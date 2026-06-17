@@ -12,45 +12,53 @@ Tauri 2 + React + TypeScript SSH Terminal Connection Tool
 - Multi-tab switching
 - Dark theme
 
-## Installation
+## System Dependencies
 
-### System Dependencies (Linux)
+### Linux (Debian/Ubuntu)
 
 ```bash
 sudo apt-get install -y pkg-config libdbus-1-dev libssl-dev libgtk-3-dev
 ```
 
-### Install Rust Toolchain
+### macOS
+
+No additional dependencies required.
+
+### Windows
+
+No additional dependencies required.
+
+## Installation
+
+### 1. Install Rust Toolchain
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### Install Frontend Dependencies
+### 2. Install Frontend Dependencies
 
 ```bash
-cd ssh-terminal
 npm install
 ```
 
 ## Development
 
 ```bash
-cd ssh-terminal
 npm run tauri dev
 ```
 
 ## Build
 
 ```bash
-cd ssh-terminal
 npm run tauri build
 ```
+
+Build output is located at `src-tauri/target/release/bundle/`.
 
 ## Project Structure
 
 ```
-ssh-terminal/
 ├── src/                          # Frontend source
 │   ├── App.tsx                   # Main app component
 │   ├── App.css                   # Main styles
@@ -74,3 +82,10 @@ ssh-terminal/
 ├── tsconfig.json
 └── vite.config.ts
 ```
+
+## Tech Stack
+
+- **Frontend**: React 19 + TypeScript + xterm.js + Vite
+- **Backend**: Tauri 2 + Rust (tokio)
+- **State Storage**: Local JSON file
+- **SSH Implementation**: Calls system `ssh` binary (via tokio::process::Command)
