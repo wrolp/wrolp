@@ -5,8 +5,9 @@ mod ssh_session;
 
 use ssh_session::AppState;
 use tauri::generate_handler;
+use tauri::Manager;
 
-fn run() {
+pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
       let state = AppState::new();

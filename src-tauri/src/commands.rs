@@ -1,9 +1,7 @@
 use super::ssh_session::{AppState, ConnectionConfig, SshSession, TerminalOutput};
 use serde_json::json;
-use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
-use tokio::sync::mpsc;
 
 // ==================== Data Persistence ====================
 
@@ -26,22 +24,26 @@ pub async fn save_connection(
   state: tauri::State<'_, AppState>,
   config: ConnectionConfig,
 ) -> Result<String, String> {
-  let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
-  let found = connections.iter_mut().find(|c| c.id == config.id);
-  if let Some(existing) = found {
-    *existing = config.clone();
-  } else {
-    connections.push(config.clone());
-  }
-  drop(connections);
+  {
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    let found = connections.iter_mut().find(|c| c.id == config.id);
+    if let Some(existing) = found {
+      *existing = config.clone();
+    } else {
+      connections.push(config.clone());
+    }
+  } // lock released here
 
   let path = get_connections_path();
   if let Some(ref path) = path {
     if let Some(parent) = path.parent() {
       let _ = tokio::fs::create_dir_all(parent).await;
     }
-    let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
-    if let Ok(content) = serde_json::to_string_pretty(&*all_conns) {
+    let content = {
+      let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
+      serde_json::to_string_pretty(&*all_conns).ok()
+    };
+    if let Some(content) = content {
       let _ = tokio::fs::write(path, content).await;
     }
   }
@@ -53,20 +55,24 @@ pub async fn delete_connection(
   state: tauri::State<'_, AppState>,
   id: String,
 ) -> Result<bool, String> {
-  let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
-  let len_before = connections.len();
-  connections.retain(|c| c.id != id);
-  let deleted = connections.len() < len_before;
+  let deleted = {
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    let len_before = connections.len();
+    connections.retain(|c| c.id != id);
+    connections.len() < len_before
+  }; // lock released here
 
   if deleted {
-    drop(connections);
     let path = get_connections_path();
     if let Some(ref path) = path {
       if let Some(parent) = path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
       }
-      let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
-      if let Ok(content) = serde_json::to_string_pretty(&*all_conns) {
+      let content = {
+        let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&*all_conns).ok()
+      };
+      if let Some(content) = content {
         let _ = tokio::fs::write(path, content).await;
       }
     }
@@ -124,7 +130,7 @@ fn build_ssh_cmd(config: &ConnectionConfig) -> Command {
 
 #[tauri::command]
 pub async fn connect(
-  app: tauri::AppHandle,
+  _app: tauri::AppHandle,
   state: tauri::State<'_, AppState>,
   config: ConnectionConfig,
   tab_id: String,
@@ -135,7 +141,10 @@ pub async fn connect(
 
   // Send connecting message
   {
-    let tx = state.output_tx.lock().map_err(|e| e.to_string())?;
+    let tx = {
+      let guard = state.output_tx.lock().map_err(|e| e.to_string())?;
+      guard.clone()
+    };
     if let Some(tx) = tx.as_ref() {
       let _ = tx
         .send(TerminalOutput {
@@ -162,12 +171,15 @@ pub async fn connect(
   let stderr = process.stderr.take().ok_or("Failed to get stderr")?;
 
   let tab_id_clone = tab_id.clone();
-  let output_tx = state.output_tx.lock().map_err(|e| e.to_string())?;
+  let output_tx = {
+    let guard = state.output_tx.lock().map_err(|e| e.to_string())?;
+    guard.clone()
+  };
 
   // Read stdout in background
   {
     let tx = output_tx.as_ref().cloned();
-    app.spawn(async move {
+    tauri::async_runtime::spawn(async move {
       let mut reader = tokio::io::BufReader::new(stdout);
       let mut buf = Vec::new();
       loop {
@@ -196,7 +208,7 @@ pub async fn connect(
   {
     let tx = output_tx.as_ref().cloned();
     let tab_id_clone = tab_id.clone();
-    app.spawn(async move {
+    tauri::async_runtime::spawn(async move {
       let mut reader = tokio::io::BufReader::new(stderr);
       let mut buf = Vec::new();
       loop {
@@ -227,7 +239,7 @@ pub async fn connect(
     tab_id: tab_id.clone(),
     config: config.clone(),
     process: Some(process),
-    stdin: Some(Box::new(stdin) as Box<dyn AsyncWriteExt + Send>),
+    stdin: Some(Box::new(stdin) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>),
     alive: true,
   };
   sessions.insert(tab_id.clone(), session);
@@ -238,13 +250,16 @@ pub async fn connect(
 
 #[tauri::command]
 pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: String) -> Result<bool, String> {
-  let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-  if let Some(session) = sessions.get_mut(&tab_id) {
-    session.alive = false;
-    if let Some(ref mut process) = session.process {
-      let _ = process.kill().await;
+  let mut process_to_kill = None;
+  {
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    if let Some(session) = sessions.get_mut(&tab_id) {
+      session.alive = false;
+      process_to_kill = session.process.take();
     }
-    session.process = None;
+  } // Lock released here, no longer spans .await
+  if let Some(ref mut process) = process_to_kill {
+    let _ = process.kill().await;
   }
   Ok(true)
 }
@@ -253,10 +268,10 @@ pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: String) -> Re
 pub async fn send_input(
   state: tauri::State<'_, AppState>,
   tab_id: String,
-  data: String,
+  _data: String,
 ) -> Result<bool, String> {
   let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-  if let Some(session) = sessions.get(&tab_id) {
+  if let Some(_session) = sessions.get(&tab_id) {
     // Note: stdin has Move semantics, needs redesign
     // Simplified handling for now
     drop(sessions);

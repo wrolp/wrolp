@@ -34,7 +34,7 @@ pub struct SshSession {
   pub tab_id: String,
   pub config: ConnectionConfig,
   pub process: Option<tokio::process::Child>,
-  pub stdin: Option<tokio::io::AsyncWriteExt>,
+  pub stdin: Option<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
   pub alive: bool,
 }
 
