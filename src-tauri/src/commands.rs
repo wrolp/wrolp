@@ -115,21 +115,40 @@ fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
   args
 }
 
-fn build_ssh_cmd(config: &ConnectionConfig) -> Command {
-  let ssh_exe = if cfg!(target_os = "windows") {
-    // Windows: try common paths
+/// Find ssh executable in PATH
+fn find_ssh_in_path() -> String {
+  let candidates = if cfg!(target_os = "windows") {
+    vec!["ssh.exe", "ssh"]
+  } else {
+    vec!["ssh"]
+  };
+
+  // 1. Search PATH first
+  for candidate in &candidates {
+    if which::which(candidate).is_ok() {
+      return candidate.to_string();
+    }
+  }
+
+  // 2. Windows common paths
+  if cfg!(target_os = "windows") {
     let win_paths = [
       r"C:\Windows\System32\OpenSSH\ssh.exe",
       r"C:\Program Files\OpenSSH-Win64\ssh.exe",
-      "ssh.exe",
     ];
-    win_paths.iter().find(|p| {
-      std::path::Path::new(p).exists()
-    }).map(|s| s.to_string()).unwrap_or_else(|| "ssh".to_string())
-  } else {
-    "ssh".to_string()
-  };
+    for p in &win_paths {
+      if std::path::Path::new(p).exists() {
+        return p.to_string();
+      }
+    }
+  }
 
+  // 3. fallback
+  candidates[0].to_string()
+}
+
+fn build_ssh_cmd(config: &ConnectionConfig) -> Command {
+  let ssh_exe = find_ssh_in_path();
   let mut cmd = Command::new(ssh_exe);
   cmd.args(build_ssh_args(config));
   cmd.stdin(std::process::Stdio::piped());
@@ -188,7 +207,7 @@ pub async fn connect(
   };
 
   // If password is set, delay writing to stdin (wait for SSH password prompt)
-  // Note: stdin needs to be saved in session below, so wrap in Arc<Mutex> first for distribution to tasks
+  // Note: stdin needs to be saved in session below, wrap in Arc<Mutex> first for distribution to tasks
   let stdin_arc = Arc::new(tokio::sync::Mutex::new(Box::new(stdin) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>));
 
   if let Some(ref pw) = password {
