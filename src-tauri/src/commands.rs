@@ -116,7 +116,21 @@ fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
 }
 
 fn build_ssh_cmd(config: &ConnectionConfig) -> Command {
-  let mut cmd = Command::new("ssh");
+  let ssh_exe = if cfg!(target_os = "windows") {
+    // Windows: try common paths
+    let win_paths = [
+      r"C:\Windows\System32\OpenSSH\ssh.exe",
+      r"C:\Program Files\OpenSSH-Win64\ssh.exe",
+      "ssh.exe",
+    ];
+    win_paths.iter().find(|p| {
+      std::path::Path::new(p).exists()
+    }).map(|s| s.to_string()).unwrap_or_else(|| "ssh".to_string())
+  } else {
+    "ssh".to_string()
+  };
+
+  let mut cmd = Command::new(ssh_exe);
   cmd.args(build_ssh_args(config));
   cmd.stdin(std::process::Stdio::piped());
   cmd.stdout(std::process::Stdio::piped());
