@@ -12,6 +12,7 @@ fn get_connections_path() -> Option<std::path::PathBuf> {
 
 /// SSH connection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConnectionConfig {
   pub id: String,
   pub name: String,

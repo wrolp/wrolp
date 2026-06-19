@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
 import 'xterm/css/xterm.css';
+import { connect, sendInput } from '../commands';
 import type { TerminalOutput } from '../types';
 
 interface TerminalComponentProps {
@@ -19,7 +19,7 @@ interface TerminalComponentProps {
   };
   // Whether to auto-connect
   autoConnect: boolean;
-  onStatusChange: (status: 'connecting' | 'connected' | 'error' | 'disconnected') => void;
+  onStatusChange: (status: 'connecting' | 'connected' | 'error' | 'disconnected', errorMessage?: string) => void;
 }
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
@@ -83,8 +83,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (parsed.status === 'connected') {
         onStatusChange('connected');
       }
+      await connect({
+        id: '',
+        name: `${cfg.username}@${cfg.host}`,
+        host: cfg.host,
+        port: cfg.port,
+        username: cfg.username,
+        password: cfg.password,
+        keyPath: cfg.keyPath,
+      }, currentTabId);
+      onStatusChange('connected');
     } catch (err) {
-      onStatusChange('error');
+      const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err);
+      onStatusChange('error', errMsg);
       console.error('connect error:', err);
     }
   }, [onStatusChange]);
@@ -135,7 +146,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // Use xterm onData to receive user input
     term.onData((data) => {
       if (!isActiveRef.current) return;
-      invoke('send_input', { tab_id: tabIdRef.current, data })
+      sendInput(tabIdRef.current, data)
         .catch(err => console.error('send_input error:', err));
     });
 

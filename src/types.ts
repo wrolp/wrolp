@@ -17,6 +17,7 @@ export interface TabInfo {
   connectionName: string;
   host: string;
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
+  errorMessage?: string;
 }
 
 export interface TerminalOutput {

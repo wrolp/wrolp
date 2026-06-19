@@ -87,6 +87,9 @@ pub async fn delete_connection(
 fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
   let mut args = vec![];
 
+  // Force allocate pseudo-terminal (PTY)
+  args.push("-tt".to_string());
+
   // Port
   if config.port != 22 {
     args.push("-p".to_string());
@@ -101,13 +104,15 @@ fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
 
   // Connection parameters
   args.push("-o".to_string());
-  args.push("BatchMode=no".to_string());
-  args.push("-o".to_string());
   args.push("ConnectTimeout=10".to_string());
 
-  // Host key checking — auto-accept unknown host keys
+  // Host key checking
   args.push("-o".to_string());
   args.push("StrictHostKeyChecking=accept-new".to_string());
+
+  // Disable ControlMaster (avoid reusing old connections)
+  args.push("-o".to_string());
+  args.push("ControlMaster=no".to_string());
 
   // user@host
   args.push(format!("{}@{}", config.username, config.host));
@@ -192,7 +197,11 @@ pub async fn connect(
   let mut process = match cmd.spawn() {
     Ok(p) => p,
     Err(e) => {
-      return Err(format!("Failed to start SSH: {}", e));
+      let ssh_path = find_ssh_in_path();
+      return Err(format!(
+        "Failed to start SSH process.\nSSH path: {}\nError: {}\n\nPossible causes:\n- SSH client not installed (Windows: install OpenSSH via Settings > Apps > Optional Features)\n- Host unreachable or wrong IP\n- Port blocked by firewall",
+        ssh_path, e
+      ));
     }
   };
 

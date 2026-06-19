@@ -49,7 +49,7 @@ export default function App() {
   const closeTab = useCallback(async (tabId: string) => {
     // Disconnect
     try {
-      await invoke('disconnect', { tab_id: tabId });
+      await invoke('disconnect', { tabId });
     } catch (e) {
       console.error('Disconnect error:', e);
     }
@@ -187,6 +187,11 @@ export default function App() {
                       <div style={{ color: '#f44747' }}>
                         Connection failed: {tab.connectionName}
                       </div>
+                      {tab.errorMessage && (
+                        <div style={{ color: '#808080', fontSize: '12px', marginTop: '8px', maxWidth: '500px', wordBreak: 'break-word' }}>
+                          {tab.errorMessage}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <TerminalComponent
@@ -208,9 +213,9 @@ export default function App() {
                           : undefined
                       }
                       autoConnect={!!tab.connectionId}
-                      onStatusChange={(status) => {
+                      onStatusChange={(status, errorMessage) => {
                         setTabs(prev => prev.map(t =>
-                          t.tabId === tab.tabId ? { ...t, status } : t
+                          t.tabId === tab.tabId ? { ...t, status, errorMessage } : t
                         ));
                       }}
                     />
