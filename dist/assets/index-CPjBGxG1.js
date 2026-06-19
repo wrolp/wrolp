@@ -17806,16 +17806,68 @@ async function listen(event, handler, options) {
     });
 }
 
-const TerminalComponent = ({ tabId, isActive }) => {
+const TerminalComponent = ({
+  tabId,
+  isActive,
+  connectConfig,
+  autoConnect,
+  onStatusChange
+}) => {
   const containerRef = reactExports.useRef(null);
   const termRef = reactExports.useRef(null);
   const fitRef = reactExports.useRef(null);
   const isActiveRef = reactExports.useRef(isActive);
+  const tabIdRef = reactExports.useRef(tabId);
+  const unlistenRef = reactExports.useRef(null);
   reactExports.useEffect(() => {
     isActiveRef.current = isActive;
   }, [isActive]);
   reactExports.useEffect(() => {
-    if (!containerRef.current) return;
+    tabIdRef.current = tabId;
+  }, [tabId]);
+  const setupListener = reactExports.useCallback(async (term, currentTabId) => {
+    if (unlistenRef.current) {
+      try {
+        unlistenRef.current();
+      } catch {
+      }
+    }
+    const unlisten = await listen("ssh://output", (event) => {
+      const payload = event.payload;
+      if (payload.tabId === currentTabId) {
+        term.write(payload.data);
+      }
+    });
+    unlistenRef.current = unlisten;
+  }, []);
+  const startConnection = reactExports.useCallback(async (term, currentTabId, cfg) => {
+    if (!cfg) return;
+    onStatusChange("connecting");
+    try {
+      const result = await invoke("connect", {
+        config: {
+          id: "",
+          // Temporary ID, not needed for connect command
+          name: `${cfg.username}@${cfg.host}`,
+          host: cfg.host,
+          port: cfg.port,
+          username: cfg.username,
+          password: cfg.password,
+          keyPath: cfg.keyPath
+        },
+        tab_id: currentTabId
+      });
+      const parsed = JSON.parse(result);
+      if (parsed.status === "connected") {
+        onStatusChange("connected");
+      }
+    } catch (err) {
+      onStatusChange("error");
+      console.error("connect error:", err);
+    }
+  }, [onStatusChange]);
+  reactExports.useEffect(() => {
+    if (!containerRef.current || !connectConfig || !autoConnect) return;
     const term = new xtermExports.Terminal({
       cursorBlink: true,
       fontSize: 14,
@@ -17850,15 +17902,10 @@ const TerminalComponent = ({ tabId, isActive }) => {
     fitAddon.fit();
     termRef.current = term;
     fitRef.current = fitAddon;
+    setupListener(term, tabIdRef.current);
     term.onData((data) => {
       if (!isActiveRef.current) return;
-      invoke("send_input", { tabId, data }).catch((err) => console.error("send_input error:", err));
-    });
-    const unlistenOutput = listen("ssh://output", (event) => {
-      const payload = event.payload;
-      if (payload.tabId === tabId) {
-        term.write(payload.data);
-      }
+      invoke("send_input", { tab_id: tabIdRef.current, data }).catch((err) => console.error("send_input error:", err));
     });
     const handleClick = () => {
       if (isActive) term.focus();
@@ -17870,15 +17917,16 @@ const TerminalComponent = ({ tabId, isActive }) => {
       }
     };
     window.addEventListener("resize", handleResize);
+    startConnection(term, tabIdRef.current, connectConfig);
     return () => {
-      unlistenOutput.then((fn) => fn());
+      unlistenRef.current?.();
       containerRef.current?.removeEventListener("click", handleClick);
       window.removeEventListener("resize", handleResize);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [tabId]);
+  }, [tabId, connectConfig, autoConnect, isActive, setupListener, startConnection]);
   reactExports.useEffect(() => {
     if (isActive && termRef.current) {
       termRef.current.focus();
@@ -17898,7 +17946,6 @@ function App() {
   const [tabs, setTabs] = reactExports.useState([]);
   const [activeTabId, setActiveTabId] = reactExports.useState(null);
   const [connections, setConnections] = reactExports.useState([]);
-  const connectingRef = reactExports.useRef(/* @__PURE__ */ new Set());
   reactExports.useEffect(() => {
     loadConnections();
   }, []);
@@ -17923,29 +17970,10 @@ function App() {
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(tabId);
-    connectingRef.current.add(tabId);
-    connectToTab(conn, tabId);
-  }, []);
-  const connectToTab = reactExports.useCallback(async (conn, tabId) => {
-    try {
-      await invoke("connect", {
-        config: conn,
-        tabId
-      });
-      setTabs((prev) => prev.map(
-        (t) => t.tabId === tabId ? { ...t, status: "connected" } : t
-      ));
-      connectingRef.current.delete(tabId);
-    } catch (err) {
-      setTabs((prev) => prev.map(
-        (t) => t.tabId === tabId ? { ...t, status: "error", connectionName: `Error: ${err}` } : t
-      ));
-      connectingRef.current.delete(tabId);
-    }
   }, []);
   const closeTab = reactExports.useCallback(async (tabId) => {
     try {
-      await invoke("disconnect", { tabId });
+      await invoke("disconnect", { tab_id: tabId });
     } catch (e) {
       console.error("Disconnect error:", e);
     }
@@ -17968,6 +17996,11 @@ function App() {
   const handleConnectionChange = reactExports.useCallback(() => {
     loadConnections();
   }, []);
+  reactExports.useCallback((tabId) => {
+    const tab = tabs.find((t) => t.tabId === tabId);
+    if (!tab?.connectionId) return void 0;
+    return cachedConnections.find((c) => c.id === tab.connectionId);
+  }, [tabs]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-container", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "toolbar", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "toolbar-title", children: "⚡ SSH Terminal" }),
@@ -17996,16 +18029,6 @@ function App() {
         {
           connections,
           onConnect: (config, tabId) => {
-            const tab = {
-              tabId,
-              connectionId: config.id,
-              connectionName: config.name,
-              host: `${config.host}:${config.port}`,
-              status: "connecting"
-            };
-            setTabs((prev) => [...prev, tab]);
-            setActiveTabId(tabId);
-            connectToTab(config, tabId);
           },
           onTabClosed: closeTab,
           activeTabId,
@@ -18075,7 +18098,24 @@ function App() {
               TerminalComponent,
               {
                 tabId: tab.tabId,
-                isActive: tab.tabId === activeTabId
+                isActive: tab.tabId === activeTabId,
+                connectConfig: tab.connectionId ? (() => {
+                  const conn = cachedConnections.find((c) => c.id === tab.connectionId);
+                  if (!conn) return void 0;
+                  return {
+                    host: conn.host,
+                    port: conn.port,
+                    username: conn.username,
+                    password: conn.password,
+                    keyPath: conn.keyPath
+                  };
+                })() : void 0,
+                autoConnect: !!tab.connectionId,
+                onStatusChange: (status) => {
+                  setTabs((prev) => prev.map(
+                    (t) => t.tabId === tab.tabId ? { ...t, status } : t
+                  ));
+                }
               }
             )
           },

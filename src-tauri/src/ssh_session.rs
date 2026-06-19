@@ -25,6 +25,7 @@ fn default_port() -> u16 {
 
 /// Terminal output event
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalOutput {
   pub tab_id: String,
   pub data: String,

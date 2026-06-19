@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { listen } from '@tauri-apps/api/event';
@@ -9,21 +9,88 @@ import type { TerminalOutput } from '../types';
 interface TerminalComponentProps {
   tabId: string;
   isActive: boolean;
+  // Connection params — passed from parent to trigger connection
+  connectConfig?: {
+    host: string;
+    port: number;
+    username: string;
+    password?: string;
+    keyPath?: string;
+  };
+  // Whether to auto-connect
+  autoConnect: boolean;
+  onStatusChange: (status: 'connecting' | 'connected' | 'error' | 'disconnected') => void;
 }
 
-export const TerminalComponent: React.FC<TerminalComponentProps> = ({ tabId, isActive }) => {
+export const TerminalComponent: React.FC<TerminalComponentProps> = ({
+  tabId,
+  isActive,
+  connectConfig,
+  autoConnect,
+  onStatusChange,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const isActiveRef = useRef(isActive);
+  const tabIdRef = useRef(tabId);
+  const unlistenRef = useRef<(() => void) | null>(null);
 
-  // Keep ref in sync with prop
+  // Keep refs in sync with props
   useEffect(() => {
     isActiveRef.current = isActive;
   }, [isActive]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    tabIdRef.current = tabId;
+  }, [tabId]);
+
+  // Listen for terminal output events
+  const setupListener = useCallback(async (term: Terminal, currentTabId: string) => {
+    if (unlistenRef.current) {
+      try { unlistenRef.current(); } catch {}
+    }
+    const unlisten = await listen<TerminalOutput>('ssh://output', (event) => {
+      const payload = event.payload;
+      if (payload.tabId === currentTabId) {
+        term.write(payload.data);
+      }
+    });
+    unlistenRef.current = unlisten as unknown as () => void;
+  }, []);
+
+  // Start SSH connection
+  const startConnection = useCallback(async (term: Terminal, currentTabId: string, cfg: TerminalComponentProps['connectConfig']) => {
+    if (!cfg) return;
+
+    onStatusChange('connecting');
+
+    try {
+      const result = await invoke('connect', {
+        config: {
+          id: '', // Temporary ID, not needed for connect command
+          name: `${cfg.username}@${cfg.host}`,
+          host: cfg.host,
+          port: cfg.port,
+          username: cfg.username,
+          password: cfg.password,
+          keyPath: cfg.keyPath,
+        },
+        tab_id: currentTabId,
+      });
+      // connect returns a JSON string on success
+      const parsed = JSON.parse(result as string);
+      if (parsed.status === 'connected') {
+        onStatusChange('connected');
+      }
+    } catch (err) {
+      onStatusChange('error');
+      console.error('connect error:', err);
+    }
+  }, [onStatusChange]);
+
+  useEffect(() => {
+    if (!containerRef.current || !connectConfig || !autoConnect) return;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -62,19 +129,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ tabId, isA
     termRef.current = term;
     fitRef.current = fitAddon;
 
+    // Set up event listener
+    setupListener(term, tabIdRef.current);
+
     // Use xterm onData to receive user input
     term.onData((data) => {
       if (!isActiveRef.current) return;
-      invoke('send_input', { tabId, data })
+      invoke('send_input', { tab_id: tabIdRef.current, data })
         .catch(err => console.error('send_input error:', err));
-    });
-
-    // Listen for terminal output from Rust backend
-    const unlistenOutput = listen<TerminalOutput>('ssh://output', (event) => {
-      const payload = event.payload;
-      if (payload.tabId === tabId) {
-        term.write(payload.data);
-      }
     });
 
     // Focus terminal on click
@@ -91,15 +153,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ tabId, isA
     };
     window.addEventListener('resize', handleResize);
 
+    // Auto connect
+    startConnection(term, tabIdRef.current, connectConfig);
+
     return () => {
-      unlistenOutput.then((fn) => fn());
+      unlistenRef.current?.();
       containerRef.current?.removeEventListener('click', handleClick);
       window.removeEventListener('resize', handleResize);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [tabId]);
+  }, [tabId, connectConfig, autoConnect, isActive, setupListener, startConnection]);
 
   // Focus when tab becomes active
   useEffect(() => {

@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { listen, emit } from '@tauri-apps/api/event';
+import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { ConnectionManager } from './components/ConnectionManager';
@@ -14,7 +13,6 @@ export default function App() {
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [connections, setConnections] = useState<ConnectionConfig[]>([]);
-  const connectingRef = useRef<Set<string>>(new Set());
 
   // Load connection list
   useEffect(() => {
@@ -32,7 +30,7 @@ export default function App() {
     }
   };
 
-  // Open new tab
+  // Open new tab (create tab only, connect later)
   const openTab = useCallback((conn: ConnectionConfig) => {
     const tabId = uuidv4();
     const newTab: TabInfo = {
@@ -45,37 +43,13 @@ export default function App() {
 
     setTabs(prev => [...prev, newTab]);
     setActiveTabId(tabId);
-    connectingRef.current.add(tabId);
-
-    // Auto connect
-    connectToTab(conn, tabId);
-  }, []);
-
-  // Connect to specified tab
-  const connectToTab = useCallback(async (conn: ConnectionConfig, tabId: string) => {
-    try {
-      await invoke('connect', {
-        config: conn,
-        tabId,
-      });
-
-      setTabs(prev => prev.map(t =>
-        t.tabId === tabId ? { ...t, status: 'connected' as const } : t
-      ));
-      connectingRef.current.delete(tabId);
-    } catch (err) {
-      setTabs(prev => prev.map(t =>
-        t.tabId === tabId ? { ...t, status: 'error' as const, connectionName: `Error: ${err}` } : t
-      ));
-      connectingRef.current.delete(tabId);
-    }
   }, []);
 
   // Close tab
   const closeTab = useCallback(async (tabId: string) => {
     // Disconnect
     try {
-      await invoke('disconnect', { tabId });
+      await invoke('disconnect', { tab_id: tabId });
     } catch (e) {
       console.error('Disconnect error:', e);
     }
@@ -91,7 +65,7 @@ export default function App() {
 
   // Select connection (double-click or click)
   const handleSelectConnection = useCallback((conn: ConnectionConfig) => {
-    // If a tab for this connection exists, activate it
+    // If a tab for this connection already exists, activate it
     const existingTab = tabs.find(t => t.connectionId === conn.id);
     if (existingTab) {
       setActiveTabId(existingTab.tabId);
@@ -104,6 +78,13 @@ export default function App() {
   const handleConnectionChange = useCallback(() => {
     loadConnections();
   }, []);
+
+  // Get connection config by tabId
+  const getConnectionById = useCallback((tabId: string): ConnectionConfig | undefined => {
+    const tab = tabs.find(t => t.tabId === tabId);
+    if (!tab?.connectionId) return undefined;
+    return cachedConnections.find(c => c.id === tab.connectionId);
+  }, [tabs]);
 
   return (
     <div className="app-container">
@@ -133,16 +114,7 @@ export default function App() {
         <ConnectionManager
           connections={connections}
           onConnect={(config, tabId) => {
-            const tab: TabInfo = {
-              tabId,
-              connectionId: config.id,
-              connectionName: config.name,
-              host: `${config.host}:${config.port}`,
-              status: 'connecting',
-            };
-            setTabs(prev => [...prev, tab]);
-            setActiveTabId(tabId);
-            connectToTab(config, tabId);
+            // This callback is not actually called; connection is triggered via onSelectConnection
           }}
           onTabClosed={closeTab}
           activeTabId={activeTabId}
@@ -220,6 +192,27 @@ export default function App() {
                     <TerminalComponent
                       tabId={tab.tabId}
                       isActive={tab.tabId === activeTabId}
+                      connectConfig={
+                        tab.connectionId
+                          ? (() => {
+                              const conn = cachedConnections.find(c => c.id === tab.connectionId);
+                              if (!conn) return undefined;
+                              return {
+                                host: conn.host,
+                                port: conn.port,
+                                username: conn.username,
+                                password: conn.password,
+                                keyPath: conn.keyPath,
+                              };
+                            })()
+                          : undefined
+                      }
+                      autoConnect={!!tab.connectionId}
+                      onStatusChange={(status) => {
+                        setTabs(prev => prev.map(t =>
+                          t.tabId === tab.tabId ? { ...t, status } : t
+                        ));
+                      }}
                     />
                   )}
                 </div>
