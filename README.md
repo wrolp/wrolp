@@ -44,9 +44,21 @@ npm install
 
 ## Development
 
+Tauri development requires starting the frontend Vite dev server first, then launching the Tauri desktop app.
+
+### Step 1: Start the frontend dev server
+
+```bash
+npm run dev
+```
+
+### Step 2: In another terminal window, start the Tauri app
+
 ```bash
 npm run tauri dev
 ```
+
+Tauri will automatically detect the frontend service at `http://localhost:1420` and load it.
 
 ## Build
 
