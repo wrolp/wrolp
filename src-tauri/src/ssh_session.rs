@@ -5,6 +5,11 @@ use tokio::io::AsyncWrite;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
+/// SSH connection config file path
+fn get_connections_path() -> Option<std::path::PathBuf> {
+  dirs::config_dir().map(|p| p.join("ssh-terminal").join("connections.json"))
+}
+
 /// SSH connection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
@@ -64,11 +69,30 @@ pub struct AppState {
 impl AppState {
   pub fn new() -> Self {
     let (output_tx, output_rx) = mpsc::channel(1000);
+
+    // Load existing connections from config file
+    let connections = get_initial_connections();
+
     Self {
-      connections: StdMutex::new(Vec::new()),
+      connections: StdMutex::new(connections),
       sessions: StdMutex::new(HashMap::new()),
       output_tx: StdMutex::new(Some(output_tx)),
       output_rx: Arc::new(StdMutex::new(Some(output_rx))),
     }
   }
+}
+
+/// Load initial connection list from config file
+fn get_initial_connections() -> Vec<ConnectionConfig> {
+  let path = get_connections_path();
+  if let Some(ref path) = path {
+    if path.exists() {
+      if let Ok(content) = std::fs::read_to_string(path) {
+        if let Ok(conns) = serde_json::from_str::<Vec<ConnectionConfig>>(&content) {
+          return conns;
+        }
+      }
+    }
+  }
+  Vec::new()
 }

@@ -17560,7 +17560,9 @@ const ConnectionModal = ({ connection, onClose, onSave }) => {
   const [host, setHost] = reactExports.useState(connection?.host || "");
   const [port, setPort] = reactExports.useState(connection?.port || 22);
   const [username, setUsername] = reactExports.useState(connection?.username || "");
-  const [authType, setAuthType] = reactExports.useState(connection?.password ? "password" : "key");
+  const [authType, setAuthType] = reactExports.useState(
+    connection && connection.password ? "password" : "password"
+  );
   const [password, setPassword] = reactExports.useState(connection?.password || "");
   const [keyPath, setKeyPath] = reactExports.useState(connection?.keyPath || "");
   const [passphrase, setPassphrase] = reactExports.useState(connection?.passphrase || "");

@@ -118,7 +118,9 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({ connection, on
   const [host, setHost] = useState(connection?.host || '');
   const [port, setPort] = useState(connection?.port || 22);
   const [username, setUsername] = useState(connection?.username || '');
-  const [authType, setAuthType] = useState<'password' | 'key'>(connection?.password ? 'password' : 'key');
+  const [authType, setAuthType] = useState<'password' | 'key'>(
+    connection && connection.password ? 'password' : 'password'
+  );
   const [password, setPassword] = useState(connection?.password || '');
   const [keyPath, setKeyPath] = useState(connection?.keyPath || '');
   const [passphrase, setPassphrase] = useState(connection?.passphrase || '');
