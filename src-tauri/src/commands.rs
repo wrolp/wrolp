@@ -105,7 +105,7 @@ fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
   args.push("-o".to_string());
   args.push("ConnectTimeout=10".to_string());
 
-  // Host key checking
+  // Host key checking — auto-accept unknown host keys
   args.push("-o".to_string());
   args.push("StrictHostKeyChecking=accept-new".to_string());
 
@@ -116,18 +116,7 @@ fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
 }
 
 fn build_ssh_cmd(config: &ConnectionConfig) -> Command {
-  let mut cmd;
-
-  // If password is set, use sshpass
-  if let Some(ref password) = config.password {
-    cmd = Command::new("sshpass");
-    cmd.arg("-p");
-    cmd.arg(password);
-    cmd.arg("ssh");
-  } else {
-    cmd = Command::new("ssh");
-  }
-
+  let mut cmd = Command::new("ssh");
   cmd.args(build_ssh_args(config));
   cmd.stdin(std::process::Stdio::piped());
   cmd.stdout(std::process::Stdio::piped());
@@ -145,6 +134,7 @@ pub async fn connect(
   let host = config.host.clone();
   let port = config.port;
   let username = config.username.clone();
+  let password = config.password.clone();
 
   // Send connecting message
   {
@@ -182,6 +172,22 @@ pub async fn connect(
     let guard = state.output_tx.lock().map_err(|e| e.to_string())?;
     guard.clone()
   };
+
+  // If password is set, delay writing to stdin (wait for SSH password prompt)
+  // Note: stdin needs to be saved in session below, so wrap in Arc<Mutex> first for distribution to tasks
+  let stdin_arc = Arc::new(tokio::sync::Mutex::new(Box::new(stdin) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>));
+
+  if let Some(ref pw) = password {
+    let pw_bytes = format!("{}\n", pw).into_bytes();
+    let stdin_for_pw = stdin_arc.clone();
+    tauri::async_runtime::spawn(async move {
+      // Wait 500ms for SSH process to initialize and emit password prompt
+      tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+      let mut writer = stdin_for_pw.lock().await;
+      let _ = writer.write_all(&pw_bytes).await;
+      let _ = writer.flush().await;
+    });
+  }
 
   // Read stdout in background
   {
@@ -240,13 +246,13 @@ pub async fn connect(
     });
   }
 
-  // Save session
+  // Save session (reuse the same stdin_arc)
   let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
   let session = SshSession {
     tab_id: tab_id.clone(),
     config: config.clone(),
     process: Some(process),
-    stdin: Some(Arc::new(tokio::sync::Mutex::new(Box::new(stdin) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>))),
+    stdin: Some(stdin_arc),
     alive: true,
   };
   sessions.insert(tab_id.clone(), session);
