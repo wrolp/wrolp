@@ -106,15 +106,8 @@ fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
   args.push("ConnectTimeout=10".to_string());
 
   // Host key checking
-  if config.key_path.is_some() {
-    args.push("-o".to_string());
-    args.push("StrictHostKeyChecking=accept-new".to_string());
-  } else {
-    args.push("-o".to_string());
-    args.push("StrictHostKeyChecking=accept-new".to_string());
-    args.push("-o".to_string());
-    args.push("UserKnownHostsFile=/dev/null".to_string());
-  }
+  args.push("-o".to_string());
+  args.push("StrictHostKeyChecking=accept-new".to_string());
 
   // user@host
   args.push(format!("{}@{}", config.username, config.host));
@@ -123,7 +116,18 @@ fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
 }
 
 fn build_ssh_cmd(config: &ConnectionConfig) -> Command {
-  let mut cmd = Command::new("ssh");
+  let mut cmd;
+
+  // If password is set, use sshpass
+  if let Some(ref password) = config.password {
+    cmd = Command::new("sshpass");
+    cmd.arg("-p");
+    cmd.arg(password);
+    cmd.arg("ssh");
+  } else {
+    cmd = Command::new("ssh");
+  }
+
   cmd.args(build_ssh_args(config));
   cmd.stdin(std::process::Stdio::piped());
   cmd.stdout(std::process::Stdio::piped());
