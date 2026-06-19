@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex as StdMutex};
+use tokio::io::AsyncWrite;
+use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
 /// SSH connection configuration
@@ -34,7 +36,7 @@ pub struct SshSession {
   pub tab_id: String,
   pub config: ConnectionConfig,
   pub process: Option<tokio::process::Child>,
-  pub stdin: Option<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
+  pub stdin: Option<Arc<TokioMutex<Box<dyn AsyncWrite + Send + Unpin>>>>,
   pub alive: bool,
 }
 
@@ -52,20 +54,20 @@ impl SshSession {
 
 /// Global state management
 pub struct AppState {
-  pub connections: Mutex<Vec<ConnectionConfig>>,
-  pub sessions: Mutex<HashMap<String, SshSession>>,
-  pub output_tx: Mutex<Option<mpsc::Sender<TerminalOutput>>>,
-  pub output_rx: Mutex<Option<mpsc::Receiver<TerminalOutput>>>,
+  pub connections: StdMutex<Vec<ConnectionConfig>>,
+  pub sessions: StdMutex<HashMap<String, SshSession>>,
+  pub output_tx: StdMutex<Option<mpsc::Sender<TerminalOutput>>>,
+  pub output_rx: Arc<StdMutex<Option<mpsc::Receiver<TerminalOutput>>>>,
 }
 
 impl AppState {
   pub fn new() -> Self {
     let (output_tx, output_rx) = mpsc::channel(1000);
     Self {
-      connections: Mutex::new(Vec::new()),
-      sessions: Mutex::new(HashMap::new()),
-      output_tx: Mutex::new(Some(output_tx)),
-      output_rx: Mutex::new(Some(output_rx)),
+      connections: StdMutex::new(Vec::new()),
+      sessions: StdMutex::new(HashMap::new()),
+      output_tx: StdMutex::new(Some(output_tx)),
+      output_rx: Arc::new(StdMutex::new(Some(output_rx))),
     }
   }
 }

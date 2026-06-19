@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import 'xterm/css/xterm.css';
 import type { TerminalOutput } from '../types';
 
@@ -14,6 +15,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ tabId, isA
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const isActiveRef = useRef(isActive);
+
+  // Keep ref in sync with prop
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -54,6 +61,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ tabId, isA
 
     termRef.current = term;
     fitRef.current = fitAddon;
+
+    // Use xterm onData to receive user input
+    term.onData((data) => {
+      if (!isActiveRef.current) return;
+      invoke('send_input', { tabId, data })
+        .catch(err => console.error('send_input error:', err));
+    });
 
     // Listen for terminal output from Rust backend
     const unlistenOutput = listen<TerminalOutput>('ssh://output', (event) => {

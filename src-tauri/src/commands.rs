@@ -1,6 +1,7 @@
 use super::ssh_session::{AppState, ConnectionConfig, SshSession, TerminalOutput};
 use serde_json::json;
-use tokio::io::AsyncBufReadExt;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 // ==================== Data Persistence ====================
@@ -98,20 +99,22 @@ fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
     args.push(key_path.clone());
   }
 
-  // Passphrase needs to be handled via sshpass or ssh-agent
-  // Skip for now, user needs to configure ssh-agent beforehand
-  if config.passphrase.is_some() {
+  // Connection parameters
+  args.push("-o".to_string());
+  args.push("BatchMode=no".to_string());
+  args.push("-o".to_string());
+  args.push("ConnectTimeout=10".to_string());
+
+  // Host key checking
+  if config.key_path.is_some() {
     args.push("-o".to_string());
-    args.push("StrictHostKeyChecking=no".to_string());
+    args.push("StrictHostKeyChecking=accept-new".to_string());
+  } else {
+    args.push("-o".to_string());
+    args.push("StrictHostKeyChecking=accept-new".to_string());
     args.push("-o".to_string());
     args.push("UserKnownHostsFile=/dev/null".to_string());
   }
-
-  // Connection parameters
-  args.push("-o".to_string());
-  args.push("BatchMode=yes".to_string());
-  args.push("-o".to_string());
-  args.push("ConnectTimeout=10".to_string());
 
   // user@host
   args.push(format!("{}@{}", config.username, config.host));
@@ -239,7 +242,7 @@ pub async fn connect(
     tab_id: tab_id.clone(),
     config: config.clone(),
     process: Some(process),
-    stdin: Some(Box::new(stdin) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>),
+    stdin: Some(Arc::new(tokio::sync::Mutex::new(Box::new(stdin) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>))),
     alive: true,
   };
   sessions.insert(tab_id.clone(), session);
@@ -268,16 +271,22 @@ pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: String) -> Re
 pub async fn send_input(
   state: tauri::State<'_, AppState>,
   tab_id: String,
-  _data: String,
+  data: String,
 ) -> Result<bool, String> {
-  let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-  if let Some(_session) = sessions.get(&tab_id) {
-    // Note: stdin has Move semantics, needs redesign
-    // Simplified handling for now
-    drop(sessions);
-    return Ok(false);
-  }
-  Ok(false)
+  // Clone the Arc<Mutex<...>> out of the HashMap before releasing the lock
+  let stdin_arc = {
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    let session = sessions.get(&tab_id).ok_or("Session not found")?;
+    session.stdin.as_ref()
+      .ok_or("No stdin available")?
+      .clone()
+  };
+
+  let bytes = data.into_bytes();
+  let mut writer = stdin_arc.lock().await;
+  writer.write_all(&bytes).await.map_err(|e| e.to_string())?;
+  writer.flush().await.map_err(|e| e.to_string())?;
+  Ok(true)
 }
 
 #[tauri::command]

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { ConnectionConfig } from '../types';
-import { saveConnection as saveConn } from '../commands';
+import { saveConnection as saveConn, deleteConnection } from '../commands';
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[];
