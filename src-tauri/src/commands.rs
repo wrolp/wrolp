@@ -1,8 +1,91 @@
-use super::ssh_session::{AppState, ConnectionConfig, SshSession, TerminalOutput};
-use serde_json::json;
+use super::ssh_session::{AppState, ConnectionConfig, ConnectResult, SshSession, TerminalOutput};
+use russh::client::{self, Handler};
+use russh::ChannelId;
+use russh_keys::load_secret_key;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use tauri::Emitter;
+
+// ==================== Custom Error type ====================
+
+#[derive(Debug)]
+struct SshError(String);
+
+impl std::fmt::Display for SshError {
+  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    write!(f, "{}", self.0)
+  }
+}
+
+impl std::error::Error for SshError {}
+
+impl From<russh::Error> for SshError {
+  fn from(e: russh::Error) -> Self {
+    SshError(e.to_string())
+  }
+}
+
+impl From<String> for SshError {
+  fn from(s: String) -> Self {
+    SshError(s)
+  }
+}
+
+// ==================== Handler ====================
+
+struct SshHandler {
+  app_handle: tauri::AppHandle,
+  tab_id: String,
+}
+
+impl SshHandler {
+  fn emit(&self, data: &str) {
+    let _ = self.app_handle.emit(
+      "ssh-output",
+      TerminalOutput {
+        tab_id: self.tab_id.clone(),
+        data: data.to_string(),
+        title: String::new(),
+      },
+    );
+  }
+}
+
+#[async_trait::async_trait]
+impl Handler for SshHandler {
+  type Error = SshError;
+
+  async fn check_server_key(
+    &mut self,
+    _server_public_key: &russh_keys::key::PublicKey,
+  ) -> Result<bool, Self::Error> {
+    // Accept all host keys (equivalent to StrictHostKeyChecking=accept-new)
+    Ok(true)
+  }
+
+  async fn data(
+    &mut self,
+    _channel: ChannelId,
+    data: &[u8],
+    _session: &mut russh::client::Session,
+  ) -> Result<(), Self::Error> {
+    let text = String::from_utf8_lossy(data);
+    self.emit(&text);
+    Ok(())
+  }
+
+  async fn extended_data(
+    &mut self,
+    _channel: ChannelId,
+    _code: u32,
+    data: &[u8],
+    _session: &mut russh::client::Session,
+  ) -> Result<(), Self::Error> {
+    // stderr → display in yellow
+    let text = String::from_utf8_lossy(data);
+    self.emit(&format!("\u{1b}[33m{}\u{1b}[0m", text));
+    Ok(())
+  }
+}
 
 // ==================== Data Persistence ====================
 
@@ -33,7 +116,7 @@ pub async fn save_connection(
     } else {
       connections.push(config.clone());
     }
-  } // lock released here
+  }
 
   let path = get_connections_path();
   if let Some(ref path) = path {
@@ -61,7 +144,7 @@ pub async fn delete_connection(
     let len_before = connections.len();
     connections.retain(|c| c.id != id);
     connections.len() < len_before
-  }; // lock released here
+  };
 
   if deleted {
     let path = get_connections_path();
@@ -82,240 +165,199 @@ pub async fn delete_connection(
   Ok(deleted)
 }
 
-// ==================== SSH Connection ====================
-
-fn build_ssh_args(config: &ConnectionConfig) -> Vec<String> {
-  let mut args = vec![];
-
-  // Force allocate pseudo-terminal (PTY)
-  args.push("-tt".to_string());
-
-  // Port
-  if config.port != 22 {
-    args.push("-p".to_string());
-    args.push(config.port.to_string());
-  }
-
-  // Key
-  if let Some(ref key_path) = config.key_path {
-    args.push("-i".to_string());
-    args.push(key_path.clone());
-  }
-
-  // Connection parameters
-  args.push("-o".to_string());
-  args.push("ConnectTimeout=10".to_string());
-
-  // Host key checking
-  args.push("-o".to_string());
-  args.push("StrictHostKeyChecking=accept-new".to_string());
-
-  // Disable ControlMaster (avoid reusing old connections)
-  args.push("-o".to_string());
-  args.push("ControlMaster=no".to_string());
-
-  // user@host
-  args.push(format!("{}@{}", config.username, config.host));
-
-  args
-}
-
-/// Find ssh executable in PATH
-fn find_ssh_in_path() -> String {
-  let candidates = if cfg!(target_os = "windows") {
-    vec!["ssh.exe", "ssh"]
-  } else {
-    vec!["ssh"]
-  };
-
-  // 1. Search PATH first
-  for candidate in &candidates {
-    if which::which(candidate).is_ok() {
-      return candidate.to_string();
-    }
-  }
-
-  // 2. Windows common paths
-  if cfg!(target_os = "windows") {
-    let win_paths = [
-      r"C:\Windows\System32\OpenSSH\ssh.exe",
-      r"C:\Program Files\OpenSSH-Win64\ssh.exe",
-    ];
-    for p in &win_paths {
-      if std::path::Path::new(p).exists() {
-        return p.to_string();
-      }
-    }
-  }
-
-  // 3. fallback
-  candidates[0].to_string()
-}
-
-fn build_ssh_cmd(config: &ConnectionConfig) -> Command {
-  let ssh_exe = find_ssh_in_path();
-  let mut cmd = Command::new(ssh_exe);
-  cmd.args(build_ssh_args(config));
-  cmd.stdin(std::process::Stdio::piped());
-  cmd.stdout(std::process::Stdio::piped());
-  cmd.stderr(std::process::Stdio::piped());
-  cmd
-}
+// ==================== SSH Connection (russh) ====================
 
 #[tauri::command]
 pub async fn connect(
-  _app: tauri::AppHandle,
+  app: tauri::AppHandle,
   state: tauri::State<'_, AppState>,
   config: ConnectionConfig,
   tab_id: String,
-) -> Result<String, String> {
+) -> Result<ConnectResult, String> {
   let host = config.host.clone();
   let port = config.port;
   let username = config.username.clone();
-  let password = config.password.clone();
+
+  println!("[connect] tab={} host={}:{} user={}", tab_id, host, port, username);
 
   // Send connecting message
+  let _ = app.emit(
+    "ssh-output",
+    TerminalOutput {
+      tab_id: tab_id.clone(),
+      data: format!("Connecting to {}:{} as {} ...\r\n", host, port, username),
+      title: String::new(),
+    },
+  );
+
+  // Create channels: data_tx for input, shutdown_tx for disconnect
+  let (data_tx, mut data_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+  let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+  // Background task: establish SSH connection and read/write loop
   {
-    let tx = {
-      let guard = state.output_tx.lock().map_err(|e| e.to_string())?;
-      guard.clone()
-    };
-    if let Some(tx) = tx.as_ref() {
-      let _ = tx
-        .send(TerminalOutput {
-          tab_id: tab_id.clone(),
-          data: format!("Connecting to {}:{} as {}\n", host, port, username),
-          title: String::new(),
-        })
-        .await;
-    }
-  }
+    let app_handle = app.clone();
+    let tid = tab_id.clone();
+    let cfg = config.clone();
 
-  // Build and launch SSH process
-  let mut cmd = build_ssh_cmd(&config);
-
-  let mut process = match cmd.spawn() {
-    Ok(p) => p,
-    Err(e) => {
-      let ssh_path = find_ssh_in_path();
-      return Err(format!(
-        "Failed to start SSH process.\nSSH path: {}\nError: {}\n\nPossible causes:\n- SSH client not installed (Windows: install OpenSSH via Settings > Apps > Optional Features)\n- Host unreachable or wrong IP\n- Port blocked by firewall",
-        ssh_path, e
-      ));
-    }
-  };
-
-  let stdin = process.stdin.take().ok_or("Failed to get stdin")?;
-  let stdout = process.stdout.take().ok_or("Failed to get stdout")?;
-  let stderr = process.stderr.take().ok_or("Failed to get stderr")?;
-
-  let tab_id_clone = tab_id.clone();
-  let output_tx = {
-    let guard = state.output_tx.lock().map_err(|e| e.to_string())?;
-    guard.clone()
-  };
-
-  // If password is set, delay writing to stdin (wait for SSH password prompt)
-  // Note: stdin needs to be saved in session below, wrap in Arc<Mutex> first for distribution to tasks
-  let stdin_arc = Arc::new(tokio::sync::Mutex::new(Box::new(stdin) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>));
-
-  if let Some(ref pw) = password {
-    let pw_bytes = format!("{}\n", pw).into_bytes();
-    let stdin_for_pw = stdin_arc.clone();
     tauri::async_runtime::spawn(async move {
-      // Wait 500ms for SSH process to initialize and emit password prompt
-      tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-      let mut writer = stdin_for_pw.lock().await;
-      let _ = writer.write_all(&pw_bytes).await;
-      let _ = writer.flush().await;
-    });
-  }
+      println!("[russh] connecting to {}:{}", cfg.host, cfg.port);
 
-  // Read stdout in background
-  {
-    let tx = output_tx.as_ref().cloned();
-    tauri::async_runtime::spawn(async move {
-      let mut reader = tokio::io::BufReader::new(stdout);
-      let mut buf = Vec::new();
+      let emit_error = |app: &tauri::AppHandle, tid: &str, msg: &str| {
+        let _ = app.emit(
+          "ssh-output",
+          TerminalOutput {
+            tab_id: tid.to_string(),
+            data: format!("\u{1b}[31m{}\u{1b}[0m\r\n", msg),
+            title: String::new(),
+          },
+        );
+      };
+
+      // 1. Establish SSH connection
+      let handler = SshHandler {
+        app_handle: app_handle.clone(),
+        tab_id: tid.clone(),
+      };
+      let ssh_config = Arc::new(client::Config::default());
+
+      let mut handle = match client::connect(ssh_config, (cfg.host.as_str(), cfg.port), handler).await {
+        Ok(h) => h,
+        Err(e) => {
+          println!("[russh] handshake error: {:?}", e);
+          emit_error(&app_handle, &tid, &format!("SSH handshake failed: {}", e));
+          return;
+        }
+      };
+
+      // 2. Authentication
+      if let Some(ref pw) = cfg.password {
+        match handle.authenticate_password(&cfg.username, pw).await {
+          Ok(true) => {}
+          Ok(false) => {
+            emit_error(&app_handle, &tid, "Authentication failed: wrong password");
+            return;
+          }
+          Err(e) => {
+            println!("[russh] auth error: {:?}", e);
+            emit_error(&app_handle, &tid, &format!("Authentication error: {}", e));
+            return;
+          }
+        }
+      } else if let Some(ref key_path) = cfg.key_path {
+        let key = match load_secret_key(key_path, cfg.passphrase.as_deref()) {
+          Ok(k) => k,
+          Err(e) => {
+            emit_error(&app_handle, &tid, &format!("Failed to load key: {}", e));
+            return;
+          }
+        };
+        match handle.authenticate_publickey(&cfg.username, Arc::new(key)).await {
+          Ok(true) => {}
+          Ok(false) => {
+            emit_error(&app_handle, &tid, "Authentication failed: invalid key");
+            return;
+          }
+          Err(e) => {
+            println!("[russh] key auth error: {:?}", e);
+            emit_error(&app_handle, &tid, &format!("Key authentication error: {}", e));
+            return;
+          }
+        }
+      } else {
+        emit_error(&app_handle, &tid, "No password or key provided");
+        return;
+      }
+
+      println!("[russh] authenticated, opening channel");
+
+      // 3. Open channel + PTY + shell
+      let channel = match handle.channel_open_session().await {
+        Ok(ch) => ch,
+        Err(e) => {
+          emit_error(&app_handle, &tid, &format!("Failed to open channel: {}", e));
+          return;
+        }
+      };
+
+      if let Err(e) = channel.request_pty(false, "xterm-256color", 80, 24, 0, 0, &[]).await {
+        emit_error(&app_handle, &tid, &format!("PTY request failed: {}", e));
+        return;
+      }
+
+      if let Err(e) = channel.request_shell(false).await {
+        emit_error(&app_handle, &tid, &format!("Shell request failed: {}", e));
+        return;
+      }
+
+      println!("[russh] shell started for tab={}", tid);
+
+      // 4. Read/write loop: data_rx → channel, shutdown_rx → exit
       loop {
-        match reader.read_until(b'\n', &mut buf).await {
-          Ok(0) => break, // EOF
-          Ok(n) => {
-            let text = String::from_utf8_lossy(&buf[..n]).to_string();
-            buf.clear();
-            if let Some(ref tx) = tx {
-              let _ = tx
-                .send(TerminalOutput {
-                  tab_id: tab_id_clone.clone(),
-                  data: text,
-                  title: String::new(),
-                })
-                .await;
+        tokio::select! {
+          Some(data) = data_rx.recv() => {
+            // channel.data() requires AsyncRead, &[u8] implements it
+            if let Err(e) = channel.data(data.as_slice()).await {
+              println!("[russh] write error for tab={}: {:?}", tid, e);
+              break;
             }
           }
-          Err(_) => break,
-        }
-      }
-    });
-  }
-
-  // Read stderr in background
-  {
-    let tx = output_tx.as_ref().cloned();
-    let tab_id_clone = tab_id.clone();
-    tauri::async_runtime::spawn(async move {
-      let mut reader = tokio::io::BufReader::new(stderr);
-      let mut buf = Vec::new();
-      loop {
-        match reader.read_until(b'\n', &mut buf).await {
-          Ok(0) => break,
-          Ok(n) => {
-            let text = String::from_utf8_lossy(&buf[..n]).to_string();
-            buf.clear();
-            if let Some(ref tx) = tx {
-              let _ = tx
-                .send(TerminalOutput {
-                  tab_id: tab_id_clone.clone(),
-                  data: format!("[stderr] {}", text),
-                  title: String::new(),
-                })
-                .await;
-            }
+          _ = &mut shutdown_rx => {
+            println!("[russh] shutdown signal for tab={}", tid);
+            // Send EOF then disconnect
+            let _ = channel.eof().await;
+            break;
           }
-          Err(_) => break,
+          else => {
+            println!("[russh] data_rx closed for tab={}", tid);
+            break;
+          }
         }
       }
+
+      println!("[russh] disconnected for tab={}", tid);
     });
   }
 
-  // Save session (reuse the same stdin_arc)
-  let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-  let session = SshSession {
-    tab_id: tab_id.clone(),
-    config: config.clone(),
-    process: Some(process),
-    stdin: Some(stdin_arc),
-    alive: true,
-  };
-  sessions.insert(tab_id.clone(), session);
-  drop(sessions);
+  // Save session
+  {
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    sessions.insert(
+      tab_id.clone(),
+      SshSession {
+        tab_id: tab_id.clone(),
+        config: config.clone(),
+        data_tx: Some(data_tx),
+        shutdown_tx: Some(shutdown_tx),
+      },
+    );
+  }
 
-  Ok(json!({"status": "connected", "tab_id": tab_id}).to_string())
+  println!("[connect] returning connected for tab={}", tab_id);
+  Ok(ConnectResult {
+    status: "connected".into(),
+    tab_id,
+  })
 }
 
 #[tauri::command]
-pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: String) -> Result<bool, String> {
-  let mut process_to_kill = None;
-  {
+pub async fn disconnect(
+  state: tauri::State<'_, AppState>,
+  tab_id: String,
+) -> Result<bool, String> {
+  let shutdown_tx = {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     if let Some(session) = sessions.get_mut(&tab_id) {
-      session.alive = false;
-      process_to_kill = session.process.take();
+      session.shutdown_tx.take()
+    } else {
+      None
     }
-  } // Lock released here, no longer spans .await
-  if let Some(ref mut process) = process_to_kill {
-    let _ = process.kill().await;
+  };
+
+  if let Some(tx) = shutdown_tx {
+    let _ = tx.send(());
   }
+
   Ok(true)
 }
 
@@ -325,19 +367,17 @@ pub async fn send_input(
   tab_id: String,
   data: String,
 ) -> Result<bool, String> {
-  // Clone the Arc<Mutex<...>> out of the HashMap before releasing the lock
-  let stdin_arc = {
+  let data_tx = {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    let session = sessions.get(&tab_id).ok_or("Session not found")?;
-    session.stdin.as_ref()
-      .ok_or("No stdin available")?
-      .clone()
+    sessions
+      .get(&tab_id)
+      .and_then(|s| s.data_tx.clone())
+      .ok_or("Session not found")?
   };
 
-  let bytes = data.into_bytes();
-  let mut writer = stdin_arc.lock().await;
-  writer.write_all(&bytes).await.map_err(|e| e.to_string())?;
-  writer.flush().await.map_err(|e| e.to_string())?;
+  data_tx
+    .send(data.into_bytes())
+    .map_err(|e| format!("Failed to send input: {}", e))?;
   Ok(true)
 }
 
@@ -348,5 +388,6 @@ pub async fn resize_terminal(
   _cols: u32,
   _rows: u32,
 ) -> Result<bool, String> {
+  // TODO: adjust PTY size via russh channel
   Ok(true)
 }

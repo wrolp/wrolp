@@ -50,7 +50,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     if (unlistenRef.current) {
       try { unlistenRef.current(); } catch {}
     }
-    const unlisten = await listen<TerminalOutput>('ssh://output', (event) => {
+    const unlisten = await listen<TerminalOutput>('ssh-output', (event) => {
       const payload = event.payload;
       if (payload.tabId === currentTabId) {
         term.write(payload.data);

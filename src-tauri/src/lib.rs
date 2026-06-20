@@ -5,28 +5,12 @@ mod ssh_session;
 
 use ssh_session::AppState;
 use tauri::generate_handler;
-use tauri::Emitter;
 use tauri::Manager;
 
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
       let state = AppState::new();
-
-      // Take receiver and move into async block
-      let app_handle = app.handle().clone();
-      let rx = {
-        let mut guard = state.output_rx.lock().unwrap();
-        guard.take()
-      };
-      if let Some(mut rx) = rx {
-        tauri::async_runtime::spawn(async move {
-          while let Some(output) = rx.recv().await {
-            let _ = app_handle.emit("ssh://output", &output);
-          }
-        });
-      }
-
       app.manage(state);
       Ok(())
     })
