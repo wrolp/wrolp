@@ -1,9 +1,10 @@
-use super::ssh_session::{AppState, ConnectionConfig, ConnectResult, SshSession, TerminalOutput};
+use super::ssh_session::{AppState, ConnectionConfig, ConnectResult, SshSession};
 use russh::client::{self, Handler};
-use russh::ChannelId;
+use russh::{Channel, ChannelId};
 use russh_keys::load_secret_key;
 use std::sync::Arc;
-use tauri::Emitter;
+use std::hint::black_box;
+use tauri::Manager;
 
 // ==================== Custom Error type ====================
 
@@ -38,15 +39,16 @@ struct SshHandler {
 }
 
 impl SshHandler {
+  /// Push data into AppState output buffer (consumed by frontend via poll_output)
   fn emit(&self, data: &str) {
-    let _ = self.app_handle.emit(
-      "ssh-output",
-      TerminalOutput {
-        tab_id: self.tab_id.clone(),
-        data: data.to_string(),
-        title: String::new(),
-      },
-    );
+    if let Some(state) = self.app_handle.try_state::<AppState>() {
+      if let Ok(mut buffers) = state.output_buffers.lock() {
+        buffers
+          .entry(self.tab_id.clone())
+          .or_default()
+          .push(data.to_string());
+      }
+    }
   }
 }
 
@@ -58,8 +60,27 @@ impl Handler for SshHandler {
     &mut self,
     _server_public_key: &russh_keys::key::PublicKey,
   ) -> Result<bool, Self::Error> {
-    // Accept all host keys (equivalent to StrictHostKeyChecking=accept-new)
     Ok(true)
+  }
+
+  async fn channel_open_confirmation(
+    &mut self,
+    _channel: ChannelId,
+    max_packet_size: u32,
+    window_size: u32,
+    _session: &mut russh::client::Session,
+  ) -> Result<(), Self::Error> {
+    eprintln!("[russh] channel_open_confirmation max_packet={} window={}", max_packet_size, window_size);
+    Ok(())
+  }
+
+  async fn channel_success(
+    &mut self,
+    _channel: ChannelId,
+    _session: &mut russh::client::Session,
+  ) -> Result<(), Self::Error> {
+    eprintln!("[russh] channel_success (shell ready)");
+    Ok(())
   }
 
   async fn data(
@@ -69,6 +90,7 @@ impl Handler for SshHandler {
     _session: &mut russh::client::Session,
   ) -> Result<(), Self::Error> {
     let text = String::from_utf8_lossy(data);
+    eprintln!("[russh data] {} bytes for tab={}: {:?}", data.len(), self.tab_id, &text[..text.len().min(80)]);
     self.emit(&text);
     Ok(())
   }
@@ -167,6 +189,39 @@ pub async fn delete_connection(
 
 // ==================== SSH Connection (russh) ====================
 
+/// Read/write loop: session as param ensures it is not dropped early by async state machine
+async fn run_session_loop(
+  channel: Channel<russh::client::Msg>,
+  mut data_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+  mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+  session: russh::client::Handle<SshHandler>,
+  tid: &str,
+) {
+  loop {
+    // black_box prevents compiler from dropping session before .await
+    black_box(&session);
+    tokio::select! {
+      Some(data) = data_rx.recv() => {
+        black_box(&session);
+        if let Err(e) = channel.data(data.as_slice()).await {
+          eprintln!("[russh] write error for tab={}: {:?}", tid, e);
+          break;
+        }
+      }
+      _ = &mut shutdown_rx => {
+        eprintln!("[russh] shutdown signal for tab={}", tid);
+        let _ = channel.eof().await;
+        break;
+      }
+      else => {
+        eprintln!("[russh] data_rx closed for tab={}", tid);
+        break;
+      }
+    }
+  }
+  drop(session);
+}
+
 #[tauri::command]
 pub async fn connect(
   app: tauri::AppHandle,
@@ -178,17 +233,30 @@ pub async fn connect(
   let port = config.port;
   let username = config.username.clone();
 
-  println!("[connect] tab={} host={}:{} user={}", tab_id, host, port, username);
+  eprintln!("[connect] tab={} host={}:{} user={}", tab_id, host, port, username);
 
-  // Send connecting message
-  let _ = app.emit(
-    "ssh-output",
-    TerminalOutput {
-      tab_id: tab_id.clone(),
-      data: format!("Connecting to {}:{} as {} ...\r\n", host, port, username),
-      title: String::new(),
-    },
-  );
+  // Send connecting message to output buffer (frontend polls via poll_output)
+  {
+    if let Ok(mut buffers) = state.output_buffers.lock() {
+      buffers
+        .entry(tab_id.clone())
+        .or_default()
+        .push(format!("Connecting to {}:{} as {} ...\r\n", host, port, username));
+    }
+  }
+
+  // If session with same tab_id exists, disconnect old one first
+  {
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    if let Some(old_session) = sessions.remove(&tab_id) {
+      eprintln!("[connect] removing old session for tab={}", tab_id);
+      if let Some(tx) = old_session.shutdown_tx {
+        let _ = tx.send(());
+      }
+      // Wait for old task cleanup (drop data_tx to exit old read/write loop)
+      drop(old_session.data_tx);
+    }
+  }
 
   // Create channels: data_tx for input, shutdown_tx for disconnect
   let (data_tx, mut data_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
@@ -201,17 +269,17 @@ pub async fn connect(
     let cfg = config.clone();
 
     tauri::async_runtime::spawn(async move {
-      println!("[russh] connecting to {}:{}", cfg.host, cfg.port);
+      eprintln!("[russh] connecting to {}:{}", cfg.host, cfg.port);
 
       let emit_error = |app: &tauri::AppHandle, tid: &str, msg: &str| {
-        let _ = app.emit(
-          "ssh-output",
-          TerminalOutput {
-            tab_id: tid.to_string(),
-            data: format!("\u{1b}[31m{}\u{1b}[0m\r\n", msg),
-            title: String::new(),
-          },
-        );
+        if let Some(state) = app.try_state::<AppState>() {
+          if let Ok(mut buffers) = state.output_buffers.lock() {
+            buffers
+              .entry(tid.to_string())
+              .or_default()
+              .push(format!("\u{1b}[31m{}\u{1b}[0m\r\n", msg));
+          }
+        }
       };
 
       // 1. Establish SSH connection
@@ -224,7 +292,7 @@ pub async fn connect(
       let mut handle = match client::connect(ssh_config, (cfg.host.as_str(), cfg.port), handler).await {
         Ok(h) => h,
         Err(e) => {
-          println!("[russh] handshake error: {:?}", e);
+          eprintln!("[russh] handshake error: {:?}", e);
           emit_error(&app_handle, &tid, &format!("SSH handshake failed: {}", e));
           return;
         }
@@ -239,7 +307,7 @@ pub async fn connect(
             return;
           }
           Err(e) => {
-            println!("[russh] auth error: {:?}", e);
+            eprintln!("[russh] auth error: {:?}", e);
             emit_error(&app_handle, &tid, &format!("Authentication error: {}", e));
             return;
           }
@@ -259,7 +327,7 @@ pub async fn connect(
             return;
           }
           Err(e) => {
-            println!("[russh] key auth error: {:?}", e);
+            eprintln!("[russh] key auth error: {:?}", e);
             emit_error(&app_handle, &tid, &format!("Key authentication error: {}", e));
             return;
           }
@@ -269,53 +337,50 @@ pub async fn connect(
         return;
       }
 
-      println!("[russh] authenticated, opening channel");
+      eprintln!("[russh] authenticated, opening channel");
 
       // 3. Open channel + PTY + shell
       let channel = match handle.channel_open_session().await {
-        Ok(ch) => ch,
+        Ok(ch) => {
+          eprintln!("[russh] channel opened");
+          ch
+        }
         Err(e) => {
           emit_error(&app_handle, &tid, &format!("Failed to open channel: {}", e));
           return;
         }
       };
 
-      if let Err(e) = channel.request_pty(false, "xterm-256color", 80, 24, 0, 0, &[]).await {
+      eprintln!("[russh] requesting PTY...");
+      if let Err(e) = channel.request_pty(true, "xterm-256color", 80, 24, 0, 0, &[]).await {
         emit_error(&app_handle, &tid, &format!("PTY request failed: {}", e));
         return;
       }
+      eprintln!("[russh] PTY allocated");
 
-      if let Err(e) = channel.request_shell(false).await {
+      eprintln!("[russh] requesting shell...");
+      if let Err(e) = channel.request_shell(true).await {
         emit_error(&app_handle, &tid, &format!("Shell request failed: {}", e));
         return;
       }
 
-      println!("[russh] shell started for tab={}", tid);
+      eprintln!("[russh] shell started for tab={}", tid);
 
-      // 4. Read/write loop: data_rx → channel, shutdown_rx → exit
-      loop {
-        tokio::select! {
-          Some(data) = data_rx.recv() => {
-            // channel.data() requires AsyncRead, &[u8] implements it
-            if let Err(e) = channel.data(data.as_slice()).await {
-              println!("[russh] write error for tab={}: {:?}", tid, e);
-              break;
-            }
-          }
-          _ = &mut shutdown_rx => {
-            println!("[russh] shutdown signal for tab={}", tid);
-            // Send EOF then disconnect
-            let _ = channel.eof().await;
-            break;
-          }
-          else => {
-            println!("[russh] data_rx closed for tab={}", tid);
-            break;
-          }
+      // Push test message to output buffer to verify polling pipeline
+      if let Some(state) = app_handle.try_state::<AppState>() {
+        if let Ok(mut buffers) = state.output_buffers.lock() {
+          buffers
+            .entry(tid.clone())
+            .or_default()
+            .push("\r\n\x1b[33m=== SSH session ready ===\x1b[0m\r\n".to_string());
         }
       }
+      eprintln!("[russh] test event pushed to buffer for tab={}", tid);
 
-      println!("[russh] disconnected for tab={}", tid);
+      // 4. Read/write loop (handle passed as param to keep alive until loop ends)
+      run_session_loop(channel, data_rx, shutdown_rx, handle, &tid).await;
+
+      eprintln!("[russh] disconnected for tab={}", tid);
     });
   }
 
@@ -333,7 +398,7 @@ pub async fn connect(
     );
   }
 
-  println!("[connect] returning connected for tab={}", tab_id);
+  eprintln!("[connect] returning connected for tab={}", tab_id);
   Ok(ConnectResult {
     status: "connected".into(),
     tab_id,
@@ -390,4 +455,14 @@ pub async fn resize_terminal(
 ) -> Result<bool, String> {
   // TODO: adjust PTY size via russh channel
   Ok(true)
+}
+
+/// Frontend calls every 100ms to consume data chunks from output buffer
+#[tauri::command]
+pub async fn poll_output(
+  state: tauri::State<'_, AppState>,
+  tab_id: String,
+) -> Result<Vec<String>, String> {
+  let mut buffers = state.output_buffers.lock().map_err(|e| e.to_string())?;
+  Ok(buffers.remove(&tab_id).unwrap_or_default())
 }

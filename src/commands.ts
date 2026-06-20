@@ -36,3 +36,8 @@ export async function resizeTerminal(
 ): Promise<boolean> {
   return await invoke<boolean>('resize_terminal', { tabId, cols, rows });
 }
+
+/// Poll for new data in SSH output buffer
+export async function pollOutput(tabId: string): Promise<string[]> {
+  return await invoke<string[]>('poll_output', { tabId });
+}

@@ -1,15 +1,12 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
-import { listen } from '@tauri-apps/api/event';
 import 'xterm/css/xterm.css';
-import { connect, sendInput } from '../commands';
-import type { TerminalOutput } from '../types';
+import { connect, sendInput, pollOutput } from '../commands';
 
 interface TerminalComponentProps {
   tabId: string;
   isActive: boolean;
-  // Connection params — passed from parent to trigger connection
   connectConfig?: {
     host: string;
     port: number;
@@ -17,7 +14,6 @@ interface TerminalComponentProps {
     password?: string;
     keyPath?: string;
   };
-  // Whether to auto-connect
   autoConnect: boolean;
   onStatusChange: (status: 'connecting' | 'connected' | 'error' | 'disconnected', errorMessage?: string) => void;
 }
@@ -34,74 +30,30 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const fitRef = useRef<FitAddon | null>(null);
   const isActiveRef = useRef(isActive);
   const tabIdRef = useRef(tabId);
-  const unlistenRef = useRef<(() => void) | null>(null);
+  const connectConfigRef = useRef(connectConfig);
+  const onStatusChangeRef = useRef(onStatusChange);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasRun = useRef(false);
 
-  // Keep refs in sync with props
+  useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
+  useEffect(() => { tabIdRef.current = tabId; }, [tabId]);
+  useEffect(() => { connectConfigRef.current = connectConfig; });
+  useEffect(() => { onStatusChangeRef.current = onStatusChange; });
+
+  // Create terminal + start connection + poll output
   useEffect(() => {
-    isActiveRef.current = isActive;
-  }, [isActive]);
-
-  useEffect(() => {
-    tabIdRef.current = tabId;
-  }, [tabId]);
-
-  // Listen for terminal output events
-  const setupListener = useCallback(async (term: Terminal, currentTabId: string) => {
-    if (unlistenRef.current) {
-      try { unlistenRef.current(); } catch {}
+    console.log('[Terminal] effect running, containerRef=', !!containerRef.current, 'autoConnect=', autoConnect, 'hasRun=', hasRun.current);
+    if (!containerRef.current || !autoConnect || hasRun.current) {
+      console.log('[Terminal] effect early return');
+      return;
     }
-    const unlisten = await listen<TerminalOutput>('ssh-output', (event) => {
-      const payload = event.payload;
-      if (payload.tabId === currentTabId) {
-        term.write(payload.data);
-      }
-    });
-    unlistenRef.current = unlisten as unknown as () => void;
-  }, []);
+    hasRun.current = true;
 
-  // Start SSH connection
-  const startConnection = useCallback(async (term: Terminal, currentTabId: string, cfg: TerminalComponentProps['connectConfig']) => {
-    if (!cfg) return;
+    const cfg = connectConfigRef.current;
+    console.log('[Terminal] connectConfig=', cfg);
+    if (!cfg) { console.log('[Terminal] no cfg, return'); return; }
 
-    onStatusChange('connecting');
-
-    try {
-      const result = await invoke('connect', {
-        config: {
-          id: '', // Temporary ID, not needed for connect command
-          name: `${cfg.username}@${cfg.host}`,
-          host: cfg.host,
-          port: cfg.port,
-          username: cfg.username,
-          password: cfg.password,
-          keyPath: cfg.keyPath,
-        },
-        tab_id: currentTabId,
-      });
-      // connect returns a JSON string on success
-      const parsed = JSON.parse(result as string);
-      if (parsed.status === 'connected') {
-        onStatusChange('connected');
-      }
-      await connect({
-        id: '',
-        name: `${cfg.username}@${cfg.host}`,
-        host: cfg.host,
-        port: cfg.port,
-        username: cfg.username,
-        password: cfg.password,
-        keyPath: cfg.keyPath,
-      }, currentTabId);
-      onStatusChange('connected');
-    } catch (err) {
-      const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err);
-      onStatusChange('error', errMsg);
-      console.error('connect error:', err);
-    }
-  }, [onStatusChange]);
-
-  useEffect(() => {
-    if (!containerRef.current || !connectConfig || !autoConnect) return;
+    const currentTabId = tabIdRef.current;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -140,42 +92,81 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     termRef.current = term;
     fitRef.current = fitAddon;
 
-    // Set up event listener
-    setupListener(term, tabIdRef.current);
-
-    // Use xterm onData to receive user input
+    // User input → SSH
     term.onData((data) => {
       if (!isActiveRef.current) return;
-      sendInput(tabIdRef.current, data)
-        .catch(err => console.error('send_input error:', err));
+      sendInput(currentTabId, data).catch(err => console.error('send_input error:', err));
     });
 
-    // Focus terminal on click
+    // Focus on click
     const handleClick = () => {
-      if (isActive) term.focus();
+      if (isActiveRef.current) term.focus();
     };
     containerRef.current.addEventListener('click', handleClick);
 
-    // Auto-fit on window resize
+    // Window resize
     const handleResize = () => {
-      if (isActive && fitRef.current) {
+      if (isActiveRef.current && fitRef.current) {
         fitRef.current.fit();
       }
     };
     window.addEventListener('resize', handleResize);
 
-    // Auto connect
-    startConnection(term, tabIdRef.current, connectConfig);
+    // Poll SSH output (every 100ms), completely bypassing Tauri event system
+    const startPolling = () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      pollTimerRef.current = setInterval(async () => {
+        try {
+          const chunks = await pollOutput(currentTabId);
+          if (chunks.length > 0) {
+            for (const chunk of chunks) {
+              term.write(chunk);
+            }
+          }
+        } catch {
+          // Silently ignore polling failures to avoid spam
+        }
+      }, 100);
+    };
+
+    // Start connection, begin polling after connected
+    (async () => {
+      onStatusChangeRef.current('connecting');
+      try {
+        await connect({
+          id: '',
+          name: `${cfg.username}@${cfg.host}`,
+          host: cfg.host,
+          port: cfg.port,
+          username: cfg.username,
+          password: cfg.password,
+          keyPath: cfg.keyPath,
+        }, currentTabId);
+        onStatusChangeRef.current('connected');
+        // Start polling output immediately after connection succeeds
+        startPolling();
+      } catch (err) {
+        const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err);
+        onStatusChangeRef.current('error', errMsg);
+        console.error('connect error:', err);
+      }
+    })();
 
     return () => {
-      unlistenRef.current?.();
+      console.log('[Terminal] cleanup, resetting hasRun');
+      hasRun.current = false;
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
       containerRef.current?.removeEventListener('click', handleClick);
       window.removeEventListener('resize', handleResize);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [tabId, connectConfig, autoConnect, isActive, setupListener, startConnection]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoConnect]);
 
   // Focus when tab becomes active
   useEffect(() => {

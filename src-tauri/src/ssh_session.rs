@@ -58,6 +58,8 @@ pub struct SshSession {
 pub struct AppState {
   pub connections: StdMutex<Vec<ConnectionConfig>>,
   pub sessions: StdMutex<HashMap<String, SshSession>>,
+  /// Polling output buffer: tab_id → pending text chunks (frontend polls every 100ms)
+  pub output_buffers: StdMutex<HashMap<String, Vec<String>>>,
 }
 
 impl AppState {
@@ -67,6 +69,7 @@ impl AppState {
     Self {
       connections: StdMutex::new(connections),
       sessions: StdMutex::new(HashMap::new()),
+      output_buffers: StdMutex::new(HashMap::new()),
     }
   }
 }

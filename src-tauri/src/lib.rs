@@ -22,6 +22,7 @@ pub fn run() {
       commands::disconnect,
       commands::send_input,
       commands::resize_terminal,
+      commands::poll_output,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

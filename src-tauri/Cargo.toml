@@ -2,6 +2,7 @@
 name = "ssh-terminal"
 version = "0.1.0"
 edition = "2021"
+default-run = "ssh-terminal"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -16,6 +17,14 @@ russh = "0.44"
 russh-keys = "0.44"
 async-trait = "0.1"
 anyhow = "1"
+
+[[bin]]
+name = "ssh-terminal"
+path = "src/main.rs"
+
+[[bin]]
+name = "ssh_test"
+path = "src/ssh_test.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
