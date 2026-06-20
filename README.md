@@ -63,11 +63,13 @@ Build output is located at `src-tauri/target/release/bundle/`.
 ```
 ├── src/                          # Frontend source
 │   ├── App.tsx                   # Main app component
-│   ├── App.css                   # Main styles
 │   ├── main.tsx                  # Entry point
-│   ├── index.css                 # Global styles
 │   ├── types.ts                  # TypeScript type definitions
 │   ├── commands.ts               # Tauri command wrappers
+│   ├── styles/                   # SCSS styles
+│   │   ├── index.scss            # Global base styles
+│   │   ├── App.scss              # App layout & component styles
+│   │   └── _variables.scss       # Shared variables (colors, etc.)
 │   └── components/
 │       ├── ConnectionManager.tsx # Connection manager (sidebar)
 │       └── Terminal.tsx          # xterm.js terminal component
@@ -88,7 +90,7 @@ Build output is located at `src-tauri/target/release/bundle/`.
 
 ## Tech Stack
 
-- **Frontend**: React 19 + TypeScript + xterm.js + Vite
+- **Frontend**: React 19 + TypeScript + xterm.js + Vite + SCSS
 - **Backend**: Tauri 2 + Rust (tokio) + russh
 - **SSH**: Pure Rust [russh](https://github.com/warp-tech/russh) async SSH client library
 - **IPC**: Tauri `invoke` commands + frontend polling (bypasses Tauri event system restriction for Windows background tasks)

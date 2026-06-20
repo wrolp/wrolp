@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
 import type { ConnectionConfig, TabInfo } from './types'
-import './App.css'
+import './styles/App.scss'
 
 // Global connection cache
 let cachedConnections: ConnectionConfig[] = []
