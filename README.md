@@ -1,14 +1,14 @@
 # SSH Terminal
 
-Tauri 2 + React + TypeScript SSH Terminal Connection Tool
+Tauri 2 + React + TypeScript desktop SSH terminal client, using pure Rust SSH library to directly connect to remote servers.
 
 ## Features
 
-- SSH connection management (CRUD connection configs)
+- SSH connection management (CRUD connection config)
 - Interactive terminal (xterm.js rendering)
-- Persistent connection configs (JSON file)
-- SSH key authentication support
+- Connection config persistence (JSON file)
 - Password authentication support
+- Key authentication support (SSH key)
 - Multi-tab switching
 - Dark theme
 
@@ -17,7 +17,7 @@ Tauri 2 + React + TypeScript SSH Terminal Connection Tool
 ### Linux (Debian/Ubuntu)
 
 ```bash
-sudo apt-get install -y pkg-config libdbus-1-dev libssl-dev libgtk-3-dev
+sudo apt-get install -y pkg-config libdbus-1-dev libssl-dev libgtk-3-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev
 ```
 
 ### macOS
@@ -44,21 +44,11 @@ npm install
 
 ## Development
 
-Tauri development requires starting the frontend Vite dev server first, then launching the Tauri desktop app.
-
-### Step 1: Start the frontend dev server
-
-```bash
-npm run dev
-```
-
-### Step 2: In another terminal window, start the Tauri app
-
 ```bash
 npm run tauri dev
 ```
 
-Tauri will automatically detect the frontend service at `http://localhost:1420` and load it.
+Tauri 2 auto-starts the Vite dev server via `beforeDevCommand` then loads the frontend.
 
 ## Build
 
@@ -83,12 +73,13 @@ Build output is located at `src-tauri/target/release/bundle/`.
 │       └── Terminal.tsx          # xterm.js terminal component
 ├── src-tauri/                    # Rust backend
 │   ├── src/
-│   │   ├── main.rs               # Tauri entry point
-│   │   ├── lib.rs                # Module entry
-│   │   ├── commands.rs           # Tauri command implementations
-│   │   └── ssh_session.rs        # SSH session management
+│   │   ├── main.rs               # App entry point
+│   │   ├── lib.rs                # Module entry & Tauri config
+│   │   ├── commands.rs           # Tauri commands (SSH connect/disconnect/input/polling)
+│   │   ├── ssh_session.rs        # SSH session state management
+│   │   └── ssh_test.rs           # Standalone russh test binary
 │   ├── Cargo.toml                # Rust dependencies
-│   ├── tauri.conf.json           # Tauri configuration
+│   ├── tauri.conf.json           # Tauri config
 │   └── build.rs                  # Build script
 ├── package.json
 ├── tsconfig.json
@@ -98,6 +89,7 @@ Build output is located at `src-tauri/target/release/bundle/`.
 ## Tech Stack
 
 - **Frontend**: React 19 + TypeScript + xterm.js + Vite
-- **Backend**: Tauri 2 + Rust (tokio)
-- **State Storage**: Local JSON file
-- **SSH Implementation**: Calls system `ssh` binary (via tokio::process::Command)
+- **Backend**: Tauri 2 + Rust (tokio) + russh
+- **SSH**: Pure Rust [russh](https://github.com/warp-tech/russh) async SSH client library
+- **IPC**: Tauri `invoke` commands + frontend polling (bypasses Tauri event system restriction for Windows background tasks)
+- **State storage**: Local JSON file
