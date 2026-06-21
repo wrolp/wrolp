@@ -192,6 +192,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           currentTabId,
         )
         onStatusChangeRef.current('connected')
+        // Send resize immediately after connection to ensure server-side PTY size matches frontend
+        if (termRef.current) {
+          sendResize(termRef.current)
+        }
         // Start polling output immediately after connection succeeds
         startPolling()
       } catch (err) {
