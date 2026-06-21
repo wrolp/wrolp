@@ -230,6 +230,8 @@ pub async fn connect(
   state: tauri::State<'_, AppState>,
   config: ConnectionConfig,
   tab_id: String,
+  cols: u32,
+  rows: u32,
 ) -> Result<ConnectResult, String> {
   let host = config.host.clone();
   let port = config.port;
@@ -358,7 +360,7 @@ pub async fn connect(
       eprintln!("[russh] requesting PTY...");
       {
         let ch = channel.lock().await;
-        if let Err(e) = ch.request_pty(true, "xterm-256color", 80, 24, 0, 0, &[]).await {
+        if let Err(e) = ch.request_pty(true, "xterm-256color", cols, rows, 0, 0, &[]).await {
           emit_error(&app_handle, &tid, &format!("PTY request failed: {}", e));
           return;
         }

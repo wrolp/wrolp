@@ -17,8 +17,10 @@ export async function deleteConnection(id: string): Promise<boolean> {
 export async function connect(
   config: ConnectionConfig,
   tabId: string,
+  cols: number,
+  rows: number,
 ): Promise<{ status: string }> {
-  return await invoke<{ status: string }>('connect', { config, tabId })
+  return await invoke<{ status: string }>('connect', { config, tabId, cols, rows })
 }
 
 export async function disconnect(tabId: string): Promise<boolean> {

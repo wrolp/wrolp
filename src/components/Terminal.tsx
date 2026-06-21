@@ -120,13 +120,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     term.loadAddon(fitAddon)
     term.open(containerRef.current)
 
-    // Delay fit to ensure DOM is rendered (container has non-zero dimensions)
-    requestAnimationFrame(() => {
-      fitAddon.fit()
-      // Send resize to server immediately after fit completes
-      sendResize(term)
-    })
-
     termRef.current = term
     fitRef.current = fitAddon
 
@@ -181,34 +174,57 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       }, 100)
     }
 
-    // Start connection, begin polling immediately after connected
-    ;(async () => {
+    // Wait for container to get actual layout dimensions, fit to get real cols/rows, then connect SSH with those dimensions
+    const doConnect = () => {
+      const cols = term.cols
+      const rows = term.rows
+      console.log(`[Terminal] initial fit done: ${cols}x${rows}, starting connect`)
       onStatusChangeRef.current('connecting')
-      try {
-        await connect(
-          {
-            id: '',
-            name: `${cfg.username}@${cfg.host}`,
-            host: cfg.host,
-            port: cfg.port,
-            username: cfg.username,
-            password: cfg.password,
-            keyPath: cfg.keyPath,
-          },
-          currentTabId,
-        )
-        onStatusChangeRef.current('connected')
-        // Start polling output immediately after connection succeeds
-        startPolling()
-      } catch (err) {
-        const errMsg =
-          typeof err === 'string'
-            ? err
-            : (err as any)?.message || String(err)
-        onStatusChangeRef.current('error', errMsg)
-        console.error('connect error:', err)
+      connect(
+        {
+          id: '',
+          name: `${cfg.username}@${cfg.host}`,
+          host: cfg.host,
+          port: cfg.port,
+          username: cfg.username,
+          password: cfg.password,
+          keyPath: cfg.keyPath,
+        },
+        currentTabId,
+        cols,
+        rows,
+      )
+        .then(() => {
+          onStatusChangeRef.current('connected')
+          startPolling()
+        })
+        .catch((err) => {
+          const errMsg =
+            typeof err === 'string'
+              ? err
+              : (err as any)?.message || String(err)
+          onStatusChangeRef.current('error', errMsg)
+          console.error('connect error:', err)
+        })
+    }
+
+    const waitForLayoutAndFit = () => {
+      const container = containerRef.current
+      if (!container) return
+      const w = container.clientWidth
+      const h = container.clientHeight
+      if (w > 0 && h > 0) {
+        fitAddon.fit()
+        doConnect()
+      } else {
+        // Container still has zero dimensions, keep waiting
+        requestAnimationFrame(waitForLayoutAndFit)
       }
-    })()
+    }
+    // Use double rAF to ensure flex layout is complete, then enter polling wait for actual dimensions
+    requestAnimationFrame(() => {
+      requestAnimationFrame(waitForLayoutAndFit)
+    })
 
     return () => {
       console.log('[Terminal] cleanup, resetting hasRun')
