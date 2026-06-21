@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::hint::black_box;
 use tauri::Manager;
 
-// ==================== Custom Error type ====================
+// ==================== Custom Error Type ====================
 
 #[derive(Debug)]
 struct SshError(String);
@@ -191,7 +191,7 @@ pub async fn delete_connection(
 
 /// Read/write loop: session as param ensures it is not dropped early by async state machine
 async fn run_session_loop(
-  channel: Channel<russh::client::Msg>,
+  channel: Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>,
   mut data_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
   mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
   session: russh::client::Handle<SshHandler>,
@@ -203,14 +203,16 @@ async fn run_session_loop(
     tokio::select! {
       Some(data) = data_rx.recv() => {
         black_box(&session);
-        if let Err(e) = channel.data(data.as_slice()).await {
+        let mut ch = channel.lock().await;
+        if let Err(e) = ch.data(data.as_slice()).await {
           eprintln!("[russh] write error for tab={}: {:?}", tid, e);
           break;
         }
       }
       _ = &mut shutdown_rx => {
         eprintln!("[russh] shutdown signal for tab={}", tid);
-        let _ = channel.eof().await;
+        let mut ch = channel.lock().await;
+        let _ = ch.eof().await;
         break;
       }
       else => {
@@ -351,20 +353,39 @@ pub async fn connect(
         }
       };
 
+      let channel = Arc::new(tokio::sync::Mutex::new(channel));
+
       eprintln!("[russh] requesting PTY...");
-      if let Err(e) = channel.request_pty(true, "xterm-256color", 80, 24, 0, 0, &[]).await {
-        emit_error(&app_handle, &tid, &format!("PTY request failed: {}", e));
-        return;
+      {
+        let ch = channel.lock().await;
+        if let Err(e) = ch.request_pty(true, "xterm-256color", 80, 24, 0, 0, &[]).await {
+          emit_error(&app_handle, &tid, &format!("PTY request failed: {}", e));
+          return;
+        }
       }
       eprintln!("[russh] PTY allocated");
 
       eprintln!("[russh] requesting shell...");
-      if let Err(e) = channel.request_shell(true).await {
-        emit_error(&app_handle, &tid, &format!("Shell request failed: {}", e));
-        return;
+      {
+        let ch = channel.lock().await;
+        if let Err(e) = ch.request_shell(true).await {
+          emit_error(&app_handle, &tid, &format!("Shell request failed: {}", e));
+          return;
+        }
       }
 
       eprintln!("[russh] shell started for tab={}", tid);
+
+      // Store channel Arc to session for resize use
+      {
+        if let Some(app_state) = app_handle.try_state::<AppState>() {
+          if let Ok(mut sessions) = app_state.sessions.lock() {
+            if let Some(session) = sessions.get_mut(&tid) {
+              session.channel_arc = Some(channel.clone());
+            }
+          }
+        }
+      }
 
       // Push test message to output buffer to verify polling pipeline
       if let Some(state) = app_handle.try_state::<AppState>() {
@@ -394,6 +415,7 @@ pub async fn connect(
         config: config.clone(),
         data_tx: Some(data_tx),
         shutdown_tx: Some(shutdown_tx),
+        channel_arc: None,
       },
     );
   }
@@ -448,12 +470,24 @@ pub async fn send_input(
 
 #[tauri::command]
 pub async fn resize_terminal(
-  _state: tauri::State<'_, AppState>,
-  _tab_id: String,
-  _cols: u32,
-  _rows: u32,
+  state: tauri::State<'_, AppState>,
+  tab_id: String,
+  cols: u32,
+  rows: u32,
 ) -> Result<bool, String> {
-  // TODO: adjust PTY size via russh channel
+  let channel = {
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    sessions
+      .get(&tab_id)
+      .and_then(|s| s.channel_arc.clone())
+      .ok_or("Session not found or channel not available")?
+  };
+
+  let mut ch = channel.lock().await;
+  ch.window_change(rows, cols, 0, 0)
+    .await
+    .map_err(|e| format!("PTY resize failed: {}", e))?;
+
   Ok(true)
 }
 

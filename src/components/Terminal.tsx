@@ -1,8 +1,8 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useCallback } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
-import { connect, sendInput, pollOutput } from '../commands'
+import { connect, sendInput, pollOutput, resizeTerminal } from '../commands'
 
 interface TerminalComponentProps {
   tabId: string
@@ -37,6 +37,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const onStatusChangeRef = useRef(onStatusChange)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const hasRun = useRef(false)
+  const resizeObserverRef = useRef<ResizeObserver | null>(null)
 
   useEffect(() => {
     isActiveRef.current = isActive
@@ -50,6 +51,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange
   })
+
+  // Calculate terminal cols/rows and send resize command
+  const sendResize = useCallback((term: Terminal) => {
+    const cols = term.cols
+    const rows = term.rows
+    console.log(`[Terminal] resizing to ${cols}x${rows}`)
+    resizeTerminal(tabIdRef.current, cols, rows).catch((err) =>
+      console.error('resize_terminal error:', err),
+    )
+  }, [])
 
   // Create terminal + start connection + poll output
   useEffect(() => {
@@ -116,7 +127,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // User input → SSH
     term.onData((data) => {
       if (!isActiveRef.current) return
-      sendInput(currentTabId, data).catch((err) => console.error('send_input error:', err))
+      sendInput(currentTabId, data).catch((err) =>
+        console.error('send_input error:', err),
+      )
     })
 
     // Focus on click
@@ -129,9 +142,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const handleResize = () => {
       if (isActiveRef.current && fitRef.current) {
         fitRef.current.fit()
+        sendResize(term)
       }
     }
     window.addEventListener('resize', handleResize)
+
+    // Use ResizeObserver to monitor container size changes (more accurate than window resize)
+    if (containerRef.current) {
+      resizeObserverRef.current = new ResizeObserver(() => {
+        if (isActiveRef.current && fitRef.current) {
+          fitRef.current.fit()
+          sendResize(term)
+        }
+      })
+      resizeObserverRef.current.observe(containerRef.current)
+    }
 
     // Poll SSH output (every 100ms), completely bypassing Tauri event system
     const startPolling = () => {
@@ -150,7 +175,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       }, 100)
     }
 
-    // Start connection, begin polling after connected
+    // Start connection, begin polling immediately after connected
     ;(async () => {
       onStatusChangeRef.current('connecting')
       try {
@@ -170,7 +195,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // Start polling output immediately after connection succeeds
         startPolling()
       } catch (err) {
-        const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
+        const errMsg =
+          typeof err === 'string'
+            ? err
+            : (err as any)?.message || String(err)
         onStatusChangeRef.current('error', errMsg)
         console.error('connect error:', err)
       }
@@ -185,6 +213,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       }
       containerRef.current?.removeEventListener('click', handleClick)
       window.removeEventListener('resize', handleResize)
+      resizeObserverRef.current?.disconnect()
+      resizeObserverRef.current = null
       term.dispose()
       termRef.current = null
       fitRef.current = null

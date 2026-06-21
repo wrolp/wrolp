@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex as StdMutex;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::mpsc;
 
 /// SSH connection config file path
@@ -52,6 +52,8 @@ pub struct SshSession {
   pub data_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
   /// Shutdown signal
   pub shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+  /// PTY channel Arc (for resize)
+  pub channel_arc: Option<Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>>,
 }
 
 /// Global state management
