@@ -119,7 +119,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(containerRef.current)
-    fitAddon.fit()
+
+    // Delay fit to ensure DOM is rendered (container has non-zero dimensions)
+    requestAnimationFrame(() => {
+      fitAddon.fit()
+      // Send resize to server immediately after fit completes
+      sendResize(term)
+    })
 
     termRef.current = term
     fitRef.current = fitAddon
@@ -192,10 +198,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           currentTabId,
         )
         onStatusChangeRef.current('connected')
-        // Send resize immediately after connection to ensure server-side PTY size matches frontend
-        if (termRef.current) {
-          sendResize(termRef.current)
-        }
         // Start polling output immediately after connection succeeds
         startPolling()
       } catch (err) {
