@@ -484,7 +484,7 @@ pub async fn resize_terminal(
   };
 
   let mut ch = channel.lock().await;
-  ch.window_change(rows, cols, 0, 0)
+  ch.window_change(cols, rows, 0, 0)
     .await
     .map_err(|e| format!("PTY resize failed: {}", e))?;
 
