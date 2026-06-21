@@ -35,7 +35,7 @@ impl From<String> for SshError {
 
 struct SshHandler {
   app_handle: tauri::AppHandle,
-  tab_id: String,
+  tab_id: u32,
 }
 
 impl SshHandler {
@@ -44,7 +44,7 @@ impl SshHandler {
     if let Some(state) = self.app_handle.try_state::<AppState>() {
       if let Ok(mut buffers) = state.output_buffers.lock() {
         buffers
-          .entry(self.tab_id.clone())
+          .entry(self.tab_id)
           .or_default()
           .push(data.to_string());
       }
@@ -195,7 +195,7 @@ async fn run_session_loop(
   mut data_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
   mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
   session: russh::client::Handle<SshHandler>,
-  tid: &str,
+  tid: u32,
 ) {
   loop {
     // black_box prevents compiler from dropping session before .await
@@ -229,7 +229,7 @@ pub async fn connect(
   app: tauri::AppHandle,
   state: tauri::State<'_, AppState>,
   config: ConnectionConfig,
-  tab_id: String,
+  tab_id: u32,
   cols: u32,
   rows: u32,
 ) -> Result<ConnectResult, String> {
@@ -243,7 +243,7 @@ pub async fn connect(
   {
     if let Ok(mut buffers) = state.output_buffers.lock() {
       buffers
-        .entry(tab_id.clone())
+        .entry(tab_id)
         .or_default()
         .push(format!("Connecting to {}:{} as {} ...\r\n", host, port, username));
     }
@@ -252,13 +252,13 @@ pub async fn connect(
   // If session with same tab_id exists, disconnect old one first
   {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    if let Some(old_session) = sessions.remove(&tab_id) {
+    if let Some(old_session) = sessions.get_mut(&tab_id) {
       eprintln!("[connect] removing old session for tab={}", tab_id);
-      if let Some(tx) = old_session.shutdown_tx {
+      if let Some(tx) = old_session.shutdown_tx.take() {
         let _ = tx.send(());
       }
       // Wait for old task cleanup (drop data_tx to exit old read/write loop)
-      drop(old_session.data_tx);
+      drop(old_session.data_tx.take());
     }
   }
 
@@ -269,17 +269,17 @@ pub async fn connect(
   // Background task: establish SSH connection and read/write loop
   {
     let app_handle = app.clone();
-    let tid = tab_id.clone();
+    let tid = tab_id;
     let cfg = config.clone();
 
     tauri::async_runtime::spawn(async move {
       eprintln!("[russh] connecting to {}:{}", cfg.host, cfg.port);
 
-      let emit_error = |app: &tauri::AppHandle, tid: &str, msg: &str| {
+      let emit_error = |app: &tauri::AppHandle, tid: u32, msg: &str| {
         if let Some(state) = app.try_state::<AppState>() {
           if let Ok(mut buffers) = state.output_buffers.lock() {
             buffers
-              .entry(tid.to_string())
+              .entry(tid)
               .or_default()
               .push(format!("\u{1b}[31m{}\u{1b}[0m\r\n", msg));
           }
@@ -289,7 +289,7 @@ pub async fn connect(
       // 1. Establish SSH connection
       let handler = SshHandler {
         app_handle: app_handle.clone(),
-        tab_id: tid.clone(),
+        tab_id: tid,
       };
       let ssh_config = Arc::new(client::Config::default());
 
@@ -297,7 +297,7 @@ pub async fn connect(
         Ok(h) => h,
         Err(e) => {
           eprintln!("[russh] handshake error: {:?}", e);
-          emit_error(&app_handle, &tid, &format!("SSH handshake failed: {}", e));
+          emit_error(&app_handle, tid, &format!("SSH handshake failed: {}", e));
           return;
         }
       };
@@ -307,12 +307,12 @@ pub async fn connect(
         match handle.authenticate_password(&cfg.username, pw).await {
           Ok(true) => {}
           Ok(false) => {
-            emit_error(&app_handle, &tid, "Authentication failed: wrong password");
+            emit_error(&app_handle, tid, "Authentication failed: wrong password");
             return;
           }
           Err(e) => {
             eprintln!("[russh] auth error: {:?}", e);
-            emit_error(&app_handle, &tid, &format!("Authentication error: {}", e));
+            emit_error(&app_handle, tid, &format!("Authentication error: {}", e));
             return;
           }
         }
@@ -320,24 +320,24 @@ pub async fn connect(
         let key = match load_secret_key(key_path, cfg.passphrase.as_deref()) {
           Ok(k) => k,
           Err(e) => {
-            emit_error(&app_handle, &tid, &format!("Failed to load key: {}", e));
+            emit_error(&app_handle, tid, &format!("Failed to load key: {}", e));
             return;
           }
         };
         match handle.authenticate_publickey(&cfg.username, Arc::new(key)).await {
           Ok(true) => {}
           Ok(false) => {
-            emit_error(&app_handle, &tid, "Authentication failed: invalid key");
+            emit_error(&app_handle, tid, "Authentication failed: invalid key");
             return;
           }
           Err(e) => {
             eprintln!("[russh] key auth error: {:?}", e);
-            emit_error(&app_handle, &tid, &format!("Key authentication error: {}", e));
+            emit_error(&app_handle, tid, &format!("Key authentication error: {}", e));
             return;
           }
         }
       } else {
-        emit_error(&app_handle, &tid, "No password or key provided");
+        emit_error(&app_handle, tid, "No password or key provided");
         return;
       }
 
@@ -350,7 +350,7 @@ pub async fn connect(
           ch
         }
         Err(e) => {
-          emit_error(&app_handle, &tid, &format!("Failed to open channel: {}", e));
+          emit_error(&app_handle, tid, &format!("Failed to open channel: {}", e));
           return;
         }
       };
@@ -361,7 +361,7 @@ pub async fn connect(
       {
         let ch = channel.lock().await;
         if let Err(e) = ch.request_pty(true, "xterm-256color", cols, rows, 0, 0, &[]).await {
-          emit_error(&app_handle, &tid, &format!("PTY request failed: {}", e));
+          emit_error(&app_handle, tid, &format!("PTY request failed: {}", e));
           return;
         }
       }
@@ -371,7 +371,7 @@ pub async fn connect(
       {
         let ch = channel.lock().await;
         if let Err(e) = ch.request_shell(true).await {
-          emit_error(&app_handle, &tid, &format!("Shell request failed: {}", e));
+          emit_error(&app_handle, tid, &format!("Shell request failed: {}", e));
           return;
         }
       }
@@ -393,7 +393,7 @@ pub async fn connect(
       if let Some(state) = app_handle.try_state::<AppState>() {
         if let Ok(mut buffers) = state.output_buffers.lock() {
           buffers
-            .entry(tid.clone())
+            .entry(tid)
             .or_default()
             .push("\r\n\x1b[33m=== SSH session ready ===\x1b[0m\r\n".to_string());
         }
@@ -401,7 +401,7 @@ pub async fn connect(
       eprintln!("[russh] test event pushed to buffer for tab={}", tid);
 
       // 4. Read/write loop (handle passed as param to keep alive until loop ends)
-      run_session_loop(channel, data_rx, shutdown_rx, handle, &tid).await;
+      run_session_loop(channel, data_rx, shutdown_rx, handle, tid).await;
 
       eprintln!("[russh] disconnected for tab={}", tid);
     });
@@ -411,9 +411,9 @@ pub async fn connect(
   {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     sessions.insert(
-      tab_id.clone(),
+      tab_id,
       SshSession {
-        tab_id: tab_id.clone(),
+        tab_id,
         config: config.clone(),
         data_tx: Some(data_tx),
         shutdown_tx: Some(shutdown_tx),
@@ -432,7 +432,7 @@ pub async fn connect(
 #[tauri::command]
 pub async fn disconnect(
   state: tauri::State<'_, AppState>,
-  tab_id: String,
+  tab_id: u32,
 ) -> Result<bool, String> {
   let shutdown_tx = {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -453,7 +453,7 @@ pub async fn disconnect(
 #[tauri::command]
 pub async fn send_input(
   state: tauri::State<'_, AppState>,
-  tab_id: String,
+  tab_id: u32,
   data: String,
 ) -> Result<bool, String> {
   let data_tx = {
@@ -473,7 +473,7 @@ pub async fn send_input(
 #[tauri::command]
 pub async fn resize_terminal(
   state: tauri::State<'_, AppState>,
-  tab_id: String,
+  tab_id: u32,
   cols: u32,
   rows: u32,
 ) -> Result<bool, String> {
@@ -497,7 +497,7 @@ pub async fn resize_terminal(
 #[tauri::command]
 pub async fn poll_output(
   state: tauri::State<'_, AppState>,
-  tab_id: String,
+  tab_id: u32,
 ) -> Result<Vec<String>, String> {
   let mut buffers = state.output_buffers.lock().map_err(|e| e.to_string())?;
   Ok(buffers.remove(&tab_id).unwrap_or_default())

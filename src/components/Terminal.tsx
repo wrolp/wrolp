@@ -5,7 +5,7 @@ import 'xterm/css/xterm.css'
 import { connect, sendInput, pollOutput, resizeTerminal } from '../commands'
 
 interface TerminalComponentProps {
-  tabId: string
+  tabId: number
   isActive: boolean
   connectConfig?: {
     host: string

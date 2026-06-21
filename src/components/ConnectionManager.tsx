@@ -5,9 +5,9 @@ import { saveConnection as saveConn, deleteConnection } from '../commands'
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[]
-  onConnect: (config: ConnectionConfig, tabId: string) => void
-  onTabClosed: (tabId: string) => void
-  activeTabId: string | null
+  onConnect: (config: ConnectionConfig, tabId: number) => void
+  onTabClosed: (tabId: number) => void
+  activeTabId: number | null
   onConnectionChange: () => void
   onSelectConnection: (config: ConnectionConfig) => void
 }

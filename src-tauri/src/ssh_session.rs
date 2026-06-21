@@ -31,7 +31,7 @@ fn default_port() -> u16 {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalOutput {
-  pub tab_id: String,
+  pub tab_id: u32,
   pub data: String,
   pub title: String,
 }
@@ -41,12 +41,12 @@ pub struct TerminalOutput {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectResult {
   pub status: String,
-  pub tab_id: String,
+  pub tab_id: u32,
 }
 
 /// Active SSH session — managed via russh
 pub struct SshSession {
-  pub tab_id: String,
+  pub tab_id: u32,
   pub config: ConnectionConfig,
   /// Sender for sending data to SSH channel
   pub data_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
@@ -59,9 +59,9 @@ pub struct SshSession {
 /// Global state management
 pub struct AppState {
   pub connections: StdMutex<Vec<ConnectionConfig>>,
-  pub sessions: StdMutex<HashMap<String, SshSession>>,
+  pub sessions: StdMutex<HashMap<u32, SshSession>>,
   /// Polling output buffer: tab_id → pending text chunks (frontend polls every 100ms)
-  pub output_buffers: StdMutex<HashMap<String, Vec<String>>>,
+  pub output_buffers: StdMutex<HashMap<u32, Vec<String>>>,
 }
 
 impl AppState {

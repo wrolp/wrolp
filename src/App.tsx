@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { v4 as uuidv4 } from 'uuid'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
 import type { ConnectionConfig, TabInfo } from './types'
@@ -9,9 +8,12 @@ import './styles/App.scss'
 // Global connection cache
 let cachedConnections: ConnectionConfig[] = []
 
+// Tab id auto-increment counter
+let nextTabId = 1
+
 export default function App() {
   const [tabs, setTabs] = useState<TabInfo[]>([])
-  const [activeTabId, setActiveTabId] = useState<string | null>(null)
+  const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
 
   // Load connection list
@@ -32,7 +34,7 @@ export default function App() {
 
   // Open new tab (create tab only, connect later)
   const openTab = useCallback((conn: ConnectionConfig) => {
-    const tabId = uuidv4()
+    const tabId = nextTabId++
     const newTab: TabInfo = {
       tabId,
       connectionId: conn.id,
@@ -47,7 +49,7 @@ export default function App() {
 
   // Close tab
   const closeTab = useCallback(
-    async (tabId: string) => {
+    async (tabId: number) => {
       // Disconnect
       try {
         await invoke('disconnect', { tabId })
@@ -87,7 +89,7 @@ export default function App() {
 
   // Get connection config by tabId
   const getConnectionById = useCallback(
-    (tabId: string): ConnectionConfig | undefined => {
+    (tabId: number): ConnectionConfig | undefined => {
       const tab = tabs.find((t) => t.tabId === tabId)
       if (!tab?.connectionId) return undefined
       return cachedConnections.find((c) => c.id === tab.connectionId)
@@ -102,7 +104,7 @@ export default function App() {
         <span className="toolbar-title">⚡ SSH Terminal</span>
         <button
           onClick={() => {
-            const newId = uuidv4()
+            const newId = nextTabId++
             const newTab: TabInfo = {
               tabId: newId,
               connectionId: '',
@@ -156,7 +158,7 @@ export default function App() {
             <div
               className="tab-add"
               onClick={() => {
-                const newId = uuidv4()
+                const newId = nextTabId++
                 const newTab: TabInfo = {
                   tabId: newId,
                   connectionId: '',

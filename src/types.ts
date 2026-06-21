@@ -12,7 +12,7 @@ export interface ConnectionConfig {
 export type AuthType = 'password' | 'key'
 
 export interface TabInfo {
-  tabId: string
+  tabId: number
   connectionId: string
   connectionName: string
   host: string
@@ -21,12 +21,12 @@ export interface TabInfo {
 }
 
 export interface TerminalOutput {
-  tabId: string
+  tabId: number
   data: string
   title: string
 }
 
 export interface TerminalError {
-  tabId: string
+  tabId: number
   error: string
 }
