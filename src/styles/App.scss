@@ -59,7 +59,7 @@
   overflow: hidden;
 }
 
-// ===== Left Sidebar - Connection List =====
+// ===== Left Sidebar — Connection List =====
 .sidebar {
   width: 260px;
   min-width: 260px;
@@ -185,7 +185,7 @@
   }
 }
 
-// ===== Right Side - Terminal Area =====
+// ===== Right Terminal Area =====
 .terminal-area {
   flex: 1;
   display: flex;
@@ -426,6 +426,29 @@
     font-size: 13px;
     color: $text-secondary;
     cursor: pointer;
+  }
+}
+
+// Tab context menu
+.tab-context-menu {
+  position: fixed;
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 2000;
+  padding: 4px 0;
+  min-width: 140px;
+
+  .context-menu-item {
+    padding: 8px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    color: $text-primary;
+
+    &:hover {
+      background: #094771;
+    }
   }
 }
 

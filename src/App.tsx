@@ -16,11 +16,23 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [sidebarWidth, setSidebarWidth] = useState(260)
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
   const isDragging = useRef(false)
 
   // Load connection list
   useEffect(() => {
     loadConnections()
+  }, [])
+
+  // Click anywhere on the page to close tab context menu
+  useEffect(() => {
+    const closeMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (target.closest('.tab-context-menu')) return
+      setTabContextMenu(null)
+    }
+    document.addEventListener('click', closeMenu)
+    return () => document.removeEventListener('click', closeMenu)
   }, [])
 
   const loadConnections = async () => {
@@ -34,7 +46,7 @@ export default function App() {
     }
   }
 
-  // Open new tab (create tab only, connect later)
+  // Open a new tab (only creates the tab, does not connect immediately)
   const openTab = useCallback((conn: ConnectionConfig) => {
     const tabId = nextTabId++
     const newTab: TabInfo = {
@@ -70,18 +82,35 @@ export default function App() {
     [activeTabId],
   )
 
-  // Select connection (double-click or click)
+  // Select connection — opens a new tab each click
   const handleSelectConnection = useCallback(
     (conn: ConnectionConfig) => {
-      // If a tab for this connection already exists, activate it
-      const existingTab = tabs.find((t) => t.connectionId === conn.id)
-      if (existingTab) {
-        setActiveTabId(existingTab.tabId)
-      } else {
-        openTab(conn)
-      }
+      openTab(conn)
     },
-    [tabs, openTab],
+    [openTab],
+  )
+
+  // Compute tab display label (number when multiple tabs share a connection)
+  const getTabLabel = useCallback(
+    (tab: TabInfo): string => {
+      if (!tab.connectionId) return tab.connectionName
+      const siblings = tabs.filter((t) => t.connectionId === tab.connectionId)
+      if (siblings.length <= 1) return tab.connectionName
+      const idx = siblings.findIndex((t) => t.tabId === tab.tabId)
+      return `${tab.connectionName} (${idx + 1})`
+    },
+    [tabs],
+  )
+
+  // Right-click to duplicate tab
+  const duplicateTab = useCallback(
+    (tab: TabInfo) => {
+      setTabContextMenu(null)
+      if (!tab.connectionId) return
+      const conn = cachedConnections.find((c) => c.id === tab.connectionId)
+      if (conn) openTab(conn)
+    },
+    [openTab],
   )
 
   // Add new connection
@@ -148,11 +177,11 @@ export default function App() {
       </div>
 
       <div className="main-content">
-        {/* Left sidebar - connection list */}
+        {/* Left sidebar — connection list */}
         <ConnectionManager
           connections={connections}
           onConnect={(config, tabId) => {
-            // This callback is not actually called; connections are triggered via onSelectConnection
+            // This callback is not actually called; connections triggered via onSelectConnection
           }}
           onTabClosed={closeTab}
           activeTabId={activeTabId}
@@ -164,7 +193,7 @@ export default function App() {
         {/* Draggable sidebar divider */}
         <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
 
-        {/* Right side - terminal area */}
+        {/* Right terminal area */}
         <div className="terminal-area">
           {/* Tab bar */}
           <div className="tab-bar">
@@ -173,8 +202,13 @@ export default function App() {
                 key={tab.tabId}
                 className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}`}
                 onClick={() => setActiveTabId(tab.tabId)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
+                }}
               >
-                <span>{tab.connectionName}</span>
+                <span>{getTabLabel(tab)}</span>
                 <span
                   className="tab-close"
                   onClick={(e) => {
@@ -204,6 +238,19 @@ export default function App() {
               +
             </div>
           </div>
+
+          {/* Tab context menu */}
+          {tabContextMenu && tabContextMenu.tab.connectionId && (
+            <div
+              className="tab-context-menu"
+              style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="context-menu-item" onClick={() => duplicateTab(tabContextMenu.tab)}>
+                Duplicate to New Tab
+              </div>
+            </div>
+          )}
 
           {/* Terminal content */}
           <div className="terminal-wrapper">
