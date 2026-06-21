@@ -10,6 +10,7 @@ interface ConnectionManagerProps {
   activeTabId: number | null
   onConnectionChange: () => void
   onSelectConnection: (config: ConnectionConfig) => void
+  sidebarWidth: number
 }
 
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
@@ -19,6 +20,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   activeTabId,
   onConnectionChange,
   onSelectConnection,
+  sidebarWidth,
 }) => {
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
@@ -43,7 +45,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   return (
     <>
-      <div className="sidebar">
+      <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
         <div className="sidebar-header">
           <span>Connections</span>
           <button

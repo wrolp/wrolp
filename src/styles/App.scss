@@ -171,6 +171,20 @@
   line-height: 1.6;
 }
 
+// ===== Draggable Panel Divider =====
+.panel-divider {
+  width: 3px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  z-index: 10;
+
+  &:hover {
+    background: $accent-hover;
+  }
+}
+
 // ===== Right Side - Terminal Area =====
 .terminal-area {
   flex: 1;

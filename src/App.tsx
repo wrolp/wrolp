@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
@@ -15,6 +15,8 @@ export default function App() {
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
+  const [sidebarWidth, setSidebarWidth] = useState(260)
+  const isDragging = useRef(false)
 
   // Load connection list
   useEffect(() => {
@@ -87,6 +89,31 @@ export default function App() {
     loadConnections()
   }, [])
 
+  // Sidebar drag to resize
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDragging.current = true
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const newWidth = Math.max(160, Math.min(500, ev.clientX))
+      setSidebarWidth(newWidth)
+    }
+
+    const handleMouseUp = () => {
+      isDragging.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [])
+
   // Get connection config by tabId
   const getConnectionById = useCallback(
     (tabId: number): ConnectionConfig | undefined => {
@@ -131,7 +158,11 @@ export default function App() {
           activeTabId={activeTabId}
           onConnectionChange={handleConnectionChange}
           onSelectConnection={handleSelectConnection}
+          sidebarWidth={sidebarWidth}
         />
+
+        {/* Draggable sidebar divider */}
+        <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
 
         {/* Right side - terminal area */}
         <div className="terminal-area">
