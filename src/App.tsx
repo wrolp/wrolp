@@ -18,6 +18,7 @@ export default function App() {
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
   const isDragging = useRef(false)
 
   // Load connection list
@@ -157,7 +158,7 @@ export default function App() {
   return (
     <div className="app-container">
       {/* Custom titlebar */}
-      <Titlebar />
+      <Titlebar onSettings={() => setShowSettings(true)} />
 
       <div className="main-content">
         {/* Left sidebar — connection list */}
@@ -308,6 +309,31 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Settings modal */}
+      {showSettings && (
+        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Settings</h3>
+              <span
+                onClick={() => setShowSettings(false)}
+                style={{ cursor: 'pointer', fontSize: '18px', color: '#888' }}
+              >
+                ✕
+              </span>
+            </div>
+            <div className="modal-body" style={{ color: '#888', fontSize: '13px' }}>
+              <p>Settings panel coming soon.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-primary" onClick={() => setShowSettings(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

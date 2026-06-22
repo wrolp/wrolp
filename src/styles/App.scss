@@ -17,7 +17,7 @@
 .titlebar {
   display: flex;
   align-items: center;
-  height: 32px;
+  height: 28px;
   padding: 0 0 0 8px;
   background: #202020;
   flex-shrink: 0;
@@ -30,6 +30,14 @@
     margin-right: auto;
     padding-left: 4px;
     pointer-events: none;
+  }
+
+  &-actions {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    gap: 4px;
+    cursor: default;
   }
 
   &-controls {
@@ -60,6 +68,16 @@
       background: #e81123;
       color: #fff;
     }
+  }
+}
+
+.settings-btn {
+  width: 20px;
+  height: 20px;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
   }
 }
 
