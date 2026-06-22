@@ -92,7 +92,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       fontSize: 14,
       fontFamily: '"Fira Code", "Cascadia Code", Consolas, "Courier New", monospace',
       theme: {
-        background: '#1e1e1e',
+        background: '#00000000',
         foreground: '#d4d4d4',
         cursor: '#aeafad',
         selectionBackground: '#264f78',

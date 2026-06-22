@@ -9,6 +9,7 @@
   width: 100vw;
   background: $bg-primary;
   color: $text-primary;
+  opacity: var(--win-opacity, 1);
   border-radius: 8px;
   overflow: hidden;
 }

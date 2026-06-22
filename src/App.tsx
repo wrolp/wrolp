@@ -19,6 +19,7 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [opacity, setOpacity] = useState(1)
   const isDragging = useRef(false)
 
   // Load connection list
@@ -156,7 +157,7 @@ export default function App() {
   )
 
   return (
-    <div className="app-container">
+    <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
       <Titlebar onSettings={() => setShowSettings(true)} />
 
@@ -324,7 +325,17 @@ export default function App() {
               </span>
             </div>
             <div className="modal-body" style={{ color: '#888', fontSize: '13px' }}>
-              <p>Settings panel coming soon.</p>
+              <div className="form-group">
+                <label>Window Opacity: {Math.round(opacity * 100)}%</label>
+                <input
+                  type="range"
+                  min="20"
+                  max="100"
+                  value={Math.round(opacity * 100)}
+                  onChange={(e) => setOpacity(Number(e.target.value) / 100)}
+                  style={{ width: '100%', accentColor: '#007acc' }}
+                />
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn-primary" onClick={() => setShowSettings(false)}>
