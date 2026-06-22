@@ -9,46 +9,57 @@
   width: 100vw;
   background: $bg-primary;
   color: $text-primary;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-// ===== Top Toolbar =====
-.toolbar {
+// ===== Custom Titlebar =====
+.titlebar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: $bg-secondary;
-  border-bottom: 1px solid $border;
+  height: 32px;
+  padding: 0 0 0 8px;
+  background: #202020;
   flex-shrink: 0;
+  user-select: none;
 
-  button {
-    padding: 6px 14px;
-    background: $accent;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
+  &-title {
+    font-weight: 500;
     font-size: 13px;
-    transition: background 0.15s;
+    color: #999;
+    margin-right: auto;
+    padding-left: 4px;
+    pointer-events: none;
+  }
+
+  &-controls {
+    display: flex;
+    height: 100%;
+    cursor: default;
+  }
+
+  &-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: #ccc;
+    cursor: pointer;
+    transition: background 0.1s;
 
     &:hover {
-      background: $accent-hover;
-    }
-
-    &.danger {
-      background: $danger;
-
-      &:hover {
-        background: $danger-hover;
-      }
+      background: rgba(255, 255, 255, 0.1);
     }
   }
 
-  &-title {
-    font-weight: 600;
-    font-size: 14px;
-    color: #cccccc;
-    margin-right: auto;
+  &-close {
+    &:hover {
+      background: #e81123;
+      color: #fff;
+    }
   }
 }
 

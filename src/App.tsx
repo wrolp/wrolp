@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { Titlebar } from './components/Titlebar'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
 import type { ConnectionConfig, TabInfo } from './types'
@@ -155,26 +156,8 @@ export default function App() {
 
   return (
     <div className="app-container">
-      {/* Top toolbar */}
-      <div className="toolbar">
-        <span className="toolbar-title">⚡ SSH Terminal</span>
-        <button
-          onClick={() => {
-            const newId = nextTabId++
-            const newTab: TabInfo = {
-              tabId: newId,
-              connectionId: '',
-              connectionName: 'New Tab',
-              host: '',
-              status: 'disconnected',
-            }
-            setTabs((prev) => [...prev, newTab])
-            setActiveTabId(newId)
-          }}
-        >
-          + New Tab
-        </button>
-      </div>
+      {/* Custom titlebar */}
+      <Titlebar />
 
       <div className="main-content">
         {/* Left sidebar — connection list */}
