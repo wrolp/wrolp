@@ -1,14 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
+use tauri::Manager;
 use tokio::sync::mpsc;
 
-/// SSH connection config file path
+/// Path to the SSH connections config file
 fn get_connections_path() -> Option<std::path::PathBuf> {
   dirs::config_dir().map(|p| p.join("ssh-terminal").join("connections.json"))
 }
 
-/// SSH connection configuration
+/// SSH connection config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionConfig {
@@ -36,7 +37,7 @@ pub struct TerminalOutput {
   pub title: String,
 }
 
-/// Return value of connect command — must match frontend invoke<{ status: string }>
+/// Return value of the `connect` command
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectResult {
@@ -44,19 +45,77 @@ pub struct ConnectResult {
   pub tab_id: u32,
 }
 
-/// Active SSH session — managed via russh
+/// File entry returned by list_files
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+  pub name: String,
+  pub path: String,
+  pub is_dir: bool,
+  pub size: u64,
+  pub mode: String,
+  pub modified: String,
+}
+
+/// Custom error type — moved here so ssh_session types can reference it
+#[derive(Debug)]
+pub struct SshError(pub String);
+
+impl std::fmt::Display for SshError {
+  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    write!(f, "{}", self.0)
+  }
+}
+
+impl std::error::Error for SshError {}
+
+impl From<russh::Error> for SshError {
+  fn from(e: russh::Error) -> Self {
+    SshError(e.to_string())
+  }
+}
+
+impl From<String> for SshError {
+  fn from(s: String) -> Self {
+    SshError(s)
+  }
+}
+
+/// SSH handler — moved here to avoid circular deps with commands.rs
+pub struct SshHandler {
+  pub app_handle: tauri::AppHandle,
+  pub tab_id: u32,
+}
+
+impl SshHandler {
+  /// Push data into AppState's output buffer (consumed by frontend via poll_output)
+  pub fn emit(&self, data: &str) {
+    if let Some(state) = self.app_handle.try_state::<AppState>() {
+      if let Ok(mut buffers) = state.output_buffers.lock() {
+        buffers
+          .entry(self.tab_id)
+          .or_default()
+          .push(data.to_string());
+      }
+    }
+  }
+}
+
+/// Active SSH session
 pub struct SshSession {
   pub tab_id: u32,
   pub config: ConnectionConfig,
-  /// Sender for sending data to SSH channel
+  /// Sender for data to the SSH channel
   pub data_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
   /// Shutdown signal
   pub shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
   /// PTY channel Arc (for resize)
   pub channel_arc: Option<Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>>,
+  /// Cloned SSH session handle for SFTP file operations
+  pub session_handle: Option<russh::client::Handle<SshHandler>>,
 }
 
-/// Global state management
+/// Global application state
 pub struct AppState {
   pub connections: StdMutex<Vec<ConnectionConfig>>,
   pub sessions: StdMutex<HashMap<u32, SshSession>>,

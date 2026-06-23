@@ -45,7 +45,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   return (
     <>
-      <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+      <div className="sidebar">
         <div className="sidebar-header">
           <span>Connections</span>
           <button

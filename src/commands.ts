@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig } from './types'
+import type { ConnectionConfig, FileEntry } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -38,4 +38,34 @@ export async function resizeTerminal(tabId: number, cols: number, rows: number):
 /// Poll for new data in SSH output buffer
 export async function pollOutput(tabId: number): Promise<string[]> {
   return await invoke<string[]>('poll_output', { tabId })
+}
+
+// ===== File Operations =====
+
+export async function listFiles(tabId: number, path: string): Promise<FileEntry[]> {
+  return await invoke<FileEntry[]>('list_files', { tabId, path })
+}
+
+export async function downloadFile(tabId: number, remotePath: string, localPath: string): Promise<boolean> {
+  return await invoke<boolean>('download_file', { tabId, remotePath, localPath })
+}
+
+export async function uploadFile(tabId: number, localPath: string, remotePath: string): Promise<boolean> {
+  return await invoke<boolean>('upload_file', { tabId, localPath, remotePath })
+}
+
+export async function fileExists(tabId: number, path: string): Promise<boolean> {
+  return await invoke<boolean>('file_exists', { tabId, path })
+}
+
+export async function createDirectory(tabId: number, path: string): Promise<boolean> {
+  return await invoke<boolean>('create_directory', { tabId, path })
+}
+
+export async function renameFile(tabId: number, oldPath: string, newPath: string): Promise<boolean> {
+  return await invoke<boolean>('rename_file', { tabId, oldPath, newPath })
+}
+
+export async function deleteFile(tabId: number, path: string, isDir: boolean): Promise<boolean> {
+  return await invoke<boolean>('delete_file', { tabId, path, isDir })
 }

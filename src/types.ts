@@ -30,3 +30,12 @@ export interface TerminalError {
   tabId: number
   error: string
 }
+
+export interface FileEntry {
+  name: string
+  path: string
+  isDir: boolean
+  size: number
+  mode: string
+  modified: string
+}

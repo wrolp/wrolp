@@ -3,13 +3,14 @@ import { invoke } from '@tauri-apps/api/core'
 import { Titlebar } from './components/Titlebar'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
+import { FilePanel } from './components/FilePanel'
 import type { ConnectionConfig, TabInfo } from './types'
 import './styles/App.scss'
 
 // Global connection cache
 let cachedConnections: ConnectionConfig[] = []
 
-// Tab id auto-increment counter
+// Auto-incrementing tab id counter
 let nextTabId = 1
 
 export default function App() {
@@ -27,7 +28,7 @@ export default function App() {
     loadConnections()
   }, [])
 
-  // Click anywhere on the page to close tab context menu
+  // Close tab context menu on click anywhere
   useEffect(() => {
     const closeMenu = (e: MouseEvent) => {
       const target = e.target as HTMLElement
@@ -49,7 +50,7 @@ export default function App() {
     }
   }
 
-  // Open a new tab (only creates the tab, does not connect immediately)
+  // Open new tab (create tab only, connect later)
   const openTab = useCallback((conn: ConnectionConfig) => {
     const tabId = nextTabId++
     const newTab: TabInfo = {
@@ -67,7 +68,7 @@ export default function App() {
   // Close tab
   const closeTab = useCallback(
     async (tabId: number) => {
-      // Disconnect
+      // Disconnect SSH session
       try {
         await invoke('disconnect', { tabId })
       } catch (e) {
@@ -85,7 +86,7 @@ export default function App() {
     [activeTabId],
   )
 
-  // Select connection — opens a new tab each click
+  // Select connection — always open a new tab
   const handleSelectConnection = useCallback(
     (conn: ConnectionConfig) => {
       openTab(conn)
@@ -93,7 +94,7 @@ export default function App() {
     [openTab],
   )
 
-  // Compute tab display label (number when multiple tabs share a connection)
+  // Compute tab display label (number tabs sharing the same connection)
   const getTabLabel = useCallback(
     (tab: TabInfo): string => {
       if (!tab.connectionId) return tab.connectionName
@@ -105,7 +106,7 @@ export default function App() {
     [tabs],
   )
 
-  // Right-click to duplicate tab
+  // Duplicate tab via right-click menu
   const duplicateTab = useCallback(
     (tab: TabInfo) => {
       setTabContextMenu(null)
@@ -116,12 +117,12 @@ export default function App() {
     [openTab],
   )
 
-  // Add new connection
+  // Handle connection changes (reload list)
   const handleConnectionChange = useCallback(() => {
     loadConnections()
   }, [])
 
-  // Sidebar drag to resize
+  // Sidebar drag-to-resize
   const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     isDragging.current = true
@@ -162,23 +163,32 @@ export default function App() {
       <Titlebar onSettings={() => setShowSettings(true)} />
 
       <div className="main-content">
-        {/* Left sidebar — connection list */}
-        <ConnectionManager
-          connections={connections}
-          onConnect={(config, tabId) => {
-            // This callback is not actually called; connections triggered via onSelectConnection
-          }}
-          onTabClosed={closeTab}
-          activeTabId={activeTabId}
-          onConnectionChange={handleConnectionChange}
-          onSelectConnection={handleSelectConnection}
-          sidebarWidth={sidebarWidth}
-        />
+        {/* Left sidebar — connection list + file panel */}
+        <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+          <ConnectionManager
+            connections={connections}
+            onConnect={(config, tabId) => {
+              // Not used
+            }}
+            onTabClosed={closeTab}
+            activeTabId={activeTabId}
+            onConnectionChange={handleConnectionChange}
+            onSelectConnection={handleSelectConnection}
+            sidebarWidth={sidebarWidth}
+          />
+          {activeTabId != null && tabs.find((t) => t.tabId === activeTabId)?.status === 'connected' && (
+            <FilePanel
+              tabId={activeTabId}
+              isConnected={true}
+              defaultPath="."
+            />
+          )}
+        </div>
 
-        {/* Draggable sidebar divider */}
+        {/* Draggable panel divider */}
         <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
 
-        {/* Right terminal area */}
+        {/* Terminal area (right) */}
         <div className="terminal-area">
           {/* Tab bar */}
           <div className="tab-bar">
@@ -224,7 +234,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Tab context menu */}
+          {/* Tab right-click context menu */}
           {tabContextMenu && tabContextMenu.tab.connectionId && (
             <div
               className="tab-context-menu"
@@ -232,7 +242,7 @@ export default function App() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="context-menu-item" onClick={() => duplicateTab(tabContextMenu.tab)}>
-                Duplicate to New Tab
+                Duplicate Tab
               </div>
             </div>
           )}

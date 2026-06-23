@@ -9,6 +9,7 @@ use tauri::Manager;
 
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_dialog::init())
     .setup(|app| {
       let state = AppState::new();
       app.manage(state);
@@ -23,6 +24,13 @@ pub fn run() {
       commands::send_input,
       commands::resize_terminal,
       commands::poll_output,
+      commands::list_files,
+      commands::download_file,
+      commands::upload_file,
+      commands::file_exists,
+      commands::create_directory,
+      commands::rename_file,
+      commands::delete_file,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

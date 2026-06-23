@@ -9,6 +9,7 @@
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "core:window:allow-is-maximized",
-    "core:event:allow-listen"
+    "core:event:allow-listen",
+    "dialog:default"
   ]
 }

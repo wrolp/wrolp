@@ -91,13 +91,12 @@
 
 // ===== Left Sidebar — Connection List =====
 .sidebar {
-  width: 260px;
-  min-width: 260px;
   background: $bg-sidebar;
   border-right: 1px solid $border;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  flex-shrink: 0;
 
   &-header {
     display: flex;
@@ -511,5 +510,151 @@
     height: 1px;
     background: $border;
     margin: 4px 0;
+  }
+}
+
+// ===== Sidebar Container =====
+.sidebar-container {
+  display: flex;
+  flex-direction: column;
+  background: $bg-sidebar;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+// ===== File Panel =====
+.file-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  border-top: 1px solid $border;
+
+  &-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px;
+    border-bottom: 1px solid $border;
+    font-size: 12px;
+    font-weight: 600;
+    color: #bbbbbb;
+    flex-shrink: 0;
+
+    .file-toolbar {
+      display: flex;
+      gap: 2px;
+
+      button {
+        background: none;
+        border: none;
+        color: #999;
+        cursor: pointer;
+        padding: 2px 5px;
+        border-radius: 3px;
+        font-size: 13px;
+        line-height: 1;
+
+        &:hover {
+          background: $bg-hover;
+        }
+
+        &:disabled {
+          opacity: 0.4;
+          cursor: default;
+        }
+      }
+    }
+  }
+
+  .file-path-bar {
+    display: flex;
+    align-items: center;
+    padding: 3px 8px;
+    gap: 4px;
+    background: $bg-primary;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+    font-size: 11px;
+    color: $text-muted;
+    overflow: hidden;
+
+    .file-path-up,
+    .file-path-home {
+      cursor: pointer;
+      padding: 1px 4px;
+      border-radius: 2px;
+      font-size: 12px;
+      flex-shrink: 0;
+
+      &:hover {
+        background: $bg-hover;
+      }
+    }
+
+    .file-path-text {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding-left: 2px;
+    }
+  }
+
+  .file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2px 0;
+  }
+
+  .file-entry {
+    display: flex;
+    align-items: center;
+    padding: 2px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: $text-secondary;
+    gap: 6px;
+    transition: background 0.1s;
+
+    &:hover {
+      background: $bg-hover;
+    }
+
+    &.is-dir {
+      color: #b8e0ff;
+    }
+
+    .file-icon {
+      flex-shrink: 0;
+      width: 18px;
+      text-align: center;
+    }
+
+    .file-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-size {
+      flex-shrink: 0;
+      font-size: 10px;
+      color: $text-muted;
+    }
+  }
+
+  .file-loading,
+  .file-error,
+  .file-empty {
+    padding: 16px;
+    text-align: center;
+    font-size: 12px;
+    color: $text-muted;
+  }
+
+  .file-error {
+    color: #f44747;
   }
 }

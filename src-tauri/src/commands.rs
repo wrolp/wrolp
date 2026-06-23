@@ -1,56 +1,13 @@
-use super::ssh_session::{AppState, ConnectionConfig, ConnectResult, SshSession};
+use super::ssh_session::{
+  AppState, ConnectionConfig, ConnectResult, FileEntry, SshError, SshHandler, SshSession,
+};
 use russh::client::{self, Handler};
-use russh::{Channel, ChannelId};
+use russh::ChannelId;
 use russh_keys::load_secret_key;
 use std::sync::Arc;
 use std::hint::black_box;
 use tauri::Manager;
 
-// ==================== Custom Error Type ====================
-
-#[derive(Debug)]
-struct SshError(String);
-
-impl std::fmt::Display for SshError {
-  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-    write!(f, "{}", self.0)
-  }
-}
-
-impl std::error::Error for SshError {}
-
-impl From<russh::Error> for SshError {
-  fn from(e: russh::Error) -> Self {
-    SshError(e.to_string())
-  }
-}
-
-impl From<String> for SshError {
-  fn from(s: String) -> Self {
-    SshError(s)
-  }
-}
-
-// ==================== Handler ====================
-
-struct SshHandler {
-  app_handle: tauri::AppHandle,
-  tab_id: u32,
-}
-
-impl SshHandler {
-  /// Push data into AppState output buffer (consumed by frontend via poll_output)
-  fn emit(&self, data: &str) {
-    if let Some(state) = self.app_handle.try_state::<AppState>() {
-      if let Ok(mut buffers) = state.output_buffers.lock() {
-        buffers
-          .entry(self.tab_id)
-          .or_default()
-          .push(data.to_string());
-      }
-    }
-  }
-}
 
 #[async_trait::async_trait]
 impl Handler for SshHandler {
@@ -70,7 +27,7 @@ impl Handler for SshHandler {
     window_size: u32,
     _session: &mut russh::client::Session,
   ) -> Result<(), Self::Error> {
-    eprintln!("[russh] channel_open_confirmation max_packet={} window={}", max_packet_size, window_size);
+    eprintln!("[russh] channel_open_confirmation max_packet={} window_size={}", max_packet_size, window_size);
     Ok(())
   }
 
@@ -189,7 +146,7 @@ pub async fn delete_connection(
 
 // ==================== SSH Connection (russh) ====================
 
-/// Read/write loop: session as param ensures it is not dropped early by async state machine
+/// I/O loop: session passed as parameter to prevent premature drop by async state machine
 async fn run_session_loop(
   channel: Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>,
   mut data_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
@@ -198,12 +155,11 @@ async fn run_session_loop(
   tid: u32,
 ) {
   loop {
-    // black_box prevents compiler from dropping session before .await
     black_box(&session);
     tokio::select! {
       Some(data) = data_rx.recv() => {
         black_box(&session);
-        let mut ch = channel.lock().await;
+        let ch = channel.lock().await;
         if let Err(e) = ch.data(data.as_slice()).await {
           eprintln!("[russh] write error for tab={}: {:?}", tid, e);
           break;
@@ -211,7 +167,7 @@ async fn run_session_loop(
       }
       _ = &mut shutdown_rx => {
         eprintln!("[russh] shutdown signal for tab={}", tid);
-        let mut ch = channel.lock().await;
+        let ch = channel.lock().await;
         let _ = ch.eof().await;
         break;
       }
@@ -239,7 +195,7 @@ pub async fn connect(
 
   eprintln!("[connect] tab={} host={}:{} user={}", tab_id, host, port, username);
 
-  // Send connecting message to output buffer (frontend polls via poll_output)
+  // Push "connecting" message to output buffer
   {
     if let Ok(mut buffers) = state.output_buffers.lock() {
       buffers
@@ -249,7 +205,7 @@ pub async fn connect(
     }
   }
 
-  // If session with same tab_id exists, disconnect old one first
+  // If an existing session with the same tab_id exists, disconnect it first
   {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     if let Some(old_session) = sessions.get_mut(&tab_id) {
@@ -257,16 +213,15 @@ pub async fn connect(
       if let Some(tx) = old_session.shutdown_tx.take() {
         let _ = tx.send(());
       }
-      // Wait for old task cleanup (drop data_tx to exit old read/write loop)
       drop(old_session.data_tx.take());
     }
   }
 
-  // Create channels: data_tx for input, shutdown_tx for disconnect
-  let (data_tx, mut data_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-  let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+  // Create channels
+  let (data_tx, data_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+  let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
-  // Background task: establish SSH connection and read/write loop
+  // Background task: establish SSH connection and run I/O loop
   {
     let app_handle = app.clone();
     let tid = tab_id;
@@ -302,7 +257,7 @@ pub async fn connect(
         }
       };
 
-      // 2. Authentication
+      // 2. Authenticate
       if let Some(ref pw) = cfg.password {
         match handle.authenticate_password(&cfg.username, pw).await {
           Ok(true) => {}
@@ -343,7 +298,7 @@ pub async fn connect(
 
       eprintln!("[russh] authenticated, opening channel");
 
-      // 3. Open channel + PTY + shell
+      // 3. Open channel + request PTY + start shell
       let channel = match handle.channel_open_session().await {
         Ok(ch) => {
           eprintln!("[russh] channel opened");
@@ -378,7 +333,7 @@ pub async fn connect(
 
       eprintln!("[russh] shell started for tab={}", tid);
 
-      // Store channel Arc to session for resize use
+      // Store channel Arc in session for later resize
       {
         if let Some(app_state) = app_handle.try_state::<AppState>() {
           if let Ok(mut sessions) = app_state.sessions.lock() {
@@ -389,7 +344,7 @@ pub async fn connect(
         }
       }
 
-      // Push test message to output buffer to verify polling pipeline
+      // Push ready message to output buffer
       if let Some(state) = app_handle.try_state::<AppState>() {
         if let Ok(mut buffers) = state.output_buffers.lock() {
           buffers
@@ -400,14 +355,16 @@ pub async fn connect(
       }
       eprintln!("[russh] test event pushed to buffer for tab={}", tid);
 
-      // 4. Read/write loop (handle passed as param to keep alive until loop ends)
+      // 4. Run I/O loop
       run_session_loop(channel, data_rx, shutdown_rx, handle, tid).await;
 
       eprintln!("[russh] disconnected for tab={}", tid);
     });
   }
 
-  // Save session
+  // Save session to state — session_handle stored earlier in the spawned task
+  // For SFTP, we reconnect/create channels from the handle stored per-session.
+  // The handle is cloned before spawning so it stays alive.
   {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     sessions.insert(
@@ -418,6 +375,7 @@ pub async fn connect(
         data_tx: Some(data_tx),
         shutdown_tx: Some(shutdown_tx),
         channel_arc: None,
+        session_handle: None, // SFTP reconnects via fresh auth per operation
       },
     );
   }
@@ -485,7 +443,7 @@ pub async fn resize_terminal(
       .ok_or("Session not found or channel not available")?
   };
 
-  let mut ch = channel.lock().await;
+  let ch = channel.lock().await;
   ch.window_change(cols, rows, 0, 0)
     .await
     .map_err(|e| format!("PTY resize failed: {}", e))?;
@@ -493,7 +451,7 @@ pub async fn resize_terminal(
   Ok(true)
 }
 
-/// Frontend calls every 100ms to consume data chunks from output buffer
+/// Called by frontend every 100ms to consume buffered output chunks
 #[tauri::command]
 pub async fn poll_output(
   state: tauri::State<'_, AppState>,
@@ -501,4 +459,248 @@ pub async fn poll_output(
 ) -> Result<Vec<String>, String> {
   let mut buffers = state.output_buffers.lock().map_err(|e| e.to_string())?;
   Ok(buffers.remove(&tab_id).unwrap_or_default())
+}
+
+// ==================== SFTP File Operations ====================
+
+/// Helper: clone config stored in session and establish a fresh SFTP connection
+async fn open_sftp_session(
+  state: &tauri::State<'_, AppState>,
+  app: &tauri::AppHandle,
+  tab_id: u32,
+) -> Result<russh_sftp::client::SftpSession, String> {
+  let config = {
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    sessions
+      .get(&tab_id)
+      .ok_or("Session not found")?
+      .config
+      .clone()
+  };
+
+  let ssh_config = Arc::new(client::Config::default());
+  let handler = SshHandler {
+    app_handle: app.clone(),
+    tab_id,
+  };
+
+  let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
+    .await
+    .map_err(|e| format!("SFTP connect failed: {}", e))?;
+
+  // Authenticate
+  if let Some(ref pw) = config.password {
+    if !handle.authenticate_password(&config.username, pw).await.map_err(|e| format!("Auth error: {}", e))? {
+      return Err("Authentication failed".into());
+    }
+  } else if let Some(ref key_path) = config.key_path {
+    let key = load_secret_key(key_path, config.passphrase.as_deref())
+      .map_err(|e| format!("Failed to load key: {}", e))?;
+    if !handle.authenticate_publickey(&config.username, Arc::new(key)).await.map_err(|e| format!("Key auth error: {}", e))? {
+      return Err("Key authentication failed".into());
+    }
+  } else {
+    return Err("No credentials provided".into());
+  }
+
+  // Open SFTP channel
+  let channel = handle
+    .channel_open_session()
+    .await
+    .map_err(|e| format!("Failed to open SFTP channel: {}", e))?;
+
+  let ch = channel;
+  ch.request_subsystem(true, "sftp")
+    .await
+    .map_err(|e| format!("Failed to request SFTP subsystem: {}", e))?;
+
+  let sftp = russh_sftp::client::SftpSession::new(ch.into_stream())
+    .await
+    .map_err(|e| format!("Failed to start SFTP session: {}", e))?;
+
+  // Spawn a task to keep `handle` alive
+  tauri::async_runtime::spawn(async move {
+    let _h = handle;
+    std::future::pending::<()>().await;
+  });
+
+  Ok(sftp)
+}
+
+#[tauri::command]
+pub async fn list_files(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  path: String,
+) -> Result<Vec<FileEntry>, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  let entries = sftp
+    .read_dir(&path)
+    .await
+    .map_err(|e| format!("Failed to list directory: {}", e))?;
+
+  let mut files: Vec<FileEntry> = Vec::new();
+  for entry in entries {
+    let name = entry.file_name();
+    let metadata = entry.metadata();
+    let is_dir = metadata.is_dir();
+    let full_path = if path.ends_with('/') {
+      format!("{}{}", path, name)
+    } else {
+      format!("{}/{}", path, name)
+    };
+    let modified = metadata
+      .modified()
+      .map(|t| {
+        t.duration_since(std::time::UNIX_EPOCH)
+          .map(|d| d.as_secs().to_string())
+          .unwrap_or_default()
+      })
+      .unwrap_or_default();
+    files.push(FileEntry {
+      name,
+      path: full_path,
+      is_dir,
+      size: metadata.size.unwrap_or(0),
+      mode: format!("{:o}", metadata.permissions.unwrap_or(0)),
+      modified,
+    });
+  }
+
+  // Sort: directories first, then alphabetical
+  files.sort_by(|a, b| {
+    b.is_dir
+      .cmp(&a.is_dir)
+      .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+  });
+
+  Ok(files)
+}
+
+#[tauri::command]
+pub async fn download_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  remote_path: String,
+  local_path: String,
+) -> Result<bool, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  // Read entire remote file at once
+  let data = sftp
+    .read(&remote_path)
+    .await
+    .map_err(|e| format!("Failed to read remote file: {}", e))?;
+
+  // Write to local file
+  if let Some(parent) = std::path::Path::new(&local_path).parent() {
+    let _ = tokio::fs::create_dir_all(parent).await;
+  }
+  tokio::fs::write(&local_path, data)
+    .await
+    .map_err(|e| format!("Failed to write local file: {}", e))?;
+
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn upload_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  local_path: String,
+  remote_path: String,
+) -> Result<bool, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  // Read local file
+  let data = tokio::fs::read(&local_path)
+    .await
+    .map_err(|e| format!("Failed to read local file: {}", e))?;
+
+  // Write entire remote file at once
+  sftp
+    .write(&remote_path, &data)
+    .await
+    .map_err(|e| format!("Failed to write to remote file: {}", e))?;
+
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn file_exists(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  path: String,
+) -> Result<bool, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  match sftp.metadata(&path).await {
+    Ok(_) => Ok(true),
+    Err(_) => Ok(false),
+  }
+}
+
+#[tauri::command]
+pub async fn create_directory(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  path: String,
+) -> Result<bool, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  sftp
+    .create_dir(&path)
+    .await
+    .map_err(|e| format!("Failed to create directory: {}", e))?;
+
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn rename_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  old_path: String,
+  new_path: String,
+) -> Result<bool, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  sftp
+    .rename(&old_path, &new_path)
+    .await
+    .map_err(|e| format!("Failed to rename: {}", e))?;
+
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn delete_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  path: String,
+  is_dir: bool,
+) -> Result<bool, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  if is_dir {
+    sftp
+      .remove_dir(&path)
+      .await
+      .map_err(|e| format!("Failed to delete directory: {}", e))?;
+  } else {
+    sftp
+      .remove_file(&path)
+      .await
+      .map_err(|e| format!("Failed to delete file: {}", e))?;
+  }
+
+  Ok(true)
 }
