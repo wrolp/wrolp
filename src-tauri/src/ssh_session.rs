@@ -85,6 +85,8 @@ impl From<String> for SshError {
 pub struct SshHandler {
   pub app_handle: tauri::AppHandle,
   pub tab_id: u32,
+  /// When true, suppress terminal output (used for SFTP-only sessions)
+  pub is_sftp: bool,
 }
 
 impl SshHandler {

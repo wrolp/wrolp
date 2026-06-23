@@ -46,9 +46,11 @@ impl Handler for SshHandler {
     data: &[u8],
     _session: &mut russh::client::Session,
   ) -> Result<(), Self::Error> {
-    let text = String::from_utf8_lossy(data);
-    eprintln!("[russh data] {} bytes for tab={}: {:?}", data.len(), self.tab_id, &text[..text.len().min(80)]);
-    self.emit(&text);
+    if !self.is_sftp {
+      let text = String::from_utf8_lossy(data);
+      eprintln!("[russh data] {} bytes for tab={}: {:?}", data.len(), self.tab_id, &text[..text.len().min(80)]);
+      self.emit(&text);
+    }
     Ok(())
   }
 
@@ -59,9 +61,11 @@ impl Handler for SshHandler {
     data: &[u8],
     _session: &mut russh::client::Session,
   ) -> Result<(), Self::Error> {
-    // stderr → display in yellow
-    let text = String::from_utf8_lossy(data);
-    self.emit(&format!("\u{1b}[33m{}\u{1b}[0m", text));
+    if !self.is_sftp {
+      // stderr → display in yellow
+      let text = String::from_utf8_lossy(data);
+      self.emit(&format!("\u{1b}[33m{}\u{1b}[0m", text));
+    }
     Ok(())
   }
 }
@@ -245,6 +249,7 @@ pub async fn connect(
       let handler = SshHandler {
         app_handle: app_handle.clone(),
         tab_id: tid,
+        is_sftp: false,
       };
       let ssh_config = Arc::new(client::Config::default());
 
@@ -482,6 +487,7 @@ async fn open_sftp_session(
   let handler = SshHandler {
     app_handle: app.clone(),
     tab_id,
+    is_sftp: true,
   };
 
   let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
