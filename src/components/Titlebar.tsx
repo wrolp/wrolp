@@ -27,21 +27,67 @@ export const Titlebar: React.FC<TitlebarProps> = ({ onSettings }) => {
   }, [])
 
   // Native mousedown listener — React synthetic events don't reliably
-  // satisfy the "primary mouse button press" requirement of startDragging()
+  // satisfy the "primary mouse button press" requirement of startDragging().
+  // Double-click → toggle maximize via manual timestamp check.
+  // Drag only starts after mouse moves past a small threshold to avoid jitter on clicks.
   useEffect(() => {
     const el = titlebarRef.current
     if (!el) return
 
+    const DOUBLE_CLICK_MS = 350
+    const DRAG_THRESHOLD = 4
+    let lastClickTime = 0
+    let startX = 0
+    let startY = 0
+
+    const cleanup = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+
+    const onMove = (ev: MouseEvent) => {
+      if (Math.abs(ev.clientX - startX) > DRAG_THRESHOLD || Math.abs(ev.clientY - startY) > DRAG_THRESHOLD) {
+        appWindow.startDragging()
+        cleanup()
+      }
+    }
+
+    const onUp = () => cleanup()
+
     const handleMouseDown = (e: MouseEvent) => {
-      // Only left mouse button
       if (e.button !== 0) return
-      // Skip when clicking on window control buttons
       if (controlsRef.current?.contains(e.target as Node)) return
-      appWindow.startDragging()
+
+      const now = Date.now()
+      if (now - lastClickTime < DOUBLE_CLICK_MS) {
+        lastClickTime = 0
+        appWindow.toggleMaximize()
+        return
+      }
+      lastClickTime = now
+
+      // Don't start dragging yet — wait for mouse to move past threshold
+      startX = e.clientX
+      startY = e.clientY
+
+      const onMove = (ev: MouseEvent) => {
+        if (Math.abs(ev.clientX - startX) > DRAG_THRESHOLD || Math.abs(ev.clientY - startY) > DRAG_THRESHOLD) {
+          appWindow.startDragging()
+          cleanup()
+        }
+      }
+
+      const onUp = () => cleanup()
+
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp, { once: true })
     }
 
     el.addEventListener('mousedown', handleMouseDown)
-    return () => el.removeEventListener('mousedown', handleMouseDown)
+    return () => {
+      el.removeEventListener('mousedown', handleMouseDown)
+      cleanup()
+    }
   }, [])
 
   return (
