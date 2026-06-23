@@ -321,6 +321,36 @@ export default function App() {
         </div>
       </div>
 
+      {/* Status bar */}
+      <div className="status-bar">
+        <div className="status-bar-left">
+          {(() => {
+            const activeTab = tabs.find((t) => t.tabId === activeTabId)
+            if (!activeTab) {
+              return <span className="status-text">No active connection</span>
+            }
+            return (
+              <>
+                <span
+                  className={`conn-status ${activeTab.status}`}
+                  style={{ width: 8, height: 8, borderRadius: '50%' }}
+                />
+                <span className="status-text">
+                  {activeTab.connectionName}
+                  {activeTab.host ? ` — ${activeTab.host}` : ''}
+                </span>
+                <span className={`status-tag ${activeTab.status}`}>
+                  {activeTab.status}
+                </span>
+              </>
+            )
+          })()}
+        </div>
+        <div className="status-bar-right">
+          <span className="status-text">SSH Terminal</span>
+        </div>
+      </div>
+
       {/* Settings modal */}
       {showSettings && (
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>

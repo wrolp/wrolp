@@ -522,6 +522,57 @@
   flex-shrink: 0;
 }
 
+// ===== Status Bar =====
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 12px;
+  background: $accent;
+  flex-shrink: 0;
+  user-select: none;
+  gap: 12px;
+
+  &-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    flex: 1;
+  }
+
+  &-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+}
+
+.status-text {
+  font-size: 12px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+
+  &.error {
+    background: rgba(255, 80, 80, 0.35);
+  }
+}
+
 // ===== File Panel =====
 .file-panel {
   display: flex;
