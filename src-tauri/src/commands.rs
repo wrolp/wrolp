@@ -703,6 +703,55 @@ async fn resolve_sftp_path(
   Ok(result)
 }
 
+/// Upload file content as raw bytes (for HTML5 drag-drop where we have File data, not paths)
+#[tauri::command]
+pub async fn upload_file_bytes(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  remote_path: String,
+  file_data: Vec<u8>,
+) -> Result<bool, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  // Resolve relative paths to absolute paths
+  let resolved_path = resolve_sftp_path(&sftp, &remote_path).await?;
+
+  // Ensure parent directory exists on remote
+  if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
+    let parent_str = parent.to_string_lossy().to_string();
+    if !parent_str.is_empty() && parent_str != "/" {
+      match sftp.metadata(&parent_str).await {
+        Err(_) => {
+          let _ = sftp.create_dir(&parent_str).await;
+          let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
+          let mut build = String::new();
+          for part in &parts {
+            if part.is_empty() { continue; }
+            build.push('/');
+            build.push_str(part);
+            let _ = sftp.create_dir(&build).await;
+          }
+        }
+        Ok(_) => {}
+      }
+    }
+  }
+
+  let mut file = sftp
+    .create(&resolved_path)
+    .await
+    .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
+
+  use tokio::io::AsyncWriteExt;
+  file
+    .write_all(&file_data)
+    .await
+    .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+
+  Ok(true)
+}
+
 #[tauri::command]
 pub async fn file_exists(
   app: tauri::AppHandle,

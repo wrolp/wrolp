@@ -54,6 +54,11 @@ export async function uploadFile(tabId: number, localPath: string, remotePath: s
   return await invoke<boolean>('upload_file', { tabId, localPath, remotePath })
 }
 
+/// Upload file as raw bytes (for HTML5 drag-drop where we have file data, not paths)
+export async function uploadFileBytes(tabId: number, remotePath: string, fileData: number[]): Promise<boolean> {
+  return await invoke<boolean>('upload_file_bytes', { tabId, remotePath, fileData })
+}
+
 export async function fileExists(tabId: number, path: string): Promise<boolean> {
   return await invoke<boolean>('file_exists', { tabId, path })
 }

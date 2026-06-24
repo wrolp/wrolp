@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { FileEntry } from '../types'
-import { listFiles, uploadFile, downloadFile, deleteFile, createDirectory, renameFile } from '../commands'
+import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile } from '../commands'
 import { open } from '@tauri-apps/plugin-dialog'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 
 interface FilePanelProps {
   tabId: number
@@ -79,32 +78,84 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     loadDir(currentPath)
   }, [tabId, currentPath, loadDir])
 
-  // Tauri drag-drop listener
-  useEffect(() => {
-    let unlisten: (() => void) | null = null
+  // Upload files from HTML5 drop (FileList → read bytes → uploadFileBytes)
+  const handleDropUpload = useCallback(async (fileList: FileList) => {
+    console.log('[FilePanel] handleDropUpload:', fileList.length, 'files')
+    setUploading(true)
+    setError('')
 
-    getCurrentWindow().onDragDropEvent((event) => {
-      const payload = event.payload as any
-      
-      switch (payload.type) {
-        case 'over':
-          setDragOver(true)
-          break
-        case 'leave':
-          setDragOver(false)
-          break
-        case 'drop':
-          setDragOver(false)
-          if (payload.paths && payload.paths.length > 0) {
-            console.log('[FilePanel] Drop paths:', payload.paths)
-            uploadFiles(payload.paths)
-          }
-          break
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i]
+      const remotePath = currentPath === '/' || currentPath.endsWith('/')
+        ? `${currentPath}${file.name}`
+        : `${currentPath}/${file.name}`
+
+      console.log('[FilePanel] Drop uploading:', file.name, '->', remotePath, `(${file.size} bytes)`)
+
+      try {
+        const buf = await file.arrayBuffer()
+        const bytes = Array.from(new Uint8Array(buf))
+        await uploadFileBytes(tabId, remotePath, bytes)
+        console.log('[FilePanel] Drop upload success:', file.name)
+      } catch (e) {
+        console.error('[FilePanel] Drop upload failed:', e)
+        setError(`Upload ${file.name} failed: ${e}`)
+        break
       }
-    }).then((fn) => { unlisten = fn })
+    }
 
-    return () => { unlisten?.() }
-  }, [uploadFiles])
+    setUploading(false)
+    loadDir(currentPath)
+  }, [tabId, currentPath, loadDir])
+
+  // HTML5 native drag-drop listeners
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!panel) return
+
+    console.log('[FilePanel] Setting up HTML5 drag-drop listeners...')
+
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy'
+      }
+      setDragOver(true)
+    }
+
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // Only set false if actually leaving the panel (not entering a child element)
+      if (!panel.contains(e.relatedTarget as Node)) {
+        setDragOver(false)
+      }
+    }
+
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setDragOver(false)
+      console.log('[FilePanel] HTML5 drop event, dataTransfer:', !!e.dataTransfer)
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        console.log('[FilePanel] Got', e.dataTransfer.files.length, 'file(s) from drop')
+        handleDropUpload(e.dataTransfer.files)
+      } else {
+        console.log('[FilePanel] No files in drop event')
+      }
+    }
+
+    panel.addEventListener('dragover', onDragOver)
+    panel.addEventListener('dragleave', onDragLeave)
+    panel.addEventListener('drop', onDrop)
+
+    return () => {
+      panel.removeEventListener('dragover', onDragOver)
+      panel.removeEventListener('dragleave', onDragLeave)
+      panel.removeEventListener('drop', onDrop)
+    }
+  }, [handleDropUpload])
 
   const navigateUp = () => {
     if (currentPath === '/' || currentPath === '.') return
