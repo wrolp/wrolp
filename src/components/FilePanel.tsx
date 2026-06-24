@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { FileEntry } from '../types'
 import { listFiles, uploadFile, downloadFile, deleteFile, createDirectory, renameFile } from '../commands'
 import { open } from '@tauri-apps/plugin-dialog'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 interface FilePanelProps {
   tabId: number
@@ -19,6 +20,9 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     y: number
     entry: FileEntry | null
   } | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const loadDir = useCallback(async (path: string) => {
     setLoading(true)
@@ -47,9 +51,60 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     return () => document.removeEventListener('click', handler)
   }, [])
 
-  const navigateTo = (path: string) => {
-    loadDir(path)
-  }
+  // Upload files to current remote directory
+  const uploadFiles = useCallback(async (paths: string[]) => {
+    console.log('[FilePanel] uploadFiles called with paths:', paths)
+
+    for (const localPath of paths) {
+      const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
+      const remotePath = currentPath === '/' || currentPath.endsWith('/')
+        ? `${currentPath}${fileName}`
+        : `${currentPath}/${ fileName}`
+      
+      console.log('[FilePanel] Uploading:', localPath, '->', remotePath)
+      
+      try {
+        setUploading(true)
+        setError('')
+        await uploadFile(tabId, localPath, remotePath)
+        console.log('[FilePanel] Upload success:', fileName)
+      } catch (e) {
+        console.error('[FilePanel] Upload failed:', e)
+        setError(`Upload ${fileName} failed: ${e}`)
+        break
+      }
+    }
+    
+    setUploading(false)
+    loadDir(currentPath)
+  }, [tabId, currentPath, loadDir])
+
+  // Tauri drag-drop listener
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+
+    getCurrentWindow().onDragDropEvent((event) => {
+      const payload = event.payload as any
+      
+      switch (payload.type) {
+        case 'over':
+          setDragOver(true)
+          break
+        case 'leave':
+          setDragOver(false)
+          break
+        case 'drop':
+          setDragOver(false)
+          if (payload.paths && payload.paths.length > 0) {
+            console.log('[FilePanel] Drop paths:', payload.paths)
+            uploadFiles(payload.paths)
+          }
+          break
+      }
+    }).then((fn) => { unlisten = fn })
+
+    return () => { unlisten?.() }
+  }, [uploadFiles])
 
   const navigateUp = () => {
     if (currentPath === '/' || currentPath === '.') return
@@ -75,6 +130,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     setContextMenu({ x: e.clientX, y: e.clientY, entry })
   }
 
+  // Upload via button or context menu
   const handleUpload = async () => {
     setContextMenu(null)
     try {
@@ -85,20 +141,9 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       if (!selected) return
 
       const paths = Array.isArray(selected) ? selected : [selected]
-      if (paths.length === 0) return
-
-      for (const localPath of paths) {
-        const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
-        const remotePath = currentPath.endsWith('/')
-          ? `${currentPath}${fileName}`
-          : `${currentPath}/${fileName}`
-        try {
-          await uploadFile(tabId, localPath, remotePath)
-        } catch (e) {
-          setError(`Upload ${fileName} failed: ${e}`)
-        }
+      if (paths.length > 0) {
+        await uploadFiles(paths)
       }
-      loadDir(currentPath)
     } catch (e) {
       setError(String(e))
     }
@@ -116,7 +161,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
         defaultPath: entry.name,
       })
       if (filePath) {
-        const path = typeof filePath === 'string' ? filePath : filePath.path
+        const path = typeof filePath === 'string' ? filePath : (filePath as { path: string }).path
         await downloadFile(tabId, entry.path, path)
       }
     } catch (e) {
@@ -143,7 +188,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     const name = prompt('Directory name:')
     if (!name) return
     try {
-      const path = currentPath.endsWith('/')
+      const path = currentPath === '/' || currentPath.endsWith('/')
         ? `${currentPath}${name}`
         : `${currentPath}/${name}`
       await createDirectory(tabId, path)
@@ -158,7 +203,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     const newName = prompt('New name:', entry.name)
     if (!newName || newName === entry.name) return
     try {
-      const parent = currentPath.endsWith('/') ? currentPath : `${currentPath}/`
+      const parent = currentPath === '/' || currentPath.endsWith('/') ? currentPath : `${currentPath}/`
       await renameFile(tabId, entry.path, `${parent}${newName}`)
       loadDir(currentPath)
     } catch (e) {
@@ -209,7 +254,10 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
   }
 
   return (
-    <div className="file-panel">
+    <div
+      ref={panelRef}
+      className={`file-panel ${dragOver ? 'drag-over' : ''}`}
+    >
       <div className="file-panel-header">
         <span>Files</span>
         <div className="file-toolbar">
@@ -222,12 +270,8 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       </div>
 
       <div className="file-path-bar">
-        <span className="file-path-up" onClick={navigateUp} title="Parent directory">
-          ⬆
-        </span>
-        <span className="file-path-home" onClick={goHome} title="Home directory">
-          🏠
-        </span>
+        <span className="file-path-up" onClick={navigateUp} title="Parent directory">⬆</span>
+        <span className="file-path-home" onClick={goHome} title="Home directory">🏠</span>
         {editingPath ? (
           <input
             className="file-path-input"
@@ -247,7 +291,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       </div>
 
       <div className="file-list">
-        {loading && <div className="file-loading">Loading...</div>}
+        {loading && <div className="file-loading">{uploading ? 'Uploading...' : 'Loading...'}</div>}
         {error && <div className="file-error">{error}</div>}
         {!loading &&
           files.map((f) => (

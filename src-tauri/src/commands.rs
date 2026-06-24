@@ -622,18 +622,85 @@ pub async fn upload_file(
 ) -> Result<bool, String> {
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
+  // Resolve relative paths to absolute paths
+  let resolved_path = resolve_sftp_path(&sftp, &remote_path).await?;
+
   // Read local file
   let data = tokio::fs::read(&local_path)
     .await
     .map_err(|e| format!("Failed to read local file: {}", e))?;
 
-  // Write entire remote file at once
-  sftp
-    .write(&remote_path, &data)
+  // Ensure parent directory exists on remote (using mkdir -p via SFTP)
+  if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
+    let parent_str = parent.to_string_lossy().to_string();
+    
+    if !parent_str.is_empty() && parent_str != "/" {
+      // Try to create directory (ignore error if already exists)
+      match sftp.metadata(&parent_str).await {
+        Err(_) => {
+          // Directory doesn't exist, try creating it
+          // Use a simple approach: try create with parents
+          let _ = sftp.create_dir(&parent_str).await;
+          
+          // Also try the individual path components
+          let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
+          let mut build = String::new();
+          for part in &parts {
+            if part.is_empty() { continue; }
+            if build.is_empty() { build.push('/'); } else { build.push('/'); }
+            build.push_str(part);
+            let _ = sftp.create_dir(&build).await;
+          }
+        }
+        Ok(_) => {}
+      }
+    }
+  }
+
+  // Write using open + write (more reliable than direct write)
+  let mut file = sftp
+    .create(&resolved_path)
     .await
-    .map_err(|e| format!("Failed to write to remote file: {}", e))?;
+    .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
+
+  use tokio::io::AsyncWriteExt;
+  file
+    .write_all(&data)
+    .await
+    .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+
+  // File is closed on drop
 
   Ok(true)
+}
+
+/// Resolve SFTP path: convert relative paths (., ~, etc.) to absolute paths
+async fn resolve_sftp_path(
+  sftp: &russh_sftp::client::SftpSession,
+  path: &str,
+) -> Result<String, String> {
+  // If path starts with /, it's already absolute
+  if path.starts_with('/') {
+    return Ok(path.to_string());
+  }
+
+  // Try to get real path of . (current working directory)
+  let cwd = sftp.canonicalize(".").await.unwrap_or_else(|_| "/".to_string());
+
+  // Handle . or empty
+  if path == "." || path.is_empty() {
+    return Ok(cwd);
+  }
+
+  let clean_path = path.trim_start_matches('.').trim_start_matches('/');
+  if clean_path.is_empty() {
+    return Ok(cwd);
+  }
+  
+  let result = format!("{}/{}", cwd.trim_end_matches('/'), clean_path);
+  println!("[resolve_sftp_path] '{}' -> '{}'", path, result);
+  
+  Ok(result)
 }
 
 #[tauri::command]

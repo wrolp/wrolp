@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Titlebar } from './components/Titlebar'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'

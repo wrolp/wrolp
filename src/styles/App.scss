@@ -580,6 +580,12 @@
   flex: 1;
   overflow: hidden;
   border-top: 1px solid $border;
+  transition: box-shadow 0.15s, border-color 0.15s;
+
+  &.drag-over {
+    box-shadow: inset 0 0 0 2px $accent-hover;
+    border-top-color: $accent-hover;
+  }
 
   &-header {
     display: flex;
