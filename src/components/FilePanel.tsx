@@ -178,7 +178,35 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
   }
 
+  const [editingPath, setEditingPath] = useState(false)
+  const [editPathValue, setEditPathValue] = useState('')
+
   const pathDisplay = currentPath === '.' ? '~ (home)' : currentPath
+
+  const startEditPath = () => {
+    setEditPathValue(currentPath === '.' ? '' : currentPath)
+    setEditingPath(true)
+  }
+
+  const commitEditPath = () => {
+    setEditingPath(false)
+    const trimmed = editPathValue.trim()
+    if (trimmed && trimmed !== (currentPath === '.' ? '' : currentPath)) {
+      loadDir(trimmed)
+    }
+  }
+
+  const cancelEditPath = () => {
+    setEditingPath(false)
+  }
+
+  const handlePathKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      commitEditPath()
+    } else if (e.key === 'Escape') {
+      cancelEditPath()
+    }
+  }
 
   return (
     <div className="file-panel">
@@ -200,9 +228,22 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
         <span className="file-path-home" onClick={goHome} title="Home directory">
           🏠
         </span>
-        <span className="file-path-text" title={pathDisplay}>
-          {pathDisplay}
-        </span>
+        {editingPath ? (
+          <input
+            className="file-path-input"
+            type="text"
+            value={editPathValue}
+            onChange={(e) => setEditPathValue(e.target.value)}
+            onBlur={commitEditPath}
+            onKeyDown={handlePathKeyDown}
+            placeholder="Enter path..."
+            autoFocus
+          />
+        ) : (
+          <span className="file-path-text" title={pathDisplay} onClick={startEditPath}>
+            {pathDisplay}
+          </span>
+        )}
       </div>
 
       <div className="file-list">

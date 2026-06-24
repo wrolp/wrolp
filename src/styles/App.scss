@@ -649,6 +649,27 @@
       text-overflow: ellipsis;
       white-space: nowrap;
       padding-left: 2px;
+      cursor: text;
+
+      &:hover {
+        color: #ccc;
+      }
+    }
+
+    .file-path-input {
+      flex: 1;
+      background: $bg-input;
+      border: 1px solid $accent-hover;
+      border-radius: 3px;
+      color: $text-primary;
+      font-size: 11px;
+      padding: 2px 6px;
+      outline: none;
+      min-width: 0;
+
+      &::placeholder {
+        color: #666;
+      }
     }
   }
 
