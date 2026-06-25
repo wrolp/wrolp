@@ -172,12 +172,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   }
 
   return (
-    <div
-      className="modal-overlay"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
+    <div className="modal-overlay">
       <div className="modal">
         <div className="modal-header">
           <h3>{connection ? 'Edit Connection' : 'New Connection'}</h3>
