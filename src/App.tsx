@@ -18,10 +18,12 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [sidebarWidth, setSidebarWidth] = useState(260)
+  const [connectionListHeight, setConnectionListHeight] = useState(200)
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [opacity, setOpacity] = useState(1)
   const isDragging = useRef(false)
+  const isDraggingV = useRef(false)
 
   // Load connection list
   useEffect(() => {
@@ -148,6 +150,36 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [])
 
+  // Connection list / SFTP vertical divider drag-to-resize
+  const handleVDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDraggingV.current = true
+    const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
+    const startY = e.clientY
+    const startHeight = connectionListHeight
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingV.current) return
+      const delta = ev.clientY - startY
+      const containerHeight = sidebarEl?.clientHeight || 700
+      const newHeight = Math.max(60, Math.min(containerHeight - 100, startHeight + delta))
+      setConnectionListHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      isDraggingV.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [connectionListHeight])
+
   // Get connection config by tabId
   const getConnectionById = useCallback(
     (tabId: number): ConnectionConfig | undefined => {
@@ -166,17 +198,23 @@ export default function App() {
       <div className="main-content">
         {/* Left sidebar — connection list + file panel */}
         <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-          <ConnectionManager
-            connections={connections}
-            onConnect={(config, tabId) => {
-              // Not used
-            }}
-            onTabClosed={closeTab}
-            activeTabId={activeTabId}
-            onConnectionChange={handleConnectionChange}
-            onSelectConnection={handleSelectConnection}
-            sidebarWidth={sidebarWidth}
-          />
+          <div style={{ height: connectionListHeight, flexShrink: 0, overflow: 'hidden' }}>
+            <ConnectionManager
+              connections={connections}
+              onConnect={(config, tabId) => {
+                // Not used
+              }}
+              onTabClosed={closeTab}
+              activeTabId={activeTabId}
+              onConnectionChange={handleConnectionChange}
+              onSelectConnection={handleSelectConnection}
+              sidebarWidth={sidebarWidth}
+            />
+          </div>
+
+          {/* Draggable divider between connection list and SFTP panel */}
+          <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
+
           {activeTabId != null && tabs.find((t) => t.tabId === activeTabId)?.status === 'connected' && (
             <FilePanel
               tabId={activeTabId}

@@ -24,6 +24,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 }) => {
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
+  const [listHovered, setListHovered] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -64,7 +65,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             +
           </button>
         </div>
-        <div className="sidebar-list">
+        <div
+          className={`sidebar-list${listHovered ? ' show-scrollbar' : ''}`}
+          onMouseEnter={() => setListHovered(true)}
+          onMouseLeave={() => setListHovered(false)}
+        >
           {connections.length === 0 ? (
             <div className="empty-state">
               <div>🖥️</div>

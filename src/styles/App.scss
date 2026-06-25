@@ -92,11 +92,11 @@
 // ===== Left Sidebar — Connection List =====
 .sidebar {
   background: $bg-sidebar;
-  border-right: 1px solid $border;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   flex-shrink: 0;
+  height: 100%;
 
   &-header {
     display: flex;
@@ -113,6 +113,16 @@
     flex: 1;
     overflow-y: auto;
     padding: 4px 0;
+
+    &::-webkit-scrollbar { width: 4px; }
+    &::-webkit-scrollbar-track { background: transparent; }
+    &::-webkit-scrollbar-thumb {
+      border-radius: 0;
+      background: transparent;
+      transition: background 0.3s;
+    }
+
+    &.show-scrollbar::-webkit-scrollbar-thumb { background: #424242; }
   }
 }
 
@@ -214,7 +224,20 @@
   }
 }
 
-// ===== Right Terminal Area =====
+.panel-divider-h {
+  height: 3px;
+  cursor: ns-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  z-index: 10;
+
+  &:hover {
+    background: $accent-hover;
+  }
+}
+
+// ===== Terminal Area (Right) =====
 .terminal-area {
   flex: 1;
   display: flex;
@@ -239,7 +262,7 @@
 
   &::-webkit-scrollbar-thumb {
     background: #555;
-    border-radius: 2px;
+    border-radius: 0;
   }
 }
 
@@ -294,7 +317,7 @@
   }
 }
 
-// Terminal container
+// Terminal wrapper
 .terminal-wrapper {
   flex: 1;
   padding: 4px;
@@ -458,7 +481,7 @@
   }
 }
 
-// Tab context menu
+// Tab right-click context menu
 .tab-context-menu {
   position: fixed;
   background: $bg-secondary;
@@ -481,7 +504,7 @@
   }
 }
 
-// Context menu
+// Right-click context menu
 .context-menu {
   position: fixed;
   background: $bg-secondary;
@@ -518,6 +541,7 @@
   display: flex;
   flex-direction: column;
   background: $bg-sidebar;
+  border-right: 1px solid $border;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -683,6 +707,12 @@
     flex: 1;
     overflow-y: auto;
     padding: 2px 0;
+
+    &::-webkit-scrollbar { width: 4px; }
+    &::-webkit-scrollbar-track { background: transparent; }
+    &::-webkit-scrollbar-thumb { border-radius: 0; background: transparent; }
+
+    &.show-scrollbar::-webkit-scrollbar-thumb { background: #424242; }
   }
 
   .file-entry {

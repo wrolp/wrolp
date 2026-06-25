@@ -17,10 +17,10 @@ body,
   color: $text-primary;
 }
 
-// Global scrollbar
+// Global scrollbar — hidden until hover
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -28,10 +28,7 @@ body,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #424242;
-  border-radius: 4px;
-
-  &:hover {
-    background: #555;
-  }
+  background: transparent;
+  border-radius: 0;
+  transition: background 0.2s;
 }

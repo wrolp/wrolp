@@ -276,6 +276,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
 
   const [editingPath, setEditingPath] = useState(false)
   const [editPathValue, setEditPathValue] = useState('')
+  const [listHovered, setListHovered] = useState(false)
 
   const pathDisplay = currentPath === '.' ? '~ (home)' : currentPath
 
@@ -341,7 +342,11 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
         )}
       </div>
 
-      <div className="file-list">
+      <div
+        className={`file-list${listHovered ? ' show-scrollbar' : ''}`}
+        onMouseEnter={() => setListHovered(true)}
+        onMouseLeave={() => setListHovered(false)}
+      >
         {loading && <div className="file-loading">{uploading ? 'Uploading...' : 'Loading...'}</div>}
         {error && <div className="file-error">{error}</div>}
         {!loading &&
