@@ -31,6 +31,14 @@
     margin-right: auto;
     padding-left: 4px;
     pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  &-icon {
+    width: 16px;
+    height: 16px;
   }
 
   &-actions {

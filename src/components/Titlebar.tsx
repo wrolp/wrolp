@@ -92,7 +92,10 @@ export const Titlebar: React.FC<TitlebarProps> = ({ onSettings }) => {
 
   return (
     <div className="titlebar" ref={titlebarRef}>
-      <span className="titlebar-title">⚡ SSH Terminal</span>
+      <span className="titlebar-title">
+        <img src="/icon.png" alt="" className="titlebar-icon" />
+        SSH Terminal
+      </span>
 
       <div className="titlebar-actions" ref={controlsRef}>
         {onSettings && (
