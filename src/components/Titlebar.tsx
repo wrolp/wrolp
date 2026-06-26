@@ -3,9 +3,10 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 
 interface TitlebarProps {
   onSettings?: () => void
+  onToggleSidebar?: () => void
 }
 
-export const Titlebar: React.FC<TitlebarProps> = ({ onSettings }) => {
+export const Titlebar: React.FC<TitlebarProps> = ({ onSettings, onToggleSidebar }) => {
   const [isMaximized, setIsMaximized] = useState(false)
   const titlebarRef = useRef<HTMLDivElement>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
@@ -98,6 +99,14 @@ export const Titlebar: React.FC<TitlebarProps> = ({ onSettings }) => {
       </span>
 
       <div className="titlebar-actions" ref={controlsRef}>
+        {onToggleSidebar && (
+          <button className="titlebar-btn settings-btn" onClick={onToggleSidebar} title="Toggle Sidebar">
+            <svg width="14" height="14" viewBox="0 0 16 16">
+              <rect x="1" y="2" width="5" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <rect x="8" y="2" width="7" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </button>
+        )}
         {onSettings && (
           <button className="titlebar-btn settings-btn" onClick={onSettings} title="Settings">
             <svg width="14" height="14" viewBox="0 0 16 16">

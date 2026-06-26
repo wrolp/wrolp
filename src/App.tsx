@@ -24,6 +24,7 @@ export default function App() {
   const [connectionListHeight, setConnectionListHeight] = useState(200)
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [showSidebar, setShowSidebar] = useState(true)
   const [opacity, setOpacity] = useState(1)
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
@@ -270,48 +271,52 @@ export default function App() {
   return (
     <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
-      <Titlebar onSettings={() => setShowSettings(true)} />
+      <Titlebar onSettings={() => setShowSettings(true)} onToggleSidebar={() => setShowSidebar(v => !v)} />
 
       <div className="main-content">
         {/* Left sidebar — connection list + file panel */}
-        <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-          {(() => {
-            const showFilePanel = activeTabId != null && tabs.find((t) => t.tabId === activeTabId)?.status === 'connected'
-            return (
-              <>
-                <div style={showFilePanel ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' } : { flex: 1, overflow: 'hidden' }}>
-                  <ConnectionManager
-                    connections={connections}
-                    onConnect={(config, tabId) => {
-                      // Not used
-                    }}
-                    onTabClosed={closeTab}
-                    activeTabId={activeTabId}
-                    onConnectionChange={handleConnectionChange}
-                    onSelectConnection={handleSelectConnection}
-                    sidebarWidth={sidebarWidth}
-                  />
-                </div>
-
-                {showFilePanel && (
-                  <>
-                    {/* Draggable divider between connection list and SFTP panel */}
-                    <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
-
-                    <FilePanel
-                      tabId={activeTabId}
-                      isConnected={true}
-                      defaultPath="."
+        {showSidebar && (
+          <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+            {(() => {
+              const showFilePanel = activeTabId != null && tabs.find((t) => t.tabId === activeTabId)?.status === 'connected'
+              return (
+                <>
+                  <div style={showFilePanel ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' } : { flex: 1, overflow: 'hidden' }}>
+                    <ConnectionManager
+                      connections={connections}
+                      onConnect={(config, tabId) => {
+                        // Not used
+                      }}
+                      onTabClosed={closeTab}
+                      activeTabId={activeTabId}
+                      onConnectionChange={handleConnectionChange}
+                      onSelectConnection={handleSelectConnection}
+                      sidebarWidth={sidebarWidth}
                     />
-                  </>
-                )}
-              </>
-            )
-          })()}
-        </div>
+                  </div>
+
+                  {showFilePanel && (
+                    <>
+                      {/* Draggable divider between connection list and SFTP panel */}
+                      <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
+
+                      <FilePanel
+                        tabId={activeTabId}
+                        isConnected={true}
+                        defaultPath="."
+                      />
+                    </>
+                  )}
+                </>
+              )
+            })()}
+          </div>
+        )}
 
         {/* Draggable panel divider */}
-        <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
+        {showSidebar && (
+          <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
+        )}
 
         {/* Terminal area (right) */}
         <div className="terminal-area">
