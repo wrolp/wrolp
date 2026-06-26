@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for the SSH Terminal app",
+  "description": "Default capabilities for the Wrolp Terminal app",
   "windows": ["main"],
   "permissions": [
     "core:default",

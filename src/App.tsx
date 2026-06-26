@@ -377,7 +377,7 @@ export default function App() {
             {tabs.length === 0 ? (
               <div className="terminal-placeholder">
                 <div className="icon">🖥️</div>
-                <div>Welcome to SSH Terminal</div>
+                <div>Welcome to Wrolp Terminal</div>
                 <div style={{ fontSize: '12px' }}>
                   Add a connection from the sidebar to get started
                 </div>
@@ -472,7 +472,7 @@ export default function App() {
           })()}
         </div>
         <div className="status-bar-right">
-          <span className="status-text">SSH Terminal</span>
+          <span className="status-text">Wrolp Terminal</span>
         </div>
       </div>
 

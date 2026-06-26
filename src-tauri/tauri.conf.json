@@ -12,7 +12,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "SSH Terminal",
+        "title": "Wrolp Terminal",
         "width": 1100,
         "height": 700,
         "resizable": true,

@@ -1,4 +1,4 @@
-# SSH Terminal
+# Wrolp Terminal
 
 Tauri 2 + React + TypeScript desktop SSH terminal client, using a pure Rust SSH library to connect directly to remote servers.
 
