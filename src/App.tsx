@@ -275,30 +275,39 @@ export default function App() {
       <div className="main-content">
         {/* Left sidebar — connection list + file panel */}
         <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-          <div style={{ height: connectionListHeight, flexShrink: 0, overflow: 'hidden' }}>
-            <ConnectionManager
-              connections={connections}
-              onConnect={(config, tabId) => {
-                // Not used
-              }}
-              onTabClosed={closeTab}
-              activeTabId={activeTabId}
-              onConnectionChange={handleConnectionChange}
-              onSelectConnection={handleSelectConnection}
-              sidebarWidth={sidebarWidth}
-            />
-          </div>
+          {(() => {
+            const showFilePanel = activeTabId != null && tabs.find((t) => t.tabId === activeTabId)?.status === 'connected'
+            return (
+              <>
+                <div style={showFilePanel ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' } : { flex: 1, overflow: 'hidden' }}>
+                  <ConnectionManager
+                    connections={connections}
+                    onConnect={(config, tabId) => {
+                      // Not used
+                    }}
+                    onTabClosed={closeTab}
+                    activeTabId={activeTabId}
+                    onConnectionChange={handleConnectionChange}
+                    onSelectConnection={handleSelectConnection}
+                    sidebarWidth={sidebarWidth}
+                  />
+                </div>
 
-          {/* Draggable divider between connection list and SFTP panel */}
-          <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
+                {showFilePanel && (
+                  <>
+                    {/* Draggable divider between connection list and SFTP panel */}
+                    <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
 
-          {activeTabId != null && tabs.find((t) => t.tabId === activeTabId)?.status === 'connected' && (
-            <FilePanel
-              tabId={activeTabId}
-              isConnected={true}
-              defaultPath="."
-            />
-          )}
+                    <FilePanel
+                      tabId={activeTabId}
+                      isConnected={true}
+                      defaultPath="."
+                    />
+                  </>
+                )}
+              </>
+            )
+          })()}
         </div>
 
         {/* Draggable panel divider */}
