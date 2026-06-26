@@ -74,3 +74,21 @@ export async function renameFile(tabId: number, oldPath: string, newPath: string
 export async function deleteFile(tabId: number, path: string, isDir: boolean): Promise<boolean> {
   return await invoke<boolean>('delete_file', { tabId, path, isDir })
 }
+
+// ===== Window Config =====
+
+export interface WindowConfig {
+  x: number
+  y: number
+  width: number
+  height: number
+  maximized: boolean
+}
+
+export async function saveWindowConfig(config: WindowConfig): Promise<void> {
+  await invoke('save_window_config', { config })
+}
+
+export async function loadWindowConfig(): Promise<WindowConfig> {
+  return await invoke<WindowConfig>('load_window_config')
+}

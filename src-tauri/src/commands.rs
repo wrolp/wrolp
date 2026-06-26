@@ -80,6 +80,10 @@ fn get_connections_path() -> Option<std::path::PathBuf> {
   get_data_dir().map(|p| p.join("connections.json"))
 }
 
+pub(crate) fn get_window_config_path() -> Option<std::path::PathBuf> {
+  get_data_dir().map(|p| p.join("window.json"))
+}
+
 #[tauri::command]
 pub async fn list_connections(state: tauri::State<'_, AppState>) -> Result<String, String> {
   let connections = state.connections.lock().map_err(|e| e.to_string())?;
@@ -825,4 +829,49 @@ pub async fn delete_file(
   }
 
   Ok(true)
+}
+
+// ==================== Window Config Persistence ====================
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct WindowConfig {
+  pub x: i32,
+  pub y: i32,
+  pub width: u32,
+  pub height: u32,
+  pub maximized: bool,
+}
+
+impl Default for WindowConfig {
+  fn default() -> Self {
+    Self { x: i32::MAX, y: i32::MAX, width: 1100, height: 700, maximized: false }
+  }
+}
+
+#[tauri::command]
+pub async fn save_window_config(config: WindowConfig) -> Result<(), String> {
+  let path = get_window_config_path()
+    .ok_or("Cannot determine config directory")?;
+  if let Some(parent) = path.parent() {
+    let _ = tokio::fs::create_dir_all(parent).await;
+  }
+  let content = serde_json::to_string_pretty(&config)
+    .map_err(|e| e.to_string())?;
+  tokio::fs::write(&path, content)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn load_window_config() -> Result<WindowConfig, String> {
+  let path = get_window_config_path()
+    .ok_or("Cannot determine config directory")?;
+  if !path.exists() {
+    return Ok(WindowConfig::default());
+  }
+  let content = tokio::fs::read_to_string(&path)
+    .await
+    .map_err(|e| format!("Failed to read window config: {}", e))?;
+  serde_json::from_str::<WindowConfig>(&content)
+    .map_err(|e| format!("Failed to parse window config: {}", e))
 }

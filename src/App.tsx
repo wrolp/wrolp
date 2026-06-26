@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
 import { Titlebar } from './components/Titlebar'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import type { ConnectionConfig, TabInfo } from './types'
+import { loadWindowConfig, saveWindowConfig } from './commands'
 import './styles/App.scss'
 
 // Global connection cache
@@ -39,6 +42,44 @@ export default function App() {
     }
     document.addEventListener('click', closeMenu)
     return () => document.removeEventListener('click', closeMenu)
+  }, [])
+
+  // Save window position/size on move/resize (restore handled by Rust setup)
+  useEffect(() => {
+    const win = getCurrentWindow()
+    let unlistenMoved: (() => void) | undefined
+    let unlistenResized: (() => void) | undefined
+    let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+    const scheduleSave = () => {
+      if (saveTimer) clearTimeout(saveTimer)
+      saveTimer = setTimeout(async () => {
+        try {
+          if (await win.isMinimized()) return
+          const pos = await win.outerPosition()
+          const size = await win.outerSize()
+          const maximized = await win.isMaximized()
+          await saveWindowConfig({
+            x: pos.x,
+            y: pos.y,
+            width: size.width,
+            height: size.height,
+            maximized,
+          })
+        } catch (e) {
+          console.error('Failed to save window config:', e)
+        }
+      }, 500)
+    }
+
+    win.onMoved(() => scheduleSave()).then(fn => { unlistenMoved = fn })
+    win.onResized(() => scheduleSave()).then(fn => { unlistenResized = fn })
+
+    return () => {
+      if (unlistenMoved) unlistenMoved()
+      if (unlistenResized) unlistenResized()
+      if (saveTimer) clearTimeout(saveTimer)
+    }
   }, [])
 
   const loadConnections = async () => {
