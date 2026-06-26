@@ -83,6 +83,7 @@ export interface WindowConfig {
   width: number
   height: number
   maximized: boolean
+  opacity: number
 }
 
 export async function saveWindowConfig(config: WindowConfig): Promise<void> {

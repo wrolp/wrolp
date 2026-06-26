@@ -840,11 +840,12 @@ pub struct WindowConfig {
   pub width: u32,
   pub height: u32,
   pub maximized: bool,
+  pub opacity: f64,
 }
 
 impl Default for WindowConfig {
   fn default() -> Self {
-    Self { x: i32::MAX, y: i32::MAX, width: 1100, height: 700, maximized: false }
+    Self { x: i32::MAX, y: i32::MAX, width: 1100, height: 700, maximized: false, opacity: 1.0 }
   }
 }
 

@@ -44,6 +44,19 @@ export default function App() {
     return () => document.removeEventListener('click', closeMenu)
   }, [])
 
+  // Ref to keep current opacity accessible in debounced save without re-registering listeners
+  const opacityRef = useRef(opacity)
+  opacityRef.current = opacity
+
+  // Load opacity from saved window config on startup
+  useEffect(() => {
+    loadWindowConfig().then(config => {
+      if (config.opacity !== undefined) {
+        setOpacity(config.opacity)
+      }
+    }).catch(() => {})
+  }, [])
+
   // Save window position/size on move/resize (restore handled by Rust setup)
   useEffect(() => {
     const win = getCurrentWindow()
@@ -65,6 +78,7 @@ export default function App() {
             width: size.width,
             height: size.height,
             maximized,
+            opacity: opacityRef.current,
           })
         } catch (e) {
           console.error('Failed to save window config:', e)
@@ -81,6 +95,28 @@ export default function App() {
       if (saveTimer) clearTimeout(saveTimer)
     }
   }, [])
+
+  // Save config immediately when opacity changes (slider already provides final value)
+  const mountedRef = useRef(false)
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true
+      return // skip initial render (handled by load effect above)
+    }
+    const win = getCurrentWindow()
+    Promise.all([win.outerPosition(), win.outerSize(), win.isMaximized()])
+      .then(([pos, size, maximized]) => {
+        saveWindowConfig({
+          x: pos.x,
+          y: pos.y,
+          width: size.width,
+          height: size.height,
+          maximized,
+          opacity,
+        })
+      })
+      .catch(() => {})
+  }, [opacity])
 
   const loadConnections = async () => {
     try {
