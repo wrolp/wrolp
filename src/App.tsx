@@ -206,7 +206,10 @@ export default function App() {
   // Sidebar drag-to-resize
   const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     isDragging.current = true
+    const win = getCurrentWindow()
+    win.setResizable(false).catch(() => {})
 
     const handleMouseMove = (ev: MouseEvent) => {
       if (!isDragging.current) return
@@ -220,6 +223,7 @@ export default function App() {
       document.removeEventListener('mouseup', handleMouseUp)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      win.setResizable(true).catch(() => {})
     }
 
     document.body.style.cursor = 'col-resize'
@@ -231,10 +235,13 @@ export default function App() {
   // Connection list / SFTP vertical divider drag-to-resize
   const handleVDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     isDraggingV.current = true
+    const win = getCurrentWindow()
     const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
     const startY = e.clientY
     const startHeight = connectionListHeight
+    win.setResizable(false).catch(() => {})
 
     const handleMouseMove = (ev: MouseEvent) => {
       if (!isDraggingV.current) return
@@ -250,6 +257,7 @@ export default function App() {
       document.removeEventListener('mouseup', handleMouseUp)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      win.setResizable(true).catch(() => {})
     }
 
     document.body.style.cursor = 'ns-resize'
