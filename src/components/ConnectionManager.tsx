@@ -159,16 +159,18 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [passphrase, setPassphrase] = useState(connection?.passphrase || '')
 
   const handleSave = () => {
-    if (!name || !host || !username) {
-      alert('Please fill in name, host and username')
+    const finalName = name.trim() || host.trim() || 'Unnamed'
+    const finalUsername = username.trim() || 'root'
+    if (!host.trim()) {
+      alert('Please fill in host')
       return
     }
     const config: ConnectionConfig = {
       id: connection?.id || uuidv4(),
-      name,
-      host,
+      name: finalName,
+      host: host.trim(),
       port,
-      username,
+      username: finalUsername,
       password: authType === 'password' ? password : undefined,
       keyPath: authType === 'key' ? keyPath : undefined,
       passphrase: authType === 'key' ? passphrase || undefined : undefined,
