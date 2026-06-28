@@ -221,12 +221,12 @@ export default function App() {
       isDragging.current = false
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
-      document.body.style.cursor = ''
+      document.body.classList.remove('resize-h')
       document.body.style.userSelect = ''
       win.setResizable(true).catch(() => {})
     }
 
-    document.body.style.cursor = 'col-resize'
+    document.body.classList.add('resize-h')
     document.body.style.userSelect = 'none'
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
@@ -255,12 +255,12 @@ export default function App() {
       isDraggingV.current = false
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
-      document.body.style.cursor = ''
+      document.body.classList.remove('resize-v')
       document.body.style.userSelect = ''
       win.setResizable(true).catch(() => {})
     }
 
-    document.body.style.cursor = 'ns-resize'
+    document.body.classList.add('resize-v')
     document.body.style.userSelect = 'none'
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
