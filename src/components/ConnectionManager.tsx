@@ -12,6 +12,8 @@ interface ConnectionManagerProps {
   onConnectionChange: () => void
   onSelectConnection: (config: ConnectionConfig) => void
   sidebarWidth: number
+  expanded?: boolean
+  onToggleExpanded?: () => void
 }
 
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
@@ -22,6 +24,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onConnectionChange,
   onSelectConnection,
   sidebarWidth,
+  expanded = true,
+  onToggleExpanded,
 }) => {
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
@@ -49,23 +53,33 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     <>
       <div className="sidebar">
         <div className="sidebar-header">
-          <span>Connections</span>
-          <button
-            onClick={() => {
-              setEditing(null)
-              setShowModal(true)
-            }}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#007acc',
-              cursor: 'pointer',
-              fontSize: '16px',
-            }}
+          <span
+            className="collapse-chevron"
+            onClick={onToggleExpanded}
+            title={expanded ? 'Collapse' : 'Expand'}
           >
-            +
-          </button>
+            {expanded ? '▼' : '▶'}
+          </span>
+          <span style={{ flex: 1 }}>Connections</span>
+          {expanded && (
+            <button
+              onClick={() => {
+                setEditing(null)
+                setShowModal(true)
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#007acc',
+                cursor: 'pointer',
+                fontSize: '16px',
+              }}
+            >
+              +
+            </button>
+          )}
         </div>
+        {expanded && (
         <div
           className={`sidebar-list${listHovered ? ' show-scrollbar' : ''}`}
           onMouseEnter={() => setListHovered(true)}
@@ -101,6 +115,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             ))
           )}
         </div>
+        )}
       </div>
 
       {showModal && (

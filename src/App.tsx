@@ -25,6 +25,8 @@ export default function App() {
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showSidebar, setShowSidebar] = useState(true)
+  const [connectionsExpanded, setConnectionsExpanded] = useState(true)
+  const [filesExpanded, setFilesExpanded] = useState(true)
   const [opacity, setOpacity] = useState(1)
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
@@ -279,7 +281,7 @@ export default function App() {
   return (
     <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
-      <Titlebar onSettings={() => setShowSettings(true)} onToggleSidebar={() => setShowSidebar(v => !v)} />
+      <Titlebar onSettings={() => setShowSettings(true)} />
 
       <div className="main-content">
         {/* Left sidebar — connection list + file panel */}
@@ -289,7 +291,17 @@ export default function App() {
               const showFilePanel = activeTabId != null && tabs.find((t) => t.tabId === activeTabId)?.status === 'connected'
               return (
                 <>
-                  <div style={showFilePanel ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' } : { flex: 1, overflow: 'hidden' }}>
+                  {/* Connections section */}
+                  <div
+                    className="collapsible-section"
+                    style={
+                      connectionsExpanded
+                        ? (showFilePanel && filesExpanded
+                          ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' }
+                          : { flex: 1, overflow: 'hidden' })
+                        : { flexShrink: 0 }
+                    }
+                  >
                     <ConnectionManager
                       connections={connections}
                       onConnect={(config, tabId) => {
@@ -300,19 +312,30 @@ export default function App() {
                       onConnectionChange={handleConnectionChange}
                       onSelectConnection={handleSelectConnection}
                       sidebarWidth={sidebarWidth}
+                      expanded={connectionsExpanded}
+                      onToggleExpanded={() => setConnectionsExpanded(v => !v)}
                     />
                   </div>
 
                   {showFilePanel && (
                     <>
-                      {/* Draggable divider between connection list and SFTP panel */}
-                      <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
+                      {connectionsExpanded && (
+                        <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
+                      )}
 
-                      <FilePanel
-                        tabId={activeTabId}
-                        isConnected={true}
-                        defaultPath="."
-                      />
+                      {/* Files section */}
+                      <div
+                        className="collapsible-section"
+                        style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
+                      >
+                        <FilePanel
+                          tabId={activeTabId}
+                          isConnected={true}
+                          defaultPath="."
+                          expanded={filesExpanded}
+                          onToggleExpanded={() => setFilesExpanded(v => !v)}
+                        />
+                      </div>
                     </>
                   )}
                 </>
@@ -330,6 +353,25 @@ export default function App() {
         <div className="terminal-area">
           {/* Tab bar */}
           <div className="tab-bar">
+            <button
+              className="sidebar-toggle"
+              onClick={() => setShowSidebar(v => !v)}
+              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
+            >
+              {showSidebar ? (
+                <svg width="14" height="14" viewBox="0 0 16 16">
+                  <rect x="1" y="2" width="4" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  <rect x="6" y="2" width="9" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M12 6l-2 2 2 2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 16 16">
+                  <rect x="1" y="2" width="4" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  <rect x="6" y="2" width="9" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M9 6l2 2-2 2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                </svg>
+              )}
+            </button>
             {tabs.map((tab) => (
               <div
                 key={tab.tabId}
@@ -353,23 +395,6 @@ export default function App() {
                 </span>
               </div>
             ))}
-            <div
-              className="tab-add"
-              onClick={() => {
-                const newId = nextTabId++
-                const newTab: TabInfo = {
-                  tabId: newId,
-                  connectionId: '',
-                  connectionName: 'New Tab',
-                  host: '',
-                  status: 'disconnected',
-                }
-                setTabs((prev) => [...prev, newTab])
-                setActiveTabId(newId)
-              }}
-            >
-              +
-            </div>
           </div>
 
           {/* Tab right-click context menu */}

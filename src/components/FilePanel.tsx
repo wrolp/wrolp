@@ -7,9 +7,11 @@ interface FilePanelProps {
   tabId: number
   isConnected: boolean
   defaultPath?: string
+  expanded?: boolean
+  onToggleExpanded?: () => void
 }
 
-export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaultPath = '.' }) => {
+export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaultPath = '.', expanded = true, onToggleExpanded }) => {
   const [currentPath, setCurrentPath] = useState(defaultPath)
   const [files, setFiles] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -311,61 +313,74 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       className={`file-panel ${dragOver ? 'drag-over' : ''}`}
     >
       <div className="file-panel-header">
-        <span>Files</span>
-        <div className="file-toolbar">
-          <button title="Upload file" onClick={handleUpload}>📤</button>
-          <button title="New folder" onClick={handleNewDir}>📁+</button>
-          <button title="Refresh" onClick={() => loadDir(currentPath)} disabled={loading}>
-            🔄
-          </button>
-        </div>
-      </div>
-
-      <div className="file-path-bar">
-        <span className="file-path-up" onClick={navigateUp} title="Parent directory">⬆</span>
-        <span className="file-path-home" onClick={goHome} title="Home directory">🏠</span>
-        {editingPath ? (
-          <input
-            className="file-path-input"
-            type="text"
-            value={editPathValue}
-            onChange={(e) => setEditPathValue(e.target.value)}
-            onBlur={commitEditPath}
-            onKeyDown={handlePathKeyDown}
-            placeholder="Enter path..."
-            autoFocus
-          />
-        ) : (
-          <span className="file-path-text" title={pathDisplay} onClick={startEditPath}>
-            {pathDisplay}
-          </span>
+        <span
+          className="collapse-chevron"
+          onClick={onToggleExpanded}
+          title={expanded ? 'Collapse' : 'Expand'}
+        >
+          {expanded ? '▼' : '▶'}
+        </span>
+        <span style={{ flex: 1 }}>Files</span>
+        {expanded && (
+          <div className="file-toolbar">
+            <button title="Upload file" onClick={handleUpload}>📤</button>
+            <button title="New folder" onClick={handleNewDir}>📁+</button>
+            <button title="Refresh" onClick={() => loadDir(currentPath)} disabled={loading}>
+              🔄
+            </button>
+          </div>
         )}
       </div>
 
-      <div
-        className={`file-list${listHovered ? ' show-scrollbar' : ''}`}
-        onMouseEnter={() => setListHovered(true)}
-        onMouseLeave={() => setListHovered(false)}
-      >
-        {loading && <div className="file-loading">{uploading ? 'Uploading...' : 'Loading...'}</div>}
-        {error && <div className="file-error">{error}</div>}
-        {!loading &&
-          files.map((f) => (
-            <div
-              key={f.path}
-              className={`file-entry ${f.isDir ? 'is-dir' : ''}`}
-              onClick={() => handleEntryClick(f)}
-              onContextMenu={(e) => handleEntryContextMenu(e, f)}
-            >
-              <span className="file-icon">{f.isDir ? '📁' : '📄'}</span>
-              <span className="file-name" title={f.name}>{f.name}</span>
-              <span className="file-size">{f.isDir ? '' : formatSize(f.size)}</span>
-            </div>
-          ))}
-        {!loading && files.length === 0 && !error && (
-          <div className="file-empty">Empty directory</div>
-        )}
-      </div>
+      {expanded && (
+        <>
+          <div className="file-path-bar">
+            <span className="file-path-up" onClick={navigateUp} title="Parent directory">⬆</span>
+            <span className="file-path-home" onClick={goHome} title="Home directory">🏠</span>
+            {editingPath ? (
+              <input
+                className="file-path-input"
+                type="text"
+                value={editPathValue}
+                onChange={(e) => setEditPathValue(e.target.value)}
+                onBlur={commitEditPath}
+                onKeyDown={handlePathKeyDown}
+                placeholder="Enter path..."
+                autoFocus
+              />
+            ) : (
+              <span className="file-path-text" title={pathDisplay} onClick={startEditPath}>
+                {pathDisplay}
+              </span>
+            )}
+          </div>
+
+          <div
+            className={`file-list${listHovered ? ' show-scrollbar' : ''}`}
+            onMouseEnter={() => setListHovered(true)}
+            onMouseLeave={() => setListHovered(false)}
+          >
+            {loading && <div className="file-loading">{uploading ? 'Uploading...' : 'Loading...'}</div>}
+            {error && <div className="file-error">{error}</div>}
+            {!loading &&
+              files.map((f) => (
+                <div
+                  key={f.path}
+                  className={`file-entry ${f.isDir ? 'is-dir' : ''}`}
+                  onClick={() => handleEntryClick(f)}
+                  onContextMenu={(e) => handleEntryContextMenu(e, f)}
+                >
+                  <span className="file-icon">{f.isDir ? '📁' : '📄'}</span>
+                  <span className="file-name" title={f.name}>{f.name}</span>
+                  <span className="file-size">{f.isDir ? '' : formatSize(f.size)}</span>
+                </div>
+              ))}
+            {!loading && files.length === 0 && !error && (
+              <div className="file-empty">Empty directory</div>
+            )}
+          </div>
+        </>
+      )}
 
       {contextMenu && (
         <div

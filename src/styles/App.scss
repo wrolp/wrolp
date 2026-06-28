@@ -24,7 +24,6 @@ body.resize-v * {
   color: $text-primary;
   opacity: var(--win-opacity, 1);
   overflow: hidden;
-  -webkit-app-region: no-drag;
 }
 
 // ===== Custom Titlebar =====
@@ -106,12 +105,52 @@ body.resize-v * {
   }
 }
 
+// ===== Collapse Chevron =====
+.collapse-chevron {
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+  color: #888;
+  flex-shrink: 0;
+  user-select: none;
+
+  &:hover {
+    color: #ccc;
+  }
+}
+
+// ===== Sidebar Toggle (in tab bar) =====
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover {
+    color: #ccc;
+    background: #353535;
+  }
+}
+
+// ===== Collapsible Section =====
+.collapsible-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 // ===== Main Content Area =====
 .main-content {
   display: flex;
   flex: 1;
   overflow: hidden;
-  -webkit-app-region: no-drag;
 }
 
 // ===== Left Sidebar — Connection List =====
@@ -126,8 +165,8 @@ body.resize-v * {
   &-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 4px 12px;
+    gap: 4px;
+    padding: 4px 8px;
     border-bottom: 1px solid $border;
     font-size: 12px;
     font-weight: 600;
@@ -654,8 +693,8 @@ body.resize-v * {
   &-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 4px 12px;
+    gap: 4px;
+    padding: 4px 8px;
     border-bottom: 1px solid $border;
     font-size: 12px;
     font-weight: 600;
