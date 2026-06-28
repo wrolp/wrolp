@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
+import { check } from '@tauri-apps/plugin-updater'
+import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
@@ -30,6 +32,12 @@ export default function App() {
   const [opacity, setOpacity] = useState(1)
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
+
+  // Update state
+  const [updateInfo, setUpdateInfo] = useState<{ version: string; body?: string } | null>(null)
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'downloading' | 'installing'>('idle')
+  const [showUpdateBanner, setShowUpdateBanner] = useState(true)
+  const updateRef = useRef<Update | null>(null)
 
   // Load connection list
   useEffect(() => {
@@ -120,6 +128,57 @@ export default function App() {
       })
       .catch(() => {})
   }, [opacity])
+
+  // Auto-check for updates on mount
+  useEffect(() => {
+    const checkForUpdates = async () => {
+      try {
+        const update = await check()
+        if (update) {
+          updateRef.current = update
+          setUpdateInfo({ version: update.version, body: update.body })
+        }
+      } catch (_) {
+        // No update available or check failed — silently ignore
+      }
+    }
+    checkForUpdates()
+  }, [])
+
+  // Manual update check + install flow
+  const handleCheckUpdate = async () => {
+    try {
+      setUpdateState('checking')
+      const update = await check()
+      if (update) {
+        updateRef.current = update
+        setUpdateInfo({ version: update.version, body: update.body })
+        setShowUpdateBanner(true)
+      } else {
+        setUpdateInfo(null)
+      }
+      setUpdateState('idle')
+    } catch (_) {
+      setUpdateState('idle')
+    }
+  }
+
+  const handleDownloadUpdate = async () => {
+    const update = updateRef.current
+    if (!update) return
+    try {
+      setUpdateState('downloading')
+      await update.download((_event: DownloadEvent) => {
+        // Progress: _event.event === 'Progress' with _event.data.chunkLength
+      })
+      setUpdateState('installing')
+      await update.install()
+      // App will restart after install
+    } catch (e) {
+      console.error('Update failed:', e)
+      setUpdateState('idle')
+    }
+  }
 
   const loadConnections = async () => {
     try {
@@ -510,6 +569,18 @@ export default function App() {
           })()}
         </div>
         <div className="status-bar-right">
+          {/* Update available banner */}
+          {updateInfo && showUpdateBanner && (
+            <div className="update-banner">
+              <span className="update-text">
+                v{updateInfo.version} available
+              </span>
+              <button className="update-btn" onClick={handleDownloadUpdate} disabled={updateState !== 'idle'}>
+                {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Update'}
+              </button>
+              <span className="update-close" onClick={() => setShowUpdateBanner(false)}>✕</span>
+            </div>
+          )}
           <span className="status-text">Wrolp Terminal</span>
         </div>
       </div>
@@ -538,6 +609,38 @@ export default function App() {
                   onChange={(e) => setOpacity(Number(e.target.value) / 100)}
                   style={{ width: '100%', accentColor: '#007acc' }}
                 />
+              </div>
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label>Updates</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                  <button
+                    className="btn-primary"
+                    onClick={handleCheckUpdate}
+                    disabled={updateState === 'checking' || updateState === 'downloading' || updateState === 'installing'}
+                    style={{ fontSize: '12px', padding: '4px 12px' }}
+                  >
+                    {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
+                  </button>
+                  {updateInfo ? (
+                    <span style={{ color: '#4ec9b0' }}>
+                      New version v{updateInfo.version}
+                    </span>
+                  ) : updateInfo === null && updateState !== 'checking' ? (
+                    <span>Up to date</span>
+                  ) : null}
+                </div>
+                {updateInfo && (
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      className="btn-primary"
+                      onClick={handleDownloadUpdate}
+                      disabled={updateState !== 'idle'}
+                      style={{ fontSize: '12px', padding: '4px 12px' }}
+                    >
+                      {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Download & Install'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">

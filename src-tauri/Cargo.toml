@@ -19,6 +19,7 @@ russh-sftp = "2"
 async-trait = "0.1"
 anyhow = "1"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
 
 [[bin]]
 name = "ssh-terminal"

@@ -866,4 +866,48 @@ body.resize-v * {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(200%); }
   }
+
+  // Update banner in status bar
+  .update-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 10px;
+    margin-right: 12px;
+    background: rgba($accent, 0.15);
+    border: 1px solid rgba($accent, 0.3);
+    border-radius: 4px;
+  }
+
+  .update-text {
+    font-size: 11px;
+    color: $accent;
+    white-space: nowrap;
+  }
+
+  .update-btn {
+    font-size: 10px;
+    padding: 1px 8px;
+    background: $accent;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    &:hover {
+      background: lighten($accent, 8%);
+    }
+    &:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+  }
+
+  .update-close {
+    font-size: 12px;
+    color: $text-dim;
+    cursor: pointer;
+    &:hover {
+      color: $text-primary;
+    }
+  }
 }

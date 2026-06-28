@@ -11,6 +11,9 @@
     "core:window:allow-is-maximized",
     "core:window:allow-set-resizable",
     "core:event:allow-listen",
-    "dialog:default"
+    "dialog:default",
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install"
   ]
 }
