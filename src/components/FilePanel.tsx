@@ -22,7 +22,9 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     entry: FileEntry | null
   } | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [transferStatus, setTransferStatus] = useState('')
   const panelRef = useRef<HTMLDivElement>(null)
 
   const loadDir = useCallback(async (path: string) => {
@@ -55,18 +57,21 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
   // Upload files to current remote directory
   const uploadFiles = useCallback(async (paths: string[]) => {
     console.log('[FilePanel] uploadFiles called with paths:', paths)
+    setUploading(true)
+    setError('')
 
-    for (const localPath of paths) {
+    const total = paths.length
+    for (let i = 0; i < paths.length; i++) {
+      const localPath = paths[i]
       const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
       const remotePath = currentPath === '/' || currentPath.endsWith('/')
         ? `${currentPath}${fileName}`
-        : `${currentPath}/${ fileName}`
+        : `${currentPath}/${fileName}`
       
+      setTransferStatus(`Uploading ${i + 1}/${total}: ${fileName}`)
       console.log('[FilePanel] Uploading:', localPath, '->', remotePath)
       
       try {
-        setUploading(true)
-        setError('')
         await uploadFile(tabId, localPath, remotePath)
         console.log('[FilePanel] Upload success:', fileName)
       } catch (e) {
@@ -77,6 +82,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     }
     
     setUploading(false)
+    setTransferStatus('')
     loadDir(currentPath)
   }, [tabId, currentPath, loadDir])
 
@@ -86,12 +92,14 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     setUploading(true)
     setError('')
 
+    const total = fileList.length
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i]
       const remotePath = currentPath === '/' || currentPath.endsWith('/')
         ? `${currentPath}${file.name}`
         : `${currentPath}/${file.name}`
 
+      setTransferStatus(`Uploading ${i + 1}/${total}: ${file.name}`)
       console.log('[FilePanel] Drop uploading:', file.name, '->', remotePath, `(${file.size} bytes)`)
 
       try {
@@ -107,6 +115,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     }
 
     setUploading(false)
+    setTransferStatus('')
     loadDir(currentPath)
   }, [tabId, currentPath, loadDir])
 
@@ -214,9 +223,15 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
         defaultPath: entry.name,
       })
       if (filePath) {
+        setDownloading(true)
+        setTransferStatus(`Downloading: ${entry.name}`)
         await downloadFile(tabId, entry.path, filePath as string)
+        setDownloading(false)
+        setTransferStatus('')
       }
     } catch (e) {
+      setDownloading(false)
+      setTransferStatus('')
       setError(String(e))
     }
   }
@@ -359,7 +374,20 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
             onMouseEnter={() => setListHovered(true)}
             onMouseLeave={() => setListHovered(false)}
           >
-            {loading && <div className="file-loading">{uploading ? 'Uploading...' : 'Loading...'}</div>}
+            {(loading || uploading || downloading) && (
+              <div className="file-loading">
+                {transferStatus ? (
+                  <>
+                    <div className="file-progress-bar">
+                      <div className="file-progress-fill" />
+                    </div>
+                    <span>{transferStatus}</span>
+                  </>
+                ) : (
+                  <span>{uploading ? 'Uploading...' : downloading ? 'Downloading...' : 'Loading...'}</span>
+                )}
+              </div>
+            )}
             {error && <div className="file-error">{error}</div>}
             {!loading &&
               files.map((f) => (
