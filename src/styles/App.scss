@@ -410,6 +410,20 @@ body.resize-v * {
       transition: background 0.15s;
     }
 
+    .btn-browse {
+      background: $bg-input;
+      color: $text-primary;
+      border: 1px solid $border-color;
+      padding: 6px 12px;
+      font-size: 13px;
+      white-space: nowrap;
+      cursor: pointer;
+
+      &:hover {
+        background: #4c4c4c;
+      }
+    }
+
     .btn-cancel {
       background: $bg-input;
       color: $text-primary;

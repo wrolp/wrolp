@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react'
 import { v4 as uuidv4 } from 'uuid'
+import { open } from '@tauri-apps/plugin-dialog'
 import type { ConnectionConfig } from '../types'
 import { saveConnection as saveConn, deleteConnection } from '../commands'
 
@@ -158,6 +159,19 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [keyPath, setKeyPath] = useState(connection?.keyPath || '')
   const [passphrase, setPassphrase] = useState(connection?.passphrase || '')
 
+  const handleBrowseKey = async () => {
+    try {
+      const selected = await open({
+        title: 'Select SSH Private Key',
+      })
+      if (selected) {
+        setKeyPath(selected as string)
+      }
+    } catch (e) {
+      console.error('File dialog error:', e)
+    }
+  }
+
   const handleSave = () => {
     const finalName = name.trim() || host.trim() || 'Unnamed'
     const finalUsername = username.trim() || 'root'
@@ -253,11 +267,21 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             <>
               <div className="form-group">
                 <label>Key Path</label>
-                <input
-                  value={keyPath}
-                  onChange={(e) => setKeyPath(e.target.value)}
-                  placeholder="~/.ssh/id_rsa (default)"
-                />
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input
+                    value={keyPath}
+                    onChange={(e) => setKeyPath(e.target.value)}
+                    placeholder="~/.ssh/id_rsa (default)"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleBrowseKey}
+                    className="btn-browse"
+                  >
+                    Browse
+                  </button>
+                </div>
               </div>
               <div className="form-group">
                 <label>Passphrase (optional)</label>
