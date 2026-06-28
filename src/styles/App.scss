@@ -1,5 +1,10 @@
 @use 'variables' as *;
 
+html,
+body {
+  -webkit-app-region: no-drag;
+}
+
 // Force cursor globally during divier drag
 body.resize-h,
 body.resize-h * {
@@ -19,6 +24,7 @@ body.resize-v * {
   color: $text-primary;
   opacity: var(--win-opacity, 1);
   overflow: hidden;
+  -webkit-app-region: no-drag;
 }
 
 // ===== Custom Titlebar =====
@@ -30,6 +36,7 @@ body.resize-v * {
   background: #202020;
   flex-shrink: 0;
   user-select: none;
+  -webkit-app-region: drag;
 
   &-title {
     font-weight: 500;
@@ -54,12 +61,14 @@ body.resize-v * {
     height: 100%;
     gap: 4px;
     cursor: default;
+    -webkit-app-region: no-drag;
   }
 
   &-controls {
     display: flex;
     height: 100%;
     cursor: default;
+    -webkit-app-region: no-drag;
   }
 
   &-btn {
@@ -102,6 +111,7 @@ body.resize-v * {
   display: flex;
   flex: 1;
   overflow: hidden;
+  -webkit-app-region: no-drag;
 }
 
 // ===== Left Sidebar — Connection List =====
@@ -413,7 +423,7 @@ body.resize-v * {
     .btn-browse {
       background: $bg-input;
       color: $text-primary;
-      border: 1px solid $border-color;
+      border: 1px solid $border;
       padding: 6px 12px;
       font-size: 13px;
       white-space: nowrap;
@@ -585,6 +595,7 @@ body.resize-v * {
   background: $accent;
   flex-shrink: 0;
   user-select: none;
+  -webkit-app-region: no-drag;
   gap: 12px;
 
   &-left {
