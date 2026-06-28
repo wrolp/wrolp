@@ -6,7 +6,23 @@ use russh::ChannelId;
 use russh_keys::load_secret_key;
 use std::sync::Arc;
 use std::hint::black_box;
+use std::path::PathBuf;
 use tauri::Manager;
+
+/// Expand ~ to the user's home directory
+fn expand_tilde(path: &str) -> PathBuf {
+  if path.starts_with("~/") {
+    if let Some(home) = dirs::home_dir() {
+      home.join(&path[2..])
+    } else {
+      PathBuf::from(path)
+    }
+  } else if path == "~" {
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"))
+  } else {
+    PathBuf::from(path)
+  }
+}
 
 
 #[async_trait::async_trait]
@@ -281,10 +297,12 @@ pub async fn connect(
           }
         }
       } else if let Some(ref key_path) = cfg.key_path {
-        let key = match load_secret_key(key_path, cfg.passphrase.as_deref()) {
+        let resolved_path = expand_tilde(key_path);
+        eprintln!("[russh] loading key: {} (resolved: {:?})", key_path, resolved_path);
+        let key = match load_secret_key(&resolved_path, cfg.passphrase.as_deref()) {
           Ok(k) => k,
           Err(e) => {
-            emit_error(&app_handle, tid, &format!("Failed to load key: {}", e));
+            emit_error(&app_handle, tid, &format!("Failed to load key '{}': {}", key_path, e));
             return;
           }
         };
@@ -504,8 +522,9 @@ async fn open_sftp_session(
       return Err("Authentication failed".into());
     }
   } else if let Some(ref key_path) = config.key_path {
-    let key = load_secret_key(key_path, config.passphrase.as_deref())
-      .map_err(|e| format!("Failed to load key: {}", e))?;
+    let resolved_path = expand_tilde(key_path);
+    let key = load_secret_key(&resolved_path, config.passphrase.as_deref())
+      .map_err(|e| format!("Failed to load key '{}': {}", key_path, e))?;
     if !handle.authenticate_publickey(&config.username, Arc::new(key)).await.map_err(|e| format!("Key auth error: {}", e))? {
       return Err("Key authentication failed".into());
     }

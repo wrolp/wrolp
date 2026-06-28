@@ -152,7 +152,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [port, setPort] = useState(connection?.port || 22)
   const [username, setUsername] = useState(connection?.username || '')
   const [authType, setAuthType] = useState<'password' | 'key'>(
-    connection && connection.password ? 'password' : 'password',
+    connection?.keyPath ? 'key' : 'password',
   )
   const [password, setPassword] = useState(connection?.password || '')
   const [keyPath, setKeyPath] = useState(connection?.keyPath || '')
@@ -172,7 +172,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
       port,
       username: finalUsername,
       password: authType === 'password' ? password : undefined,
-      keyPath: authType === 'key' ? keyPath : undefined,
+      keyPath: authType === 'key' ? (keyPath.trim() || '~/.ssh/id_rsa') : undefined,
       passphrase: authType === 'key' ? passphrase || undefined : undefined,
     }
     onSave(config)
@@ -256,7 +256,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 <input
                   value={keyPath}
                   onChange={(e) => setKeyPath(e.target.value)}
-                  placeholder="~/.ssh/id_rsa"
+                  placeholder="~/.ssh/id_rsa (default)"
                 />
               </div>
               <div className="form-group">
