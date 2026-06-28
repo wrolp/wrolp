@@ -6,6 +6,9 @@ mod ssh_session;
 use ssh_session::AppState;
 use tauri::generate_handler;
 use tauri::Manager;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
+use tauri::image::Image;
 
 pub fn run() {
   tauri::Builder::default()
@@ -15,8 +18,54 @@ pub fn run() {
       let state = AppState::new();
       app.manage(state);
 
+      // ---- Tray icon ----
+      let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
+      let hide_item = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
+      let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+      let menu = MenuBuilder::new(app)
+        .item(&show_item)
+        .item(&hide_item)
+        .item(&quit_item)
+        .build()?;
+
+      let icon_bytes = include_bytes!("../icons/32x32.png");
+      let _tray = TrayIconBuilder::new()
+        .icon(Image::from_bytes(icon_bytes)?)
+        .tooltip("Wrolp Terminal")
+        .menu(&menu)
+        .on_menu_event(move |app, event| {
+          let id = event.id().as_ref();
+          match id {
+            "show" => {
+              if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+              }
+            }
+            "hide" => {
+              if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+              }
+            }
+            "quit" => {
+              app.exit(0);
+            }
+            _ => {}
+          }
+        })
+        .build(app)?;
+
       // Restore window position/size from saved config before showing
       if let Some(window) = app.get_webview_window("main") {
+        // Hide to tray instead of closing
+        let window_clone = window.clone();
+        window.on_window_event(move |event| {
+          if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = window_clone.hide();
+          }
+        });
+
         let config_path = commands::get_window_config_path();
         if let Some(ref path) = config_path {
           if let Ok(content) = std::fs::read_to_string(path) {
