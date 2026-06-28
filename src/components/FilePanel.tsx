@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { FileEntry } from '../types'
 import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile } from '../commands'
-import { open } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 
 interface FilePanelProps {
   tabId: number
@@ -209,13 +209,12 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       return
     }
     try {
-      const filePath = await open({
+      const filePath = await save({
         title: 'Save file as',
         defaultPath: entry.name,
       })
       if (filePath) {
-        const path = typeof filePath === 'string' ? filePath : (filePath as { path: string }).path
-        await downloadFile(tabId, entry.path, path)
+        await downloadFile(tabId, entry.path, filePath as string)
       }
     } catch (e) {
       setError(String(e))
