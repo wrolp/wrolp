@@ -374,20 +374,6 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
             onMouseEnter={() => setListHovered(true)}
             onMouseLeave={() => setListHovered(false)}
           >
-            {(loading || uploading || downloading) && (
-              <div className="file-loading">
-                {transferStatus ? (
-                  <>
-                    <div className="file-progress-bar">
-                      <div className="file-progress-fill" />
-                    </div>
-                    <span>{transferStatus}</span>
-                  </>
-                ) : (
-                  <span>{uploading ? 'Uploading...' : downloading ? 'Downloading...' : 'Loading...'}</span>
-                )}
-              </div>
-            )}
             {error && <div className="file-error">{error}</div>}
             {!loading &&
               files.map((f) => (
@@ -406,6 +392,21 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
               <div className="file-empty">Empty directory</div>
             )}
           </div>
+
+          {(loading || uploading || downloading) && (
+            <div className="file-loading">
+              {transferStatus ? (
+                <>
+                  <div className="file-progress-bar">
+                    <div className="file-progress-fill" />
+                  </div>
+                  <span>{transferStatus}</span>
+                </>
+              ) : (
+                <span>{uploading ? 'Uploading...' : downloading ? 'Downloading...' : 'Loading...'}</span>
+              )}
+            </div>
+          )}
         </>
       )}
 
