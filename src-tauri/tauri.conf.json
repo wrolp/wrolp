@@ -1,7 +1,7 @@
 {
-  "productName": "ssh-terminal",
-  "version": "0.1.0",
-  "identifier": "com.ssh-terminal.app",
+  "productName": "wrolp-terminal",
+  "version": "0.0.2",
+  "identifier": "com.wrolp-terminal.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",

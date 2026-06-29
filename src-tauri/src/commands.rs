@@ -120,7 +120,7 @@ impl Handler for SshHandler {
 // ==================== Data Persistence ====================
 
 fn get_data_dir() -> Option<std::path::PathBuf> {
-  dirs::config_dir().map(|p| p.join("ssh-terminal"))
+  dirs::config_dir().map(|p| p.join("wrolp-terminal"))
 }
 
 fn get_connections_path() -> Option<std::path::PathBuf> {

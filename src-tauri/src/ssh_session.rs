@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 /// Path to the SSH connections config file
 fn get_connections_path() -> Option<std::path::PathBuf> {
-  dirs::config_dir().map(|p| p.join("ssh-terminal").join("connections.json"))
+  dirs::config_dir().map(|p| p.join("wrolp-terminal").join("connections.json"))
 }
 
 /// SSH connection config

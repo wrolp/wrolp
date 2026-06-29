@@ -4138,28 +4138,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ssh-terminal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "dirs 6.0.0",
- "log",
- "russh",
- "russh-keys",
- "russh-sftp",
- "serde",
- "serde_json",
- "simplelog",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-updater",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6100,6 +6078,28 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
+
+[[package]]
+name = "wrolp-terminal"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs 6.0.0",
+ "log",
+ "russh",
+ "russh-keys",
+ "russh-sftp",
+ "serde",
+ "serde_json",
+ "simplelog",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-updater",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "wry"

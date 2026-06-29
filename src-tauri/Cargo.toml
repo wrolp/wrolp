@@ -1,8 +1,8 @@
 [package]
-name = "ssh-terminal"
-version = "0.1.0"
+name = "wrolp-terminal"
+version = "0.0.2"
 edition = "2021"
-default-run = "ssh-terminal"
+default-run = "wrolp-terminal"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
@@ -22,7 +22,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 
 [[bin]]
-name = "ssh-terminal"
+name = "wrolp-terminal"
 path = "src/main.rs"
 
 [[bin]]
