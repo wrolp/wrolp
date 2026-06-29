@@ -116,6 +116,15 @@ pub struct SshSession {
   pub channel_arc: Option<Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>>,
   /// Cloned SSH session handle for SFTP file operations
   pub session_handle: Option<russh::client::Handle<SshHandler>>,
+  /// Optional switched user for SFTP operations (different from connection config user)
+  pub switched_sftp_user: Option<SwitchedUser>,
+}
+
+/// Switched SFTP user — allows operating files with a different user's permissions
+#[derive(Debug, Clone)]
+pub struct SwitchedUser {
+  pub username: String,
+  pub password: String,
 }
 
 /// Per-tab transfer pause/resume control

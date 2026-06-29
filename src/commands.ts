@@ -103,3 +103,17 @@ export async function pauseTransfer(tabId: number): Promise<void> {
 export async function resumeTransfer(tabId: number): Promise<void> {
   await invoke('resume_transfer', { tabId })
 }
+
+// ===== SFTP User Switching =====
+
+export async function switchSftpUser(tabId: number, username: string, password: string): Promise<void> {
+  await invoke('switch_sftp_user', { tabId, username, password })
+}
+
+export async function revertSftpUser(tabId: number): Promise<void> {
+  await invoke('revert_sftp_user', { tabId })
+}
+
+export async function getSftpUser(tabId: number): Promise<string | null> {
+  return await invoke<string | null>('get_sftp_user', { tabId })
+}

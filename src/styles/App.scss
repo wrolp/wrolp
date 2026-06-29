@@ -724,6 +724,69 @@ body.resize-v * {
           cursor: default;
         }
       }
+
+      .file-sftp-user {
+        font-size: 11px;
+        color: $accent;
+        background: rgba($accent, 0.12);
+        border: 1px solid rgba($accent, 0.25);
+        border-radius: 3px;
+        padding: 1px 5px;
+        line-height: 1.4;
+      }
+    }
+  }
+
+  .file-switch-user {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: $bg-primary;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+
+    input {
+      height: 22px;
+      padding: 2px 6px;
+      font-size: 11px;
+      background: $bg-input;
+      border: 1px solid $border;
+      border-radius: 3px;
+      color: $text-primary;
+      outline: none;
+      width: 100px;
+
+      &:focus {
+        border-color: $accent;
+      }
+    }
+
+    button {
+      height: 22px;
+      padding: 0 8px;
+      font-size: 11px;
+      background: rgba($accent, 0.15);
+      border: 1px solid rgba($accent, 0.3);
+      border-radius: 3px;
+      color: $accent;
+      cursor: pointer;
+      line-height: 1;
+
+      &:hover {
+        background: rgba($accent, 0.25);
+      }
+
+      &:last-child {
+        background: none;
+        border: none;
+        color: $text-muted;
+        padding: 0 4px;
+
+        &:hover {
+          color: $text-primary;
+        }
+      }
     }
   }
 

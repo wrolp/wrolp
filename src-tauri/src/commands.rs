@@ -1,5 +1,5 @@
 use super::ssh_session::{
-  AppState, ConnectionConfig, ConnectResult, FileEntry, SshError, SshHandler, SshSession, TransferControl,
+  AppState, ConnectionConfig, ConnectResult, FileEntry, SshError, SshHandler, SshSession, SwitchedUser, TransferControl,
 };
 use russh::client::{self, Handler};
 use russh::ChannelId;
@@ -434,6 +434,7 @@ pub async fn connect(
         shutdown_tx: Some(shutdown_tx),
         channel_arc: None,
         session_handle: None, // SFTP reconnects via fresh auth per operation
+        switched_sftp_user: None,
       },
     );
   }
@@ -527,13 +528,12 @@ async fn open_sftp_session(
   app: &tauri::AppHandle,
   tab_id: u32,
 ) -> Result<russh_sftp::client::SftpSession, String> {
-  let config = {
+  let (config, switched_user) = {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    sessions
+    let session = sessions
       .get(&tab_id)
-      .ok_or("Session not found")?
-      .config
-      .clone()
+      .ok_or("Session not found")?;
+    (session.config.clone(), session.switched_sftp_user.clone())
   };
 
   let ssh_config = Arc::new(client::Config::default());
@@ -547,8 +547,14 @@ async fn open_sftp_session(
     .await
     .map_err(|e| format!("SFTP connect failed: {}", e))?;
 
-  // Authenticate
-  if let Some(ref pw) = config.password {
+  // Authenticate — use switched user if set, otherwise original config credentials
+  if let Some(ref su) = switched_user {
+    // Authenticate as switched user (password-only for now)
+    if !handle.authenticate_password(&su.username, &su.password).await
+      .map_err(|e| format!("Auth error: {}", e))? {
+      return Err(format!("Authentication failed for switched user '{}'", su.username));
+    }
+  } else if let Some(ref pw) = config.password {
     if !handle.authenticate_password(&config.username, pw).await.map_err(|e| format!("Auth error: {}", e))? {
       return Err("Authentication failed".into());
     }
@@ -1000,6 +1006,42 @@ pub async fn delete_file(
   }
 
   Ok(true)
+}
+
+// ==================== SFTP User Switching ====================
+
+#[tauri::command]
+pub async fn switch_sftp_user(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  username: String,
+  password: String,
+) -> Result<(), String> {
+  let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+  let session = sessions.get_mut(&tab_id).ok_or("Session not found")?;
+  session.switched_sftp_user = Some(SwitchedUser { username, password });
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn revert_sftp_user(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<(), String> {
+  let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+  let session = sessions.get_mut(&tab_id).ok_or("Session not found")?;
+  session.switched_sftp_user = None;
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn get_sftp_user(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<Option<String>, String> {
+  let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+  let session = sessions.get(&tab_id).ok_or("Session not found")?;
+  Ok(session.switched_sftp_user.as_ref().map(|su| su.username.clone()))
 }
 
 // ==================== Transfer Pause/Resume ====================

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import type { FileEntry } from '../types'
-import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile, pauseTransfer, resumeTransfer } from '../commands'
+import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
 
 interface TransferProgress {
@@ -40,6 +40,10 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
   const panelRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [contextMenuStyle, setContextMenuStyle] = useState<React.CSSProperties>({})
+  const [sftpUser, setSftpUser] = useState<string | null>(null)
+  const [showSwitchUser, setShowSwitchUser] = useState(false)
+  const [switchUsername, setSwitchUsername] = useState('')
+  const [switchPassword, setSwitchPassword] = useState('')
 
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return '-'
@@ -77,6 +81,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
   useEffect(() => {
     if (isConnected) {
       loadDir(currentPath)
+      getSftpUser(tabId).then(setSftpUser).catch(() => {})
     }
   }, [isConnected, tabId])
 
@@ -346,6 +351,35 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     }
   }
 
+  const handleSwitchUser = async () => {
+    const name = switchUsername.trim()
+    const pw = switchPassword
+    if (!name || !pw) {
+      setError('Username and password are required')
+      return
+    }
+    try {
+      await switchSftpUser(tabId, name, pw)
+      setSftpUser(name)
+      setShowSwitchUser(false)
+      setSwitchUsername('')
+      setSwitchPassword('')
+      setError('')
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  const handleRevertUser = async () => {
+    try {
+      await revertSftpUser(tabId)
+      setSftpUser(null)
+      setError('')
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
   const handleRename = async (entry: FileEntry) => {
     setContextMenu(null)
     const newName = prompt('New name:', entry.name)
@@ -406,6 +440,14 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
         <span style={{ flex: 1 }}>Files</span>
         {expanded && (
           <div className="file-toolbar">
+            {sftpUser ? (
+              <>
+                <span className="file-sftp-user" title={`SFTP operations as: ${sftpUser}`}>🔒{sftpUser}</span>
+                <button title="Restore original user" onClick={handleRevertUser}>↩</button>
+              </>
+            ) : (
+              <button title="Switch SFTP user" onClick={() => setShowSwitchUser(!showSwitchUser)}>👤</button>
+            )}
             <button title="Upload file" onClick={handleUpload}>📤</button>
             <button title="New folder" onClick={handleNewDir}>📁+</button>
             <button title="Refresh" onClick={() => loadDir(currentPath)} disabled={loading}>
@@ -437,6 +479,27 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
               </span>
             )}
           </div>
+
+          {showSwitchUser && (
+            <div className="file-switch-user">
+              <input
+                type="text"
+                placeholder="Username"
+                value={switchUsername}
+                onChange={(e) => setSwitchUsername(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSwitchUser() }}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={switchPassword}
+                onChange={(e) => setSwitchPassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSwitchUser() }}
+              />
+              <button onClick={handleSwitchUser}>Switch</button>
+              <button onClick={() => setShowSwitchUser(false)}>✕</button>
+            </div>
+          )}
 
           <div
             className={`file-list${listHovered ? ' show-scrollbar' : ''}`}
