@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import type { FileEntry } from '../types'
 import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile, pauseTransfer, resumeTransfer } from '../commands'
@@ -38,6 +38,8 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
   const [transferStatus, setTransferStatus] = useState('')
   const [transferProgress, setTransferProgress] = useState<{ transferred: number; total: number; speed: string } | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+  const [contextMenuStyle, setContextMenuStyle] = useState<React.CSSProperties>({})
 
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return '-'
@@ -97,6 +99,20 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     document.addEventListener('click', handler)
     return () => document.removeEventListener('click', handler)
   }, [])
+
+  // Adjust context menu position to avoid clipping at window edges
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) return
+    const menu = contextMenuRef.current
+    const rect = menu.getBoundingClientRect()
+    const overflowY = contextMenu.y + rect.height - window.innerHeight
+    const overflowX = contextMenu.x + rect.width - window.innerWidth
+
+    setContextMenuStyle({
+      left: overflowX > 0 ? contextMenu.x - overflowX - 4 : contextMenu.x,
+      top: overflowY > 0 ? contextMenu.y - rect.height : contextMenu.y,
+    })
+  }, [contextMenu])
 
   // Upload files to current remote directory
   const uploadFiles = useCallback(async (paths: string[]) => {
@@ -493,8 +509,9 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
 
       {contextMenu && (
         <div
+          ref={contextMenuRef}
           className="context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={contextMenuStyle}
           onClick={(e) => e.stopPropagation()}
         >
           {contextMenu.entry && !contextMenu.entry.isDir && (
