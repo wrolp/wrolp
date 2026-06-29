@@ -868,6 +868,24 @@ body.resize-v * {
     margin-top: 2px;
   }
 
+  .file-pause-btn {
+    background: none;
+    border: 1px solid $border;
+    border-radius: 3px;
+    color: $text-muted;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0 6px;
+    height: 20px;
+    line-height: 1;
+    margin-left: 6px;
+
+    &:hover {
+      background: $bg-input;
+      color: $text-primary;
+    }
+  }
+
   @keyframes progress-indeterminate {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(200%); }

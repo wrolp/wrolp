@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import type { FileEntry } from '../types'
-import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile } from '../commands'
+import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile, pauseTransfer, resumeTransfer } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
 
 interface TransferProgress {
@@ -33,6 +33,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
   } | null>(null)
   const [uploading, setUploading] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [paused, setPaused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [transferStatus, setTransferStatus] = useState('')
   const [transferProgress, setTransferProgress] = useState<{ transferred: number; total: number; speed: string } | null>(null)
@@ -102,6 +103,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     console.log('[FilePanel] uploadFiles called with paths:', paths)
     setUploading(true)
     setError('')
+    setPaused(false)
     setTransferProgress(null)
 
     const total = paths.length
@@ -126,6 +128,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     }
     
     setUploading(false)
+    setPaused(false)
     setTransferStatus('')
     // Keep last progress visible so user can see final speed/size
     loadDir(currentPath)
@@ -136,6 +139,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     console.log('[FilePanel] handleDropUpload:', fileList.length, 'files')
     setUploading(true)
     setError('')
+    setPaused(false)
     setTransferProgress(null)
     setTransferProgress(null)
 
@@ -162,6 +166,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     }
 
     setUploading(false)
+    setPaused(false)
     setTransferStatus('')
     loadDir(currentPath)
   }, [tabId, currentPath, loadDir])
@@ -271,10 +276,12 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       })
       if (filePath) {
         setDownloading(true)
+        setPaused(false)
         setTransferStatus(`Downloading: ${entry.name}`)
         setTransferProgress(null)
         await downloadFile(tabId, entry.path, filePath as string)
         setDownloading(false)
+        setPaused(false)
         setTransferStatus('')
       }
     } catch (e) {
@@ -310,6 +317,16 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       loadDir(currentPath)
     } catch (e) {
       setError(String(e))
+    }
+  }
+
+  const togglePause = async () => {
+    if (paused) {
+      setPaused(false)
+      await resumeTransfer(tabId)
+    } else {
+      setPaused(true)
+      await pauseTransfer(tabId)
     }
   }
 
@@ -444,6 +461,13 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
                     />
                   </div>
                   <span>{transferStatus}</span>
+                  <button
+                    className="file-pause-btn"
+                    onClick={togglePause}
+                    title={paused ? 'Resume' : 'Pause'}
+                  >
+                    {paused ? '▶' : '⏸'}
+                  </button>
                   {transferProgress && transferProgress.total > 0 && (
                     <span className="file-progress-detail">
                       {formatSize(transferProgress.transferred)} / {formatSize(transferProgress.total)} · {transferProgress.speed}

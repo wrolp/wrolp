@@ -101,6 +101,8 @@ pub fn run() {
       commands::create_directory,
       commands::rename_file,
       commands::delete_file,
+      commands::pause_transfer,
+      commands::resume_transfer,
       commands::save_window_config,
       commands::load_window_config,
     ])

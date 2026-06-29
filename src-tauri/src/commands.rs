@@ -1,15 +1,44 @@
 use super::ssh_session::{
-  AppState, ConnectionConfig, ConnectResult, FileEntry, SshError, SshHandler, SshSession,
+  AppState, ConnectionConfig, ConnectResult, FileEntry, SshError, SshHandler, SshSession, TransferControl,
 };
 use russh::client::{self, Handler};
 use russh::ChannelId;
 use russh_keys::load_secret_key;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::hint::black_box;
 use std::path::PathBuf;
 use tauri::Manager;
 use tauri::Emitter;
 use tokio::io::AsyncReadExt;
+
+/// Wait if the transfer for this tab is paused. Returns immediately if not paused.
+async fn check_pause(control: &TransferControl) {
+  loop {
+    if !control.paused.load(Ordering::SeqCst) {
+      return;
+    }
+    control.notify.notified().await;
+  }
+}
+
+/// RAII guard to remove transfer control from state on drop
+struct TransferGuard {
+  state_ptr: *const AppState,
+  tab_id: u32,
+}
+// Safety: AppState is managed by Tauri and lives for the app lifetime
+unsafe impl Send for TransferGuard {}
+
+impl Drop for TransferGuard {
+  fn drop(&mut self) {
+    // Safety: state_ptr is valid because Tauri state outlives commands
+    let state = unsafe { &*self.state_ptr };
+    if let Ok(mut controls) = state.transfer_controls.lock() {
+      controls.remove(&self.tab_id);
+    }
+  }
+}
 
 /// Expand ~ to the user's home directory
 fn expand_tilde(path: &str) -> PathBuf {
@@ -618,6 +647,21 @@ pub async fn download_file(
   remote_path: String,
   local_path: String,
 ) -> Result<bool, String> {
+  // Set up pause control
+  let control = Arc::new(TransferControl {
+    paused: AtomicBool::new(false),
+    notify: tokio::sync::Notify::new(),
+  });
+  {
+    let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+    controls.insert(tab_id, control.clone());
+  }
+  // Clean up control on exit
+  let _cleanup = TransferGuard {
+    state_ptr: &*state as *const AppState,
+    tab_id,
+  };
+
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
   let filename = std::path::Path::new(&remote_path)
@@ -640,6 +684,9 @@ pub async fn download_file(
   let mut offset: u64 = 0;
 
   loop {
+    // Check for pause before each chunk
+    check_pause(&control).await;
+
     let n = file.read(&mut buf).await
       .map_err(|e| format!("Failed to read: {}", e))?;
     if n == 0 { break; }
@@ -675,6 +722,20 @@ pub async fn upload_file(
   local_path: String,
   remote_path: String,
 ) -> Result<bool, String> {
+  // Set up pause control
+  let control = Arc::new(TransferControl {
+    paused: AtomicBool::new(false),
+    notify: tokio::sync::Notify::new(),
+  });
+  {
+    let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+    controls.insert(tab_id, control.clone());
+  }
+  let _cleanup = TransferGuard {
+    state_ptr: &*state as *const AppState,
+    tab_id,
+  };
+
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
   let filename = std::path::Path::new(&remote_path)
@@ -729,6 +790,7 @@ pub async fn upload_file(
   let mut written: u64 = 0;
 
   for chunk in data.chunks(chunk_size) {
+    check_pause(&control).await;
     file.write_all(chunk).await
       .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
     written += chunk.len() as u64;
@@ -787,6 +849,20 @@ pub async fn upload_file_bytes(
   remote_path: String,
   file_data: Vec<u8>,
 ) -> Result<bool, String> {
+  // Set up pause control
+  let control = Arc::new(TransferControl {
+    paused: AtomicBool::new(false),
+    notify: tokio::sync::Notify::new(),
+  });
+  {
+    let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+    controls.insert(tab_id, control.clone());
+  }
+  let _cleanup = TransferGuard {
+    state_ptr: &*state as *const AppState,
+    tab_id,
+  };
+
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
   let filename = std::path::Path::new(&remote_path)
@@ -832,6 +908,7 @@ pub async fn upload_file_bytes(
   let mut written: u64 = 0;
 
   for chunk in file_data.chunks(chunk_size) {
+    check_pause(&control).await;
     file.write_all(chunk).await
       .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
     written += chunk.len() as u64;
@@ -923,6 +1000,33 @@ pub async fn delete_file(
   }
 
   Ok(true)
+}
+
+// ==================== Transfer Pause/Resume ====================
+
+#[tauri::command]
+pub async fn pause_transfer(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<(), String> {
+  let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+  if let Some(ctrl) = controls.get(&tab_id) {
+    ctrl.paused.store(true, Ordering::SeqCst);
+  }
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_transfer(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<(), String> {
+  let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+  if let Some(ctrl) = controls.get(&tab_id) {
+    ctrl.paused.store(false, Ordering::SeqCst);
+    ctrl.notify.notify_one();
+  }
+  Ok(())
 }
 
 // ==================== Window Config Persistence ====================

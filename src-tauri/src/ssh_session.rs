@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tokio::sync::mpsc;
 
@@ -117,12 +118,20 @@ pub struct SshSession {
   pub session_handle: Option<russh::client::Handle<SshHandler>>,
 }
 
+/// Per-tab transfer pause/resume control
+pub struct TransferControl {
+  pub paused: AtomicBool,
+  pub notify: tokio::sync::Notify,
+}
+
 /// Global application state
 pub struct AppState {
   pub connections: StdMutex<Vec<ConnectionConfig>>,
   pub sessions: StdMutex<HashMap<u32, SshSession>>,
   /// Polling output buffer: tab_id → pending text chunks (frontend polls every 100ms)
   pub output_buffers: StdMutex<HashMap<u32, Vec<String>>>,
+  /// Transfer pause controls: tab_id → control
+  pub transfer_controls: StdMutex<HashMap<u32, Arc<TransferControl>>>,
 }
 
 impl AppState {
@@ -133,6 +142,7 @@ impl AppState {
       connections: StdMutex::new(connections),
       sessions: StdMutex::new(HashMap::new()),
       output_buffers: StdMutex::new(HashMap::new()),
+      transfer_controls: StdMutex::new(HashMap::new()),
     }
   }
 }

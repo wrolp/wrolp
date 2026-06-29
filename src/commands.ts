@@ -93,3 +93,13 @@ export async function saveWindowConfig(config: WindowConfig): Promise<void> {
 export async function loadWindowConfig(): Promise<WindowConfig> {
   return await invoke<WindowConfig>('load_window_config')
 }
+
+// ===== Transfer Control =====
+
+export async function pauseTransfer(tabId: number): Promise<void> {
+  await invoke('pause_transfer', { tabId })
+}
+
+export async function resumeTransfer(tabId: number): Promise<void> {
+  await invoke('resume_transfer', { tabId })
+}
