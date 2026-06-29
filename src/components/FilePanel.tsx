@@ -1,7 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import type { FileEntry } from '../types'
 import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
+
+interface TransferProgress {
+  tabId: number
+  op: 'upload' | 'download'
+  filename: string
+  transferred: number
+  total: number
+  elapsed: number
+}
 
 interface FilePanelProps {
   tabId: number
@@ -25,11 +35,31 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
   const [downloading, setDownloading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [transferStatus, setTransferStatus] = useState('')
+  const [transferProgress, setTransferProgress] = useState<{ transferred: number; total: number; speed: string } | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+
+  const formatSize = (bytes: number): string => {
+    if (bytes === 0) return '-'
+    const units = ['B', 'KB', 'MB', 'GB']
+    let i = 0
+    let size = bytes
+    while (size >= 1024 && i < units.length - 1) {
+      size /= 1024
+      i++
+    }
+    return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+  }
+
+  const formatSpeed = (bytesPerSec: number): string => {
+    if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`
+    if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
+    return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
+  }
 
   const loadDir = useCallback(async (path: string) => {
     setLoading(true)
     setError('')
+    setTransferProgress(null)
     try {
       const result = await listFiles(tabId, path)
       setFiles(result)
@@ -47,6 +77,19 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     }
   }, [isConnected, tabId])
 
+  // Listen for transfer progress events from Rust
+  useEffect(() => {
+    const unlisten = listen<TransferProgress>('transfer-progress', (event) => {
+      const p = event.payload
+      if (p.tabId !== tabId) return
+      const elapsed = p.elapsed > 0 ? p.elapsed / 1000 : 0.001
+      const bytesPerSec = p.transferred / elapsed
+      const speed = formatSpeed(bytesPerSec)
+      setTransferProgress({ transferred: p.transferred, total: p.total, speed })
+    })
+    return () => { unlisten.then(fn => fn()) }
+  }, [tabId])
+
   // Close context menu on click outside
   useEffect(() => {
     const handler = () => setContextMenu(null)
@@ -59,6 +102,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     console.log('[FilePanel] uploadFiles called with paths:', paths)
     setUploading(true)
     setError('')
+    setTransferProgress(null)
 
     const total = paths.length
     for (let i = 0; i < paths.length; i++) {
@@ -83,6 +127,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     
     setUploading(false)
     setTransferStatus('')
+    // Keep last progress visible so user can see final speed/size
     loadDir(currentPath)
   }, [tabId, currentPath, loadDir])
 
@@ -91,6 +136,8 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     console.log('[FilePanel] handleDropUpload:', fileList.length, 'files')
     setUploading(true)
     setError('')
+    setTransferProgress(null)
+    setTransferProgress(null)
 
     const total = fileList.length
     for (let i = 0; i < fileList.length; i++) {
@@ -225,6 +272,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       if (filePath) {
         setDownloading(true)
         setTransferStatus(`Downloading: ${entry.name}`)
+        setTransferProgress(null)
         await downloadFile(tabId, entry.path, filePath as string)
         setDownloading(false)
         setTransferStatus('')
@@ -276,18 +324,6 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     } catch (e) {
       setError(String(e))
     }
-  }
-
-  const formatSize = (bytes: number): string => {
-    if (bytes === 0) return '-'
-    const units = ['B', 'KB', 'MB', 'GB']
-    let i = 0
-    let size = bytes
-    while (size >= 1024 && i < units.length - 1) {
-      size /= 1024
-      i++
-    }
-    return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
   }
 
   const [editingPath, setEditingPath] = useState(false)
@@ -393,14 +429,35 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
             )}
           </div>
 
-          {(loading || uploading || downloading) && (
+          {(loading || uploading || downloading || transferProgress) && (
             <div className="file-loading">
               {transferStatus ? (
                 <>
                   <div className="file-progress-bar">
-                    <div className="file-progress-fill" />
+                    <div
+                      className="file-progress-fill"
+                      style={
+                        transferProgress && transferProgress.total > 0
+                          ? { width: `${(transferProgress.transferred / transferProgress.total) * 100}%`, animation: 'none' }
+                          : undefined
+                      }
+                    />
                   </div>
                   <span>{transferStatus}</span>
+                  {transferProgress && transferProgress.total > 0 && (
+                    <span className="file-progress-detail">
+                      {formatSize(transferProgress.transferred)} / {formatSize(transferProgress.total)} · {transferProgress.speed}
+                    </span>
+                  )}
+                </>
+              ) : transferProgress && transferProgress.total > 0 ? (
+                <>
+                  <div className="file-progress-bar">
+                    <div className="file-progress-fill" style={{ width: '100%', animation: 'none' }} />
+                  </div>
+                  <span className="file-progress-detail">
+                    Completed · {formatSize(transferProgress.transferred)} · {transferProgress.speed}
+                  </span>
                 </>
               ) : (
                 <span>{uploading ? 'Uploading...' : downloading ? 'Downloading...' : 'Loading...'}</span>

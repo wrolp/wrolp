@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::hint::black_box;
 use std::path::PathBuf;
 use tauri::Manager;
+use tauri::Emitter;
+use tokio::io::AsyncReadExt;
 
 /// Expand ~ to the user's home directory
 fn expand_tilde(path: &str) -> PathBuf {
@@ -618,17 +620,47 @@ pub async fn download_file(
 ) -> Result<bool, String> {
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
-  // Read entire remote file at once
-  let data = sftp
-    .read(&remote_path)
-    .await
-    .map_err(|e| format!("Failed to read remote file: {}", e))?;
+  let filename = std::path::Path::new(&remote_path)
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| remote_path.clone());
+
+  // Get total file size
+  let metadata = sftp.metadata(&remote_path).await
+    .map_err(|e| format!("Failed to stat remote file: {}", e))?;
+  let total = metadata.size.unwrap_or(0);
+
+  // Open file for chunked streaming read
+  let mut file = sftp.open(&remote_path).await
+    .map_err(|e| format!("Failed to open remote file: {}", e))?;
+
+  let mut all_data = Vec::with_capacity(total as usize);
+  let mut buf = vec![0u8; 65536];
+  let start = std::time::Instant::now();
+  let mut offset: u64 = 0;
+
+  loop {
+    let n = file.read(&mut buf).await
+      .map_err(|e| format!("Failed to read: {}", e))?;
+    if n == 0 { break; }
+    all_data.extend_from_slice(&buf[..n]);
+    offset += n as u64;
+
+    let _ = app.emit("transfer-progress", serde_json::json!({
+      "tabId": tab_id,
+      "op": "download",
+      "filename": &filename,
+      "transferred": offset,
+      "total": total,
+      "elapsed": start.elapsed().as_millis()
+    }));
+  }
 
   // Write to local file
   if let Some(parent) = std::path::Path::new(&local_path).parent() {
     let _ = tokio::fs::create_dir_all(parent).await;
   }
-  tokio::fs::write(&local_path, data)
+  tokio::fs::write(&local_path, &all_data)
     .await
     .map_err(|e| format!("Failed to write local file: {}", e))?;
 
@@ -645,6 +677,11 @@ pub async fn upload_file(
 ) -> Result<bool, String> {
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
+  let filename = std::path::Path::new(&remote_path)
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| remote_path.clone());
+
   // Resolve relative paths to absolute paths
   let resolved_path = resolve_sftp_path(&sftp, &remote_path).await?;
 
@@ -652,6 +689,7 @@ pub async fn upload_file(
   let data = tokio::fs::read(&local_path)
     .await
     .map_err(|e| format!("Failed to read local file: {}", e))?;
+  let total = data.len() as u64;
 
   // Ensure parent directory exists on remote (using mkdir -p via SFTP)
   if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
@@ -662,7 +700,6 @@ pub async fn upload_file(
       match sftp.metadata(&parent_str).await {
         Err(_) => {
           // Directory doesn't exist, try creating it
-          // Use a simple approach: try create with parents
           let _ = sftp.create_dir(&parent_str).await;
           
           // Also try the individual path components
@@ -680,17 +717,32 @@ pub async fn upload_file(
     }
   }
 
-  // Write using open + write (more reliable than direct write)
+  // Write in chunks with progress
   let mut file = sftp
     .create(&resolved_path)
     .await
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
   use tokio::io::AsyncWriteExt;
-  file
-    .write_all(&data)
-    .await
-    .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+  let start = std::time::Instant::now();
+  let chunk_size: usize = 65536;
+  let mut written: u64 = 0;
+
+  for chunk in data.chunks(chunk_size) {
+    file.write_all(chunk).await
+      .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+    written += chunk.len() as u64;
+
+    let elapsed = start.elapsed().as_millis();
+    let _ = app.emit("transfer-progress", serde_json::json!({
+      "tabId": tab_id,
+      "op": "upload",
+      "filename": &filename,
+      "transferred": written,
+      "total": total,
+      "elapsed": elapsed
+    }));
+  }
 
   // File is closed on drop
 
@@ -737,6 +789,13 @@ pub async fn upload_file_bytes(
 ) -> Result<bool, String> {
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
+  let filename = std::path::Path::new(&remote_path)
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| remote_path.clone());
+
+  let total = file_data.len() as u64;
+
   // Resolve relative paths to absolute paths
   let resolved_path = resolve_sftp_path(&sftp, &remote_path).await?;
 
@@ -761,16 +820,32 @@ pub async fn upload_file_bytes(
     }
   }
 
+  // Write in chunks with progress
   let mut file = sftp
     .create(&resolved_path)
     .await
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
   use tokio::io::AsyncWriteExt;
-  file
-    .write_all(&file_data)
-    .await
-    .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+  let start = std::time::Instant::now();
+  let chunk_size: usize = 65536;
+  let mut written: u64 = 0;
+
+  for chunk in file_data.chunks(chunk_size) {
+    file.write_all(chunk).await
+      .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+    written += chunk.len() as u64;
+
+    let elapsed = start.elapsed().as_millis();
+    let _ = app.emit("transfer-progress", serde_json::json!({
+      "tabId": tab_id,
+      "op": "upload",
+      "filename": &filename,
+      "transferred": written,
+      "total": total,
+      "elapsed": elapsed
+    }));
+  }
 
   Ok(true)
 }

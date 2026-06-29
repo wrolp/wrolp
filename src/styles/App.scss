@@ -862,6 +862,12 @@ body.resize-v * {
     animation: progress-indeterminate 1.2s ease-in-out infinite;
   }
 
+  .file-progress-detail {
+    font-size: 10px;
+    color: $text-dim;
+    margin-top: 2px;
+  }
+
   @keyframes progress-indeterminate {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(200%); }
