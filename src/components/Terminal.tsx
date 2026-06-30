@@ -7,6 +7,7 @@ import { connect, sendInput, pollOutput, resizeTerminal } from '../commands'
 interface TerminalComponentProps {
   tabId: number
   isActive: boolean
+  reconnectTrigger?: number
   connectConfig?: {
     host: string
     port: number
@@ -24,6 +25,7 @@ interface TerminalComponentProps {
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
   isActive,
+  reconnectTrigger,
   connectConfig,
   autoConnect,
   onStatusChange,
@@ -37,6 +39,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const onStatusChangeRef = useRef(onStatusChange)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const hasRun = useRef(false)
+  const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
 
   useEffect(() => {
@@ -243,6 +246,89 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoConnect])
+
+  // Reconnect when trigger changes (keep xterm instance alive, preserve history)
+  useEffect(() => {
+    const trigger = reconnectTrigger ?? 0
+    if (trigger === 0 || trigger === reconnectTriggerRef.current) return
+    reconnectTriggerRef.current = trigger
+
+    // Stop existing poll timer
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+
+    const term = termRef.current
+    if (!term) return
+
+    const cfg = connectConfigRef.current
+    const currentTabId = tabIdRef.current
+    if (!cfg) return
+
+    // Write separator to terminal to mark new session
+    term.write('\r\n\x1b[33m══════ Reconnecting ══════\x1b[0m\r\n')
+
+    const doConnect = () => {
+      const cols = term.cols
+      const rows = term.rows
+      console.log(`[Terminal] reconnect: ${cols}x${rows}`)
+      onStatusChangeRef.current('connecting')
+
+      connect(
+        {
+          id: '',
+          name: `${cfg.username}@${cfg.host}`,
+          host: cfg.host,
+          port: cfg.port,
+          username: cfg.username,
+          password: cfg.password,
+          keyPath: cfg.keyPath,
+        },
+        currentTabId,
+        cols,
+        rows,
+      )
+        .then(() => {
+          onStatusChangeRef.current('connected')
+          // Start polling again
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+          pollTimerRef.current = setInterval(async () => {
+            try {
+              const chunks = await pollOutput(currentTabId)
+              if (chunks.length > 0) {
+                for (const chunk of chunks) {
+                  term.write(chunk)
+                }
+              }
+            } catch {}
+          }, 100)
+        })
+        .catch((err) => {
+          const errMsg =
+            typeof err === 'string'
+              ? err
+              : (err as any)?.message || String(err)
+          onStatusChangeRef.current('error', errMsg)
+          console.error('reconnect error:', err)
+        })
+    }
+
+    // Ensure terminal has dimensions before connecting
+    if (term.cols > 0 && term.rows > 0) {
+      doConnect()
+    } else {
+      const waitForLayout = () => {
+        if (term.cols > 0 && term.rows > 0) {
+          fitRef.current?.fit()
+          doConnect()
+        } else {
+          requestAnimationFrame(waitForLayout)
+        }
+      }
+      requestAnimationFrame(waitForLayout)
+    }
+  }, [reconnectTrigger])
 
   // Focus when tab becomes active
   useEffect(() => {

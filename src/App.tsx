@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi'
+
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
@@ -29,6 +30,7 @@ export default function App() {
   const [connectionsExpanded, setConnectionsExpanded] = useState(true)
   const [filesExpanded, setFilesExpanded] = useState(true)
   const [opacity, setOpacity] = useState(1)
+  const [reconnectKeys, setReconnectKeys] = useState<Record<number, number>>({})
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
 
@@ -53,6 +55,38 @@ export default function App() {
     document.addEventListener('click', closeMenu)
     return () => document.removeEventListener('click', closeMenu)
   }, [])
+
+  // Listen for unexpected SSH disconnections
+  useEffect(() => {
+    const unlisten = listen<{ tabId: number }>('connection-closed', (event) => {
+      const tid = event.payload.tabId
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.tabId === tid && t.status === 'connected'
+            ? { ...t, status: 'disconnected', errorMessage: 'Connection lost' }
+            : t,
+        ),
+      )
+    })
+    return () => { unlisten.then(fn => fn()) }
+  }, [])
+
+  // Enter key retry on disconnected/error tabs
+  const handleReconnectRef = useRef<((tabId: number) => void) | null>(null)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return
+      // Ignore if focus is in an input/button/textarea/select
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (activeTabId == null) return
+      const tab = tabs.find(t => t.tabId === activeTabId)
+      if (!tab || (tab.status !== 'disconnected' && tab.status !== 'error')) return
+      handleReconnectRef.current?.(activeTabId)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [activeTabId, tabs])
 
   // Ref to keep current opacity accessible in debounced save without re-registering listeners
   const opacityRef = useRef(opacity)
@@ -257,6 +291,19 @@ export default function App() {
     [openTab],
   )
 
+  // Reconnect a disconnected tab
+  const handleReconnect = useCallback((tabId: number) => {
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.tabId === tabId ? { ...t, status: 'connecting', errorMessage: undefined } : t,
+      ),
+    )
+    setReconnectKeys((prev) => ({ ...prev, [tabId]: (prev[tabId] || 0) + 1 }))
+  }, [])
+
+  // Sync handleReconnect to ref for keyboard listener
+  useEffect(() => { handleReconnectRef.current = handleReconnect }, [handleReconnect])
+
   // Compute tab display label (number tabs sharing the same connection)
   const getTabLabel = useCallback(
     (tab: TabInfo): string => {
@@ -350,16 +397,6 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [connectionListHeight])
 
-  // Get connection config by tabId
-  const getConnectionById = useCallback(
-    (tabId: number): ConnectionConfig | undefined => {
-      const tab = tabs.find((t) => t.tabId === tabId)
-      if (!tab?.connectionId) return undefined
-      return cachedConnections.find((c) => c.id === tab.connectionId)
-    },
-    [tabs],
-  )
-
   return (
     <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
@@ -386,7 +423,7 @@ export default function App() {
                   >
                     <ConnectionManager
                       connections={connections}
-                      onConnect={(config, tabId) => {
+                      onConnect={(_config, _tabId) => {
                         // Not used
                       }}
                       onTabClosed={closeTab}
@@ -509,9 +546,113 @@ export default function App() {
                   style={{
                     display: tab.tabId === activeTabId ? 'block' : 'none',
                     height: '100%',
+                    position: 'relative',
                   }}
                 >
-                  {tab.tabType === 'settings' ? (
+                  {/* Terminal area: always mounted to preserve history; hidden when disconnected/error */}
+                  {tab.tabType !== 'settings' && (
+                    <div style={{ display: tab.status === 'disconnected' || tab.status === 'error' ? 'none' : 'block', height: '100%' }}>
+                      <TerminalComponent
+                        tabId={tab.tabId}
+                        isActive={tab.tabId === activeTabId}
+                        reconnectTrigger={reconnectKeys[tab.tabId] || 0}
+                        connectConfig={
+                          tab.connectionId
+                            ? (() => {
+                                const conn = cachedConnections.find((c) => c.id === tab.connectionId)
+                                if (!conn) return undefined
+                                return {
+                                  host: conn.host,
+                                  port: conn.port,
+                                  username: conn.username,
+                                  password: conn.password,
+                                  keyPath: conn.keyPath,
+                                }
+                              })()
+                            : undefined
+                        }
+                        autoConnect={!!tab.connectionId}
+                        onStatusChange={(status, errorMessage) => {
+                          setTabs((prev) =>
+                            prev.map((t) =>
+                              t.tabId === tab.tabId ? { ...t, status, errorMessage } : t,
+                            ),
+                          )
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Settings tab */}
+                  {tab.tabType === 'settings' && (
+                    <div className="settings-tab-content">
+                      <h3>Settings</h3>
+                      <div className="form-group">
+                        <label>Window Opacity: {Math.round(opacity * 100)}%</label>
+                        <input
+                          type="range"
+                          min="20"
+                          max="100"
+                          value={Math.round(opacity * 100)}
+                          onChange={(e) => setOpacity(Number(e.target.value) / 100)}
+                          style={{ width: '100%', accentColor: '#007acc' }}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginTop: 16 }}>
+                        <label>Updates</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                          <button
+                            className="btn-primary"
+                            onClick={handleCheckUpdate}
+                            disabled={updateState === 'checking' || updateState === 'downloading' || updateState === 'installing'}
+                            style={{ fontSize: '12px', padding: '4px 12px' }}
+                          >
+                            {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
+                          </button>
+                          {updateInfo ? (
+                            <span style={{ color: '#4ec9b0' }}>
+                              New version v{updateInfo.version}
+                            </span>
+                          ) : updateInfo === null && updateState !== 'checking' ? (
+                            <span>Up to date</span>
+                          ) : null}
+                        </div>
+                        {updateInfo && (
+                          <div style={{ marginTop: 8 }}>
+                            <button
+                              className="btn-primary"
+                              onClick={handleDownloadUpdate}
+                              disabled={updateState !== 'idle'}
+                              style={{ fontSize: '12px', padding: '4px 12px' }}
+                            >
+                              {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Download & Install'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Disconnected overlay */}
+                  {tab.status === 'disconnected' ? (
+                    <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
+                      <div className="icon">🔌</div>
+                      <div style={{ color: '#f44747' }}>Connection lost</div>
+                      <div style={{ fontSize: '12px', color: '#888' }}>
+                        {tab.connectionName} — {tab.host}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>
+                        Press Enter to retry
+                      </div>
+                      <button
+                        className="btn-primary"
+                        onClick={() => handleReconnect(tab.tabId)}
+                        style={{ marginTop: 12, fontSize: '13px', padding: '6px 20px' }}
+                      >
+                        🔄 Reconnect
+                      </button>
+                    </div>
+                  ) : tab.tabType === 'settings' ? (
                     <div className="settings-tab-content">
                       <h3>Settings</h3>
                       <div className="form-group">
@@ -576,11 +717,22 @@ export default function App() {
                           {tab.errorMessage}
                         </div>
                       )}
+                      <div style={{ fontSize: '12px', color: '#666', marginTop: 12 }}>
+                        Press Enter to retry
+                      </div>
+                      <button
+                        className="btn-primary"
+                        onClick={() => handleReconnect(tab.tabId)}
+                        style={{ marginTop: 8, fontSize: '13px', padding: '6px 20px' }}
+                      >
+                        🔄 Reconnect
+                      </button>
                     </div>
                   ) : (
                     <TerminalComponent
                       tabId={tab.tabId}
                       isActive={tab.tabId === activeTabId}
+                      reconnectTrigger={reconnectKeys[tab.tabId] || 0}
                       connectConfig={
                         tab.connectionId
                           ? (() => {

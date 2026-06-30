@@ -250,13 +250,10 @@ pub async fn connect(
 
   eprintln!("[connect] tab={} host={}:{} user={}", tab_id, host, port, username);
 
-  // Push "connecting" message to output buffer
+  // Clear stale output for this tab from previous sessions
   {
     if let Ok(mut buffers) = state.output_buffers.lock() {
-      buffers
-        .entry(tab_id)
-        .or_default()
-        .push(format!("Connecting to {}:{} as {} ...\r\n", host, port, username));
+      buffers.remove(&tab_id);
     }
   }
 
@@ -276,6 +273,9 @@ pub async fn connect(
   let (data_tx, data_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
   let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
+  // Bump session version so stale tasks can detect they've been replaced
+  let session_id = state.next_session_id.fetch_add(1, Ordering::SeqCst);
+
   // Background task: establish SSH connection and run I/O loop
   {
     let app_handle = app.clone();
@@ -284,6 +284,18 @@ pub async fn connect(
 
     tauri::async_runtime::spawn(async move {
       eprintln!("[russh] connecting to {}:{}", cfg.host, cfg.port);
+
+      // Push "connecting" message — only if this session is still current
+      if let Some(s) = app_handle.try_state::<AppState>() {
+        if let Ok(sessions) = s.sessions.lock() {
+          if sessions.get(&tid).map_or(false, |s| s.session_id == session_id) {
+            if let Ok(mut buf) = s.output_buffers.lock() {
+              buf.entry(tid).or_default()
+                .push(format!("Connecting to {}:{} as {} ...\r\n", cfg.host, cfg.port, cfg.username));
+            }
+          }
+        }
+      }
 
       let emit_error = |app: &tauri::AppHandle, tid: u32, msg: &str| {
         if let Some(state) = app.try_state::<AppState>() {
@@ -402,13 +414,17 @@ pub async fn connect(
         }
       }
 
-      // Push ready message to output buffer
+      // Push ready message to output buffer — only if this session is still current
       if let Some(state) = app_handle.try_state::<AppState>() {
-        if let Ok(mut buffers) = state.output_buffers.lock() {
-          buffers
-            .entry(tid)
-            .or_default()
-            .push("\r\n\x1b[33m=== SSH session ready ===\x1b[0m\r\n".to_string());
+        if let Ok(sessions) = state.sessions.lock() {
+          if sessions.get(&tid).map_or(false, |s| s.session_id == session_id) {
+            if let Ok(mut buffers) = state.output_buffers.lock() {
+              buffers
+                .entry(tid)
+                .or_default()
+                .push("\r\n\x1b[33m=== SSH session ready ===\x1b[0m\r\n".to_string());
+            }
+          }
         }
       }
       eprintln!("[russh] test event pushed to buffer for tab={}", tid);
@@ -417,6 +433,20 @@ pub async fn connect(
       run_session_loop(channel, data_rx, shutdown_rx, handle, tid).await;
 
       eprintln!("[russh] disconnected for tab={}", tid);
+      // Notify frontend that connection closed, but only if this session hasn't been replaced
+      if let Some(app_state) = app_handle.try_state::<AppState>() {
+        if let Ok(sessions) = app_state.sessions.lock() {
+          if let Some(s) = sessions.get(&tid) {
+            if s.session_id == session_id {
+              let _ = app_handle.emit("connection-closed", serde_json::json!({
+                "tabId": tid,
+              }));
+            } else {
+              eprintln!("[russh] session_id changed for tab={}, skipping stale event", tid);
+            }
+          }
+        }
+      }
     });
   }
 
@@ -435,6 +465,7 @@ pub async fn connect(
         channel_arc: None,
         session_handle: None, // SFTP reconnects via fresh auth per operation
         switched_sftp_user: None,
+        session_id,
       },
     );
   }

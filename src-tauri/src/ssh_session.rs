@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use tauri::Manager;
 use tokio::sync::mpsc;
 
@@ -118,6 +118,9 @@ pub struct SshSession {
   pub session_handle: Option<russh::client::Handle<SshHandler>>,
   /// Optional switched user for SFTP operations (different from connection config user)
   pub switched_sftp_user: Option<SwitchedUser>,
+  /// Monotonic session version — incremented on each reconnection for the same tab
+  /// Used to prevent stale tasks from emitting spurious connection-closed events
+  pub session_id: u64,
 }
 
 /// Switched SFTP user — allows operating files with a different user's permissions
@@ -141,6 +144,8 @@ pub struct AppState {
   pub output_buffers: StdMutex<HashMap<u32, Vec<String>>>,
   /// Transfer pause controls: tab_id → control
   pub transfer_controls: StdMutex<HashMap<u32, Arc<TransferControl>>>,
+  /// Monotonic connection counter — bumped per new connect() call
+  pub next_session_id: AtomicU64,
 }
 
 impl AppState {
@@ -152,6 +157,7 @@ impl AppState {
       sessions: StdMutex::new(HashMap::new()),
       output_buffers: StdMutex::new(HashMap::new()),
       transfer_controls: StdMutex::new(HashMap::new()),
+      next_session_id: AtomicU64::new(1),
     }
   }
 }
