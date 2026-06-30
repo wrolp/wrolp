@@ -25,7 +25,6 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [connectionListHeight, setConnectionListHeight] = useState(200)
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
-  const [showSettings, setShowSettings] = useState(false)
   const [showSidebar, setShowSidebar] = useState(true)
   const [connectionsExpanded, setConnectionsExpanded] = useState(true)
   const [filesExpanded, setFilesExpanded] = useState(true)
@@ -200,20 +199,43 @@ export default function App() {
       connectionName: conn.name,
       host: `${conn.host}:${conn.port}`,
       status: 'connecting',
+      tabType: 'terminal',
     }
 
     setTabs((prev) => [...prev, newTab])
     setActiveTabId(tabId)
   }, [])
 
+  // Open settings as a tab (reuse if already open)
+  const handleOpenSettings = useCallback(() => {
+    const existing = tabs.find(t => t.tabType === 'settings')
+    if (existing) {
+      setActiveTabId(existing.tabId)
+      return
+    }
+    const tabId = nextTabId++
+    const settingsTab: TabInfo = {
+      tabId,
+      connectionName: 'Settings',
+      host: '',
+      status: 'settings',
+      tabType: 'settings',
+    }
+    setTabs(prev => [...prev, settingsTab])
+    setActiveTabId(tabId)
+  }, [tabs])
+
   // Close tab
   const closeTab = useCallback(
     async (tabId: number) => {
-      // Disconnect SSH session
-      try {
-        await invoke('disconnect', { tabId })
-      } catch (e) {
-        console.error('Disconnect error:', e)
+      const tab = tabs.find(t => t.tabId === tabId)
+      // Only disconnect SSH sessions, not settings tab
+      if (tab?.tabType === 'terminal') {
+        try {
+          await invoke('disconnect', { tabId })
+        } catch (e) {
+          console.error('Disconnect error:', e)
+        }
       }
 
       setTabs((prev) => {
@@ -224,7 +246,7 @@ export default function App() {
         return newTabs
       })
     },
-    [activeTabId],
+    [activeTabId, tabs],
   )
 
   // Select connection — always open a new tab
@@ -238,8 +260,9 @@ export default function App() {
   // Compute tab display label (number tabs sharing the same connection)
   const getTabLabel = useCallback(
     (tab: TabInfo): string => {
+      if (tab.tabType === 'settings') return '⚙ Settings'
       if (!tab.connectionId) return tab.connectionName
-      const siblings = tabs.filter((t) => t.connectionId === tab.connectionId)
+      const siblings = tabs.filter((t) => t.tabType === 'terminal' && t.connectionId === tab.connectionId)
       if (siblings.length <= 1) return tab.connectionName
       const idx = siblings.findIndex((t) => t.tabId === tab.tabId)
       return `${tab.connectionName} (${idx + 1})`
@@ -251,7 +274,7 @@ export default function App() {
   const duplicateTab = useCallback(
     (tab: TabInfo) => {
       setTabContextMenu(null)
-      if (!tab.connectionId) return
+      if (tab.tabType !== 'terminal' || !tab.connectionId) return
       const conn = cachedConnections.find((c) => c.id === tab.connectionId)
       if (conn) openTab(conn)
     },
@@ -340,7 +363,7 @@ export default function App() {
   return (
     <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
-      <Titlebar onSettings={() => setShowSettings(true)} />
+      <Titlebar onSettings={handleOpenSettings} />
 
       <div className="main-content">
         {/* Left sidebar — connection list + file panel */}
@@ -457,7 +480,7 @@ export default function App() {
           </div>
 
           {/* Tab right-click context menu */}
-          {tabContextMenu && tabContextMenu.tab.connectionId && (
+          {tabContextMenu && tabContextMenu.tab.tabType === 'terminal' && tabContextMenu.tab.connectionId && (
             <div
               className="tab-context-menu"
               style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
@@ -488,7 +511,54 @@ export default function App() {
                     height: '100%',
                   }}
                 >
-                  {tab.status === 'error' ? (
+                  {tab.tabType === 'settings' ? (
+                    <div className="settings-tab-content">
+                      <h3>Settings</h3>
+                      <div className="form-group">
+                        <label>Window Opacity: {Math.round(opacity * 100)}%</label>
+                        <input
+                          type="range"
+                          min="20"
+                          max="100"
+                          value={Math.round(opacity * 100)}
+                          onChange={(e) => setOpacity(Number(e.target.value) / 100)}
+                          style={{ width: '100%', accentColor: '#007acc' }}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginTop: 16 }}>
+                        <label>Updates</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                          <button
+                            className="btn-primary"
+                            onClick={handleCheckUpdate}
+                            disabled={updateState === 'checking' || updateState === 'downloading' || updateState === 'installing'}
+                            style={{ fontSize: '12px', padding: '4px 12px' }}
+                          >
+                            {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
+                          </button>
+                          {updateInfo ? (
+                            <span style={{ color: '#4ec9b0' }}>
+                              New version v{updateInfo.version}
+                            </span>
+                          ) : updateInfo === null && updateState !== 'checking' ? (
+                            <span>Up to date</span>
+                          ) : null}
+                        </div>
+                        {updateInfo && (
+                          <div style={{ marginTop: 8 }}>
+                            <button
+                              className="btn-primary"
+                              onClick={handleDownloadUpdate}
+                              disabled={updateState !== 'idle'}
+                              style={{ fontSize: '12px', padding: '4px 12px' }}
+                            >
+                              {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Download & Install'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : tab.status === 'error' ? (
                     <div className="terminal-placeholder">
                       <div style={{ color: '#f44747' }}>
                         Connection failed: {tab.connectionName}
@@ -551,6 +621,9 @@ export default function App() {
             if (!activeTab) {
               return <span className="status-text">No active connection</span>
             }
+            if (activeTab.tabType === 'settings') {
+              return <span className="status-text">⚙ Settings</span>
+            }
             return (
               <>
                 <span
@@ -585,72 +658,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Settings modal */}
-      {showSettings && (
-        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Settings</h3>
-              <span
-                onClick={() => setShowSettings(false)}
-                style={{ cursor: 'pointer', fontSize: '18px', color: '#888' }}
-              >
-                ✕
-              </span>
-            </div>
-            <div className="modal-body" style={{ color: '#888', fontSize: '13px' }}>
-              <div className="form-group">
-                <label>Window Opacity: {Math.round(opacity * 100)}%</label>
-                <input
-                  type="range"
-                  min="20"
-                  max="100"
-                  value={Math.round(opacity * 100)}
-                  onChange={(e) => setOpacity(Number(e.target.value) / 100)}
-                  style={{ width: '100%', accentColor: '#007acc' }}
-                />
-              </div>
-              <div className="form-group" style={{ marginTop: 16 }}>
-                <label>Updates</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
-                  <button
-                    className="btn-primary"
-                    onClick={handleCheckUpdate}
-                    disabled={updateState === 'checking' || updateState === 'downloading' || updateState === 'installing'}
-                    style={{ fontSize: '12px', padding: '4px 12px' }}
-                  >
-                    {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
-                  </button>
-                  {updateInfo ? (
-                    <span style={{ color: '#4ec9b0' }}>
-                      New version v{updateInfo.version}
-                    </span>
-                  ) : updateInfo === null && updateState !== 'checking' ? (
-                    <span>Up to date</span>
-                  ) : null}
-                </div>
-                {updateInfo && (
-                  <div style={{ marginTop: 8 }}>
-                    <button
-                      className="btn-primary"
-                      onClick={handleDownloadUpdate}
-                      disabled={updateState !== 'idle'}
-                      style={{ fontSize: '12px', padding: '4px 12px' }}
-                    >
-                      {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Download & Install'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn-primary" onClick={() => setShowSettings(false)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

@@ -404,6 +404,24 @@ body.resize-v * {
   }
 }
 
+// ===== Settings Tab =====
+.settings-tab-content {
+  max-width: 480px;
+  margin: 40px auto;
+  padding: 24px;
+  color: #ccc;
+  font-size: 13px;
+
+  h3 {
+    font-size: 16px;
+    font-weight: 500;
+    color: $text-primary;
+    margin-bottom: 20px;
+    border-bottom: 1px solid $border;
+    padding-bottom: 10px;
+  }
+}
+
 // ===== Modal =====
 .modal-overlay {
   position: fixed;

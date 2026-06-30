@@ -13,11 +13,12 @@ export type AuthType = 'password' | 'key'
 
 export interface TabInfo {
   tabId: number
-  connectionId: string
+  connectionId?: string
   connectionName: string
   host: string
-  status: 'disconnected' | 'connecting' | 'connected' | 'error'
+  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'settings'
   errorMessage?: string
+  tabType: 'terminal' | 'settings'
 }
 
 export interface TerminalOutput {
