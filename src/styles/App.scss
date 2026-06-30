@@ -1,4 +1,5 @@
 @use 'variables' as *;
+@use 'sass:color';
 
 html,
 body {
@@ -981,7 +982,7 @@ body.resize-v * {
     border-radius: 3px;
     cursor: pointer;
     &:hover {
-      background: lighten($accent, 8%);
+      background: color.adjust($accent, $lightness: 8%);
     }
     &:disabled {
       opacity: 0.6;
