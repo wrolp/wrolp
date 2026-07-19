@@ -1105,3 +1105,298 @@ body.resize-v * {
     }
   }
 }
+
+// ==================== Bottom Panel ====================
+
+.bottom-panel {
+  flex-shrink: 0;
+  border-top: 1px solid $border;
+  background: $bg-secondary;
+  display: flex;
+  flex-direction: column;
+
+  &:not(.expanded) {
+    height: 28px;
+  }
+
+  &.expanded {
+    height: 240px;
+    min-height: 120px;
+  }
+
+  &-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 4px;
+    height: 28px;
+    flex-shrink: 0;
+    border-bottom: 1px solid $border;
+    background: $bg-secondary;
+
+    .collapse-chevron {
+      cursor: pointer;
+      color: $text-muted;
+      padding: 0 4px;
+      font-size: 10px;
+      user-select: none;
+      &:hover { color: $text-primary; }
+    }
+  }
+
+  .tab-btn {
+    background: none;
+    border: none;
+    color: $text-muted;
+    cursor: pointer;
+    padding: 3px 10px;
+    font-size: 12px;
+    border-radius: 3px 3px 0 0;
+    border-bottom: 2px solid transparent;
+
+    &:hover { color: $text-primary; background: $bg-hover; }
+    &.active {
+      color: $text-primary;
+      border-bottom-color: $accent;
+    }
+  }
+
+  &-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+// Shared panel styles
+.panel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+
+  .filter-select, .speed-select {
+    background: $bg-primary;
+    border: 1px solid $border;
+    color: $text-primary;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  .refresh-btn, .add-btn {
+    background: none;
+    border: 1px solid $border;
+    color: $text-muted;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    &:hover { color: $text-primary; border-color: $accent; }
+  }
+
+  .add-btn {
+    margin-left: auto;
+    color: $accent;
+    border-color: rgba($accent, 0.3);
+    background: rgba($accent, 0.1);
+    &:hover { background: rgba($accent, 0.2); }
+  }
+
+  .session-count, .cmd-set-count {
+    font-size: 11px;
+    color: $text-dim;
+  }
+}
+
+.panel-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-dim;
+  font-size: 13px;
+  padding: 20px;
+  text-align: center;
+}
+
+// Session list
+.session-table, .cmd-set-table {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 0;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb { background: #424242; }
+}
+
+.session-row, .cmd-set-row {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  gap: 8px;
+  border-bottom: 1px solid rgba($border, 0.5);
+
+  &:hover { background: $bg-hover; }
+
+  &-info {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+
+    button {
+      background: none;
+      border: none;
+      color: $text-muted;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 13px;
+      &:hover { background: $bg-hover; color: $text-primary; }
+      &:disabled { opacity: 0.3; cursor: default; }
+    }
+  }
+}
+
+.session-name, .cmd-set-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-meta, .cmd-set-meta {
+  font-size: 11px;
+  color: $text-muted;
+}
+
+.rename-input {
+  font-size: 13px;
+  padding: 1px 4px;
+  background: $bg-primary;
+  border: 1px solid $accent;
+  color: $text-primary;
+  border-radius: 2px;
+  width: 100%;
+}
+
+// Session viewer (playback)
+.session-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+
+  &-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+    background: $bg-secondary;
+  }
+
+  &-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: $text-primary;
+  }
+
+  &-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+
+    button {
+      background: none;
+      border: 1px solid $border;
+      color: $text-muted;
+      cursor: pointer;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 14px;
+      &:hover { color: $text-primary; border-color: $accent; }
+      &:disabled { opacity: 0.3; cursor: default; }
+    }
+
+    .speed-select {
+      background: $bg-primary;
+      border: 1px solid $border;
+      color: $text-primary;
+      font-size: 12px;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    .time-display {
+      font-size: 11px;
+      color: $text-muted;
+      min-width: 70px;
+      text-align: right;
+    }
+
+    .close-btn {
+      border: none;
+      font-size: 16px;
+      padding: 0 4px;
+    }
+  }
+
+  &-timeline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+
+    .timeline-slider {
+      flex: 1;
+      height: 4px;
+      accent-color: $accent;
+    }
+
+    .event-count {
+      font-size: 11px;
+      color: $text-dim;
+      min-width: 100px;
+      text-align: right;
+    }
+  }
+
+  &-terminal {
+    flex: 1;
+    overflow: hidden;
+    padding: 4px;
+  }
+}
+
+// Command set editor textarea
+.commands-textarea {
+  width: 100%;
+  min-height: 200px;
+  background: $bg-primary;
+  border: 1px solid $border;
+  color: $text-primary;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 13px;
+  padding: 8px;
+  border-radius: 4px;
+  resize: vertical;
+
+  &:focus {
+    border-color: $accent;
+    outline: none;
+  }
+}

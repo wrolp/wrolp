@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry } from './types'
+import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -123,4 +123,49 @@ export async function getSftpUser(tabId: number): Promise<string | null> {
 /// Poll the remote working directory via a dedicated exec channel.
 export async function pollWorkingDir(tabId: number): Promise<string | null> {
   return await invoke<string | null>('poll_working_dir', { tabId })
+}
+
+// ===== Session Recording =====
+
+export async function listSessions(
+  connectionId?: string,
+  limit?: number,
+): Promise<SessionSummary[]> {
+  return await invoke<SessionSummary[]>('list_sessions', { connectionId, limit })
+}
+
+export async function getSessionEvents(sessionId: string): Promise<SessionEventDto[]> {
+  return await invoke<SessionEventDto[]>('get_session_events', { sessionId })
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  await invoke<void>('delete_session', { sessionId })
+}
+
+export async function renameSession(sessionId: string, title: string): Promise<void> {
+  await invoke<void>('rename_session', { sessionId, title })
+}
+
+export async function extractCommands(sessionId: string): Promise<string[]> {
+  return await invoke<string[]>('extract_commands', { sessionId })
+}
+
+export async function commitCommand(tabId: number, command: string): Promise<boolean> {
+  return await invoke<boolean>('commit_command', { tabId, command })
+}
+
+// ===== Command Sets =====
+
+export async function listCommandSets(
+  connectionId?: string,
+): Promise<CommandSetDto[]> {
+  return await invoke<CommandSetDto[]>('list_command_sets', { connectionId })
+}
+
+export async function saveCommandSet(cmdSet: CommandSetDto): Promise<string> {
+  return await invoke<string>('save_command_set', { cmdSet })
+}
+
+export async function deleteCommandSet(id: string): Promise<void> {
+  await invoke<void>('delete_command_set', { id })
 }

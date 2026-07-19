@@ -11,6 +11,33 @@ export interface ConnectionConfig {
   group?: string
 }
 
+export interface SessionSummary {
+  id: string
+  connectionId: string
+  connectionName: string | null
+  startedAt: string
+  endedAt: string | null
+  durationSeconds: number | null
+  title: string | null
+  eventCount: number
+}
+
+export interface SessionEventDto {
+  seq: number
+  timestampMs: number
+  direction: 'input' | 'output'
+  content: string
+}
+
+export interface CommandSetDto {
+  id: string
+  name: string
+  connectionId: string | null
+  commands: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 export type AuthType = 'password' | 'key'
 
 export interface TabInfo {

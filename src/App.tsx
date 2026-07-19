@@ -9,6 +9,7 @@ import { Titlebar } from './components/Titlebar'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
+import { BottomPanel } from './components/BottomPanel'
 import type { ConnectionConfig, TabInfo } from './types'
 import { loadWindowConfig, saveWindowConfig } from './commands'
 import './styles/App.scss'
@@ -29,6 +30,7 @@ export default function App() {
   const [showSidebar, setShowSidebar] = useState(true)
   const [connectionsExpanded, setConnectionsExpanded] = useState(true)
   const [filesExpanded, setFilesExpanded] = useState(true)
+  const [bottomPanelExpanded, setBottomPanelExpanded] = useState(false)
   const [syncEnabled, setSyncEnabled] = useState(() => {
     try {
       return localStorage.getItem('wrolp-sync-enabled') === '1'
@@ -779,6 +781,14 @@ export default function App() {
               ))
             )}
           </div>
+
+          {/* Bottom panel — session recordings & command sets */}
+          <BottomPanel
+            connections={connections}
+            activeTabId={activeTabId}
+            expanded={bottomPanelExpanded}
+            onToggleExpanded={() => setBottomPanelExpanded(v => !v)}
+          />
         </div>
       </div>
 

@@ -1,6 +1,8 @@
 use super::ssh_session::{
   AppState, ConnectionConfig, ConnectResult, FileEntry, SshError, SshHandler, SshSession, SwitchedUser, TransferControl,
+  ActiveRecording,
 };
+use crate::db::{self, CommandSetDto, SessionEventDto, SessionSummary};
 use russh::client::{self, Handler};
 use russh::ChannelId;
 use russh_keys::load_secret_key;
@@ -11,6 +13,7 @@ use std::path::PathBuf;
 use tauri::Manager;
 use tauri::Emitter;
 use tokio::io::AsyncReadExt;
+use uuid::Uuid;
 
 /// Wait if the transfer for this tab is paused. Returns immediately if not paused.
 async fn check_pause(control: &TransferControl) {
@@ -95,8 +98,8 @@ impl Handler for SshHandler {
   ) -> Result<(), Self::Error> {
     if !self.is_sftp {
       let text = String::from_utf8_lossy(data);
-      eprintln!("[russh data] {} bytes for tab={}: {:?}", data.len(), self.tab_id, &text[..text.len().min(80)]);
       self.emit(&text);
+      self.record_event("output", &text);
     }
     Ok(())
   }
@@ -111,7 +114,9 @@ impl Handler for SshHandler {
     if !self.is_sftp {
       // stderr → display in yellow
       let text = String::from_utf8_lossy(data);
-      self.emit(&format!("\u{1b}[33m{}\u{1b}[0m", text));
+      let formatted = format!("\u{1b}[33m{}\u{1b}[0m", text);
+      self.emit(&formatted);
+      self.record_event("output", &text);
     }
     Ok(())
   }
@@ -433,6 +438,34 @@ pub async fn connect(
       run_session_loop(channel, data_rx, shutdown_rx, handle, tid).await;
 
       eprintln!("[russh] disconnected for tab={}", tid);
+
+      // Finalize recording — only if this session hasn't been replaced
+      if let Some(app_state) = app_handle.try_state::<AppState>() {
+        let rec_to_finalize = {
+          if let Ok(mut recordings) = app_state.recordings.lock() {
+            let is_ours = recordings
+              .get(&tid)
+              .map_or(false, |r| r.session_version == session_id);
+            if is_ours {
+              recordings.remove(&tid)
+            } else {
+              None
+            }
+          } else {
+            None
+          }
+        };
+        if let Some(rec) = rec_to_finalize {
+          if let Ok(conn) = app_state.db.lock() {
+            let _ = db::insert_events(&conn, &rec.session_id, &rec.events);
+            let ended_at = chrono::Utc::now().to_rfc3339();
+            let duration = rec.started_at.elapsed().as_secs() as i64;
+            let db_count = db::count_session_events(&conn, &rec.session_id).unwrap_or(0);
+            let _ = db::finalize_session(&conn, &rec.session_id, &ended_at, duration, db_count);
+          }
+        }
+      }
+
       // Notify frontend that connection closed, but only if this session hasn't been replaced
       if let Some(app_state) = app_handle.try_state::<AppState>() {
         if let Ok(sessions) = app_state.sessions.lock() {
@@ -468,6 +501,68 @@ pub async fn connect(
         session_id,
       },
     );
+  }
+
+  // Create session recording entry
+  {
+    // Finalize any previous recording for this tab (reconnection case)
+    let old_recording = {
+      if let Ok(mut recordings) = state.recordings.lock() {
+        recordings.remove(&tab_id)
+      } else {
+        None
+      }
+    };
+    if let Some(old_rec) = old_recording {
+      if let Ok(conn) = state.db.lock() {
+        let _ = db::insert_events(&conn, &old_rec.session_id, &old_rec.events);
+        let ended_at = chrono::Utc::now().to_rfc3339();
+        let duration = old_rec.started_at.elapsed().as_secs() as i64;
+        let db_count = db::count_session_events(&conn, &old_rec.session_id).unwrap_or(0);
+        let _ = db::finalize_session(
+          &conn,
+          &old_rec.session_id,
+          &ended_at,
+          duration,
+          db_count,
+        );
+      }
+    }
+
+    let session_uuid = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now();
+    let started_at_iso = now.to_rfc3339();
+    let recording_enabled = std::env::var("WROLP_RECORDING")
+      .map(|v| v != "0" && v != "false")
+      .unwrap_or(true);
+
+    // Insert session record into SQLite
+    if let Ok(conn) = state.db.lock() {
+      let _ = db::create_session(
+        &conn,
+        &session_uuid,
+        &config.id,
+        &config.name,
+        tab_id,
+        &started_at_iso,
+      );
+    }
+
+    // Create in-memory recording buffer
+    let recording = ActiveRecording {
+      session_id: session_uuid,
+      session_version: session_id,
+      connection_id: config.id.clone(),
+      connection_name: config.name.clone(),
+      started_at: std::time::Instant::now(),
+      started_at_iso,
+      seq_counter: 0,
+      events: Vec::new(),
+      recording_enabled,
+    };
+    if let Ok(mut recordings) = state.recordings.lock() {
+      recordings.insert(tab_id, recording);
+    }
   }
 
   eprintln!("[connect] returning connected for tab={}", tab_id);
@@ -513,8 +608,26 @@ pub async fn send_input(
   };
 
   data_tx
-    .send(data.into_bytes())
+    .send(data.clone().into_bytes())
     .map_err(|e| format!("Failed to send input: {}", e))?;
+
+  // Record input event
+  if let Ok(mut recordings) = state.recordings.lock() {
+    if let Some(rec) = recordings.get_mut(&tab_id) {
+      if rec.recording_enabled {
+        let seq = rec.seq_counter;
+        rec.seq_counter += 1;
+        let elapsed = rec.started_at.elapsed().as_millis() as u64;
+        rec.events.push(db::RecordedEvent {
+          seq,
+          timestamp_ms: elapsed,
+          direction: "input".to_string(),
+          content: data,
+        });
+      }
+    }
+  }
+
   Ok(true)
 }
 
@@ -1239,4 +1352,184 @@ pub async fn load_window_config() -> Result<WindowConfig, String> {
     .map_err(|e| format!("Failed to read window config: {}", e))?;
   serde_json::from_str::<WindowConfig>(&content)
     .map_err(|e| format!("Failed to parse window config: {}", e))
+}
+
+// ==================== Session Recording ====================
+
+/// Flush all in-memory recording buffers to SQLite. Called periodically by a
+/// background task and on app shutdown.
+pub fn flush_all_recordings(state: &AppState) {
+  let mut to_flush: Vec<(String, Vec<db::RecordedEvent>)> = Vec::new();
+  {
+    if let Ok(mut recordings) = state.recordings.lock() {
+      for rec in recordings.values_mut() {
+        if rec.events.is_empty() {
+          continue;
+        }
+        let drained = std::mem::take(&mut rec.events);
+        to_flush.push((rec.session_id.clone(), drained));
+      }
+    }
+  }
+  if to_flush.is_empty() {
+    return;
+  }
+  if let Ok(conn) = state.db.lock() {
+    for (session_id, events) in to_flush {
+      let _ = db::insert_events(&conn, &session_id, &events);
+    }
+  }
+}
+
+#[tauri::command]
+pub async fn list_sessions(
+  state: tauri::State<'_, AppState>,
+  connection_id: Option<String>,
+  limit: Option<u32>,
+) -> Result<Vec<SessionSummary>, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::list_sessions(&conn, connection_id.as_deref(), limit.unwrap_or(100))
+}
+
+#[tauri::command]
+pub async fn get_session_events(
+  state: tauri::State<'_, AppState>,
+  session_id: String,
+) -> Result<Vec<SessionEventDto>, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::get_session_events(&conn, &session_id)
+}
+
+#[tauri::command]
+pub async fn delete_session(
+  state: tauri::State<'_, AppState>,
+  session_id: String,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::delete_session(&conn, &session_id)
+}
+
+#[tauri::command]
+pub async fn rename_session(
+  state: tauri::State<'_, AppState>,
+  session_id: String,
+  title: String,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::rename_session(&conn, &session_id, &title)
+}
+
+/// Record the full command line as submitted by the user. The text is captured
+/// on the frontend from the terminal buffer at the moment Enter is pressed, which
+/// preserves tab-completed text that is otherwise lost when only raw keystrokes
+/// (`input` events, which contain literal `\t`) are recorded.
+#[tauri::command]
+pub async fn commit_command(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  command: String,
+) -> Result<bool, String> {
+  if let Ok(mut recordings) = state.recordings.lock() {
+    if let Some(rec) = recordings.get_mut(&tab_id) {
+      if rec.recording_enabled {
+        let seq = rec.seq_counter;
+        rec.seq_counter += 1;
+        let elapsed = rec.started_at.elapsed().as_millis() as u64;
+        rec.events.push(db::RecordedEvent {
+          seq,
+          timestamp_ms: elapsed,
+          direction: "command".to_string(),
+          content: command,
+        });
+      }
+    }
+  }
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn extract_commands(
+  state: tauri::State<'_, AppState>,
+  session_id: String,
+) -> Result<Vec<String>, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  let events = db::get_session_events(&conn, &session_id)?;
+
+  // Prefer precise "command" events captured on Enter — they already contain
+  // tab-completed text and exact spacing, so they are more faithful than the
+  // raw keystroke stream.
+  let mut precise_commands: Vec<String> = Vec::new();
+  for ev in &events {
+    if ev.direction == "command" {
+      precise_commands.push(ev.content.clone());
+    }
+  }
+  if !precise_commands.is_empty() {
+    let mut seen = std::collections::HashSet::new();
+    let mut commands = Vec::new();
+    for raw in precise_commands {
+      let trimmed = raw.trim();
+      if trimmed.is_empty() {
+        continue;
+      }
+      if seen.insert(trimmed.to_string()) {
+        commands.push(trimmed.to_string());
+      }
+    }
+    return Ok(commands);
+  }
+
+  // Fallback for sessions recorded before precise command capture existed:
+  // reconstruct from the raw input stream. NOTE: commands that used tab
+  // completion will appear incomplete here (the literal `\t` is recorded but
+  // the server-completed text is not).
+  let mut all_input = String::new();
+  for ev in &events {
+    if ev.direction == "input" {
+      all_input.push_str(&ev.content);
+    }
+  }
+
+  // Split by newlines, filter empty, deduplicate preserving order
+  let mut seen = std::collections::HashSet::new();
+  let mut commands = Vec::new();
+  for line in all_input.split(['\n', '\r']) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+      continue;
+    }
+    if seen.insert(trimmed.to_string()) {
+      commands.push(trimmed.to_string());
+    }
+  }
+  Ok(commands)
+}
+
+// ==================== Command Sets ====================
+
+#[tauri::command]
+pub async fn list_command_sets(
+  state: tauri::State<'_, AppState>,
+  connection_id: Option<String>,
+) -> Result<Vec<CommandSetDto>, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::list_command_sets(&conn, connection_id.as_deref())
+}
+
+#[tauri::command]
+pub async fn save_command_set(
+  state: tauri::State<'_, AppState>,
+  cmd_set: CommandSetDto,
+) -> Result<String, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::save_command_set(&conn, &cmd_set)
+}
+
+#[tauri::command]
+pub async fn delete_command_set(
+  state: tauri::State<'_, AppState>,
+  id: String,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::delete_command_set(&conn, &id)
 }

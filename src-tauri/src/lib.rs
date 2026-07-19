@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod db;
 mod ssh_session;
 
 use ssh_session::AppState;
@@ -15,8 +16,35 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
-      let state = AppState::new();
+      // Initialize SQLite database
+      let data_dir = dirs::config_dir()
+        .map(|p| p.join("wrolp-terminal"))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+      let db_conn = db::init_db(&data_dir).unwrap_or_else(|e| {
+        eprintln!("[db] init failed: {}, using in-memory fallback", e);
+        // Fallback: try in-memory database so app still runs
+        let conn = rusqlite::Connection::open_in_memory()
+          .expect("Failed to open in-memory SQLite");
+        conn.execute_batch(include_str!("schema.sql")).ok();
+        std::sync::Arc::new(std::sync::Mutex::new(conn))
+      });
+
+      let state = AppState::new(db_conn);
       app.manage(state);
+
+      // Spawn periodic recording flush task (every 5 seconds)
+      {
+        let app_handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+          let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+          loop {
+            interval.tick().await;
+            if let Some(app_state) = app_handle.try_state::<AppState>() {
+              commands::flush_all_recordings(&app_state);
+            }
+          }
+        });
+      }
 
       // ---- Tray icon ----
       let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
@@ -109,6 +137,15 @@ pub fn run() {
       commands::poll_working_dir,
       commands::save_window_config,
       commands::load_window_config,
+      commands::list_sessions,
+      commands::get_session_events,
+      commands::delete_session,
+      commands::rename_session,
+      commands::extract_commands,
+      commands::commit_command,
+      commands::list_command_sets,
+      commands::save_command_set,
+      commands::delete_command_set,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use tauri::Manager;
 use tokio::sync::mpsc;
 
+use crate::db::{DbConn, RecordedEvent};
+
 /// Path to the SSH connections config file
 fn get_connections_path() -> Option<std::path::PathBuf> {
   dirs::config_dir().map(|p| p.join("wrolp-terminal").join("connections.json"))
@@ -106,6 +108,28 @@ impl SshHandler {
       }
     }
   }
+
+  /// Record a terminal event (input or output) for session recording
+  pub fn record_event(&self, direction: &str, content: &str) {
+    if let Some(state) = self.app_handle.try_state::<AppState>() {
+      if let Ok(mut recordings) = state.recordings.lock() {
+        if let Some(rec) = recordings.get_mut(&self.tab_id) {
+          if !rec.recording_enabled {
+            return;
+          }
+          let seq = rec.seq_counter;
+          rec.seq_counter += 1;
+          let elapsed = rec.started_at.elapsed().as_millis() as u64;
+          rec.events.push(RecordedEvent {
+            seq,
+            timestamp_ms: elapsed,
+            direction: direction.to_string(),
+            content: content.to_string(),
+          });
+        }
+      }
+    }
+  }
 }
 
 /// Active SSH session
@@ -140,6 +164,19 @@ pub struct TransferControl {
   pub notify: tokio::sync::Notify,
 }
 
+/// Active session recording — accumulates events in memory, flushed to SQLite periodically
+pub struct ActiveRecording {
+  pub session_id: String,
+  pub session_version: u64,
+  pub connection_id: String,
+  pub connection_name: String,
+  pub started_at: std::time::Instant,
+  pub started_at_iso: String,
+  pub seq_counter: u64,
+  pub events: Vec<RecordedEvent>,
+  pub recording_enabled: bool,
+}
+
 /// Global application state
 pub struct AppState {
   pub connections: StdMutex<Vec<ConnectionConfig>>,
@@ -150,10 +187,14 @@ pub struct AppState {
   pub transfer_controls: StdMutex<HashMap<u32, Arc<TransferControl>>>,
   /// Monotonic connection counter — bumped per new connect() call
   pub next_session_id: AtomicU64,
+  /// SQLite database for session recording and command sets
+  pub db: DbConn,
+  /// Active recordings: tab_id → recording buffer
+  pub recordings: StdMutex<HashMap<u32, ActiveRecording>>,
 }
 
 impl AppState {
-  pub fn new() -> Self {
+  pub fn new(db: DbConn) -> Self {
     let connections = get_initial_connections();
 
     Self {
@@ -162,6 +203,8 @@ impl AppState {
       output_buffers: StdMutex::new(HashMap::new()),
       transfer_controls: StdMutex::new(HashMap::new()),
       next_session_id: AtomicU64::new(1),
+      db,
+      recordings: StdMutex::new(HashMap::new()),
     }
   }
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useCallback, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { connect, sendInput, pollOutput, resizeTerminal } from '../commands'
+import { connect, sendInput, commitCommand, pollOutput, resizeTerminal } from '../commands'
 
 interface TerminalComponentProps {
   tabId: number
@@ -130,6 +130,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // User input → SSH
     term.onData((data) => {
       if (!isActiveRef.current) return
+      // Capture the full command line (with tab-completed text) when the user
+      // submits it, before the remote echo changes the buffer row.
+      if (data.includes('\r') || data.includes('\n')) {
+        commitSubmittedCommands(term, data, currentTabId)
+      }
       sendInput(currentTabId, data).catch((err) =>
         console.error('send_input error:', err),
       )
@@ -418,4 +423,63 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       )}
     </>
   )
+}
+
+// Read the full logical line under the cursor, reassembling wrapped
+// continuation lines so long tab-completed commands are not truncated.
+function getCurrentCommandLine(term: Terminal): string {
+  const buffer = term.buffer.active
+  const line = buffer.getLine(buffer.cursorY)
+  if (!line) return ''
+  let text = line.translateToString(true)
+  let y = buffer.cursorY
+  while (y > 0) {
+    const prev = buffer.getLine(y - 1)
+    if (prev && prev.isWrapped) {
+      text = prev.translateToString(true) + text
+      y -= 1
+    } else {
+      break
+    }
+  }
+  return text
+}
+
+// Remove ANSI escape sequences and strip a leading shell prompt so only the
+// command itself remains.
+function stripPrompt(line: string): string {
+  const noAnsi = line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+  const markers = ['$ ', '# ', '% ', '> ', '❯ ']
+  let idx = -1
+  for (const m of markers) {
+    const pos = noAnsi.lastIndexOf(m)
+    if (pos > idx) idx = pos
+  }
+  if (idx >= 0) {
+    return noAnsi.slice(idx + 2).trimEnd()
+  }
+  return noAnsi.trim()
+}
+
+// Capture commands submitted by the user. A single Enter commits the current
+// terminal-buffer line (which holds tab-completed text); a multi-line paste
+// commits each pasted line directly.
+function commitSubmittedCommands(term: Terminal, data: string, tabId: number) {
+  if (/^[\r\n]+$/.test(data)) {
+    const cmd = stripPrompt(getCurrentCommandLine(term))
+    if (cmd.trim().length > 0) {
+      commitCommand(tabId, cmd).catch((e) =>
+        console.error('commit_command error:', e),
+      )
+    }
+    return
+  }
+  for (const raw of data.split(/[\r\n]+/)) {
+    const cmd = raw.replace(/[\x00-\x1f]/g, '').trim()
+    if (cmd.length > 0) {
+      commitCommand(tabId, cmd).catch((e) =>
+        console.error('commit_command error:', e),
+      )
+    }
+  }
 }
