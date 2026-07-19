@@ -80,6 +80,10 @@ export function FileEditor({
       fontSize: 13,
       minimap: { enabled: showMinimap },
       scrollBeyondLastLine: false,
+      scrollbar: {
+        verticalScrollbarSize: 4,
+        horizontalScrollbarSize: 4,
+      },
       tabSize: 2,
       readOnly: false,
     })
