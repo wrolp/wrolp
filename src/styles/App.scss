@@ -1185,7 +1185,8 @@ body.resize-v * {
     overflow: hidden;
 
     .file-path-up,
-    .file-path-home {
+    .file-path-home,
+    .file-path-pin {
       cursor: pointer;
       padding: 1px 4px;
       border-radius: 2px;
@@ -1195,6 +1196,29 @@ body.resize-v * {
       &:hover {
         background: $bg-hover;
       }
+    }
+
+    .file-path-up.disabled {
+      cursor: default;
+      opacity: 0.35;
+
+      &:hover {
+        background: transparent;
+      }
+    }
+
+    .file-path-root {
+      flex-shrink: 0;
+      margin-left: 4px;
+      padding: 1px 6px;
+      border-radius: 2px;
+      font-size: 10px;
+      color: $accent;
+      background: rgba(0, 122, 204, 0.12);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 45%;
     }
 
     .file-path-text {

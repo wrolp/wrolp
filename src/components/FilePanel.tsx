@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, forwardRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, forwardRef, type ReactNode } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import type { FileEntry } from '../types'
 import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile, writeFileContent, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser, sendInput, pollWorkingDir } from '../commands'
@@ -57,6 +57,21 @@ function join(p: string, name: string): string {
   return base + name
 }
 
+// Whether `path` is the root itself or a descendant of `root`.
+// A root of '.' (home) or '/' is treated as unrestricted.
+function isWithinRoot(path: string, root: string): boolean {
+  if (root === '.' || root === '/') return true
+  const r = root.endsWith('/') ? root : root + '/'
+  const p = path.endsWith('/') && path !== '/' ? path.slice(0, -1) + '/' : path + '/'
+  return p === r || p.startsWith(r)
+}
+
+// Normalize: drop a single trailing slash (keep '/' itself).
+function normalizePath(p: string): string {
+  if (p === '/' || p === '.') return p
+  return p.endsWith('/') ? p.slice(0, -1) : p
+}
+
 function toNode(e: FileEntry): TreeNode {
   return {
     name: e.name,
@@ -110,6 +125,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   onEditFile,
 }, ref) {
   const [currentPath, setCurrentPath] = useState(defaultPath)
+  const [rootPath, setRootPath] = useState(defaultPath)
   const [tree, setTree] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -138,6 +154,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   /* ---- sync ---- */
   const syncRef = useRef(syncEnabled)
   syncRef.current = syncEnabled
+  const rootPathRef = useRef(rootPath)
+  rootPathRef.current = rootPath
   const lastPolledPath = useRef<string | null>(null)
 
   const cdToTerminal = useCallback(async (path: string) => {
@@ -216,7 +234,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         if (!active || !remotePath) return
         if (remotePath !== lastPolledPath.current) {
           lastPolledPath.current = remotePath
-          loadRootDir(remotePath, false)
+          if (rootPathRef.current === '.' || isWithinRoot(remotePath, rootPathRef.current)) {
+            loadRootDir(remotePath, false)
+          }
         }
       } catch { /* ignore */ }
     }
@@ -458,13 +478,19 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   /* ---- header actions ---- */
   const navigateUp = () => {
+    if (currentPath === rootPath) return
     if (currentPath === '/' || currentPath === '.') return
     const parts = currentPath.replace(/\/$/, '').split('/')
     parts.pop()
     const parent = parts.join('/') || '/'
     loadRootDir(parent, true)
   }
-  const goHome = () => loadRootDir('.', true)
+  const setRoot = (path: string) => {
+    const p = normalizePath(path)
+    setRootPath(p)
+    loadRootDir(p, true)
+  }
+  const goHome = () => { setRootPath('.'); loadRootDir('.', true) }
 
   const startEditPath = () => {
     setEditPathValue(currentPath === '.' ? '' : currentPath)
@@ -473,7 +499,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const commitEditPath = () => {
     setEditingPath(false)
     const trimmed = editPathValue.trim()
-    if (trimmed && trimmed !== (currentPath === '.' ? '' : currentPath)) loadRootDir(trimmed, true)
+    if (!trimmed) return
+    const norm = normalizePath(trimmed)
+    if (norm === (currentPath === '.' ? '' : currentPath)) return
+    if (isWithinRoot(norm, rootPath)) {
+      loadRootDir(norm, true)
+    } else if (window.confirm(`"${norm}" is outside the current root directory.\nSet it as the new root?`)) {
+      setRoot(norm)
+    }
   }
   const cancelEditPath = () => setEditingPath(false)
   const handlePathKeyDown = (e: React.KeyboardEvent) => {
@@ -509,7 +542,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }
 
   /* ---- recursive render ---- */
-  const renderNodes = (nodes: TreeNode[], depth: number): JSX.Element[] => {
+  const renderNodes = (nodes: TreeNode[], depth: number): ReactNode[] => {
     return nodes.map((node) => (
       <div key={node.path}>
         <div
@@ -574,8 +607,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       {expanded && (
         <>
           <div className="file-path-bar">
-            <span className="file-path-up" onClick={navigateUp} title="Parent">⬆</span>
+            <span
+              className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
+              onClick={currentPath === rootPath ? undefined : navigateUp}
+              title="Parent"
+            >⬆</span>
             <span className="file-path-home" onClick={goHome} title="Home">🏠</span>
+            <span className="file-path-pin" onClick={() => setRoot(currentPath)} title="Set current directory as root">📌</span>
             {editingPath ? (
               <input className="file-path-input" type="text" value={editPathValue}
                 onChange={(e) => setEditPathValue(e.target.value)}
@@ -585,6 +623,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               <span className="file-path-text" title={pathDisplay} onClick={startEditPath}>
                 {pathDisplay}
               </span>
+            )}
+            {rootPath !== '.' && (
+              <span className="file-path-root" title={`Root directory: ${rootPath}`}>📌 {rootPath}</span>
             )}
           </div>
 
@@ -661,6 +702,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           {contextMenu.node && !contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => handleDownload(contextMenu.node!)}>
               📥 Download
+            </div>
+          )}
+          {contextMenu.node && contextMenu.node.isDir && (
+            <div className="context-menu-item" onClick={() => setRoot(contextMenu.node!.path)}>
+              📌 Set as root
             </div>
           )}
           {contextMenu.node && <div className="context-menu-divider" />}
