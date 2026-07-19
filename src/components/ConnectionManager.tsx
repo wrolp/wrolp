@@ -1,8 +1,8 @@
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback, useMemo, useRef } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { ConnectionConfig } from '../types'
-import { saveConnection as saveConn, deleteConnection } from '../commands'
+import { saveConnection as saveConn, deleteConnection, reorderConnections } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 
 interface ConnectionManagerProps {
@@ -38,6 +38,113 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     conn: ConnectionConfig
   } | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
+  // Drag-and-drop state
+  const dragDataRef = useRef<{
+    type: 'connection' | 'group'
+    id?: string
+    group: string
+  } | null>(null)
+  const [dragOverTarget, setDragOverTarget] = useState<{
+    key: string // 'conn:<id>' | 'group:<key>' | 'group-end:<key>'
+    position: 'before' | 'after'
+  } | null>(null)
+
+  const groupOf = (conn: ConnectionConfig) => conn.group?.trim() || UNGROUPED
+
+  /**
+   * Compute the new full order of connection IDs (and any group changes)
+   * after a drag-and-drop operation, then persist via reorder_connections.
+   */
+  const handleDrop = useCallback(
+    async (
+      dropType: 'connection' | 'group' | 'group-end',
+      dropConnId: string | undefined,
+      dropGroup: string,
+      dropPosition: 'before' | 'after',
+    ) => {
+      const drag = dragDataRef.current
+      if (!drag) return
+
+      const allConns = [...connections]
+      const groupUpdates: Record<string, string> = {}
+
+      if (drag.type === 'connection') {
+        const dragConn = allConns.find((c) => c.id === drag.id)
+        if (!dragConn) return
+
+        // Remove dragged connection from the list
+        const filtered = allConns.filter((c) => c.id !== drag.id)
+
+        // If group changed, queue a group update
+        if (drag.group !== dropGroup) {
+          groupUpdates[drag.id!] = dropGroup === UNGROUPED ? '' : dropGroup
+        }
+
+        let insertIdx: number
+        if (dropType === 'group') {
+          // Drop on group header → add to end of that group
+          const groupConns = filtered.filter((c) => groupOf(c) === dropGroup)
+          if (groupConns.length === 0) {
+            insertIdx = filtered.length // empty group → end of list
+          } else {
+            const lastInGroup = groupConns[groupConns.length - 1]
+            insertIdx = filtered.findIndex((c) => c.id === lastInGroup.id) + 1
+          }
+        } else {
+          // Drop on a connection item
+          const dropIdx = filtered.findIndex((c) => c.id === dropConnId)
+          if (dropIdx < 0) return
+          insertIdx = dropPosition === 'after' ? dropIdx + 1 : dropIdx
+        }
+
+        filtered.splice(insertIdx, 0, dragConn)
+
+        const orderedIds = filtered.map((c) => c.id)
+        await reorderConnections(
+          orderedIds,
+          Object.keys(groupUpdates).length > 0 ? groupUpdates : undefined,
+        )
+      } else if (drag.type === 'group' && dropType === 'group') {
+        // Reordering whole groups — move all of dragGroup before/after dropGroup
+        if (drag.group === dropGroup) return
+
+        const dragGroupConns = allConns.filter((c) => groupOf(c) === drag.group)
+        if (dragGroupConns.length === 0) return
+
+        const remaining = allConns.filter((c) => groupOf(c) !== drag.group)
+
+        // Find the first connection of dropGroup in remaining
+        const firstDropIdx = remaining.findIndex((c) => groupOf(c) === dropGroup)
+        if (firstDropIdx < 0) {
+          // Drop group doesn't exist in remaining → append to end
+          remaining.push(...dragGroupConns)
+          const orderedIds = remaining.map((c) => c.id)
+          await reorderConnections(orderedIds)
+        } else {
+          const insertIdx = dropPosition === 'after' ? firstDropIdx + 1 : firstDropIdx
+          const newOrder = [
+            ...remaining.slice(0, insertIdx),
+            ...dragGroupConns,
+            ...remaining.slice(insertIdx),
+          ]
+          const orderedIds = newOrder.map((c) => c.id)
+          await reorderConnections(orderedIds)
+        }
+      }
+
+      dragDataRef.current = null
+      setDragOverTarget(null)
+      onConnectionChange()
+    },
+    [connections, onConnectionChange],
+  )
+
+  /** Determine before/after based on cursor Y relative to element center */
+  const computeDropPosition = (e: React.DragEvent, el: HTMLElement): 'before' | 'after' => {
+    const rect = el.getBoundingClientRect()
+    return e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  }
 
   const {
     listRef,
@@ -139,6 +246,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       e.preventDefault()
                       setContextMenu({ x: e.clientX, y: e.clientY, conn })
                     }}
+                    onDragStart={(e, c) => {
+                      dragDataRef.current = { type: 'connection', id: c.id, group: groupOf(c) }
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragOver={(e, c) => {
+                      e.preventDefault()
+                      const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                      setDragOverTarget({ key: `conn:${c.id}`, position: pos })
+                    }}
+                    onDragLeave={() => setDragOverTarget(null)}
+                    onDrop={(e, c) => {
+                      e.preventDefault()
+                      const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                      handleDrop('connection', c.id, groupOf(c), pos)
+                    }}
+                    onDragEnd={() => {
+                      dragDataRef.current = null
+                      setDragOverTarget(null)
+                    }}
+                    isDragOver={
+                      dragOverTarget?.key === `conn:${conn.id}`
+                        ? dragOverTarget.position
+                        : null
+                    }
                   />
                 ))
               ) : (
@@ -146,11 +277,47 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 grouped.map(([key, conns]) => {
                   const isUngrouped = key === UNGROUPED
                   const collapsed = collapsedGroups.has(key)
+                  const isGroupDragOver = dragOverTarget?.key === `group:${key}`
                   return (
                     <div key={key} className="conn-group">
                       <div
-                        className="conn-group-header"
+                        className={`conn-group-header${isGroupDragOver ? ' drag-over' : ''}`}
                         onClick={() => toggleGroup(key)}
+                        draggable={!isUngrouped}
+                        onDragStart={(e) => {
+                          if (isUngrouped) return
+                          dragDataRef.current = { type: 'group', group: key }
+                          e.dataTransfer.effectAllowed = 'move'
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault()
+                          // Only highlight if dragging a connection (to move into this group)
+                          // or dragging a group (to reorder)
+                          if (dragDataRef.current) {
+                            const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                            setDragOverTarget({ key: `group:${key}`, position: pos })
+                          }
+                        }}
+                        onDragLeave={() => {
+                          if (dragOverTarget?.key === `group:${key}`) setDragOverTarget(null)
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          if (!dragDataRef.current) return
+                          const drag = dragDataRef.current
+                          if (drag.type === 'connection') {
+                            // Move connection into this group (end of group)
+                            handleDrop('group', undefined, key, 'after')
+                          } else if (drag.type === 'group') {
+                            // Reorder groups
+                            const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                            handleDrop('group', undefined, key, pos)
+                          }
+                        }}
+                        onDragEnd={() => {
+                          dragDataRef.current = null
+                          setDragOverTarget(null)
+                        }}
                       >
                         <span className="collapse-chevron">
                           {collapsed ? '▶' : '▼'}
@@ -171,6 +338,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               e.preventDefault()
                               setContextMenu({ x: e.clientX, y: e.clientY, conn })
                             }}
+                            onDragStart={(e, c) => {
+                              dragDataRef.current = { type: 'connection', id: c.id, group: groupOf(c) }
+                              e.dataTransfer.effectAllowed = 'move'
+                            }}
+                            onDragOver={(e, c) => {
+                              e.preventDefault()
+                              const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                              setDragOverTarget({ key: `conn:${c.id}`, position: pos })
+                            }}
+                            onDragLeave={() => setDragOverTarget(null)}
+                            onDrop={(e, c) => {
+                              e.preventDefault()
+                              const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                              handleDrop('connection', c.id, groupOf(c), pos)
+                            }}
+                            onDragEnd={() => {
+                              dragDataRef.current = null
+                              setDragOverTarget(null)
+                            }}
+                            isDragOver={
+                              dragOverTarget?.key === `conn:${conn.id}`
+                                ? dragOverTarget.position
+                                : null
+                            }
                           />
                         ))}
                     </div>
@@ -238,6 +429,12 @@ interface ConnectionItemProps {
   indent?: boolean
   onSelect: (conn: ConnectionConfig) => void
   onContextMenu: (e: React.MouseEvent) => void
+  onDragStart: (e: React.DragEvent, conn: ConnectionConfig) => void
+  onDragOver: (e: React.DragEvent, conn: ConnectionConfig) => void
+  onDragLeave: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent, conn: ConnectionConfig) => void
+  onDragEnd: () => void
+  isDragOver: 'before' | 'after' | null
 }
 
 const ConnectionItem: React.FC<ConnectionItemProps> = ({
@@ -245,13 +442,27 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
   indent,
   onSelect,
   onContextMenu,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
+  isDragOver,
 }) => {
   return (
     <div
-      className={`connection-item${indent ? ' indented' : ''}`}
+      className={`connection-item${indent ? ' indented' : ''}${
+        isDragOver === 'before' ? ' drag-over-before' : ''
+      }${isDragOver === 'after' ? ' drag-over-after' : ''}`}
       title={conn.description || undefined}
       onClick={() => onSelect(conn)}
       onContextMenu={onContextMenu}
+      draggable
+      onDragStart={(e) => onDragStart(e, conn)}
+      onDragOver={(e) => onDragOver(e, conn)}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => onDrop(e, conn)}
+      onDragEnd={onDragEnd}
     >
       <span className="conn-icon">🔗</span>
       <div className="conn-info">

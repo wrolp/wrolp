@@ -205,6 +205,54 @@ pub async fn delete_connection(
   Ok(deleted)
 }
 
+/// Reorder connections by the given ordered list of IDs.
+/// Optionally update the `group` field for specific connections
+/// (used when dragging a connection into a different group).
+#[tauri::command]
+pub async fn reorder_connections(
+  state: tauri::State<'_, AppState>,
+  ordered_ids: Vec<String>,
+  group_updates: Option<std::collections::HashMap<String, String>>,
+) -> Result<bool, String> {
+  {
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+
+    // Apply group overrides (empty string = ungrouped / None)
+    if let Some(ref updates) = group_updates {
+      for conn in connections.iter_mut() {
+        if let Some(new_group) = updates.get(&conn.id) {
+          conn.group = if new_group.is_empty() { None } else { Some(new_group.clone()) };
+        }
+      }
+    }
+
+    // Sort by the new order; connections not in ordered_ids stay at the end
+    let order_map: std::collections::HashMap<&String, usize> = ordered_ids
+      .iter()
+      .enumerate()
+      .map(|(i, id)| (id, i))
+      .collect();
+    connections.sort_by_key(|c| order_map.get(&c.id).copied().unwrap_or(usize::MAX));
+  }
+
+  // Persist
+  let path = get_connections_path();
+  if let Some(ref path) = path {
+    if let Some(parent) = path.parent() {
+      let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let content = {
+      let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
+      serde_json::to_string_pretty(&*all_conns).ok()
+    };
+    if let Some(content) = content {
+      let _ = tokio::fs::write(path, content).await;
+    }
+  }
+
+  Ok(true)
+}
+
 // ==================== SSH Connection (russh) ====================
 
 /// I/O loop: session passed as parameter to prevent premature drop by async state machine

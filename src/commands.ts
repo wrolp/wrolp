@@ -14,6 +14,16 @@ export async function deleteConnection(id: string): Promise<boolean> {
   return await invoke<boolean>('delete_connection', { id })
 }
 
+export async function reorderConnections(
+  orderedIds: string[],
+  groupUpdates?: Record<string, string>,
+): Promise<boolean> {
+  return await invoke<boolean>('reorder_connections', {
+    orderedIds,
+    groupUpdates: groupUpdates ?? null,
+  })
+}
+
 export async function connect(
   config: ConnectionConfig,
   tabId: number,
