@@ -30,6 +30,8 @@ export const LANGUAGE_OPTIONS: LanguageOption[] = [
   { id: "dockerfile", label: "Dockerfile" },
   { id: "lua", label: "Lua" },
   { id: "makefile", label: "Makefile" },
+  { id: "nginx", label: "Nginx Config" },
+  { id: "properties", label: "Properties / .env" },
 ];
 
 const ExtMap: Record<string, string> = {
@@ -54,12 +56,15 @@ const ExtMap: Record<string, string> = {
   toml: "ini", ini: "ini", conf: "ini", cfg: "ini",
   sql: "sql",
   lua: "lua",
+  properties: "properties", env: "properties",
 };
+
 
 export function detectLanguage(filename: string): string {
   const lower = filename.toLowerCase();
   if (lower === "dockerfile" || lower.endsWith(".dockerfile")) return "dockerfile";
   if (lower.endsWith("makefile") || lower === "gnumakefile") return "makefile";
+  if (lower.endsWith("nginx.conf") || lower.endsWith(".nginx")) return "nginx";
   const ext = lower.includes(".") ? lower.split(".").pop()! : "";
   return ExtMap[ext] ?? "plaintext";
 }

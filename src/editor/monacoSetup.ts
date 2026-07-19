@@ -34,5 +34,9 @@ window.MonacoEnvironment = {
   },
 };
 
+// Register custom Monarch-based languages (nginx, properties, etc.)
+import { registerCustomLanguages } from "./customLanguages";
+registerCustomLanguages();
+
 export default monaco;
 export { monaco };
