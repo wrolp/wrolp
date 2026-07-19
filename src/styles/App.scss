@@ -174,20 +174,84 @@ body.resize-v * {
     color: #bbbbbb;
   }
 
+  &-list-wrapper {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
   &-list {
     flex: 1;
-    overflow-y: auto;
+    overflow-y: scroll;
     padding: 4px 0;
 
-    &::-webkit-scrollbar { width: 4px; }
-    &::-webkit-scrollbar-track { background: transparent; }
-    &::-webkit-scrollbar-thumb {
-      border-radius: 0;
-      background: transparent;
-      transition: background 0.3s;
-    }
+    // Hide native scrollbar — custom overlay scrollbar takes over
+    &::-webkit-scrollbar { display: none; }
+    scrollbar-width: none;
+  }
+}
 
-    &.show-scrollbar::-webkit-scrollbar-thumb { background: #424242; }
+// Custom overlay scrollbar (shared by sidebar-list and file-list)
+.sidebar-scrollbar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  z-index: 2;
+  pointer-events: none;
+
+  &-thumb {
+    position: absolute;
+    right: 0;
+    width: 4px;
+    border-radius: 0;
+    background: transparent;
+    transition: background 0.2s;
+    pointer-events: auto;
+  }
+
+  &.show &-thumb {
+    background: #424242;
+  }
+}
+
+// Connection grouping
+.conn-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.conn-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 2px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+
+  &:hover {
+    color: $text-secondary;
+  }
+
+  .conn-group-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conn-group-count {
+    font-size: 10px;
+    color: $text-dim;
+    font-weight: 400;
   }
 }
 
@@ -199,6 +263,10 @@ body.resize-v * {
   border-left: 3px solid transparent;
   transition: background 0.1s;
   gap: 8px;
+
+  &.indented {
+    padding-left: 24px;
+  }
 
   &:hover {
     background: $bg-hover;
@@ -233,6 +301,15 @@ body.resize-v * {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .conn-desc {
+    font-size: 11px;
+    color: $text-muted;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-style: italic;
   }
 
   .conn-status {
@@ -738,6 +815,11 @@ body.resize-v * {
           background: $bg-hover;
         }
 
+        &.sync-active {
+          color: $accent;
+          background: rgba($accent, 0.15);
+        }
+
         &:disabled {
           opacity: 0.4;
           cursor: default;
@@ -864,16 +946,22 @@ body.resize-v * {
     }
   }
 
+  .file-list-wrapper {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
   .file-list {
     flex: 1;
-    overflow-y: auto;
+    overflow-y: scroll;
     padding: 2px 0;
 
-    &::-webkit-scrollbar { width: 4px; }
-    &::-webkit-scrollbar-track { background: transparent; }
-    &::-webkit-scrollbar-thumb { border-radius: 0; background: transparent; }
-
-    &.show-scrollbar::-webkit-scrollbar-thumb { background: #424242; }
+    // Hide native scrollbar — custom overlay scrollbar takes over
+    &::-webkit-scrollbar { display: none; }
+    scrollbar-width: none;
   }
 
   .file-entry {

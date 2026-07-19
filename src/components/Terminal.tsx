@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react'
+import React, { useEffect, useRef, useCallback, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -41,6 +41,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const hasRun = useRef(false)
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     isActiveRef.current = isActive
@@ -140,6 +141,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     containerRef.current.addEventListener('click', handleClick)
 
+    // Right-click context menu for copy/paste/select-all
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setCtxMenu({ x: e.clientX, y: e.clientY })
+    }
+    containerRef.current.addEventListener('contextmenu', handleContextMenu)
+
     // Window resize
     const handleResize = () => {
       if (isActiveRef.current && fitRef.current) {
@@ -237,6 +246,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         pollTimerRef.current = null
       }
       containerRef.current?.removeEventListener('click', handleClick)
+      containerRef.current?.removeEventListener('contextmenu', handleContextMenu)
       window.removeEventListener('resize', handleResize)
       resizeObserverRef.current?.disconnect()
       resizeObserverRef.current = null
@@ -337,5 +347,75 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }, [isActive])
 
-  return <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+  // Close context menu on click anywhere
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = () => setCtxMenu(null)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [ctxMenu])
+
+  // Clipboard actions
+  const handleCopy = useCallback(async () => {
+    setCtxMenu(null)
+    const term = termRef.current
+    if (!term) return
+    const sel = term.getSelection()
+    if (sel) {
+      try {
+        await navigator.clipboard.writeText(sel)
+      } catch {
+        // Fallback: execCommand (some WebView2 contexts)
+        const ta = document.createElement('textarea')
+        ta.value = sel
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+    }
+  }, [])
+
+  const handlePaste = useCallback(async () => {
+    setCtxMenu(null)
+    const term = termRef.current
+    if (!term) return
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) {
+        await sendInput(tabIdRef.current, text)
+      }
+    } catch {
+      // Clipboard read may be blocked; silently ignore
+    }
+  }, [])
+
+  const handleSelectAll = useCallback(() => {
+    setCtxMenu(null)
+    termRef.current?.selectAll()
+  }, [])
+
+  return (
+    <>
+      <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+      {ctxMenu && (
+        <div
+          className="context-menu"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="context-menu-item" onClick={handleCopy}>
+            📋 Copy
+          </div>
+          <div className="context-menu-item" onClick={handlePaste}>
+            📎 Paste
+          </div>
+          <div className="context-menu-divider" />
+          <div className="context-menu-item" onClick={handleSelectAll}>
+            🔤 Select All
+          </div>
+        </div>
+      )}
+    </>
+  )
 }

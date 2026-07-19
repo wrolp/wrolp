@@ -29,6 +29,13 @@ export default function App() {
   const [showSidebar, setShowSidebar] = useState(true)
   const [connectionsExpanded, setConnectionsExpanded] = useState(true)
   const [filesExpanded, setFilesExpanded] = useState(true)
+  const [syncEnabled, setSyncEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('wrolp-sync-enabled') === '1'
+    } catch {
+      return false
+    }
+  })
   const [opacity, setOpacity] = useState(1)
   const [reconnectKeys, setReconnectKeys] = useState<Record<number, number>>({})
   const isDragging = useRef(false)
@@ -453,6 +460,16 @@ export default function App() {
                           defaultPath="."
                           expanded={filesExpanded}
                           onToggleExpanded={() => setFilesExpanded(v => !v)}
+                          syncEnabled={syncEnabled}
+                          onToggleSync={() => {
+                            const next = !syncEnabled
+                            setSyncEnabled(next)
+                            try {
+                              localStorage.setItem('wrolp-sync-enabled', next ? '1' : '0')
+                            } catch {
+                              // ignore localStorage errors
+                            }
+                          }}
                         />
                       </div>
                     </>

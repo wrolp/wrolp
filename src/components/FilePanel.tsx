@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import type { FileEntry } from '../types'
-import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser } from '../commands'
+import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser, sendInput, pollWorkingDir } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 
 interface TransferProgress {
   tabId: number
@@ -19,9 +20,11 @@ interface FilePanelProps {
   defaultPath?: string
   expanded?: boolean
   onToggleExpanded?: () => void
+  syncEnabled?: boolean
+  onToggleSync?: () => void
 }
 
-export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaultPath = '.', expanded = true, onToggleExpanded }) => {
+export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaultPath = '.', expanded = true, onToggleExpanded, syncEnabled = false, onToggleSync }) => {
   const [currentPath, setCurrentPath] = useState(defaultPath)
   const [files, setFiles] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -45,6 +48,11 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
   const [switchUsername, setSwitchUsername] = useState('')
   const [switchPassword, setSwitchPassword] = useState('')
 
+  // SFTP ↔ Shell sync
+  const syncRef = useRef(syncEnabled)
+  syncRef.current = syncEnabled
+  const lastPolledPath = useRef<string | null>(null)
+
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return '-'
     const units = ['B', 'KB', 'MB', 'GB']
@@ -63,7 +71,19 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
   }
 
-  const loadDir = useCallback(async (path: string) => {
+  // Send `cd` to the terminal so the shell follows file-panel navigation
+  const cdToTerminal = useCallback(async (path: string) => {
+    if (!syncRef.current) return
+    // "." means home — send bare `cd` to go to the home directory
+    const cmd = path === '.' ? 'cd\n' : `cd "${path}"\n`
+    try {
+      await sendInput(tabId, cmd)
+    } catch (e) {
+      console.error('Sync cd failed:', e)
+    }
+  }, [tabId])
+
+  const loadDir = useCallback(async (path: string, sendCd = false) => {
     setLoading(true)
     setError('')
     setTransferProgress(null)
@@ -71,12 +91,15 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       const result = await listFiles(tabId, path)
       setFiles(result)
       setCurrentPath(path)
+      if (sendCd) {
+        cdToTerminal(path)
+      }
     } catch (e) {
       setError(String(e))
     } finally {
       setLoading(false)
     }
-  }, [tabId])
+  }, [tabId, cdToTerminal])
 
   useEffect(() => {
     if (isConnected) {
@@ -84,6 +107,36 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
       getSftpUser(tabId).then(setSftpUser).catch(() => {})
     }
   }, [isConnected, tabId])
+
+  // Shell → FilePanel: poll remote working directory so the file panel
+  // follows `cd` commands typed in the terminal.
+  useEffect(() => {
+    if (!syncEnabled || !isConnected) return
+    let active = true
+
+    const poll = async () => {
+      if (!active) return
+      try {
+        const remotePath = await pollWorkingDir(tabId)
+        if (!active || !remotePath) return
+        if (remotePath !== lastPolledPath.current) {
+          lastPolledPath.current = remotePath
+          // Reload file list from the new path WITHOUT sending cd back
+          // (avoids a feedback loop: poll → cd → poll → …)
+          loadDir(remotePath, false)
+        }
+      } catch {
+        // Silently ignore — connection may be busy or unavailable
+      }
+    }
+
+    poll()
+    const interval = setInterval(poll, 5000)
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
+  }, [syncEnabled, isConnected, tabId, loadDir])
 
   // Listen for transfer progress events from Rust
   useEffect(() => {
@@ -246,16 +299,16 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     const parts = currentPath.replace(/\/$/, '').split('/')
     parts.pop()
     const parent = parts.join('/') || '/'
-    loadDir(parent)
+    loadDir(parent, true)
   }
 
   const goHome = () => {
-    loadDir('.')
+    loadDir('.', true)
   }
 
   const handleEntryClick = (entry: FileEntry) => {
     if (entry.isDir) {
-      loadDir(entry.path)
+      loadDir(entry.path, true)
     }
   }
 
@@ -395,7 +448,17 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
 
   const [editingPath, setEditingPath] = useState(false)
   const [editPathValue, setEditPathValue] = useState('')
-  const [listHovered, setListHovered] = useState(false)
+
+  const {
+    listRef: fileListRef,
+    thumbHeight: fileThumbHeight,
+    thumbTop: fileThumbTop,
+    showThumb: fileShowThumb,
+    onScroll: onFileScroll,
+    onThumbMouseDown: onFileThumbMouseDown,
+    onMouseEnter: onFileMouseEnter,
+    onMouseLeave: onFileMouseLeave,
+  } = useCustomScrollbar()
 
   const pathDisplay = currentPath === '.' ? '~ (home)' : currentPath
 
@@ -408,7 +471,7 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     setEditingPath(false)
     const trimmed = editPathValue.trim()
     if (trimmed && trimmed !== (currentPath === '.' ? '' : currentPath)) {
-      loadDir(trimmed)
+      loadDir(trimmed, true)
     }
   }
 
@@ -440,6 +503,15 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
         <span style={{ flex: 1 }}>Files</span>
         {expanded && (
           <div className="file-toolbar">
+            {onToggleSync && (
+              <button
+                title={syncEnabled ? 'Disable shell sync' : 'Enable shell sync (cd terminal ↔ files)'}
+                onClick={onToggleSync}
+                className={syncEnabled ? 'sync-active' : ''}
+              >
+                🔗
+              </button>
+            )}
             {sftpUser ? (
               <>
                 <span className="file-sftp-user" title={`SFTP operations as: ${sftpUser}`}>🔒{sftpUser}</span>
@@ -502,26 +574,38 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
           )}
 
           <div
-            className={`file-list${listHovered ? ' show-scrollbar' : ''}`}
-            onMouseEnter={() => setListHovered(true)}
-            onMouseLeave={() => setListHovered(false)}
+            className="file-list-wrapper"
+            onMouseEnter={onFileMouseEnter}
+            onMouseLeave={onFileMouseLeave}
           >
-            {error && <div className="file-error">{error}</div>}
-            {!loading &&
-              files.map((f) => (
+            <div className="file-list" ref={fileListRef} onScroll={onFileScroll}>
+              {error && <div className="file-error">{error}</div>}
+              {!loading &&
+                files.map((f) => (
+                  <div
+                    key={f.path}
+                    className={`file-entry ${f.isDir ? 'is-dir' : ''}`}
+                    onClick={() => handleEntryClick(f)}
+                    onContextMenu={(e) => handleEntryContextMenu(e, f)}
+                  >
+                    <span className="file-icon">{f.isDir ? '📁' : '📄'}</span>
+                    <span className="file-name" title={f.name}>{f.name}</span>
+                    <span className="file-size">{f.isDir ? '' : formatSize(f.size)}</span>
+                  </div>
+                ))}
+              {!loading && files.length === 0 && !error && (
+                <div className="file-empty">Empty directory</div>
+              )}
+            </div>
+
+            {fileThumbHeight > 0 && (
+              <div className={`sidebar-scrollbar${fileShowThumb ? ' show' : ''}`}>
                 <div
-                  key={f.path}
-                  className={`file-entry ${f.isDir ? 'is-dir' : ''}`}
-                  onClick={() => handleEntryClick(f)}
-                  onContextMenu={(e) => handleEntryContextMenu(e, f)}
-                >
-                  <span className="file-icon">{f.isDir ? '📁' : '📄'}</span>
-                  <span className="file-name" title={f.name}>{f.name}</span>
-                  <span className="file-size">{f.isDir ? '' : formatSize(f.size)}</span>
-                </div>
-              ))}
-            {!loading && files.length === 0 && !error && (
-              <div className="file-empty">Empty directory</div>
+                  className="sidebar-scrollbar-thumb"
+                  style={{ height: fileThumbHeight, top: fileThumbTop }}
+                  onMouseDown={onFileThumbMouseDown}
+                />
+              </div>
             )}
           </div>
 

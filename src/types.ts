@@ -7,6 +7,8 @@ export interface ConnectionConfig {
   password?: string
   keyPath?: string
   passphrase?: string
+  description?: string
+  group?: string
 }
 
 export type AuthType = 'password' | 'key'

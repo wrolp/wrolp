@@ -117,3 +117,10 @@ export async function revertSftpUser(tabId: number): Promise<void> {
 export async function getSftpUser(tabId: number): Promise<string | null> {
   return await invoke<string | null>('get_sftp_user', { tabId })
 }
+
+// ===== SFTP ↔ Shell Sync =====
+
+/// Poll the remote working directory via a dedicated exec channel.
+export async function pollWorkingDir(tabId: number): Promise<string | null> {
+  return await invoke<string | null>('poll_working_dir', { tabId })
+}

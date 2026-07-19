@@ -624,6 +624,99 @@ async fn open_sftp_session(
   Ok(sftp)
 }
 
+/// Poll the remote working directory via a dedicated exec channel.
+///
+/// Opens a fresh SSH connection (like SFTP operations do) so it never
+/// interferes with the interactive PTY. Used by the SFTP ↔ Shell sync feature
+/// to keep the file panel in step with `cd` commands typed in the terminal.
+#[tauri::command]
+pub async fn poll_working_dir(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<Option<String>, String> {
+  let config = {
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    sessions
+      .get(&tab_id)
+      .ok_or("Session not found")?
+      .config
+      .clone()
+  };
+
+  let ssh_config = Arc::new(client::Config::default());
+  let handler = SshHandler {
+    app_handle: app.clone(),
+    tab_id,
+    is_sftp: true,
+  };
+
+  let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
+    .await
+    .map_err(|e| format!("Connect failed: {}", e))?;
+
+  // Authenticate (reuse original config credentials — cwd should reflect the
+  // logged-in user, not a switched SFTP user)
+  if let Some(ref pw) = config.password {
+    if !handle
+      .authenticate_password(&config.username, pw)
+      .await
+      .map_err(|e| format!("Auth error: {}", e))?
+    {
+      return Err("Authentication failed".into());
+    }
+  } else if let Some(ref key_path) = config.key_path {
+    let resolved = expand_tilde(key_path);
+    let key = load_secret_key(&resolved, config.passphrase.as_deref())
+      .map_err(|e| format!("Failed to load key: {}", e))?;
+    if !handle
+      .authenticate_publickey(&config.username, Arc::new(key))
+      .await
+      .map_err(|e| format!("Key auth error: {}", e))?
+    {
+      return Err("Key authentication failed".into());
+    }
+  } else {
+    return Err("No credentials provided".into());
+  }
+
+  // Open a channel and exec `pwd`
+  let mut channel = handle
+    .channel_open_session()
+    .await
+    .map_err(|e| format!("Failed to open channel: {}", e))?;
+
+  channel
+    .exec(true, "pwd")
+    .await
+    .map_err(|e| format!("Failed to exec pwd: {}", e))?;
+
+  let mut output = String::new();
+  while let Some(msg) = channel.wait().await {
+    match msg {
+      russh::ChannelMsg::Data { data } => {
+        output.push_str(&String::from_utf8_lossy(&data));
+      }
+      russh::ChannelMsg::ExitStatus { .. } | russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
+        break;
+      }
+      _ => {}
+    }
+  }
+
+  // Let the handle drop gracefully in the background
+  tauri::async_runtime::spawn(async move {
+    let _h = handle;
+  });
+
+  let path = output.trim();
+  if path.is_empty() {
+    Ok(None)
+  } else {
+    Ok(Some(path.to_string()))
+  }
+}
+
 #[tauri::command]
 pub async fn list_files(
   app: tauri::AppHandle,

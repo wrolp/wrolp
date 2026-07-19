@@ -106,6 +106,7 @@ pub fn run() {
       commands::get_sftp_user,
       commands::pause_transfer,
       commands::resume_transfer,
+      commands::poll_working_dir,
       commands::save_window_config,
       commands::load_window_config,
     ])

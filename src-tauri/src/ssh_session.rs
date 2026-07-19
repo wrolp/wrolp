@@ -23,6 +23,10 @@ pub struct ConnectionConfig {
   pub password: Option<String>,
   pub key_path: Option<String>,
   pub passphrase: Option<String>,
+  #[serde(default)]
+  pub description: Option<String>,
+  #[serde(default)]
+  pub group: Option<String>,
 }
 
 fn default_port() -> u16 {

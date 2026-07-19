@@ -1,8 +1,9 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { ConnectionConfig } from '../types'
 import { saveConnection as saveConn, deleteConnection } from '../commands'
+import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[]
@@ -15,6 +16,8 @@ interface ConnectionManagerProps {
   expanded?: boolean
   onToggleExpanded?: () => void
 }
+
+const UNGROUPED = '__ungrouped__'
 
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   connections,
@@ -29,12 +32,43 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 }) => {
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
-  const [listHovered, setListHovered] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
     conn: ConnectionConfig
   } | null>(null)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
+  const {
+    listRef,
+    thumbHeight,
+    thumbTop,
+    showThumb,
+    onScroll,
+    onThumbMouseDown,
+    onMouseEnter,
+    onMouseLeave,
+  } = useCustomScrollbar()
+
+  // Group connections by `group` field, preserving insertion order
+  const grouped = useMemo(() => {
+    const map = new Map<string, ConnectionConfig[]>()
+    for (const conn of connections) {
+      const key = conn.group?.trim() || UNGROUPED
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(conn)
+    }
+    return Array.from(map.entries())
+  }, [connections])
+
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const handleEdit = (conn: ConnectionConfig) => {
     setEditing(conn)
@@ -80,47 +114,94 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           )}
         </div>
         {expanded && (
-        <div
-          className={`sidebar-list${listHovered ? ' show-scrollbar' : ''}`}
-          onMouseEnter={() => setListHovered(true)}
-          onMouseLeave={() => setListHovered(false)}
-        >
-          {connections.length === 0 ? (
-            <div className="empty-state">
-              <div>🖥️</div>
-              <div>No connections yet</div>
-              <div style={{ fontSize: '12px', marginTop: '8px' }}>
-                Click + to add a new SSH connection
-              </div>
-            </div>
-          ) : (
-            connections.map((conn) => (
-              <div
-                key={conn.id}
-                className="connection-item"
-                onClick={() => onSelectConnection(conn)}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  setContextMenu({ x: e.clientX, y: e.clientY, conn })
-                }}
-              >
-                <span className="conn-icon">🔗</span>
-                <div className="conn-info">
-                  <div className="conn-name">{conn.name}</div>
-                  <div className="conn-host">
-                    {conn.host}:{conn.port}
+          <div
+            className="sidebar-list-wrapper"
+            onMouseEnter={onMouseEnter}
+            onMouseLeave={onMouseLeave}
+          >
+            <div className="sidebar-list" ref={listRef} onScroll={onScroll}>
+              {connections.length === 0 ? (
+                <div className="empty-state">
+                  <div>🖥️</div>
+                  <div>No connections yet</div>
+                  <div style={{ fontSize: '12px', marginTop: '8px' }}>
+                    Click + to add a new SSH connection
                   </div>
                 </div>
+              ) : grouped.length === 1 && grouped[0][0] === UNGROUPED ? (
+                // No groups — render flat list
+                grouped[0][1].map((conn) => (
+                  <ConnectionItem
+                    key={conn.id}
+                    conn={conn}
+                    onSelect={onSelectConnection}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setContextMenu({ x: e.clientX, y: e.clientY, conn })
+                    }}
+                  />
+                ))
+              ) : (
+                // Grouped rendering
+                grouped.map(([key, conns]) => {
+                  const isUngrouped = key === UNGROUPED
+                  const collapsed = collapsedGroups.has(key)
+                  return (
+                    <div key={key} className="conn-group">
+                      <div
+                        className="conn-group-header"
+                        onClick={() => toggleGroup(key)}
+                      >
+                        <span className="collapse-chevron">
+                          {collapsed ? '▶' : '▼'}
+                        </span>
+                        <span className="conn-group-name">
+                          {isUngrouped ? 'Ungrouped' : key}
+                        </span>
+                        <span className="conn-group-count">{conns.length}</span>
+                      </div>
+                      {!collapsed &&
+                        conns.map((conn) => (
+                          <ConnectionItem
+                            key={conn.id}
+                            conn={conn}
+                            indent
+                            onSelect={onSelectConnection}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              setContextMenu({ x: e.clientX, y: e.clientY, conn })
+                            }}
+                          />
+                        ))}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            {thumbHeight > 0 && (
+              <div className={`sidebar-scrollbar${showThumb ? ' show' : ''}`}>
+                <div
+                  className="sidebar-scrollbar-thumb"
+                  style={{ height: thumbHeight, top: thumbTop }}
+                  onMouseDown={onThumbMouseDown}
+                />
               </div>
-            ))
-          )}
-        </div>
+            )}
+          </div>
         )}
       </div>
 
       {showModal && (
         <ConnectionModal
           connection={editing}
+          existingGroups={Array.from(
+            new Set(
+              connections
+                .map((c) => c.group?.trim())
+                .filter((g): g is string => !!g),
+            ),
+          )}
           onClose={() => {
             setShowModal(false)
             setEditing(null)
@@ -150,16 +231,57 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   )
 }
 
+// ===== Connection Item =====
+
+interface ConnectionItemProps {
+  conn: ConnectionConfig
+  indent?: boolean
+  onSelect: (conn: ConnectionConfig) => void
+  onContextMenu: (e: React.MouseEvent) => void
+}
+
+const ConnectionItem: React.FC<ConnectionItemProps> = ({
+  conn,
+  indent,
+  onSelect,
+  onContextMenu,
+}) => {
+  return (
+    <div
+      className={`connection-item${indent ? ' indented' : ''}`}
+      title={conn.description || undefined}
+      onClick={() => onSelect(conn)}
+      onContextMenu={onContextMenu}
+    >
+      <span className="conn-icon">🔗</span>
+      <div className="conn-info">
+        <div className="conn-name">{conn.name}</div>
+        {conn.description ? (
+          <div className="conn-desc" title={conn.description}>
+            {conn.description}
+          </div>
+        ) : (
+          <div className="conn-host">
+            {conn.host}:{conn.port}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ===== Connection Edit Modal =====
 
 interface ConnectionModalProps {
   connection: ConnectionConfig | null
+  existingGroups: string[]
   onClose: () => void
   onSave: (config: ConnectionConfig) => void
 }
 
 export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   connection,
+  existingGroups,
   onClose,
   onSave,
 }) => {
@@ -173,6 +295,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [password, setPassword] = useState(connection?.password || '')
   const [keyPath, setKeyPath] = useState(connection?.keyPath || '')
   const [passphrase, setPassphrase] = useState(connection?.passphrase || '')
+  const [group, setGroup] = useState(connection?.group || '')
+  const [description, setDescription] = useState(connection?.description || '')
 
   const handleBrowseKey = async () => {
     try {
@@ -203,6 +327,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
       password: authType === 'password' ? password : undefined,
       keyPath: authType === 'key' ? (keyPath.trim() || '~/.ssh/id_rsa') : undefined,
       passphrase: authType === 'key' ? passphrase || undefined : undefined,
+      group: group.trim() || undefined,
+      description: description.trim() || undefined,
     }
     onSave(config)
   }
@@ -246,6 +372,28 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="root"
+            />
+          </div>
+          <div className="form-group">
+            <label>Group (optional)</label>
+            <input
+              value={group}
+              onChange={(e) => setGroup(e.target.value)}
+              placeholder="Production / Staging / ..."
+              list="conn-groups"
+            />
+            <datalist id="conn-groups">
+              {existingGroups.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+          </div>
+          <div className="form-group">
+            <label>Description (optional)</label>
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Notes about this connection"
             />
           </div>
 
