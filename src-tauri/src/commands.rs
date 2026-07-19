@@ -133,6 +133,24 @@ fn get_connections_path() -> Option<std::path::PathBuf> {
   get_data_dir().map(|p| p.join("connections.json"))
 }
 
+/// Persist the current connections list to disk.
+async fn persist_connections(state: &tauri::State<'_, AppState>) -> Result<(), String> {
+  let path = get_connections_path();
+  if let Some(ref path) = path {
+    if let Some(parent) = path.parent() {
+      let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let content = {
+      let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
+      serde_json::to_string_pretty(&*all_conns).ok()
+    };
+    if let Some(content) = content {
+      let _ = tokio::fs::write(path, content).await;
+    }
+  }
+  Ok(())
+}
+
 pub(crate) fn get_window_config_path() -> Option<std::path::PathBuf> {
   get_data_dir().map(|p| p.join("window.json"))
 }
@@ -236,21 +254,60 @@ pub async fn reorder_connections(
   }
 
   // Persist
-  let path = get_connections_path();
-  if let Some(ref path) = path {
-    if let Some(parent) = path.parent() {
-      let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    let content = {
-      let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
-      serde_json::to_string_pretty(&*all_conns).ok()
-    };
-    if let Some(content) = content {
-      let _ = tokio::fs::write(path, content).await;
-    }
-  }
+  persist_connections(&state).await?;
 
   Ok(true)
+}
+
+/// Rename a group: updates the `group` field of every connection in that group.
+#[tauri::command]
+pub async fn rename_group(
+  state: tauri::State<'_, AppState>,
+  old_name: String,
+  new_name: String,
+) -> Result<bool, String> {
+  let changed = {
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    let new = new_name.trim().to_string();
+    let mut any = false;
+    for conn in connections.iter_mut() {
+      if conn.group.as_deref() == Some(old_name.as_str()) {
+        conn.group = if new.is_empty() { None } else { Some(new.clone()) };
+        any = true;
+      }
+    }
+    any
+  };
+
+  if changed {
+    persist_connections(&state).await?;
+  }
+  Ok(changed)
+}
+
+/// Delete a group: ungroup all connections that belong to it (the connections
+/// themselves are kept, just moved out of the group).
+#[tauri::command]
+pub async fn delete_group(
+  state: tauri::State<'_, AppState>,
+  group_name: String,
+) -> Result<bool, String> {
+  let changed = {
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    let mut any = false;
+    for conn in connections.iter_mut() {
+      if conn.group.as_deref() == Some(group_name.as_str()) {
+        conn.group = None;
+        any = true;
+      }
+    }
+    any
+  };
+
+  if changed {
+    persist_connections(&state).await?;
+  }
+  Ok(changed)
 }
 
 // ==================== SSH Connection (russh) ====================

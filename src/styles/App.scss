@@ -107,13 +107,25 @@ body.resize-v * {
 }
 
 // ===== Collapse Chevron =====
+// CSS-drawn chevron: points right (›) when collapsed, rotates 90° around its
+// own midpoint to point down (⌄) when expanded.
 .collapse-chevron {
-  cursor: pointer;
-  font-size: 10px;
-  padding: 2px 4px;
-  color: #888;
   flex-shrink: 0;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); // collapsed → points right
+  transform-origin: center center;
+  transition: transform 0.18s ease, color 0.15s ease;
+  cursor: pointer;
   user-select: none;
+
+  &.expanded {
+    transform: rotate(45deg); // expanded → points down
+  }
 
   &:hover {
     color: #ccc;
@@ -236,6 +248,9 @@ body.resize-v * {
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.4px;
+
+  // ">" group icon: rotates to point down when the group is expanded
+  // (chevron geometry/rotation is defined on the base `.collapse-chevron`)
 
   &:hover {
     color: $text-secondary;
@@ -835,6 +850,7 @@ body.resize-v * {
 }
 
 .form-group {
+  position: relative;
   margin-bottom: 16px;
 
   label {
@@ -863,6 +879,35 @@ body.resize-v * {
 
     &::placeholder {
       color: #777777;
+    }
+  }
+
+  // Case-sensitive group suggestion dropdown (replaces native <datalist>,
+  // which would coerce the typed casing to match an existing option).
+  .group-suggestions {
+    position: absolute;
+    z-index: 20;
+    left: 0;
+    right: 0;
+    margin: 2px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: $bg-secondary;
+    border: 1px solid $accent-hover;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    max-height: 180px;
+    overflow-y: auto;
+
+    li {
+      padding: 6px 12px;
+      font-size: 13px;
+      color: $text-primary;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(0, 122, 204, 0.18);
+      }
     }
   }
 }
@@ -1429,8 +1474,7 @@ body.resize-v * {
     .collapse-chevron {
       cursor: pointer;
       color: $text-muted;
-      padding: 0 4px;
-      font-size: 10px;
+      margin: 0 2px;
       user-select: none;
       &:hover { color: $text-primary; }
     }

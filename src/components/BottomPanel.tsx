@@ -45,12 +45,10 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
     <div className={`bottom-panel${expanded ? ' expanded' : ''}`}>
       <div className="bottom-panel-tabs">
         <span
-          className="collapse-chevron"
+          className={`collapse-chevron${expanded ? ' expanded' : ''}`}
           onClick={onToggleExpanded}
           title={expanded ? 'Collapse' : 'Expand'}
-        >
-          {expanded ? '▼' : '▶'}
-        </span>
+        />
         <button
           className={`tab-btn${activeTab === 'sessions' ? ' active' : ''}`}
           onClick={() => setActiveTab('sessions')}

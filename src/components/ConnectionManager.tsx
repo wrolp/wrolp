@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo, useRef } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { ConnectionConfig } from '../types'
-import { saveConnection as saveConn, deleteConnection, reorderConnections } from '../commands'
+import { saveConnection as saveConn, deleteConnection, reorderConnections, renameGroup, deleteGroup } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 
 interface ConnectionManagerProps {
@@ -38,6 +38,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     conn: ConnectionConfig
   } | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [groupContextMenu, setGroupContextMenu] = useState<{
+    x: number
+    y: number
+    group: string
+  } | null>(null)
 
   // Drag-and-drop state
   const dragDataRef = useRef<{
@@ -190,17 +195,47 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setContextMenu(null)
   }
 
+  const handleRenameGroup = async (oldName: string) => {
+    const newName = window.prompt('Rename group', oldName)
+    if (newName === null) return
+    const trimmed = newName.trim()
+    if (trimmed === oldName) return
+    await renameGroup(oldName, trimmed)
+    // Keep collapsed state in sync with the renamed group
+    setCollapsedGroups((prev) => {
+      if (!prev.has(oldName)) return prev
+      const next = new Set(prev)
+      next.delete(oldName)
+      if (trimmed) next.add(trimmed)
+      return next
+    })
+    onConnectionChange()
+    setGroupContextMenu(null)
+  }
+
+  const handleDeleteGroup = async (groupName: string) => {
+    if (confirm(`Delete group "${groupName}"?\nConnections in this group will be moved to Ungrouped.`)) {
+      await deleteGroup(groupName)
+      setCollapsedGroups((prev) => {
+        if (!prev.has(groupName)) return prev
+        const next = new Set(prev)
+        next.delete(groupName)
+        return next
+      })
+      onConnectionChange()
+    }
+    setGroupContextMenu(null)
+  }
+
   return (
     <>
       <div className="sidebar">
         <div className="sidebar-header">
           <span
-            className="collapse-chevron"
+            className={`collapse-chevron${expanded ? ' expanded' : ''}`}
             onClick={onToggleExpanded}
             title={expanded ? 'Collapse' : 'Expand'}
-          >
-            {expanded ? '▼' : '▶'}
-          </span>
+          />
           <span style={{ flex: 1 }}>Connections</span>
           {expanded && (
             <button
@@ -283,6 +318,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       <div
                         className={`conn-group-header${isGroupDragOver ? ' drag-over' : ''}`}
                         onClick={() => toggleGroup(key)}
+                        onContextMenu={(e) => {
+                          if (isUngrouped) return
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setGroupContextMenu({ x: e.clientX, y: e.clientY, group: key })
+                        }}
                         draggable={!isUngrouped}
                         onDragStart={(e) => {
                           if (isUngrouped) return
@@ -319,9 +360,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           setDragOverTarget(null)
                         }}
                       >
-                        <span className="collapse-chevron">
-                          {collapsed ? '▶' : '▼'}
-                        </span>
+                        <span className={`collapse-chevron${collapsed ? '' : ' expanded'}`} />
                         <span className="conn-group-name">
                           {isUngrouped ? 'Ungrouped' : key}
                         </span>
@@ -418,6 +457,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      {groupContextMenu && (
+        <GroupContextMenu
+          x={groupContextMenu.x}
+          y={groupContextMenu.y}
+          onRename={() => handleRenameGroup(groupContextMenu.group)}
+          onDelete={() => handleDeleteGroup(groupContextMenu.group)}
+          onClose={() => setGroupContextMenu(null)}
+        />
+      )}
     </>
   )
 }
@@ -508,6 +557,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [passphrase, setPassphrase] = useState(connection?.passphrase || '')
   const [group, setGroup] = useState(connection?.group || '')
   const [description, setDescription] = useState(connection?.description || '')
+  const [groupFocused, setGroupFocused] = useState(false)
 
   const handleBrowseKey = async () => {
     try {
@@ -590,14 +640,31 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             <input
               value={group}
               onChange={(e) => setGroup(e.target.value)}
+              onFocus={() => setGroupFocused(true)}
+              onBlur={() => setTimeout(() => setGroupFocused(false), 120)}
               placeholder="Production / Staging / ..."
-              list="conn-groups"
             />
-            <datalist id="conn-groups">
-              {existingGroups.map((g) => (
-                <option key={g} value={g} />
-              ))}
-            </datalist>
+            {groupFocused && existingGroups.length > 0 && (
+              <ul className="group-suggestions">
+                {existingGroups
+                  .filter(
+                    (g) =>
+                      g.toLowerCase().includes(group.trim().toLowerCase()) &&
+                      g !== group.trim(),
+                  )
+                  .map((g) => (
+                    <li
+                      key={g}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        setGroup(g)
+                      }}
+                    >
+                      {g}
+                    </li>
+                  ))}
+              </ul>
+            )}
           </div>
           <div className="form-group">
             <label>Description (optional)</label>
@@ -706,6 +773,41 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onEdit, onDelete, onClo
       </div>
       <div className="context-menu-item" onClick={onDelete}>
         🗑️ Delete
+      </div>
+    </div>
+  )
+}
+
+// ===== Group Context Menu =====
+
+interface GroupContextMenuProps {
+  x: number
+  y: number
+  onRename: () => void
+  onDelete: () => void
+  onClose: () => void
+}
+
+const GroupContextMenu: React.FC<GroupContextMenuProps> = ({
+  x,
+  y,
+  onRename,
+  onDelete,
+  onClose,
+}) => {
+  React.useEffect(() => {
+    const handler = () => onClose()
+    document.addEventListener('click', handler)
+    return () => document.removeEventListener('click', handler)
+  }, [onClose])
+
+  return (
+    <div className="context-menu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
+      <div className="context-menu-item" onClick={onRename}>
+        ✏️ Rename Group
+      </div>
+      <div className="context-menu-item" onClick={onDelete}>
+        🗑️ Delete Group
       </div>
     </div>
   )

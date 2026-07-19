@@ -142,6 +142,8 @@ pub fn run() {
       commands::save_connection,
       commands::delete_connection,
       commands::reorder_connections,
+      commands::rename_group,
+      commands::delete_group,
       commands::connect,
       commands::disconnect,
       commands::send_input,

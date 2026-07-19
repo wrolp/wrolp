@@ -537,9 +537,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     <div ref={panelRef} className={`file-panel${dragOver ? ' drag-over' : ''}`}>
       {/* header */}
       <div className="file-panel-header">
-        <span className="collapse-chevron" onClick={onToggleExpanded} title={expanded ? 'Collapse' : 'Expand'}>
-          {expanded ? '▼' : '▶'}
-        </span>
+        <span
+          className={`collapse-chevron${expanded ? ' expanded' : ''}`}
+          onClick={onToggleExpanded}
+          title={expanded ? 'Collapse' : 'Expand'}
+        />
         <span style={{ flex: 1 }}>Files</span>
         {expanded && (
           <div className="file-toolbar">

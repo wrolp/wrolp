@@ -24,6 +24,14 @@ export async function reorderConnections(
   })
 }
 
+export async function renameGroup(oldName: string, newName: string): Promise<boolean> {
+  return await invoke<boolean>('rename_group', { oldName, newName })
+}
+
+export async function deleteGroup(groupName: string): Promise<boolean> {
+  return await invoke<boolean>('delete_group', { groupName })
+}
+
 export async function connect(
   config: ConnectionConfig,
   tabId: number,
