@@ -22,9 +22,10 @@ interface FilePanelProps {
   onToggleExpanded?: () => void
   syncEnabled?: boolean
   onToggleSync?: () => void
+  onEditFile?: (sshTabId: number, path: string) => void
 }
 
-export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaultPath = '.', expanded = true, onToggleExpanded, syncEnabled = false, onToggleSync }) => {
+export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaultPath = '.', expanded = true, onToggleExpanded, syncEnabled = false, onToggleSync, onEditFile }) => {
   const [currentPath, setCurrentPath] = useState(defaultPath)
   const [files, setFiles] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -337,6 +338,12 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
     }
   }
 
+  const handleEditFile = (entry: FileEntry) => {
+    setContextMenu(null)
+    if (entry.isDir) return
+    onEditFile?.(tabId, entry.path)
+  }
+
   const handleDownload = async (entry: FileEntry) => {
     setContextMenu(null)
     if (entry.isDir) {
@@ -586,6 +593,13 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
                     key={f.path}
                     className={`file-entry ${f.isDir ? 'is-dir' : ''}`}
                     onClick={() => handleEntryClick(f)}
+                    onDoubleClick={() => {
+                      if (f.isDir) {
+                        loadDir(f.path, true)
+                      } else if (onEditFile) {
+                        onEditFile(tabId, f.path)
+                      }
+                    }}
                     onContextMenu={(e) => handleEntryContextMenu(e, f)}
                   >
                     <span className="file-icon">{f.isDir ? '📁' : '📄'}</span>
@@ -664,6 +678,11 @@ export const FilePanel: React.FC<FilePanelProps> = ({ tabId, isConnected, defaul
           {contextMenu.entry && !contextMenu.entry.isDir && (
             <div className="context-menu-item" onClick={() => handleDownload(contextMenu.entry!)}>
               📥 Download
+            </div>
+          )}
+          {contextMenu.entry && !contextMenu.entry.isDir && onEditFile && (
+            <div className="context-menu-item" onClick={() => handleEditFile(contextMenu.entry!)}>
+              ✏️ Edit
             </div>
           )}
           {contextMenu.entry && (

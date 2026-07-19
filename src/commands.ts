@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto } from './types'
+import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, FileContent } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -152,6 +152,14 @@ export async function extractCommands(sessionId: string): Promise<string[]> {
 
 export async function commitCommand(tabId: number, command: string): Promise<boolean> {
   return await invoke<boolean>('commit_command', { tabId, command })
+}
+
+export async function readFileContent(tabId: number, path: string, maxSize?: number): Promise<FileContent> {
+  return await invoke<FileContent>('read_file_content', { tabId, path, maxSize })
+}
+
+export async function writeFileContent(tabId: number, path: string, content: string): Promise<boolean> {
+  return await invoke<boolean>('write_file_content', { tabId, path, content })
 }
 
 // ===== Command Sets =====

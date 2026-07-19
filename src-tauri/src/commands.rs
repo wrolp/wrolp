@@ -882,6 +882,123 @@ pub async fn list_files(
   Ok(files)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+  pub path: String,
+  pub content: String,
+  pub size: u64,
+  pub mode: String,
+  pub is_binary: bool,
+  pub is_too_large: bool,
+}
+
+const DEFAULT_MAX_EDIT_SIZE: u64 = 5_000_000;
+
+/// Read a remote file's content into memory for editing.
+/// `is_binary`/`is_too_large` let the frontend refuse non-text or oversized files.
+#[tauri::command]
+pub async fn read_file_content(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  path: String,
+  max_size: Option<u64>,
+) -> Result<FileContent, String> {
+  let max_size = max_size.unwrap_or(DEFAULT_MAX_EDIT_SIZE);
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  let metadata = sftp.metadata(&path).await
+    .map_err(|e| format!("Failed to stat remote file: {}", e))?;
+  let size = metadata.size.unwrap_or(0);
+  let mode = format!("{:04o}", metadata.permissions.unwrap_or(0) & 0o7777);
+
+  if size > max_size {
+    return Ok(FileContent {
+      path,
+      content: String::new(),
+      size,
+      mode,
+      is_binary: false,
+      is_too_large: true,
+    });
+  }
+
+  let mut handle = sftp.open(&path).await
+    .map_err(|e| format!("Failed to open remote file: {}", e))?;
+  let mut all_data = Vec::with_capacity(size as usize);
+  let mut buf = vec![0u8; 65536];
+  loop {
+    let n = handle.read(&mut buf).await
+      .map_err(|e| format!("Failed to read: {}", e))?;
+    if n == 0 {
+      break;
+    }
+    all_data.extend_from_slice(&buf[..n]);
+  }
+
+  // NUL byte or invalid UTF-8 => treat as binary (not editable as text)
+  let is_binary = all_data.contains(&0) || String::from_utf8(all_data.clone()).is_err();
+  let content = if is_binary {
+    String::new()
+  } else {
+    String::from_utf8(all_data).unwrap_or_default()
+  };
+
+  Ok(FileContent {
+    path,
+    content,
+    size,
+    mode,
+    is_binary,
+    is_too_large: false,
+  })
+}
+
+/// Write edited text content back to a remote file, overwriting the original.
+/// The parent directory is created if it does not exist.
+#[tauri::command]
+pub async fn write_file_content(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  path: String,
+  content: String,
+) -> Result<bool, String> {
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+  let resolved_path = resolve_sftp_path(&sftp, &path).await?;
+
+  // Ensure parent directory exists on remote
+  if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
+    let parent_str = parent.to_string_lossy().to_string();
+    if !parent_str.is_empty() && parent_str != "/" {
+      match sftp.metadata(&parent_str).await {
+        Err(_) => {
+          let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
+          let mut build = String::new();
+          for part in &parts {
+            if part.is_empty() {
+              continue;
+            }
+            build.push('/');
+            build.push_str(part);
+            let _ = sftp.create_dir(&build).await;
+          }
+        }
+        Ok(_) => {}
+      }
+    }
+  }
+
+  let mut file = sftp.create(&resolved_path).await
+    .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
+  use tokio::io::AsyncWriteExt;
+  file.write_all(content.as_bytes()).await
+    .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+
+  Ok(true)
+}
+
 #[tauri::command]
 pub async fn download_file(
   app: tauri::AppHandle,

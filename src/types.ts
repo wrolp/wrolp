@@ -69,3 +69,12 @@ export interface FileEntry {
   mode: string
   modified: string
 }
+
+export interface FileContent {
+  path: string
+  content: string
+  size: number
+  mode: string
+  isBinary: boolean
+  isTooLarge: boolean
+}

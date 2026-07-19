@@ -10,8 +10,9 @@ import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
+import { FileEditor, type EditorTab } from './components/FileEditor'
 import type { ConnectionConfig, TabInfo } from './types'
-import { loadWindowConfig, saveWindowConfig } from './commands'
+import { loadWindowConfig, saveWindowConfig, readFileContent, writeFileContent } from './commands'
 import './styles/App.scss'
 
 // Global connection cache
@@ -31,6 +32,10 @@ export default function App() {
   const [connectionsExpanded, setConnectionsExpanded] = useState(true)
   const [filesExpanded, setFilesExpanded] = useState(true)
   const [bottomPanelExpanded, setBottomPanelExpanded] = useState(false)
+
+  // Remote file editor state
+  const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
+  const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
   const [syncEnabled, setSyncEnabled] = useState(() => {
     try {
       return localStorage.getItem('wrolp-sync-enabled') === '1'
@@ -300,6 +305,111 @@ export default function App() {
     [openTab],
   )
 
+  // Open a remote file in the inline editor (loads content on demand)
+  const openInEditor = useCallback(async (sshTabId: number, path: string) => {
+    const key = `${sshTabId}:${path}`
+    setEditorTabs((prev) => {
+      if (prev.some((t) => t.key === key)) return prev
+      return [
+        ...prev,
+        {
+          key,
+          sshTabId,
+          path,
+          name: path.split('/').pop() || path,
+          content: '',
+          original: '',
+          isBinary: false,
+          isTooLarge: false,
+          isDirty: false,
+          loading: true,
+          size: 0,
+        },
+      ]
+    })
+    setActiveEditorKey(key)
+    try {
+      const fc = await readFileContent(sshTabId, path)
+      setEditorTabs((prev) =>
+        prev.map((t) =>
+          t.key === key
+            ? {
+                ...t,
+                loading: false,
+                content: fc.content,
+                original: fc.content,
+                isBinary: fc.isBinary,
+                isTooLarge: fc.isTooLarge,
+                size: fc.size,
+              }
+            : t,
+        ),
+      )
+    } catch (e) {
+      setEditorTabs((prev) =>
+        prev.map((t) =>
+          t.key === key ? { ...t, loading: false, error: String(e) } : t,
+        ),
+      )
+    }
+  }, [])
+
+  const closeEditorTab = useCallback(
+    (key: string) => {
+      setEditorTabs((prev) => {
+        const idx = prev.findIndex((t) => t.key === key)
+        if (idx < 0) return prev
+        const next = prev.filter((t) => t.key !== key)
+        if (activeEditorKey === key) {
+          setActiveEditorKey(
+            next.length > 0
+              ? next[Math.min(idx, next.length - 1)].key
+              : null,
+          )
+        }
+        return next
+      })
+    },
+    [activeEditorKey],
+  )
+
+  const handleEditorContentChange = useCallback((key: string, content: string) => {
+    setEditorTabs((prev) =>
+      prev.map((t) =>
+        t.key === key ? { ...t, content, isDirty: content !== t.original } : t,
+      ),
+    )
+  }, [])
+
+  const handleSaveEditorTab = useCallback(
+    async (key: string) => {
+      const target = editorTabs.find((t) => t.key === key)
+      if (!target || target.isBinary || target.isTooLarge) return
+      setEditorTabs((prev) =>
+        prev.map((t) =>
+          t.key === key ? { ...t, saving: true, error: undefined } : t,
+        ),
+      )
+      try {
+        await writeFileContent(target.sshTabId, target.path, target.content)
+        setEditorTabs((prev) =>
+          prev.map((t) =>
+            t.key === key
+              ? { ...t, saving: false, original: t.content, isDirty: false }
+              : t,
+          ),
+        )
+      } catch (e) {
+        setEditorTabs((prev) =>
+          prev.map((t) =>
+            t.key === key ? { ...t, saving: false, error: String(e) } : t,
+          ),
+        )
+      }
+    },
+    [editorTabs],
+  )
+
   // Reconnect a disconnected tab
   const handleReconnect = useCallback((tabId: number) => {
     setTabs((prev) =>
@@ -472,6 +582,7 @@ export default function App() {
                               // ignore localStorage errors
                             }
                           }}
+                          onEditFile={openInEditor}
                         />
                       </div>
                     </>
@@ -546,6 +657,18 @@ export default function App() {
                 Duplicate Tab
               </div>
             </div>
+          )}
+
+          {/* Remote file editor (inline editing) */}
+          {editorTabs.length > 0 && (
+            <FileEditor
+              tabs={editorTabs}
+              activeKey={activeEditorKey}
+              onSelect={setActiveEditorKey}
+              onClose={closeEditorTab}
+              onContentChange={handleEditorContentChange}
+              onSave={handleSaveEditorTab}
+            />
           )}
 
           {/* Terminal content */}

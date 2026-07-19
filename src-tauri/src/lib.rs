@@ -94,6 +94,9 @@ pub fn run() {
           }
         });
 
+        // 恢复窗口几何（如有保存）。先校验窗口矩形是否与任一可见显示器相交，
+        // 不相交（如之前在已断开的副屏 / DPI 偏移导致越界）则居中，
+        // 避免窗口跑到屏幕外而“看不到”（任务栏有条目但桌面无内容）。
         let config_path = commands::get_window_config_path();
         if let Some(ref path) = config_path {
           if let Ok(content) = std::fs::read_to_string(path) {
@@ -101,13 +104,35 @@ pub fn run() {
               if config.maximized {
                 let _ = window.maximize();
               } else if config.x != i32::MAX {
-                let _ = window.set_position(tauri::PhysicalPosition::new(config.x, config.y));
-                let _ = window.set_size(tauri::PhysicalSize::new(config.width, config.height));
+                let w = if config.width > 0 { config.width } else { 1200u32 };
+                let h = if config.height > 0 { config.height } else { 800u32 };
+                let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+                let on_screen = window
+                  .available_monitors()
+                  .map(|monitors| {
+                    monitors.iter().any(|m| {
+                      let pos = m.position();
+                      let size = m.size();
+                      config.x < pos.x + size.width as i32
+                        && config.x + w as i32 > pos.x
+                        && config.y < pos.y + size.height as i32
+                        && config.y + h as i32 > pos.y
+                    })
+                  })
+                  .unwrap_or(false);
+                if on_screen {
+                  let _ = window.set_position(tauri::PhysicalPosition::new(config.x, config.y));
+                } else {
+                  let _ = window.center();
+                }
               }
             }
           }
         }
+        // 显示窗口（tauri.conf.json 中 visible: false），并确保未最小化且置前
+        let _ = window.unminimize();
         let _ = window.show();
+        let _ = window.set_focus();
       }
 
       Ok(())
@@ -123,6 +148,8 @@ pub fn run() {
       commands::poll_output,
       commands::list_files,
       commands::download_file,
+      commands::read_file_content,
+      commands::write_file_content,
       commands::upload_file,
       commands::upload_file_bytes,
       commands::file_exists,
