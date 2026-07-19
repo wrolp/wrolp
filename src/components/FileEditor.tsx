@@ -56,7 +56,7 @@ export function FileEditor({
   const handlersRef = useRef({ onContentChange, onSave })
   handlersRef.current = { onContentChange, onSave }
 
-  const [showMinimap, setShowMinimap] = useState(true)
+  const [showMinimap, setShowMinimap] = useState(false)
 
   const active = tabs.find((t) => t.key === activeKey) || null
 
