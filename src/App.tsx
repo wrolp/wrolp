@@ -877,54 +877,7 @@ export default function App() {
                         🔄 Reconnect
                       </button>
                     </div>
-                  ) : tab.tabType === 'settings' ? (
-                    <div className="settings-tab-content">
-                      <h3>Settings</h3>
-                      <div className="form-group">
-                        <label>Window Opacity: {Math.round(opacity * 100)}%</label>
-                        <input
-                          type="range"
-                          min="20"
-                          max="100"
-                          value={Math.round(opacity * 100)}
-                          onChange={(e) => setOpacity(Number(e.target.value) / 100)}
-                          style={{ width: '100%', accentColor: '#007acc' }}
-                        />
-                      </div>
-                      <div className="form-group" style={{ marginTop: 16 }}>
-                        <label>Updates</label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
-                          <button
-                            className="btn-primary"
-                            onClick={handleCheckUpdate}
-                            disabled={updateState === 'checking' || updateState === 'downloading' || updateState === 'installing'}
-                            style={{ fontSize: '12px', padding: '4px 12px' }}
-                          >
-                            {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
-                          </button>
-                          {updateInfo ? (
-                            <span style={{ color: '#4ec9b0' }}>
-                              New version v{updateInfo.version}
-                            </span>
-                          ) : updateInfo === null && updateState !== 'checking' ? (
-                            <span>Up to date</span>
-                          ) : null}
-                        </div>
-                        {updateInfo && (
-                          <div style={{ marginTop: 8 }}>
-                            <button
-                              className="btn-primary"
-                              onClick={handleDownloadUpdate}
-                              disabled={updateState !== 'idle'}
-                              style={{ fontSize: '12px', padding: '4px 12px' }}
-                            >
-                              {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Download & Install'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : tab.status === 'error' ? (
+                  ) : tab.tabType === 'settings' ? null : tab.status === 'error' ? (
                     <div className="terminal-placeholder">
                       <div style={{ color: '#f44747' }}>
                         Connection failed: {tab.connectionName}
