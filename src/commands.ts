@@ -154,12 +154,26 @@ export async function commitCommand(tabId: number, command: string): Promise<boo
   return await invoke<boolean>('commit_command', { tabId, command })
 }
 
-export async function readFileContent(tabId: number, path: string, maxSize?: number): Promise<FileContent> {
-  return await invoke<FileContent>('read_file_content', { tabId, path, maxSize })
+export async function readFileContent(
+  tabId: number,
+  path: string,
+  options?: { maxSize?: number; encoding?: string },
+): Promise<FileContent> {
+  return await invoke<FileContent>('read_file_content', {
+    tabId,
+    path,
+    maxSize: options?.maxSize,
+    encoding: options?.encoding,
+  })
 }
 
-export async function writeFileContent(tabId: number, path: string, content: string): Promise<boolean> {
-  return await invoke<boolean>('write_file_content', { tabId, path, content })
+export async function writeFileContent(
+  tabId: number,
+  path: string,
+  content: string,
+  encoding?: string,
+): Promise<boolean> {
+  return await invoke<boolean>('write_file_content', { tabId, path, content, encoding })
 }
 
 // ===== Command Sets =====

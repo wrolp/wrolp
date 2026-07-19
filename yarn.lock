@@ -531,6 +531,11 @@ lru-cache@^5.1.1:
   dependencies:
     yallist "^3.0.2"
 
+monaco-editor@^0.52.0:
+  version "0.52.0"
+  resolved "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.0.tgz"
+  integrity sha512-OeWhNpABLCeTqubfqLMXGsqf6OmPU6pHM85kF3dhy6kq5hnhuVS1p3VrEW/XhWHc71P2tHyS5JFySD8mgs1crw==
+
 ms@^2.1.3:
   version "2.1.3"
   resolved "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"

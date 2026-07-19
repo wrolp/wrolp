@@ -77,4 +77,8 @@ export interface FileContent {
   mode: string
   isBinary: boolean
   isTooLarge: boolean
+  /** Charset used to decode the file, e.g. "utf-8" or "gbk". */
+  encoding: string
+  /** True when the file was not valid UTF-8 and must be re-saved with `encoding`. */
+  needsEncoding: boolean
 }

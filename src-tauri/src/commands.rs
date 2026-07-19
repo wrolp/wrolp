@@ -14,6 +14,7 @@ use tauri::Manager;
 use tauri::Emitter;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
+use encoding_rs::{Encoding, UTF_8};
 
 /// Wait if the transfer for this tab is paused. Returns immediately if not paused.
 async fn check_pause(control: &TransferControl) {
@@ -891,6 +892,37 @@ pub struct FileContent {
   pub mode: String,
   pub is_binary: bool,
   pub is_too_large: bool,
+  /// Charset used to decode the file, e.g. "utf-8" or "gbk".
+  pub encoding: String,
+  /// True when the file was not valid UTF-8 (e.g. GBK) and must be
+  /// re-saved with `encoding` to avoid corrupting it.
+  pub needs_encoding: bool,
+}
+
+/// Decode raw bytes into a String using the requested encoding, or auto-detect
+/// (UTF-8 first, then GBK) when `encoding_name` is `None`.
+/// Returns (content, encoding_name, needs_encoding).
+fn decode_file_content(data: &[u8], encoding_name: Option<&str>) -> (String, String, bool) {
+  if let Some(name) = encoding_name {
+    let encoding: &Encoding = Encoding::for_label(name.as_bytes()).unwrap_or(UTF_8);
+    let (cow, _, _had_errors) = encoding.decode(data);
+    let needs = encoding.name() != "UTF-8";
+    return (cow.into_owned(), encoding.name().to_ascii_lowercase(), needs);
+  }
+
+  // Auto-detect: prefer UTF-8, fall back to GBK.
+  if let Ok(s) = String::from_utf8(data.to_vec()) {
+    return (s, "utf-8".to_string(), false);
+  }
+  if let Some(gbk) = Encoding::for_label(b"gbk") {
+    let (cow, _, had_errors) = gbk.decode(data);
+    if !had_errors {
+      return (cow.into_owned(), "gbk".to_string(), true);
+    }
+  }
+  // Last resort: UTF-8 with replacement characters.
+  let (cow, _, _) = UTF_8.decode(data);
+  (cow.into_owned(), "utf-8".to_string(), false)
 }
 
 const DEFAULT_MAX_EDIT_SIZE: u64 = 5_000_000;
@@ -904,6 +936,7 @@ pub async fn read_file_content(
   tab_id: u32,
   path: String,
   max_size: Option<u64>,
+  encoding: Option<String>,
 ) -> Result<FileContent, String> {
   let max_size = max_size.unwrap_or(DEFAULT_MAX_EDIT_SIZE);
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
@@ -921,6 +954,8 @@ pub async fn read_file_content(
       mode,
       is_binary: false,
       is_too_large: true,
+      encoding: encoding.unwrap_or_else(|| "utf-8".to_string()),
+      needs_encoding: false,
     });
   }
 
@@ -937,12 +972,13 @@ pub async fn read_file_content(
     all_data.extend_from_slice(&buf[..n]);
   }
 
-  // NUL byte or invalid UTF-8 => treat as binary (not editable as text)
-  let is_binary = all_data.contains(&0) || String::from_utf8(all_data.clone()).is_err();
-  let content = if is_binary {
-    String::new()
+  // NUL byte => treat as binary (not editable as text).
+  // Invalid UTF-8 alone is no longer binary (it may be GBK and decodable).
+  let is_binary = all_data.contains(&0);
+  let (content, used_encoding, needs_encoding) = if is_binary {
+    (String::new(), encoding.clone().unwrap_or_else(|| "utf-8".to_string()), false)
   } else {
-    String::from_utf8(all_data).unwrap_or_default()
+    decode_file_content(&all_data, encoding.as_deref())
   };
 
   Ok(FileContent {
@@ -952,11 +988,14 @@ pub async fn read_file_content(
     mode,
     is_binary,
     is_too_large: false,
+    encoding: used_encoding,
+    needs_encoding,
   })
 }
 
 /// Write edited text content back to a remote file, overwriting the original.
 /// The parent directory is created if it does not exist.
+/// `encoding` selects the charset used to serialize the text (defaults to UTF-8).
 #[tauri::command]
 pub async fn write_file_content(
   app: tauri::AppHandle,
@@ -964,8 +1003,18 @@ pub async fn write_file_content(
   tab_id: u32,
   path: String,
   content: String,
+  encoding: Option<String>,
 ) -> Result<bool, String> {
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  // Serialize text using the requested charset (default UTF-8).
+  let encoding_ref: &Encoding = Encoding::for_label(encoding.as_deref().unwrap_or("utf-8").as_bytes())
+    .unwrap_or(UTF_8);
+  let (bytes, _used_encoding, had_errors) = encoding_ref.encode(&content);
+  if had_errors {
+    return Err(format!("Content cannot be encoded as {}", encoding_ref.name()));
+  }
+  let bytes = bytes.into_owned();
   let resolved_path = resolve_sftp_path(&sftp, &path).await?;
 
   // Ensure parent directory exists on remote
@@ -993,7 +1042,7 @@ pub async fn write_file_content(
   let mut file = sftp.create(&resolved_path).await
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
   use tokio::io::AsyncWriteExt;
-  file.write_all(content.as_bytes()).await
+  file.write_all(&bytes).await
     .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
 
   Ok(true)

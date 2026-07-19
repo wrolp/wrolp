@@ -11,8 +11,10 @@ import { TerminalComponent } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
+import type { FileTreeHandle } from './components/FilePanel'
 import type { ConnectionConfig, TabInfo } from './types'
 import { loadWindowConfig, saveWindowConfig, readFileContent, writeFileContent } from './commands'
+import { detectLanguage } from './editor/languages'
 import './styles/App.scss'
 
 // Global connection cache
@@ -318,12 +320,16 @@ export default function App() {
           path,
           name: path.split('/').pop() || path,
           content: '',
-          original: '',
+          savedContent: '',
           isBinary: false,
           isTooLarge: false,
           isDirty: false,
           loading: true,
           size: 0,
+          language: detectLanguage(path.split('/').pop() || path),
+          encoding: 'utf-8',
+          needsEncoding: false,
+          lineEnding: 'LF' as const,
         },
       ]
     })
@@ -333,15 +339,22 @@ export default function App() {
       setEditorTabs((prev) =>
         prev.map((t) =>
           t.key === key
-            ? {
-                ...t,
-                loading: false,
-                content: fc.content,
-                original: fc.content,
-                isBinary: fc.isBinary,
-                isTooLarge: fc.isTooLarge,
-                size: fc.size,
-              }
+              ? {
+                  ...t,
+                  loading: false,
+                  content: fc.content,
+                  savedContent: fc.content,
+                  isBinary: fc.isBinary,
+                  isTooLarge: fc.isTooLarge,
+                  size: fc.size,
+                  encoding: fc.encoding,
+                  needsEncoding: fc.needsEncoding,
+                  lineEnding: (
+                    typeof fc.content === 'string' && /\r\n/.test(fc.content)
+                      ? 'CRLF'
+                      : 'LF'
+                  ) as 'LF' | 'CRLF',
+                }
             : t,
         ),
       )
@@ -373,10 +386,14 @@ export default function App() {
     [activeEditorKey],
   )
 
+  const fileTreeRef = useRef<FileTreeHandle>(null)
+
   const handleEditorContentChange = useCallback((key: string, content: string) => {
     setEditorTabs((prev) =>
       prev.map((t) =>
-        t.key === key ? { ...t, content, isDirty: content !== t.original } : t,
+        t.key === key
+          ? { ...t, content, isDirty: content !== t.savedContent }
+          : t,
       ),
     )
   }, [])
@@ -391,20 +408,82 @@ export default function App() {
         ),
       )
       try {
-        await writeFileContent(target.sshTabId, target.path, target.content)
+        await writeFileContent(
+          target.sshTabId,
+          target.path,
+          target.content,
+          target.encoding,
+        )
         setEditorTabs((prev) =>
           prev.map((t) =>
             t.key === key
-              ? { ...t, saving: false, original: t.content, isDirty: false }
+              ? { ...t, saving: false, savedContent: t.content, isDirty: false, needsEncoding: false }
               : t,
           ),
         )
+        // Refresh file tree after save
+        fileTreeRef.current?.refresh()
       } catch (e) {
         setEditorTabs((prev) =>
           prev.map((t) =>
             t.key === key ? { ...t, saving: false, error: String(e) } : t,
           ),
         )
+      }
+    },
+    [editorTabs],
+  )
+
+  const changeEditorTabLanguage = useCallback(
+    (key: string, language: string) => {
+      setEditorTabs((prev) =>
+        prev.map((t) => (t.key === key ? { ...t, language } : t)),
+      )
+    },
+    [],
+  )
+
+  const changeEditorTabLineEnding = useCallback(
+    (key: string, lineEnding: 'LF' | 'CRLF') => {
+      setEditorTabs((prev) =>
+        prev.map((t) => (t.key === key ? { ...t, lineEnding } : t)),
+      )
+    },
+    [],
+  )
+
+  const changeEditorTabEncoding = useCallback(
+    async (key: string, encoding: string) => {
+      const target = editorTabs.find((t) => t.key === key)
+      if (!target) return
+      if (target?.isDirty) {
+        const ok = window.confirm(
+          'Switching encoding will reload the file and discard unsaved changes. Continue?',
+        )
+        if (!ok) return
+      }
+      try {
+        const fc = await readFileContent(target.sshTabId, target.path, {
+          encoding,
+        })
+        if (fc.isBinary || fc.isTooLarge) return
+        setEditorTabs((prev) =>
+          prev.map((t) =>
+            t.key === key
+              ? {
+                  ...t,
+                  content: fc.content,
+                  savedContent: fc.content,
+                  isDirty: false,
+                  encoding: fc.encoding,
+                  needsEncoding: fc.needsEncoding,
+                  error: undefined,
+                }
+              : t,
+          ),
+        )
+      } catch {
+        // encoding not supported by server; keep current tab state
       }
     },
     [editorTabs],
@@ -567,6 +646,7 @@ export default function App() {
                         style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
                       >
                         <FilePanel
+                          ref={fileTreeRef}
                           tabId={activeTabId}
                           isConnected={true}
                           defaultPath="."
@@ -668,6 +748,9 @@ export default function App() {
               onClose={closeEditorTab}
               onContentChange={handleEditorContentChange}
               onSave={handleSaveEditorTab}
+              onChangeLanguage={changeEditorTabLanguage}
+              onChangeEncoding={changeEditorTabEncoding}
+              onChangeLineEnding={changeEditorTabLineEnding}
             />
           )}
 
