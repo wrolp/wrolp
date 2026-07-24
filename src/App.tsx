@@ -35,6 +35,10 @@ export default function App() {
   const [filesExpanded, setFilesExpanded] = useState(true)
   const [bottomPanelExpanded, setBottomPanelExpanded] = useState(false)
 
+  // Shell (terminal) pane height / collapse when a file editor is open
+  const [shellHeight, setShellHeight] = useState(240)
+  const [shellCollapsed, setShellCollapsed] = useState(false)
+
   // Remote file editor state
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
@@ -595,6 +599,198 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [connectionListHeight])
 
+  // Editor <-> Shell vertical divider drag-to-resize (only when a file editor is open)
+  const handleEditorShellDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const win = getCurrentWindow()
+    const areaEl = (e.target as HTMLElement).closest('.terminal-area')
+    const startY = e.clientY
+    const startHeight = shellHeight
+    const areaH = areaEl?.clientHeight || 600
+    const maxHeight = Math.max(80, areaH - 160 - 28 - 6)
+    win.setResizable(false).catch(() => {})
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      const delta = startY - ev.clientY
+      const newHeight = Math.max(60, Math.min(maxHeight, startHeight + delta))
+      setShellHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.classList.remove('resize-v')
+      document.body.style.userSelect = ''
+      win.setResizable(true).catch(() => {})
+    }
+
+    document.body.classList.add('resize-v')
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [shellHeight])
+
+  // Terminals block (reused standalone or inside the editor + shell split)
+  const terminalContent = (
+    <div className="terminal-wrapper">
+      {tabs.length === 0 ? (
+        <div className="terminal-placeholder">
+          <div className="icon">🖥️</div>
+          <div>Welcome to Wrolp Terminal</div>
+          <div style={{ fontSize: '12px' }}>
+            Add a connection from the sidebar to get started
+          </div>
+        </div>
+      ) : (
+        tabs.map((tab) => (
+          <div
+            key={tab.tabId}
+            style={{
+              display: tab.tabId === activeTabId ? 'block' : 'none',
+              height: '100%',
+              position: 'relative',
+            }}
+          >
+            {/* Terminal area: always mounted to preserve history; hidden when disconnected/error */}
+            {tab.tabType !== 'settings' && (
+              <div style={{ display: tab.status === 'disconnected' || tab.status === 'error' ? 'none' : 'block', height: '100%' }}>
+                <TerminalComponent
+                  tabId={tab.tabId}
+                  isActive={tab.tabId === activeTabId}
+                  reconnectTrigger={reconnectKeys[tab.tabId] || 0}
+                  connectConfig={
+                    tab.connectionId
+                      ? (() => {
+                          const conn = cachedConnections.find((c) => c.id === tab.connectionId)
+                          if (!conn) return undefined
+                          return {
+                            host: conn.host,
+                            port: conn.port,
+                            username: conn.username,
+                            password: conn.password,
+                            keyPath: conn.keyPath,
+                          }
+                        })()
+                      : undefined
+                  }
+                  autoConnect={!!tab.connectionId}
+                  onStatusChange={(status, errorMessage) => {
+                    setTabs((prev) =>
+                      prev.map((t) =>
+                        t.tabId === tab.tabId ? { ...t, status, errorMessage } : t,
+                      ),
+                    )
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Settings tab */}
+            {tab.tabType === 'settings' && (
+              <div className="settings-tab-content">
+                <h3>Settings</h3>
+                <div className="form-group">
+                  <label>Window Opacity: {Math.round(opacity * 100)}%</label>
+                  <input
+                    type="range"
+                    min="20"
+                    max="100"
+                    value={Math.round(opacity * 100)}
+                    onChange={(e) => setOpacity(Number(e.target.value) / 100)}
+                    style={{ width: '100%', accentColor: '#007acc' }}
+                  />
+                </div>
+                <div className="form-group" style={{ marginTop: 16 }}>
+                  <label>Updates</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                    <button
+                      className="btn-primary"
+                      onClick={handleCheckUpdate}
+                      disabled={updateState === 'checking' || updateState === 'downloading' || updateState === 'installing'}
+                      style={{ fontSize: '12px', padding: '4px 12px' }}
+                    >
+                      {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
+                    </button>
+                    {updateInfo ? (
+                      <span style={{ color: '#4ec9b0' }}>
+                        New version v{updateInfo.version}
+                      </span>
+                    ) : updateInfo === null && updateState !== 'checking' ? (
+                      <span>Up to date</span>
+                    ) : null}
+                  </div>
+                  {updateInfo && (
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        className="btn-primary"
+                        onClick={handleDownloadUpdate}
+                        disabled={updateState !== 'idle'}
+                        style={{ fontSize: '12px', padding: '4px 12px' }}
+                      >
+                        {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Download & Install'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Disconnected overlay */}
+            {tab.status === 'disconnected' ? (
+              <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
+                <div className="icon">🔌</div>
+                <div style={{ color: '#f44747' }}>Connection lost</div>
+                <div style={{ fontSize: '12px', color: '#888' }}>
+                  {tab.connectionName} — {tab.host}
+                </div>
+                <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>
+                  Press Enter to retry
+                </div>
+                <button
+                  className="btn-primary"
+                  onClick={() => handleReconnect(tab.tabId)}
+                  style={{ marginTop: 12, fontSize: '13px', padding: '6px 20px' }}
+                >
+                  🔄 Reconnect
+                </button>
+              </div>
+            ) : tab.tabType === 'settings' ? null : tab.status === 'error' ? (
+              <div className="terminal-placeholder">
+                <div style={{ color: '#f44747' }}>
+                  Connection failed: {tab.connectionName}
+                </div>
+                {tab.errorMessage && (
+                  <div
+                    style={{
+                      color: '#808080',
+                      fontSize: '12px',
+                      marginTop: '8px',
+                      maxWidth: '500px',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {tab.errorMessage}
+                  </div>
+                )}
+                <div style={{ fontSize: '12px', color: '#666', marginTop: 12 }}>
+                  Press Enter to retry
+                </div>
+                <button
+                  className="btn-primary"
+                  onClick={() => handleReconnect(tab.tabId)}
+                  style={{ marginTop: 8, fontSize: '13px', padding: '6px 20px' }}
+                >
+                  🔄 Reconnect
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ))
+      )}
+    </div>
+  )
+
   return (
     <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
@@ -754,192 +950,33 @@ export default function App() {
             />
           )}
 
-          {/* Terminal content */}
-          <div className="terminal-wrapper">
-            {tabs.length === 0 ? (
-              <div className="terminal-placeholder">
-                <div className="icon">🖥️</div>
-                <div>Welcome to Wrolp Terminal</div>
-                <div style={{ fontSize: '12px' }}>
-                  Add a connection from the sidebar to get started
+          {/* Shell (terminal) pane — standalone, or split with the editor above */}
+          {editorTabs.length === 0 ? (
+            terminalContent
+          ) : (
+            <>
+              <div
+                className="editor-shell-divider"
+                onMouseDown={handleEditorShellDividerMouseDown}
+                title="Drag to resize · use ▲/▼ in the Shell header to collapse"
+              />
+              <div className="shell-pane">
+                <div className="shell-pane-header">
+                  <span className="shell-pane-title">Shell</span>
+                  <button
+                    className="shell-pane-toggle"
+                    onClick={() => setShellCollapsed((v) => !v)}
+                    title={shellCollapsed ? 'Expand shell' : 'Collapse shell'}
+                  >
+                    {shellCollapsed ? '▲' : '▼'}
+                  </button>
+                </div>
+                <div className="shell-pane-body" style={{ height: shellCollapsed ? 0 : shellHeight }}>
+                  {terminalContent}
                 </div>
               </div>
-            ) : (
-              tabs.map((tab) => (
-                <div
-                  key={tab.tabId}
-                  style={{
-                    display: tab.tabId === activeTabId ? 'block' : 'none',
-                    height: '100%',
-                    position: 'relative',
-                  }}
-                >
-                  {/* Terminal area: always mounted to preserve history; hidden when disconnected/error */}
-                  {tab.tabType !== 'settings' && (
-                    <div style={{ display: tab.status === 'disconnected' || tab.status === 'error' ? 'none' : 'block', height: '100%' }}>
-                      <TerminalComponent
-                        tabId={tab.tabId}
-                        isActive={tab.tabId === activeTabId}
-                        reconnectTrigger={reconnectKeys[tab.tabId] || 0}
-                        connectConfig={
-                          tab.connectionId
-                            ? (() => {
-                                const conn = cachedConnections.find((c) => c.id === tab.connectionId)
-                                if (!conn) return undefined
-                                return {
-                                  host: conn.host,
-                                  port: conn.port,
-                                  username: conn.username,
-                                  password: conn.password,
-                                  keyPath: conn.keyPath,
-                                }
-                              })()
-                            : undefined
-                        }
-                        autoConnect={!!tab.connectionId}
-                        onStatusChange={(status, errorMessage) => {
-                          setTabs((prev) =>
-                            prev.map((t) =>
-                              t.tabId === tab.tabId ? { ...t, status, errorMessage } : t,
-                            ),
-                          )
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Settings tab */}
-                  {tab.tabType === 'settings' && (
-                    <div className="settings-tab-content">
-                      <h3>Settings</h3>
-                      <div className="form-group">
-                        <label>Window Opacity: {Math.round(opacity * 100)}%</label>
-                        <input
-                          type="range"
-                          min="20"
-                          max="100"
-                          value={Math.round(opacity * 100)}
-                          onChange={(e) => setOpacity(Number(e.target.value) / 100)}
-                          style={{ width: '100%', accentColor: '#007acc' }}
-                        />
-                      </div>
-                      <div className="form-group" style={{ marginTop: 16 }}>
-                        <label>Updates</label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
-                          <button
-                            className="btn-primary"
-                            onClick={handleCheckUpdate}
-                            disabled={updateState === 'checking' || updateState === 'downloading' || updateState === 'installing'}
-                            style={{ fontSize: '12px', padding: '4px 12px' }}
-                          >
-                            {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
-                          </button>
-                          {updateInfo ? (
-                            <span style={{ color: '#4ec9b0' }}>
-                              New version v{updateInfo.version}
-                            </span>
-                          ) : updateInfo === null && updateState !== 'checking' ? (
-                            <span>Up to date</span>
-                          ) : null}
-                        </div>
-                        {updateInfo && (
-                          <div style={{ marginTop: 8 }}>
-                            <button
-                              className="btn-primary"
-                              onClick={handleDownloadUpdate}
-                              disabled={updateState !== 'idle'}
-                              style={{ fontSize: '12px', padding: '4px 12px' }}
-                            >
-                              {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Download & Install'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Disconnected overlay */}
-                  {tab.status === 'disconnected' ? (
-                    <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
-                      <div className="icon">🔌</div>
-                      <div style={{ color: '#f44747' }}>Connection lost</div>
-                      <div style={{ fontSize: '12px', color: '#888' }}>
-                        {tab.connectionName} — {tab.host}
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>
-                        Press Enter to retry
-                      </div>
-                      <button
-                        className="btn-primary"
-                        onClick={() => handleReconnect(tab.tabId)}
-                        style={{ marginTop: 12, fontSize: '13px', padding: '6px 20px' }}
-                      >
-                        🔄 Reconnect
-                      </button>
-                    </div>
-                  ) : tab.tabType === 'settings' ? null : tab.status === 'error' ? (
-                    <div className="terminal-placeholder">
-                      <div style={{ color: '#f44747' }}>
-                        Connection failed: {tab.connectionName}
-                      </div>
-                      {tab.errorMessage && (
-                        <div
-                          style={{
-                            color: '#808080',
-                            fontSize: '12px',
-                            marginTop: '8px',
-                            maxWidth: '500px',
-                            wordBreak: 'break-word',
-                          }}
-                        >
-                          {tab.errorMessage}
-                        </div>
-                      )}
-                      <div style={{ fontSize: '12px', color: '#666', marginTop: 12 }}>
-                        Press Enter to retry
-                      </div>
-                      <button
-                        className="btn-primary"
-                        onClick={() => handleReconnect(tab.tabId)}
-                        style={{ marginTop: 8, fontSize: '13px', padding: '6px 20px' }}
-                      >
-                        🔄 Reconnect
-                      </button>
-                    </div>
-                  ) : (
-                    <TerminalComponent
-                      tabId={tab.tabId}
-                      isActive={tab.tabId === activeTabId}
-                      reconnectTrigger={reconnectKeys[tab.tabId] || 0}
-                      connectConfig={
-                        tab.connectionId
-                          ? (() => {
-                              const conn = cachedConnections.find((c) => c.id === tab.connectionId)
-                              if (!conn) return undefined
-                              return {
-                                host: conn.host,
-                                port: conn.port,
-                                username: conn.username,
-                                password: conn.password,
-                                keyPath: conn.keyPath,
-                              }
-                            })()
-                          : undefined
-                      }
-                      autoConnect={!!tab.connectionId}
-                      onStatusChange={(status, errorMessage) => {
-                        setTabs((prev) =>
-                          prev.map((t) =>
-                            t.tabId === tab.tabId ? { ...t, status, errorMessage } : t,
-                          ),
-                        )
-                      }}
-                    />
-                  )}
-                </div>
-              ))
-            )}
-          </div>
+            </>
+          )}
 
           {/* Bottom panel — session recordings & command sets */}
           <BottomPanel

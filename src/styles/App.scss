@@ -498,15 +498,98 @@ body.resize-v * {
   overflow: hidden;
 }
 
+// ===== Editor <-> Shell divider & collapsible shell pane =====
+.editor-shell-divider {
+  flex-shrink: 0;
+  height: 6px;
+  cursor: row-resize;
+  background: $bg-secondary;
+  border-top: 1px solid $border;
+  border-bottom: 1px solid $border;
+  position: relative;
+
+  &:hover {
+    background: #007acc;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 36px;
+    height: 3px;
+    border-radius: 2px;
+    background: $text-dim;
+  }
+
+  &:hover::after {
+    background: #fff;
+  }
+}
+
+.shell-pane {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: $bg-primary;
+}
+
+.shell-pane-header {
+  flex-shrink: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 10px;
+  background: $bg-secondary;
+  border-bottom: 1px solid $border;
+  user-select: none;
+
+  .shell-pane-title {
+    font-size: 12px;
+    color: $text-dim;
+    letter-spacing: 0.5px;
+  }
+
+  .shell-pane-toggle {
+    background: transparent;
+    border: none;
+    color: $text-dim;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 3px;
+
+    &:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+}
+
+.shell-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+
+  .terminal-wrapper {
+    flex: 1;
+  }
+}
+
 // ===== Remote file editor =====
 .file-editor {
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  height: 40%;
-  min-height: 180px;
-  max-height: 60%;
-  border-bottom: 1px solid $border;
+  flex: 1 1 0;
+  min-height: 120px;
+  overflow: hidden;
+  border-bottom: none;
   background: $bg-primary;
 
   .editor-tabs {
