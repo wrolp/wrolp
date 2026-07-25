@@ -9,9 +9,10 @@ mod ssh_session;
 use ssh_session::AppState;
 use tauri::generate_handler;
 use tauri::Manager;
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
-use tauri::image::Image;
+// Tray-related imports (commented out along with the tray icon below)
+// use tauri::menu::{MenuBuilder, MenuItemBuilder};
+// use tauri::tray::TrayIconBuilder;
+// use tauri::image::Image;
 
 pub fn run() {
   tauri::Builder::default()
@@ -48,7 +49,8 @@ pub fn run() {
         });
       }
 
-      // ---- Tray icon ----
+      /*
+      // ---- Tray icon (disabled) ----
       let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
       let hide_item = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
       let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
@@ -84,21 +86,24 @@ pub fn run() {
           }
         })
         .build(app)?;
+      */
 
       // Restore window position/size from saved config before showing
       if let Some(window) = app.get_webview_window("main") {
         // Hide to tray instead of closing
-        let window_clone = window.clone();
-        window.on_window_event(move |event| {
-          if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            let _ = window_clone.hide();
-          }
-        });
+        // let window_clone = window.clone();
+        // window.on_window_event(move |event| {
+        //   if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        //     api.prevent_close();
+        //     let _ = window_clone.hide();
+        //   }
+        // });
 
-        // 恢复窗口几何（如有保存）。先校验窗口矩形是否与任一可见显示器相交，
-        // 不相交（如之前在已断开的副屏 / DPI 偏移导致越界）则居中，
-        // 避免窗口跑到屏幕外而“看不到”（任务栏有条目但桌面无内容）。
+        // Restore window geometry if saved. First verify the window rect
+        // intersects any visible monitor; if it does not (e.g. it was on a
+        // now-disconnected secondary display, or off-screen due to a DPI
+        // offset), center the window instead, so it does not end up outside
+        // the screen (a taskbar entry exists but nothing shows on the desktop).
         let config_path = commands::get_window_config_path();
         if let Some(ref path) = config_path {
           if let Ok(content) = std::fs::read_to_string(path) {
@@ -131,7 +136,8 @@ pub fn run() {
             }
           }
         }
-        // 显示窗口（tauri.conf.json 中 visible: false），并确保未最小化且置前
+        // Show the window (visible: false in tauri.conf.json), and make sure
+        // it is unminimized and brought to the front.
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
