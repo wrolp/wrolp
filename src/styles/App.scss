@@ -502,7 +502,8 @@ body.resize-v * {
 .editor-shell-divider {
   flex-shrink: 0;
   height: 6px;
-  cursor: row-resize;
+  // Custom up/down-arrow cursor (no horizontal lines, unlike the OS row-resize cursor)
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cg fill='white' stroke='%23111' stroke-width='1.2' stroke-linejoin='round'%3E%3Cpath d='M12 3.5 L6.5 10 L17.5 10 Z'/%3E%3Cpath d='M12 20.5 L6.5 14 L17.5 14 Z'/%3E%3C/g%3E%3C/svg%3E") 12 12, ns-resize;
   background: $bg-secondary;
   border-top: 1px solid $border;
   border-bottom: 1px solid $border;
@@ -1841,5 +1842,140 @@ body.resize-v * {
   &:focus {
     border-color: $accent;
     outline: none;
+  }
+}
+
+// ==================== P6: Docker panel & target chip ====================
+
+.file-target-chip {
+  font-size: 10px;
+  color: $accent;
+  background: rgba($accent, 0.12);
+  border: 1px solid rgba($accent, 0.3);
+  border-radius: 3px;
+  padding: 0 5px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.docker-panel {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid $border;
+  background: $bg-primary;
+  min-height: 0;
+}
+
+.docker-panel-header {
+  flex-shrink: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 10px;
+  background: $bg-secondary;
+  border-bottom: 1px solid $border;
+  font-size: 12px;
+  color: $text-primary;
+  user-select: none;
+
+  .collapse-chevron {
+    cursor: pointer;
+    color: $text-muted;
+    margin-right: 4px;
+    &:hover { color: $text-primary; }
+  }
+
+  .docker-refresh {
+    background: none;
+    border: none;
+    color: $text-muted;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    &:hover { background: $bg-hover; color: $text-primary; }
+    &:disabled { opacity: 0.4; cursor: default; }
+  }
+}
+
+.docker-list {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 2px 0;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb { background: #424242; }
+
+  .file-error,
+  .file-empty {
+    padding: 8px 10px;
+    font-size: 12px;
+    color: $text-dim;
+  }
+}
+
+.docker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba($border, 0.4);
+
+  &:hover { background: $bg-hover; }
+  &.active { background: rgba($accent, 0.12); box-shadow: inset 2px 0 0 $accent; }
+
+  .docker-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .docker-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .docker-name {
+    font-size: 12px;
+    color: $text-primary;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .docker-image {
+    font-size: 10px;
+    color: $text-dim;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .docker-state {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    text-transform: lowercase;
+    background: $bg-secondary;
+    border: 1px solid $border;
+    color: $text-dim;
+
+    &.running {
+      color: #4ec9b0;
+      border-color: rgba(#4ec9b0, 0.35);
+      background: rgba(#4ec9b0, 0.1);
+    }
+    &.exited, &.dead, &.paused {
+      color: #f48771;
+      border-color: rgba(#f48771, 0.35);
+      background: rgba(#f48771, 0.08);
+    }
   }
 }

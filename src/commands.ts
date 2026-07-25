@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, FileContent } from './types'
+import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, FileContent, TargetRef, ContainerInfo } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -208,4 +208,72 @@ export async function saveCommandSet(cmdSet: CommandSetDto): Promise<string> {
 
 export async function deleteCommandSet(id: string): Promise<void> {
   await invoke<void>('delete_command_set', { id })
+}
+
+// ===== P6: Target-based file operations (jump host / Docker) =====
+
+export async function listDockerContainers(jumpTabId: number): Promise<ContainerInfo[]> {
+  return await invoke<ContainerInfo[]>('list_docker_containers', { jumpTabId })
+}
+
+function isSession(t: TargetRef): t is { kind: 'session'; tabId: number } {
+  return t.kind === 'session'
+}
+
+/**
+ * Filesystem dispatch: `session` targets reuse the optimized tab-based commands
+ * (preserving transfer progress / pause / switched-user behaviour); every other
+ * target routes to the `target_*` commands which operate via RemoteFs.
+ */
+export async function fsListFiles(target: TargetRef, path: string): Promise<FileEntry[]> {
+  return isSession(target) ? listFiles(target.tabId, path) : invoke<FileEntry[]>('target_list_files', { target, path })
+}
+
+export async function fsDownloadFile(target: TargetRef, remotePath: string, localPath: string): Promise<boolean> {
+  return isSession(target) ? downloadFile(target.tabId, remotePath, localPath) : invoke<boolean>('target_download_file', { target, remotePath, localPath })
+}
+
+export async function fsUploadFile(target: TargetRef, localPath: string, remotePath: string): Promise<boolean> {
+  return isSession(target) ? uploadFile(target.tabId, localPath, remotePath) : invoke<boolean>('target_upload_file', { target, localPath, remotePath })
+}
+
+export async function fsUploadFileBytes(target: TargetRef, remotePath: string, fileData: number[]): Promise<boolean> {
+  return isSession(target) ? uploadFileBytes(target.tabId, remotePath, fileData) : invoke<boolean>('target_upload_file_bytes', { target, remotePath, fileData })
+}
+
+export async function fsFileExists(target: TargetRef, path: string): Promise<boolean> {
+  return isSession(target) ? fileExists(target.tabId, path) : invoke<boolean>('target_file_exists', { target, path })
+}
+
+export async function fsCreateDirectory(target: TargetRef, path: string): Promise<boolean> {
+  return isSession(target) ? createDirectory(target.tabId, path) : invoke<boolean>('target_create_directory', { target, path })
+}
+
+export async function fsRenameFile(target: TargetRef, oldPath: string, newPath: string): Promise<boolean> {
+  return isSession(target) ? renameFile(target.tabId, oldPath, newPath) : invoke<boolean>('target_rename_file', { target, oldPath, newPath })
+}
+
+export async function fsDeleteFile(target: TargetRef, path: string, isDir: boolean): Promise<boolean> {
+  return isSession(target) ? deleteFile(target.tabId, path, isDir) : invoke<boolean>('target_delete_file', { target, path, isDir })
+}
+
+export async function fsReadFileContent(
+  target: TargetRef,
+  path: string,
+  options?: { maxSize?: number; encoding?: string },
+): Promise<FileContent> {
+  return isSession(target)
+    ? readFileContent(target.tabId, path, options)
+    : invoke<FileContent>('target_read_file', { target, path, maxSize: options?.maxSize, encoding: options?.encoding })
+}
+
+export async function fsWriteFileContent(
+  target: TargetRef,
+  path: string,
+  content: string,
+  encoding?: string,
+): Promise<boolean> {
+  return isSession(target)
+    ? writeFileContent(target.tabId, path, content, encoding)
+    : invoke<boolean>('target_write_file', { target, path, content, encoding })
 }

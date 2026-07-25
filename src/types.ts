@@ -82,3 +82,46 @@ export interface FileContent {
   /** True when the file was not valid UTF-8 and must be re-saved with `encoding`. */
   needsEncoding: boolean
 }
+
+// ===== P6: Jump host / Docker targets =====
+
+/** Credentials for a secondary target (independent of the jump host). */
+export interface TargetAuth {
+  username: string
+  password?: string
+  keyPath?: string
+  passphrase?: string
+}
+
+/**
+ * Identifies which remote filesystem a file operation acts upon.
+ * Serialized with a `kind` tag to match the Rust `TargetRef` enum.
+ */
+export type TargetRef =
+  | { kind: 'session'; tabId: number }
+  | { kind: 'jumpRemote'; jumpTabId: number; host: string; port: number; auth: TargetAuth }
+  | { kind: 'docker'; jumpTabId: number; container: string; user?: string }
+  | { kind: 'dockerSsh'; jumpTabId: number; host: string; port: number; auth: TargetAuth }
+
+/** A Docker container discovered via `docker ps` on a connected (jump) host. */
+export interface ContainerInfo {
+  id: string
+  name: string
+  image: string
+  state: string
+  status: string
+}
+
+/** Human-readable label for a target (used in chips / headers). */
+export function targetLabel(target: TargetRef): string {
+  switch (target.kind) {
+    case 'session':
+      return 'Local session'
+    case 'jumpRemote':
+      return `${target.host}:${target.port}`
+    case 'docker':
+      return `docker:${target.container}`
+    case 'dockerSsh':
+      return `docker-ssh:${target.host}:${target.port}`
+  }
+}

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, forwardRef, type ReactNode } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, useMemo, forwardRef, type ReactNode } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import type { FileEntry } from '../types'
-import { listFiles, uploadFile, uploadFileBytes, downloadFile, deleteFile, createDirectory, renameFile, writeFileContent, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser, sendInput, pollWorkingDir } from '../commands'
+import type { FileEntry, TargetRef } from '../types'
+import { targetLabel } from '../types'
+import { fsListFiles, fsUploadFile, fsUploadFileBytes, fsDownloadFile, fsDeleteFile, fsCreateDirectory, fsRenameFile, fsWriteFileContent, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser, sendInput, pollWorkingDir } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 
@@ -37,7 +38,13 @@ interface FilePanelProps {
   onToggleExpanded?: () => void
   syncEnabled?: boolean
   onToggleSync?: () => void
-  onEditFile?: (sshTabId: number, path: string) => void
+  onEditFile?: (target: TargetRef, path: string) => void
+  /**
+   * Which remote filesystem this panel operates on. Defaults to the tab's main
+   * session (`{ kind: 'session', tabId }`). Non-session targets disable
+   * session-only features (shell sync, SFTP user switch, transfer pause).
+   */
+  targetRef?: TargetRef
 }
 
 export interface FileTreeHandle {
@@ -123,7 +130,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   syncEnabled = false,
   onToggleSync,
   onEditFile,
+  targetRef,
 }, ref) {
+  // The remote filesystem this panel operates on (defaults to the tab session).
+  // Memoized by its serialized form so callbacks/effects get a stable identity.
+  const targetKey = JSON.stringify(targetRef ?? { kind: 'session' as const, tabId })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const target: TargetRef = useMemo(() => JSON.parse(targetKey) as TargetRef, [targetKey])
+  // Session-only tab id (null for jump/docker targets) — gates shell sync, SFTP
+  // user switching and transfer pause, which only apply to the main connection.
+  const sessionTabId = target.kind === 'session' ? target.tabId : null
+
   const [currentPath, setCurrentPath] = useState(defaultPath)
   const [rootPath, setRootPath] = useState(defaultPath)
   const [tree, setTree] = useState<TreeNode[]>([])
@@ -159,10 +176,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const lastPolledPath = useRef<string | null>(null)
 
   const cdToTerminal = useCallback(async (path: string) => {
-    if (!syncRef.current) return
+    if (!syncRef.current || sessionTabId == null) return
     const cmd = path === '.' ? 'cd\n' : `cd "${path}"\n`
-    try { await sendInput(tabId, cmd) } catch { /* ignore */ }
-  }, [tabId])
+    try { await sendInput(sessionTabId, cmd) } catch { /* ignore */ }
+  }, [sessionTabId])
 
   /* ---- tree load ---- */
   const loadRootDir = useCallback(async (path: string, sendCd = false) => {
@@ -170,7 +187,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     setError('')
     setTransferProgress(null)
     try {
-      const result = await listFiles(tabId, path)
+      const result = await fsListFiles(target, path)
       setTree(result.map(toNode))
       setCurrentPath(path)
       if (sendCd) cdToTerminal(path)
@@ -179,14 +196,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     } finally {
       setLoading(false)
     }
-  }, [tabId, cdToTerminal])
+  }, [target, cdToTerminal])
 
   // Refresh: re-load root + re-load any previously expanded directories
   const refresh = useCallback(async () => {
     setLoading(true)
     setError('')
     const reloadDir = async (path: string, prevMap?: Map<string, TreeNode>): Promise<TreeNode[]> => {
-      const result = await listFiles(tabId, path)
+      const result = await fsListFiles(target, path)
       const nodes: TreeNode[] = result.map(toNode)
       if (prevMap) {
         for (const n of nodes) {
@@ -212,25 +229,27 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     } finally {
       setLoading(false)
     }
-  }, [tabId, currentPath, tree])
+  }, [target, currentPath, tree])
 
   useImperativeHandle(ref, () => ({ refresh }), [refresh])
 
   useEffect(() => {
     if (isConnected) {
       loadRootDir(currentPath)
-      getSftpUser(tabId).then(setSftpUser).catch(() => {})
+      if (sessionTabId != null) {
+        getSftpUser(sessionTabId).then(setSftpUser).catch(() => {})
+      }
     }
-  }, [isConnected, tabId])
+  }, [isConnected, sessionTabId, targetKey])
 
-  // Shell → FilePanel sync
+  // Shell → FilePanel sync (main session only)
   useEffect(() => {
-    if (!syncEnabled || !isConnected) return
+    if (!syncEnabled || !isConnected || sessionTabId == null) return
     let active = true
     const poll = async () => {
       if (!active) return
       try {
-        const remotePath = await pollWorkingDir(tabId)
+        const remotePath = await pollWorkingDir(sessionTabId)
         if (!active || !remotePath) return
         if (remotePath !== lastPolledPath.current) {
           lastPolledPath.current = remotePath
@@ -243,13 +262,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     poll()
     const interval = setInterval(poll, 5000)
     return () => { active = false; clearInterval(interval) }
-  }, [syncEnabled, isConnected, tabId, loadRootDir])
+  }, [syncEnabled, isConnected, sessionTabId, loadRootDir])
 
-  // Transfer progress events
+  // Transfer progress events (main session only)
   useEffect(() => {
+    if (sessionTabId == null) return
     const unlisten = listen<TransferProgress>('transfer-progress', (event) => {
       const p = event.payload
-      if (p.tabId !== tabId) return
+      if (p.tabId !== sessionTabId) return
       const elapsed = p.elapsed > 0 ? p.elapsed / 1000 : 0.001
       const bytesPerSec = p.transferred / elapsed
       setTransferProgress({
@@ -259,7 +279,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       })
     })
     return () => { unlisten.then(fn => fn()) }
-  }, [tabId])
+  }, [sessionTabId])
 
   // Close context menu
   useEffect(() => {
@@ -290,7 +310,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       if (!node.loaded) {
         setTree((t) => updateNode(t, node.path, (n) => ({ ...n, loading: true })))
         try {
-          const result = await listFiles(tabId, node.path)
+          const result = await fsListFiles(target, node.path)
           setTree((t) =>
             updateNode(t, node.path, (n) => ({
               ...n,
@@ -307,7 +327,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         setTree((t) => updateNode(t, node.path, (n) => ({ ...n, expanded: true })))
       }
     }
-  }, [tabId])
+  }, [target])
 
   /* ---- upload ---- */
   const uploadFiles = useCallback(async (paths: string[]) => {
@@ -319,14 +339,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       const remotePath = join(currentPath, fileName)
       setTransferStatus(`Uploading ${i + 1}/${total}: ${fileName}`)
       try {
-        await uploadFile(tabId, localPath, remotePath)
+        await fsUploadFile(target, localPath, remotePath)
       } catch (e) {
         setError(`Upload ${fileName} failed: ${e}`); break
       }
     }
     setUploading(false); setPaused(false); setTransferStatus('')
     refresh()
-  }, [tabId, currentPath, refresh])
+  }, [target, currentPath, refresh])
 
   const handleDropUpload = useCallback(async (fileList: FileList) => {
     setUploading(true); setError(''); setPaused(false); setTransferProgress(null)
@@ -338,14 +358,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       try {
         const buf = await file.arrayBuffer()
         const bytes = Array.from(new Uint8Array(buf))
-        await uploadFileBytes(tabId, remotePath, bytes)
+        await fsUploadFileBytes(target, remotePath, bytes)
       } catch (e) {
         setError(`Upload ${file.name} failed: ${e}`); break
       }
     }
     setUploading(false); setPaused(false); setTransferStatus('')
     refresh()
-  }, [tabId, currentPath, refresh])
+  }, [target, currentPath, refresh])
 
   // HTML5 drag-drop
   useEffect(() => {
@@ -398,7 +418,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     const name = window.prompt('File name:')
     if (!name) return
     try {
-      await writeFileContent(tabId, join(baseDir, name), '', 'utf-8')
+      await fsWriteFileContent(target, join(baseDir, name), '', 'utf-8')
       refresh()
     } catch (e) { setError(String(e)) }
   }
@@ -413,7 +433,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     const name = window.prompt('Folder name:')
     if (!name) return
     try {
-      await createDirectory(tabId, join(baseDir, name))
+      await fsCreateDirectory(target, join(baseDir, name))
       refresh()
     } catch (e) { setError(String(e)) }
   }
@@ -424,7 +444,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     if (!newName || newName === node.name) return
     const parent = getParentDir(node.path)
     try {
-      await renameFile(tabId, node.path, join(parent, newName))
+      await fsRenameFile(target, node.path, join(parent, newName))
       refresh()
     } catch (e) { setError(String(e)) }
   }
@@ -436,7 +456,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       : `Delete file "${node.name}"?`
     if (!window.confirm(msg)) return
     try {
-      await deleteFile(tabId, node.path, node.isDir)
+      await fsDeleteFile(target, node.path, node.isDir)
       refresh()
     } catch (e) { setError(String(e)) }
   }
@@ -450,7 +470,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         setDownloading(true); setPaused(false)
         setTransferStatus(`Downloading: ${node.name}`)
         setTransferProgress(null)
-        await downloadFile(tabId, node.path, filePath as string)
+        await fsDownloadFile(target, node.path, filePath as string)
         setDownloading(false); setPaused(false); setTransferStatus('')
       }
     } catch (e) { setDownloading(false); setTransferStatus(''); setError(String(e)) }
@@ -458,21 +478,23 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   const handleEdit = (node: TreeNode) => {
     setContextMenu(null)
-    onEditFile?.(tabId, node.path)
+    onEditFile?.(target, node.path)
   }
 
-  /* ---- SFTP user ---- */
+  /* ---- SFTP user (main session only) ---- */
   const handleSwitchUser = async () => {
+    if (sessionTabId == null) return
     const name = switchUsername.trim(); const pw = switchPassword
     if (!name || !pw) { setError('Username and password are required'); return }
     try {
-      await switchSftpUser(tabId, name, pw)
+      await switchSftpUser(sessionTabId, name, pw)
       setSftpUser(name); setShowSwitchUser(false)
       setSwitchUsername(''); setSwitchPassword(''); setError('')
     } catch (e) { setError(String(e)) }
   }
   const handleRevertUser = async () => {
-    try { await revertSftpUser(tabId); setSftpUser(null); setError('') }
+    if (sessionTabId == null) return
+    try { await revertSftpUser(sessionTabId); setSftpUser(null); setError('') }
     catch (e) { setError(String(e)) }
   }
 
@@ -515,8 +537,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }
 
   const togglePause = async () => {
-    if (paused) { setPaused(false); await resumeTransfer(tabId) }
-    else { setPaused(true); await pauseTransfer(tabId) }
+    if (sessionTabId == null) return
+    if (paused) { setPaused(false); await resumeTransfer(sessionTabId) }
+    else { setPaused(true); await pauseTransfer(sessionTabId) }
   }
 
   /* ---- scrollbar ---- */
@@ -537,7 +560,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     if (node.isDir) {
       toggleDir(node)
     } else {
-      onEditFile?.(tabId, node.path)
+      onEditFile?.(target, node.path)
     }
   }
 
@@ -575,24 +598,29 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           onClick={onToggleExpanded}
           title={expanded ? 'Collapse' : 'Expand'}
         />
-        <span style={{ flex: 1 }}>Files</span>
+        <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          Files
+          {sessionTabId == null && (
+            <span className="file-target-chip" title={targetLabel(target)}>{targetLabel(target)}</span>
+          )}
+        </span>
         {expanded && (
           <div className="file-toolbar">
-            {onToggleSync && (
+            {onToggleSync && sessionTabId != null && (
               <button
                 title={syncEnabled ? 'Disable shell sync' : 'Enable shell sync (cd terminal ↔ files)'}
                 onClick={onToggleSync}
                 className={syncEnabled ? 'sync-active' : ''}
               >🔗</button>
             )}
-            {sftpUser ? (
+            {sessionTabId != null && (sftpUser ? (
               <>
                 <span className="file-sftp-user" title={`SFTP as: ${sftpUser}`}>🔒{sftpUser}</span>
                 <button title="Restore original user" onClick={handleRevertUser}>↩</button>
               </>
             ) : (
               <button title="Switch SFTP user" onClick={() => setShowSwitchUser(!showSwitchUser)}>👤</button>
-            )}
+            ))}
             <button title="Upload" onClick={handleUpload}>📤</button>
             <button title="New item" onClick={() => {
               const btn = document.activeElement as HTMLElement
@@ -673,9 +701,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                     } />
                   </div>
                   <span>{transferStatus}</span>
-                  <button className="file-pause-btn" onClick={togglePause} title={paused ? 'Resume' : 'Pause'}>
-                    {paused ? '▶' : '⏸'}
-                  </button>
+                  {sessionTabId != null && (
+                    <button className="file-pause-btn" onClick={togglePause} title={paused ? 'Resume' : 'Pause'}>
+                      {paused ? '▶' : '⏸'}
+                    </button>
+                  )}
                   {transferProgress && transferProgress.total > 0 && (
                     <span className="file-progress-detail">
                       {formatSize(transferProgress.transferred)} / {formatSize(transferProgress.total)} · {transferProgress.speed}

@@ -11,9 +11,10 @@ import { TerminalComponent } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
+import { DockerPanel } from './components/DockerPanel'
 import type { FileTreeHandle } from './components/FilePanel'
-import type { ConnectionConfig, TabInfo } from './types'
-import { loadWindowConfig, saveWindowConfig, readFileContent, writeFileContent } from './commands'
+import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo } from './types'
+import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent } from './commands'
 import { detectLanguage } from './editor/languages'
 import './styles/App.scss'
 
@@ -34,10 +35,32 @@ export default function App() {
   const [connectionsExpanded, setConnectionsExpanded] = useState(true)
   const [filesExpanded, setFilesExpanded] = useState(true)
   const [bottomPanelExpanded, setBottomPanelExpanded] = useState(false)
+  const [dockerExpanded, setDockerExpanded] = useState(false)
+  // Remote filesystem shown in the Files panel (null = the tab's main session).
+  const [fileTarget, setFileTarget] = useState<TargetRef | null>(null)
 
   // Shell (terminal) pane height / collapse when a file editor is open
   const [shellHeight, setShellHeight] = useState(240)
   const [shellCollapsed, setShellCollapsed] = useState(false)
+
+  // Reset the Files panel target when switching tabs (targets are tab-scoped).
+  useEffect(() => {
+    setFileTarget(null)
+  }, [activeTabId])
+
+  // Open (or toggle closed) a Docker container's filesystem in the Files panel.
+  const handleOpenContainer = useCallback(
+    (container: ContainerInfo) => {
+      if (activeTabId == null) return
+      setFileTarget((prev) =>
+        prev?.kind === 'docker' && prev.container === container.name
+          ? null
+          : { kind: 'docker', jumpTabId: activeTabId, container: container.name },
+      )
+      setFilesExpanded(true)
+    },
+    [activeTabId],
+  )
 
   // Remote file editor state
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
@@ -311,16 +334,19 @@ export default function App() {
     [openTab],
   )
 
-  // Open a remote file in the inline editor (loads content on demand)
-  const openInEditor = useCallback(async (sshTabId: number, path: string) => {
-    const key = `${sshTabId}:${path}`
+  // Open a remote file in the inline editor (loads content on demand).
+  // `target` identifies which remote filesystem the file lives on.
+  const openInEditor = useCallback(async (target: TargetRef, path: string) => {
+    const key = `${JSON.stringify(target)}:${path}`
+    const legacyTabId = target.kind === 'session' ? target.tabId : target.jumpTabId
     setEditorTabs((prev) => {
       if (prev.some((t) => t.key === key)) return prev
       return [
         ...prev,
         {
           key,
-          sshTabId,
+          sshTabId: legacyTabId,
+          targetRef: target,
           path,
           name: path.split('/').pop() || path,
           content: '',
@@ -339,7 +365,7 @@ export default function App() {
     })
     setActiveEditorKey(key)
     try {
-      const fc = await readFileContent(sshTabId, path)
+      const fc = await fsReadFileContent(target, path)
       setEditorTabs((prev) =>
         prev.map((t) =>
           t.key === key
@@ -402,6 +428,10 @@ export default function App() {
     )
   }, [])
 
+  // Resolve the remote filesystem a tab's file lives on (defaults to its session).
+  const tabTarget = (t: EditorTab): TargetRef =>
+    t.targetRef ?? { kind: 'session', tabId: t.sshTabId }
+
   const handleSaveEditorTab = useCallback(
     async (key: string) => {
       const target = editorTabs.find((t) => t.key === key)
@@ -412,8 +442,8 @@ export default function App() {
         ),
       )
       try {
-        await writeFileContent(
-          target.sshTabId,
+        await fsWriteFileContent(
+          tabTarget(target),
           target.path,
           target.content,
           target.encoding,
@@ -467,7 +497,7 @@ export default function App() {
         if (!ok) return
       }
       try {
-        const fc = await readFileContent(target.sshTabId, target.path, {
+        const fc = await fsReadFileContent(tabTarget(target), target.path, {
           encoding,
         })
         if (fc.isBinary || fc.isTooLarge) return
@@ -836,16 +866,18 @@ export default function App() {
                         <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
                       )}
 
-                      {/* Files section */}
+                      {/* Files section (session, or a jump/docker target) */}
                       <div
                         className="collapsible-section"
                         style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
                       >
                         <FilePanel
+                          key={fileTarget ? JSON.stringify(fileTarget) : 'session'}
                           ref={fileTreeRef}
                           tabId={activeTabId}
                           isConnected={true}
-                          defaultPath="."
+                          defaultPath={fileTarget?.kind === 'docker' ? '/' : '.'}
+                          targetRef={fileTarget ?? undefined}
                           expanded={filesExpanded}
                           onToggleExpanded={() => setFilesExpanded(v => !v)}
                           syncEnabled={syncEnabled}
@@ -859,6 +891,20 @@ export default function App() {
                             }
                           }}
                           onEditFile={openInEditor}
+                        />
+                      </div>
+
+                      {/* Docker containers on the connected host */}
+                      <div
+                        className="collapsible-section"
+                        style={dockerExpanded ? { flexShrink: 0, maxHeight: 220, overflow: 'hidden' } : { flexShrink: 0 }}
+                      >
+                        <DockerPanel
+                          jumpTabId={activeTabId}
+                          expanded={dockerExpanded}
+                          onToggleExpanded={() => setDockerExpanded(v => !v)}
+                          activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
+                          onOpenContainer={handleOpenContainer}
                         />
                       </div>
                     </>

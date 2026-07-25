@@ -142,8 +142,10 @@ pub struct SshSession {
   pub shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
   /// PTY channel Arc (for resize)
   pub channel_arc: Option<Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>>,
-  /// Cloned SSH session handle for SFTP file operations
-  pub session_handle: Option<russh::client::Handle<SshHandler>>,
+  /// Shared SSH session handle, kept alive for the session lifetime.
+  /// Used to open extra channels (ProxyJump direct-tcpip, docker exec) for
+  /// secondary targets without re-authenticating.
+  pub session_handle: Option<Arc<russh::client::Handle<SshHandler>>>,
   /// Optional switched user for SFTP operations (different from connection config user)
   pub switched_sftp_user: Option<SwitchedUser>,
   /// Monotonic session version — incremented on each reconnection for the same tab
@@ -156,6 +158,83 @@ pub struct SshSession {
 pub struct SwitchedUser {
   pub username: String,
   pub password: String,
+}
+
+// ==================== P6: Jump host / Docker targets ====================
+
+/// Credentials for a secondary target (independent of the jump host).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetAuth {
+  pub username: String,
+  pub password: Option<String>,
+  pub key_path: Option<String>,
+  pub passphrase: Option<String>,
+}
+
+/// Identifies which remote filesystem a file operation acts upon.
+/// Constructed by the frontend, consumed by the backend.
+///
+/// NOTE: `rename_all = "camelCase"` is intentionally NOT used here — when
+/// combined with `tag = "kind"`, serde fails to apply it to variant fields, so
+/// we rename the multi-word fields explicitly to match the frontend's camelCase.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum TargetRef {
+  /// The current tab's main SSH connection (backwards-compatible).
+  #[serde(rename = "session")]
+  Session {
+    #[serde(rename = "tabId")]
+    tab_id: u32,
+  },
+  /// A secondary remote server reached via ProxyJump through a connected jump tab.
+  #[serde(rename = "jumpRemote")]
+  JumpRemote {
+    #[serde(rename = "jumpTabId")]
+    jump_tab_id: u32,
+    host: String,
+    port: u16,
+    auth: TargetAuth,
+  },
+  /// A Docker container on the jump host, accessed via `docker exec` (no sshd).
+  #[serde(rename = "docker")]
+  Docker {
+    #[serde(rename = "jumpTabId")]
+    jump_tab_id: u32,
+    container: String,
+    user: Option<String>,
+  },
+  /// A container running sshd, reached via ProxyJump (host = container IP).
+  #[serde(rename = "dockerSsh")]
+  DockerSsh {
+    #[serde(rename = "jumpTabId")]
+    jump_tab_id: u32,
+    host: String,
+    port: u16,
+    auth: TargetAuth,
+  },
+}
+
+/// A Docker container discovered via `docker ps` on the jump host.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainerInfo {
+  pub id: String,
+  pub name: String,
+  pub image: String,
+  pub state: String,
+  pub status: String,
+}
+
+/// File metadata for a remote target.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMeta {
+  pub path: String,
+  pub is_dir: bool,
+  pub size: u64,
+  pub mode: String,
+  pub modified: String,
 }
 
 /// Per-tab transfer pause/resume control

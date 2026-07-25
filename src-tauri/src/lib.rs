@@ -2,6 +2,8 @@
 
 mod commands;
 mod db;
+mod docker_fs;
+mod remote_fs;
 mod ssh_session;
 
 use ssh_session::AppState;
@@ -165,6 +167,17 @@ pub fn run() {
       commands::pause_transfer,
       commands::resume_transfer,
       commands::poll_working_dir,
+      commands::target_list_files,
+      commands::target_file_exists,
+      commands::target_create_directory,
+      commands::target_rename_file,
+      commands::target_delete_file,
+      commands::target_read_file,
+      commands::target_write_file,
+      commands::target_download_file,
+      commands::target_upload_file,
+      commands::target_upload_file_bytes,
+      commands::list_docker_containers,
       commands::save_window_config,
       commands::load_window_config,
       commands::list_sessions,

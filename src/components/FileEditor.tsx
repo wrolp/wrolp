@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import monaco from '../editor/monacoSetup'
 import { LANGUAGE_OPTIONS, ENCODING_OPTIONS } from '../editor/languages'
+import type { TargetRef } from '../types'
 
 export interface EditorTab {
   key: string
   sshTabId: number
+  /** Remote filesystem this file lives on (defaults to the tab session). */
+  targetRef?: TargetRef
   path: string
   name: string
   content: string

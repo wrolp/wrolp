@@ -1,14 +1,14 @@
 use super::ssh_session::{
-  AppState, ConnectionConfig, ConnectResult, FileEntry, SshError, SshHandler, SshSession, SwitchedUser, TransferControl,
-  ActiveRecording,
+  AppState, ConnectionConfig, ConnectResult, ContainerInfo, FileEntry, SshError, SshHandler, SshSession, SwitchedUser,
+  TargetRef, TransferControl, ActiveRecording,
 };
 use crate::db::{self, CommandSetDto, SessionEventDto, SessionSummary};
+use crate::remote_fs::build_fs;
 use russh::client::{self, Handler};
 use russh::ChannelId;
 use russh_keys::load_secret_key;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::hint::black_box;
 use std::path::PathBuf;
 use tauri::Manager;
 use tauri::Emitter;
@@ -45,7 +45,7 @@ impl Drop for TransferGuard {
 }
 
 /// Expand ~ to the user's home directory
-fn expand_tilde(path: &str) -> PathBuf {
+pub(crate) fn expand_tilde(path: &str) -> PathBuf {
   if path.starts_with("~/") {
     if let Some(home) = dirs::home_dir() {
       home.join(&path[2..])
@@ -312,19 +312,17 @@ pub async fn delete_group(
 
 // ==================== SSH Connection (russh) ====================
 
-/// I/O loop: session passed as parameter to prevent premature drop by async state machine
+/// I/O loop for the interactive PTY channel. The SSH `Handle` is kept alive in
+/// `AppState.sessions[tab].session_handle` (see `connect`), so it is not owned here.
 async fn run_session_loop(
   channel: Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>,
   mut data_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
   mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
-  session: russh::client::Handle<SshHandler>,
   tid: u32,
 ) {
   loop {
-    black_box(&session);
     tokio::select! {
       Some(data) = data_rx.recv() => {
-        black_box(&session);
         let ch = channel.lock().await;
         if let Err(e) = ch.data(data.as_slice()).await {
           eprintln!("[russh] write error for tab={}: {:?}", tid, e);
@@ -343,7 +341,6 @@ async fn run_session_loop(
       }
     }
   }
-  drop(session);
 }
 
 #[tauri::command]
@@ -514,12 +511,14 @@ pub async fn connect(
 
       eprintln!("[russh] shell started for tab={}", tid);
 
-      // Store channel Arc in session for later resize
+      // Store channel Arc (for resize) and the shared session handle (for
+      // ProxyJump / docker exec on secondary targets) in the session.
       {
         if let Some(app_state) = app_handle.try_state::<AppState>() {
           if let Ok(mut sessions) = app_state.sessions.lock() {
             if let Some(session) = sessions.get_mut(&tid) {
               session.channel_arc = Some(channel.clone());
+              session.session_handle = Some(Arc::new(handle));
             }
           }
         }
@@ -540,8 +539,8 @@ pub async fn connect(
       }
       eprintln!("[russh] test event pushed to buffer for tab={}", tid);
 
-      // 4. Run I/O loop
-      run_session_loop(channel, data_rx, shutdown_rx, handle, tid).await;
+      // 4. Run I/O loop (handle kept alive in AppState.session_handle)
+      run_session_loop(channel, data_rx, shutdown_rx, tid).await;
 
       eprintln!("[russh] disconnected for tab={}", tid);
 
@@ -772,75 +771,14 @@ pub async fn poll_output(
 
 // ==================== SFTP File Operations ====================
 
-/// Helper: clone config stored in session and establish a fresh SFTP connection
+/// Helper: establish a fresh SFTP connection for a tab's main session.
+/// Delegates to the shared implementation in `remote_fs`.
 async fn open_sftp_session(
   state: &tauri::State<'_, AppState>,
   app: &tauri::AppHandle,
   tab_id: u32,
 ) -> Result<russh_sftp::client::SftpSession, String> {
-  let (config, switched_user) = {
-    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    let session = sessions
-      .get(&tab_id)
-      .ok_or("Session not found")?;
-    (session.config.clone(), session.switched_sftp_user.clone())
-  };
-
-  let ssh_config = Arc::new(client::Config::default());
-  let handler = SshHandler {
-    app_handle: app.clone(),
-    tab_id,
-    is_sftp: true,
-  };
-
-  let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
-    .await
-    .map_err(|e| format!("SFTP connect failed: {}", e))?;
-
-  // Authenticate — use switched user if set, otherwise original config credentials
-  if let Some(ref su) = switched_user {
-    // Authenticate as switched user (password-only for now)
-    if !handle.authenticate_password(&su.username, &su.password).await
-      .map_err(|e| format!("Auth error: {}", e))? {
-      return Err(format!("Authentication failed for switched user '{}'", su.username));
-    }
-  } else if let Some(ref pw) = config.password {
-    if !handle.authenticate_password(&config.username, pw).await.map_err(|e| format!("Auth error: {}", e))? {
-      return Err("Authentication failed".into());
-    }
-  } else if let Some(ref key_path) = config.key_path {
-    let resolved_path = expand_tilde(key_path);
-    let key = load_secret_key(&resolved_path, config.passphrase.as_deref())
-      .map_err(|e| format!("Failed to load key '{}': {}", key_path, e))?;
-    if !handle.authenticate_publickey(&config.username, Arc::new(key)).await.map_err(|e| format!("Key auth error: {}", e))? {
-      return Err("Key authentication failed".into());
-    }
-  } else {
-    return Err("No credentials provided".into());
-  }
-
-  // Open SFTP channel
-  let channel = handle
-    .channel_open_session()
-    .await
-    .map_err(|e| format!("Failed to open SFTP channel: {}", e))?;
-
-  let ch = channel;
-  ch.request_subsystem(true, "sftp")
-    .await
-    .map_err(|e| format!("Failed to request SFTP subsystem: {}", e))?;
-
-  let sftp = russh_sftp::client::SftpSession::new(ch.into_stream())
-    .await
-    .map_err(|e| format!("Failed to start SFTP session: {}", e))?;
-
-  // Spawn a task to keep `handle` alive
-  tauri::async_runtime::spawn(async move {
-    let _h = handle;
-    std::future::pending::<()>().await;
-  });
-
-  Ok(sftp)
+  crate::remote_fs::open_session_sftp(state, app, tab_id).await
 }
 
 /// Poll the remote working directory via a dedicated exec channel.
@@ -1514,6 +1452,214 @@ pub async fn delete_file(
   }
 
   Ok(true)
+}
+
+// ==================== P6: Target-based file operations ====================
+//
+// These commands address any `TargetRef` (main session / ProxyJump remote /
+// Docker container) and operate directly on that target. The `Session` variant
+// reproduces the behaviour of the `tab_id` commands above.
+
+#[tauri::command]
+pub async fn target_list_files(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  path: String,
+) -> Result<Vec<FileEntry>, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  fs.list_dir(&path).await
+}
+
+#[tauri::command]
+pub async fn target_file_exists(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  path: String,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  Ok(fs.metadata(&path).await.is_ok())
+}
+
+#[tauri::command]
+pub async fn target_create_directory(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  path: String,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  fs.create_dir(&path).await?;
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn target_rename_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  old_path: String,
+  new_path: String,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  fs.rename(&old_path, &new_path).await?;
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn target_delete_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  path: String,
+  is_dir: bool,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  if is_dir {
+    fs.remove_dir(&path).await?;
+  } else {
+    fs.remove_file(&path).await?;
+  }
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn target_read_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  path: String,
+  max_size: Option<u64>,
+  encoding: Option<String>,
+) -> Result<FileContent, String> {
+  let max_size = max_size.unwrap_or(DEFAULT_MAX_EDIT_SIZE);
+  let fs = build_fs(&app, &state, &target).await?;
+
+  let meta = fs
+    .metadata(&path)
+    .await
+    .map_err(|e| format!("Failed to stat remote file: {}", e))?;
+  let size = meta.size;
+  let mode = meta.mode.clone();
+
+  if size > max_size {
+    return Ok(FileContent {
+      path,
+      content: String::new(),
+      size,
+      mode,
+      is_binary: false,
+      is_too_large: true,
+      encoding: encoding.unwrap_or_else(|| "utf-8".to_string()),
+      needs_encoding: false,
+    });
+  }
+
+  let data = fs
+    .read_file(&path)
+    .await
+    .map_err(|e| format!("Failed to read remote file: {}", e))?;
+
+  let is_binary = data.contains(&0);
+  let (content, used_encoding, needs_encoding) = if is_binary {
+    (String::new(), encoding.clone().unwrap_or_else(|| "utf-8".to_string()), false)
+  } else {
+    decode_file_content(&data, encoding.as_deref())
+  };
+
+  Ok(FileContent {
+    path,
+    content,
+    size,
+    mode,
+    is_binary,
+    is_too_large: false,
+    encoding: used_encoding,
+    needs_encoding,
+  })
+}
+
+#[tauri::command]
+pub async fn target_write_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  path: String,
+  content: String,
+  encoding: Option<String>,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+
+  let encoding_ref: &Encoding = Encoding::for_label(encoding.as_deref().unwrap_or("utf-8").as_bytes())
+    .unwrap_or(UTF_8);
+  let (bytes, _used, had_errors) = encoding_ref.encode(&content);
+  if had_errors {
+    return Err(format!("Content cannot be encoded as {}", encoding_ref.name()));
+  }
+  fs.write_file(&path, &bytes).await?;
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn target_download_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  remote_path: String,
+  local_path: String,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  let data = fs
+    .read_file(&remote_path)
+    .await
+    .map_err(|e| format!("Failed to read remote file: {}", e))?;
+  if let Some(parent) = std::path::Path::new(&local_path).parent() {
+    let _ = tokio::fs::create_dir_all(parent).await;
+  }
+  tokio::fs::write(&local_path, &data)
+    .await
+    .map_err(|e| format!("Failed to write local file: {}", e))?;
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn target_upload_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  local_path: String,
+  remote_path: String,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  let data = tokio::fs::read(&local_path)
+    .await
+    .map_err(|e| format!("Failed to read local file: {}", e))?;
+  fs.write_file(&remote_path, &data).await?;
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn target_upload_file_bytes(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  remote_path: String,
+  file_data: Vec<u8>,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  fs.write_file(&remote_path, &file_data).await?;
+  Ok(true)
+}
+
+/// List Docker containers reachable from a connected (jump host) tab.
+#[tauri::command]
+pub async fn list_docker_containers(
+  state: tauri::State<'_, AppState>,
+  jump_tab_id: u32,
+) -> Result<Vec<ContainerInfo>, String> {
+  let jump = crate::remote_fs::get_jump_handle(&state, jump_tab_id)?;
+  crate::docker_fs::list_docker_containers(jump).await
 }
 
 // ==================== SFTP User Switching ====================
