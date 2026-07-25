@@ -158,6 +158,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const handleResize = () => {
       if (isActiveRef.current && fitRef.current) {
         fitRef.current.fit()
+        term.refresh(0, term.rows - 1)
         sendResize(term)
       }
     }
@@ -168,6 +169,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       resizeObserverRef.current = new ResizeObserver(() => {
         if (isActiveRef.current && fitRef.current) {
           fitRef.current.fit()
+          term.refresh(0, term.rows - 1)
           sendResize(term)
         }
       })
@@ -232,6 +234,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const h = container.clientHeight
       if (w > 0 && h > 0) {
         fitAddon.fit()
+        // B3 fix: repaint after fit so a stale trailing row / blinking cursor
+        // pinned to the bottom edge is cleared.
+        term.refresh(0, term.rows - 1)
         doConnect()
       } else {
         // Container still has zero dimensions, keep waiting

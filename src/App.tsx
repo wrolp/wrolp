@@ -1021,32 +1021,39 @@ export default function App() {
             </div>
           )}
 
-          {/* Remote file editor (inline editing) */}
-          {editorTabs.length > 0 && (
-            <FileEditor
-              tabs={editorTabs}
-              activeKey={activeEditorKey}
-              onSelect={setActiveEditorKey}
-              onClose={closeEditorTab}
-              onContentChange={handleEditorContentChange}
-              onSave={handleSaveEditorTab}
-              onChangeLanguage={changeEditorTabLanguage}
-              onChangeEncoding={changeEditorTabEncoding}
-              onChangeLineEnding={changeEditorTabLineEnding}
-            />
-          )}
-
-          {/* Shell (terminal) pane — standalone, or split with the editor above */}
-          {editorTabs.length === 0 ? (
-            terminalContent
-          ) : (
-            <>
-              <div
-                className="editor-shell-divider"
-                onMouseDown={handleEditorShellDividerMouseDown}
-                title="Drag to resize · use ▲/▼ in the Shell header to collapse"
+          {/* Remote file editor (inline editing) + Shell pane.
+              NOTE (B2 fix): `terminalContent` is ALWAYS rendered inside the same
+              `.shell-pane > .shell-pane-body` DOM position (keyed), so opening or
+              closing the file editor no longer remounts the TerminalComponent
+              (which previously triggered a fresh connect() and lost focus). */}
+          {[
+            editorTabs.length > 0 && (
+              <FileEditor
+                key="file-editor"
+                tabs={editorTabs}
+                activeKey={activeEditorKey}
+                onSelect={setActiveEditorKey}
+                onClose={closeEditorTab}
+                onContentChange={handleEditorContentChange}
+                onSave={handleSaveEditorTab}
+                onChangeLanguage={changeEditorTabLanguage}
+                onChangeEncoding={changeEditorTabEncoding}
+                onChangeLineEnding={changeEditorTabLineEnding}
               />
-              <div className="shell-pane">
+            ),
+            <div
+              key="editor-shell-divider"
+              className="editor-shell-divider"
+              style={{ display: editorTabs.length > 0 ? 'block' : 'none' }}
+              onMouseDown={handleEditorShellDividerMouseDown}
+              title="Drag to resize · use ▲/▼ in the Shell header to collapse"
+            />,
+            <div
+              key="shell-pane"
+              className="shell-pane"
+              style={{ flex: editorTabs.length === 0 ? 1 : '0 0 auto', minHeight: 0 }}
+            >
+              {editorTabs.length > 0 && (
                 <div className="shell-pane-header">
                   <span className="shell-pane-title">Shell</span>
                   <button
@@ -1057,12 +1064,15 @@ export default function App() {
                     {shellCollapsed ? '▲' : '▼'}
                   </button>
                 </div>
-                <div className="shell-pane-body" style={{ height: shellCollapsed ? 0 : shellHeight }}>
-                  {terminalContent}
-                </div>
+              )}
+              <div
+                className="shell-pane-body"
+                style={{ height: editorTabs.length === 0 ? undefined : (shellCollapsed ? 0 : shellHeight) }}
+              >
+                {terminalContent}
               </div>
-            </>
-          )}
+            </div>,
+          ]}
 
           {/* Bottom panel — session recordings & command sets */}
           <BottomPanel
