@@ -644,7 +644,9 @@ export default function App() {
 
     const handleMouseMove = (ev: MouseEvent) => {
       if (!isDraggingV.current) return
-      const delta = ev.clientY - startY
+      // Docker panel sits BELOW this divider, so dragging the divider down
+      // (increasing clientY) must SHRINK it — mirror the shell divider's sign.
+      const delta = startY - ev.clientY
       const containerHeight = sidebarEl?.clientHeight || 700
       const newHeight = Math.max(80, Math.min(containerHeight - 100, startHeight + delta))
       setDockerHeight(newHeight)
