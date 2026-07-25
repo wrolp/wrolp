@@ -36,6 +36,8 @@ export default function App() {
   const [filesExpanded, setFilesExpanded] = useState(true)
   const [bottomPanelExpanded, setBottomPanelExpanded] = useState(false)
   const [dockerExpanded, setDockerExpanded] = useState(false)
+  // Docker panel height (resizable via the divider between Files and Docker)
+  const [dockerHeight, setDockerHeight] = useState(220)
   // Remote filesystem shown in the Files panel (null = the tab's main session).
   const [fileTarget, setFileTarget] = useState<TargetRef | null>(null)
 
@@ -629,6 +631,40 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [connectionListHeight])
 
+  // Files <-> Docker vertical divider drag-to-resize (only when the Docker panel is expanded)
+  const handleDockerDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    isDraggingV.current = true
+    const win = getCurrentWindow()
+    const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
+    const startY = e.clientY
+    const startHeight = dockerHeight
+    win.setResizable(false).catch(() => {})
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingV.current) return
+      const delta = ev.clientY - startY
+      const containerHeight = sidebarEl?.clientHeight || 700
+      const newHeight = Math.max(80, Math.min(containerHeight - 100, startHeight + delta))
+      setDockerHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      isDraggingV.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.classList.remove('resize-v')
+      document.body.style.userSelect = ''
+      win.setResizable(true).catch(() => {})
+    }
+
+    document.body.classList.add('resize-v')
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [dockerHeight])
+
   // Editor <-> Shell vertical divider drag-to-resize (only when a file editor is open)
   const handleEditorShellDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -894,10 +930,14 @@ export default function App() {
                         />
                       </div>
 
+                      {dockerExpanded && (
+                        <div className="panel-divider-h" onMouseDown={handleDockerDividerMouseDown} />
+                      )}
+
                       {/* Docker containers on the connected host */}
                       <div
                         className="collapsible-section"
-                        style={dockerExpanded ? { flexShrink: 0, maxHeight: 220, overflow: 'hidden' } : { flexShrink: 0 }}
+                        style={dockerExpanded ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' } : { flexShrink: 0 }}
                       >
                         <DockerPanel
                           jumpTabId={activeTabId}

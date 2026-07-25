@@ -363,6 +363,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Clipboard actions
   const handleCopy = useCallback(async () => {
     setCtxMenu(null)
+    termRef.current?.focus()
     const term = termRef.current
     if (!term) return
     const sel = term.getSelection()
@@ -383,6 +384,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
   const handlePaste = useCallback(async () => {
     setCtxMenu(null)
+    termRef.current?.focus()
     const term = termRef.current
     if (!term) return
     try {
@@ -397,6 +399,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
   const handleSelectAll = useCallback(() => {
     setCtxMenu(null)
+    termRef.current?.focus()
     termRef.current?.selectAll()
   }, [])
 

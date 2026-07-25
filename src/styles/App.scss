@@ -1667,6 +1667,16 @@ body.resize-v * {
   text-align: center;
 }
 
+// B5 fix: bound the scroll wrappers so their child `.session-table` /
+// `.cmd-set-table` (flex:1; overflow-y:auto) can actually scroll instead of
+// being clipped by `.bottom-panel-content { overflow: hidden }`.
+.session-list-panel, .cmd-set-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 // Session list
 .session-table, .cmd-set-table {
   flex: 1;
@@ -1862,12 +1872,12 @@ body.resize-v * {
 }
 
 .docker-panel {
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border-top: 1px solid $border;
   background: $bg-primary;
-  min-height: 0;
 }
 
 .docker-panel-header {
@@ -1903,6 +1913,7 @@ body.resize-v * {
 }
 
 .docker-list {
+  flex: 1;
   overflow-y: auto;
   min-height: 0;
   padding: 2px 0;
