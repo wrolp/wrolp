@@ -9,6 +9,8 @@ interface TerminalComponentProps {
   isActive: boolean
   reconnectTrigger?: number
   connectConfig?: {
+    id: string
+    name?: string
     host: string
     port: number
     username: string
@@ -201,8 +203,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onStatusChangeRef.current('connecting')
       connect(
         {
-          id: '',
-          name: `${cfg.username}@${cfg.host}`,
+          id: cfg.id,
+          name: cfg.name || `${cfg.username}@${cfg.host}`,
           host: cfg.host,
           port: cfg.port,
           username: cfg.username,
@@ -297,8 +299,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
       connect(
         {
-          id: '',
-          name: `${cfg.username}@${cfg.host}`,
+          id: cfg.id,
+          name: cfg.name || `${cfg.username}@${cfg.host}`,
           host: cfg.host,
           port: cfg.port,
           username: cfg.username,

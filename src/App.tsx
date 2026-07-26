@@ -733,6 +733,8 @@ export default function App() {
                           const conn = cachedConnections.find((c) => c.id === tab.connectionId)
                           if (!conn) return undefined
                           return {
+                            id: conn.id,
+                            name: conn.name,
                             host: conn.host,
                             port: conn.port,
                             username: conn.username,
