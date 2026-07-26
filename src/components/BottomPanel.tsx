@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import type { ConnectionConfig, SessionSummary } from '../types'
+import type { ConnectionConfig, SessionSummary, DockPos } from '../types'
 import { SessionListPanel } from './SessionListPanel'
 import { CommandSetPanel } from './CommandSetPanel'
 import { SessionViewer } from './SessionViewer'
@@ -8,6 +8,8 @@ interface BottomPanelProps {
   connections: ConnectionConfig[]
   activeTabId: number | null
   expanded: boolean
+  pos?: DockPos
+  size?: number
   onToggleExpanded: () => void
 }
 
@@ -17,6 +19,8 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
   connections,
   activeTabId,
   expanded,
+  pos = 'bottom',
+  size = 240,
   onToggleExpanded,
 }) => {
   const [activeTab, setActiveTab] = useState<PanelTab>('sessions')
@@ -42,7 +46,16 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
   }
 
   return (
-    <div className={`bottom-panel${expanded ? ' expanded' : ''}`}>
+    <div
+      className={`bottom-panel${expanded ? ' expanded' : ''}${pos === 'right' ? ' right' : ''}`}
+      style={
+        expanded
+          ? pos === 'right'
+            ? { width: size }
+            : { height: size }
+          : undefined
+      }
+    >
       <div className="bottom-panel-tabs">
         <span
           className={`collapse-chevron${expanded ? ' expanded' : ''}`}

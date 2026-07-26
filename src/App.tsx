@@ -13,8 +13,9 @@ import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import type { FileTreeHandle } from './components/FilePanel'
-import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo } from './types'
-import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent } from './commands'
+import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout } from './types'
+import { defaultLayout, mergeLayout } from './types'
+import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout } from './commands'
 import { detectLanguage } from './editor/languages'
 import './styles/App.scss'
 
@@ -28,16 +29,25 @@ export default function App() {
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
-  const [sidebarWidth, setSidebarWidth] = useState(260)
-  const [connectionListHeight, setConnectionListHeight] = useState(200)
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
-  const [showSidebar, setShowSidebar] = useState(true)
-  const [connectionsExpanded, setConnectionsExpanded] = useState(true)
-  const [filesExpanded, setFilesExpanded] = useState(true)
-  const [bottomPanelExpanded, setBottomPanelExpanded] = useState(false)
-  const [dockerExpanded, setDockerExpanded] = useState(false)
-  // Docker panel height (resizable via the divider between Files and Docker)
-  const [dockerHeight, setDockerHeight] = useState(220)
+  // Customizable workspace layout (sidebar side/visibility, panel position,
+  // section visibility/collapse, sizes). Persisted to layout.json via loadLayout/saveLayout.
+  const [layout, setLayout] = useState<WorkspaceLayout>(defaultLayout)
+  const layoutLoadedRef = useRef(false)
+  const updateLayout = useCallback(
+    (updater: (prev: WorkspaceLayout) => WorkspaceLayout) => setLayout(updater),
+    [],
+  )
+
+  // Derived values so the rest of the render can keep using the familiar names.
+  const sidebarWidth = layout.sidebar.width
+  const showSidebar = layout.sidebar.visible
+  const connectionsExpanded = !layout.sidebar.sections.connections.collapsed
+  const filesExpanded = !layout.sidebar.sections.files.collapsed
+  const dockerExpanded = !layout.sidebar.sections.docker.collapsed
+  const connectionListHeight = layout.sidebar.sections.connections.height ?? 200
+  const dockerHeight = layout.sidebar.sections.docker.height ?? 220
+  const bottomPanelExpanded = layout.bottomPanel.visible
   // Remote filesystem shown in the Files panel (null = the tab's main session).
   const [fileTarget, setFileTarget] = useState<TargetRef | null>(null)
 
@@ -63,7 +73,16 @@ export default function App() {
           ? null
           : { kind: 'docker', jumpTabId: activeTabId, container: container.name },
       )
-      setFilesExpanded(true)
+      updateLayout((l) => ({
+        ...l,
+        sidebar: {
+          ...l.sidebar,
+          sections: {
+            ...l.sidebar.sections,
+            files: { ...l.sidebar.sections.files, collapsed: false },
+          },
+        },
+      }))
     },
     [activeTabId],
   )
@@ -82,6 +101,7 @@ export default function App() {
   const [reconnectKeys, setReconnectKeys] = useState<Record<number, number>>({})
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
+  const panelDragRef = useRef(false)
 
   // Update state
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body?: string } | null>(null)
@@ -136,6 +156,83 @@ export default function App() {
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [activeTabId, tabs])
+
+  // Load persisted workspace layout on startup (merged onto defaults).
+  useEffect(() => {
+    let cancelled = false
+    loadLayout()
+      .then((json) => {
+        if (cancelled) return
+        try {
+          setLayout((prev) => mergeLayout(prev, JSON.parse(json)))
+        } catch {
+          // keep defaults on parse error
+        }
+        layoutLoadedRef.current = true
+      })
+      .catch(() => {
+        layoutLoadedRef.current = true
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Persist layout changes (debounced) once the initial load has completed.
+  useEffect(() => {
+    if (!layoutLoadedRef.current) return
+    const id = setTimeout(() => {
+      saveLayout(JSON.stringify(layout)).catch(() => {})
+    }, 400)
+    return () => clearTimeout(id)
+  }, [layout])
+
+  // Layout shortcuts:
+  //   Ctrl+B            toggle sidebar visibility
+  //   Ctrl+Alt+B        move sidebar to the other side
+  //   Ctrl+J            toggle the bottom/panel
+  //   Ctrl+Alt+J        move the panel to bottom <-> right
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const ctrl = e.ctrlKey || e.metaKey
+      if (!ctrl) return
+      const key = e.key.toLowerCase()
+      if (key === 'b' && e.altKey) {
+        e.preventDefault()
+        updateLayout((l) => ({
+          ...l,
+          sidebar: { ...l.sidebar, side: l.sidebar.side === 'left' ? 'right' : 'left' },
+        }))
+        return
+      }
+      if (key === 'b') {
+        e.preventDefault()
+        updateLayout((l) => ({ ...l, sidebar: { ...l.sidebar, visible: !l.sidebar.visible } }))
+        return
+      }
+      if (key === 'j' && e.altKey) {
+        e.preventDefault()
+        updateLayout((l) => ({
+          ...l,
+          bottomPanel: {
+            ...l.bottomPanel,
+            pos: l.bottomPanel.pos === 'bottom' ? 'right' : 'bottom',
+          },
+        }))
+        return
+      }
+      if (key === 'j') {
+        e.preventDefault()
+        updateLayout((l) => ({
+          ...l,
+          bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
+        }))
+        return
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [updateLayout])
 
   // Ref to keep current opacity accessible in debounced save without re-registering listeners
   const opacityRef = useRef(opacity)
@@ -582,8 +679,14 @@ export default function App() {
 
     const handleMouseMove = (ev: MouseEvent) => {
       if (!isDragging.current) return
-      const newWidth = Math.max(160, Math.min(500, ev.clientX))
-      setSidebarWidth(newWidth)
+      const newWidth =
+        layout.sidebar.side === 'right'
+          ? window.innerWidth - ev.clientX
+          : ev.clientX
+      updateLayout((l) => ({
+        ...l,
+        sidebar: { ...l.sidebar, width: Math.max(160, Math.min(500, newWidth)) },
+      }))
     }
 
     const handleMouseUp = () => {
@@ -599,7 +702,7 @@ export default function App() {
     document.body.style.userSelect = 'none'
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-  }, [])
+  }, [layout.sidebar.side])
 
   // Connection list / SFTP vertical divider drag-to-resize
   const handleVDividerMouseDown = useCallback((e: React.MouseEvent) => {
@@ -617,7 +720,16 @@ export default function App() {
       const delta = ev.clientY - startY
       const containerHeight = sidebarEl?.clientHeight || 700
       const newHeight = Math.max(60, Math.min(containerHeight - 100, startHeight + delta))
-      setConnectionListHeight(newHeight)
+      updateLayout((l) => ({
+        ...l,
+        sidebar: {
+          ...l.sidebar,
+          sections: {
+            ...l.sidebar.sections,
+            connections: { ...l.sidebar.sections.connections, height: newHeight },
+          },
+        },
+      }))
     }
 
     const handleMouseUp = () => {
@@ -653,7 +765,16 @@ export default function App() {
       const delta = startY - ev.clientY
       const containerHeight = sidebarEl?.clientHeight || 700
       const newHeight = Math.max(80, Math.min(containerHeight - 100, startHeight + delta))
-      setDockerHeight(newHeight)
+      updateLayout((l) => ({
+        ...l,
+        sidebar: {
+          ...l.sidebar,
+          sections: {
+            ...l.sidebar.sections,
+            docker: { ...l.sidebar.sections.docker, height: newHeight },
+          },
+        },
+      }))
     }
 
     const handleMouseUp = () => {
@@ -670,6 +791,38 @@ export default function App() {
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
   }, [dockerHeight])
+
+  // Bottom panel resize when docked to the right (vertical divider -> width).
+  const handlePanelDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const win = getCurrentWindow()
+    win.setResizable(false).catch(() => {})
+    const isDragging = panelDragRef
+    isDragging.current = true
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const newWidth = window.innerWidth - ev.clientX
+      updateLayout((l) => ({
+        ...l,
+        bottomPanel: {
+          ...l.bottomPanel,
+          size: Math.max(180, Math.min(700, newWidth)),
+        },
+      }))
+    }
+    const handleMouseUp = () => {
+      isDragging.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.classList.remove('resize-h')
+      document.body.style.userSelect = ''
+      win.setResizable(true).catch(() => {})
+    }
+    document.body.classList.add('resize-h')
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [])
 
   // Editor <-> Shell vertical divider drag-to-resize (only when a file editor is open)
   const handleEditorShellDividerMouseDown = useCallback((e: React.MouseEvent) => {
@@ -886,116 +1039,168 @@ export default function App() {
     </div>
   )
 
+  // Sidebar body (connections / files / docker), reused for left or right placement.
+  const sidebarBody = (() => {
+    const showFilePanel =
+      activeTabId != null &&
+      tabs.find((t) => t.tabId === activeTabId)?.status === 'connected'
+    return (
+      <>
+        {layout.sidebar.sections.connections.visible && (
+          <div
+            className="collapsible-section"
+            style={
+              connectionsExpanded
+                ? (showFilePanel && filesExpanded
+                  ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' }
+                  : { flex: 1, overflow: 'hidden' })
+                : { flexShrink: 0 }
+            }
+          >
+            <ConnectionManager
+              connections={connections}
+              onConnect={(_config, _tabId) => {
+                // Not used
+              }}
+              onTabClosed={closeTab}
+              activeTabId={activeTabId}
+              onConnectionChange={handleConnectionChange}
+              onSelectConnection={handleSelectConnection}
+              sidebarWidth={sidebarWidth}
+              expanded={connectionsExpanded}
+              onToggleExpanded={() =>
+                updateLayout((l) => ({
+                  ...l,
+                  sidebar: {
+                    ...l.sidebar,
+                    sections: {
+                      ...l.sidebar.sections,
+                      connections: {
+                        ...l.sidebar.sections.connections,
+                        collapsed: !l.sidebar.sections.connections.collapsed,
+                      },
+                    },
+                  },
+                }))
+              }
+            />
+          </div>
+        )}
+
+        {showFilePanel && layout.sidebar.sections.files.visible && (
+          <>
+            {connectionsExpanded && (
+              <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
+            )}
+
+            {/* Files section (session, or a jump/docker target) */}
+            <div
+              className="collapsible-section"
+              style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
+            >
+              <FilePanel
+                key={fileTarget ? JSON.stringify(fileTarget) : 'session'}
+                ref={fileTreeRef}
+                tabId={activeTabId}
+                isConnected={true}
+                defaultPath={fileTarget?.kind === 'docker' ? '/' : '.'}
+                targetRef={fileTarget ?? undefined}
+                expanded={filesExpanded}
+                onToggleExpanded={() =>
+                  updateLayout((l) => ({
+                    ...l,
+                    sidebar: {
+                      ...l.sidebar,
+                      sections: {
+                        ...l.sidebar.sections,
+                        files: {
+                          ...l.sidebar.sections.files,
+                          collapsed: !l.sidebar.sections.files.collapsed,
+                        },
+                      },
+                    },
+                  }))
+                }
+                syncEnabled={syncEnabled}
+                onToggleSync={() => {
+                  const next = !syncEnabled
+                  setSyncEnabled(next)
+                  try {
+                    localStorage.setItem('wrolp-sync-enabled', next ? '1' : '0')
+                  } catch {
+                    // ignore localStorage errors
+                  }
+                }}
+                onEditFile={openInEditor}
+              />
+            </div>
+
+            {dockerExpanded && layout.sidebar.sections.docker.visible && (
+              <div className="panel-divider-h" onMouseDown={handleDockerDividerMouseDown} />
+            )}
+
+            {/* Docker containers on the connected host */}
+            {layout.sidebar.sections.docker.visible && (
+              <div
+                className="collapsible-section"
+                style={dockerExpanded ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' } : { flexShrink: 0 }}
+              >
+                <DockerPanel
+                  jumpTabId={activeTabId}
+                  expanded={dockerExpanded}
+                  onToggleExpanded={() =>
+                    updateLayout((l) => ({
+                      ...l,
+                      sidebar: {
+                        ...l.sidebar,
+                        sections: {
+                          ...l.sidebar.sections,
+                          docker: {
+                            ...l.sidebar.sections.docker,
+                            collapsed: !l.sidebar.sections.docker.collapsed,
+                          },
+                        },
+                      },
+                    }))
+                  }
+                  activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
+                  onOpenContainer={handleOpenContainer}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </>
+    )
+  })()
+
+  const sidebarEl = showSidebar ? (
+    <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+      {sidebarBody}
+    </div>
+  ) : null
+
   return (
     <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
       <Titlebar onSettings={handleOpenSettings} />
 
       <div className="main-content">
-        {/* Left sidebar — connection list + file panel */}
-        {showSidebar && (
-          <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-            {(() => {
-              const showFilePanel = activeTabId != null && tabs.find((t) => t.tabId === activeTabId)?.status === 'connected'
-              return (
-                <>
-                  {/* Connections section */}
-                  <div
-                    className="collapsible-section"
-                    style={
-                      connectionsExpanded
-                        ? (showFilePanel && filesExpanded
-                          ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' }
-                          : { flex: 1, overflow: 'hidden' })
-                        : { flexShrink: 0 }
-                    }
-                  >
-                    <ConnectionManager
-                      connections={connections}
-                      onConnect={(_config, _tabId) => {
-                        // Not used
-                      }}
-                      onTabClosed={closeTab}
-                      activeTabId={activeTabId}
-                      onConnectionChange={handleConnectionChange}
-                      onSelectConnection={handleSelectConnection}
-                      sidebarWidth={sidebarWidth}
-                      expanded={connectionsExpanded}
-                      onToggleExpanded={() => setConnectionsExpanded(v => !v)}
-                    />
-                  </div>
-
-                  {showFilePanel && (
-                    <>
-                      {connectionsExpanded && (
-                        <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
-                      )}
-
-                      {/* Files section (session, or a jump/docker target) */}
-                      <div
-                        className="collapsible-section"
-                        style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
-                      >
-                        <FilePanel
-                          key={fileTarget ? JSON.stringify(fileTarget) : 'session'}
-                          ref={fileTreeRef}
-                          tabId={activeTabId}
-                          isConnected={true}
-                          defaultPath={fileTarget?.kind === 'docker' ? '/' : '.'}
-                          targetRef={fileTarget ?? undefined}
-                          expanded={filesExpanded}
-                          onToggleExpanded={() => setFilesExpanded(v => !v)}
-                          syncEnabled={syncEnabled}
-                          onToggleSync={() => {
-                            const next = !syncEnabled
-                            setSyncEnabled(next)
-                            try {
-                              localStorage.setItem('wrolp-sync-enabled', next ? '1' : '0')
-                            } catch {
-                              // ignore localStorage errors
-                            }
-                          }}
-                          onEditFile={openInEditor}
-                        />
-                      </div>
-
-                      {dockerExpanded && (
-                        <div className="panel-divider-h" onMouseDown={handleDockerDividerMouseDown} />
-                      )}
-
-                      {/* Docker containers on the connected host */}
-                      <div
-                        className="collapsible-section"
-                        style={dockerExpanded ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' } : { flexShrink: 0 }}
-                      >
-                        <DockerPanel
-                          jumpTabId={activeTabId}
-                          expanded={dockerExpanded}
-                          onToggleExpanded={() => setDockerExpanded(v => !v)}
-                          activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
-                          onOpenContainer={handleOpenContainer}
-                        />
-                      </div>
-                    </>
-                  )}
-                </>
-              )
-            })()}
-          </div>
-        )}
-
-        {/* Draggable panel divider */}
-        {showSidebar && (
+        {layout.sidebar.side === 'left' && sidebarEl}
+        {layout.sidebar.side === 'left' && showSidebar && (
           <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
         )}
 
         {/* Terminal area (right) */}
-        <div className="terminal-area">
+        <div className={`terminal-area ${layout.bottomPanel.pos === 'right' ? 'panel-right' : ''}`}>
+          <div className="terminal-main">
           {/* Tab bar */}
           <div className="tab-bar">
             <button
               className="sidebar-toggle"
-              onClick={() => setShowSidebar(v => !v)}
+              onClick={() =>
+                updateLayout((l) => ({ ...l, sidebar: { ...l.sidebar, visible: !l.sidebar.visible } }))
+              }
               title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
             >
               {showSidebar ? (
@@ -1103,14 +1308,29 @@ export default function App() {
             </div>,
           ]}
 
+          </div>
+
           {/* Bottom panel — session recordings & command sets */}
+          {layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (
+            <div className="panel-divider-v" onMouseDown={handlePanelDividerMouseDown} />
+          )}
           <BottomPanel
             connections={connections}
             activeTabId={activeTabId}
             expanded={bottomPanelExpanded}
-            onToggleExpanded={() => setBottomPanelExpanded(v => !v)}
+            pos={layout.bottomPanel.pos}
+            onToggleExpanded={() =>
+              updateLayout((l) => ({
+                ...l,
+                bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
+              }))
+            }
           />
         </div>
+        {layout.sidebar.side === 'right' && showSidebar && (
+          <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
+        )}
+        {layout.sidebar.side === 'right' && sidebarEl}
       </div>
 
       {/* Status bar — temporarily disabled

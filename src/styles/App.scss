@@ -418,6 +418,32 @@ body.resize-v * {
   flex-direction: column;
   overflow: hidden;
   background: $bg-primary;
+
+  // Panel docked to the right -> terminal area becomes a row.
+  &.panel-right {
+    flex-direction: row;
+  }
+}
+
+// Column holding the tab bar + editor/shell, so the bottom panel can sit beside it.
+.terminal-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+// Vertical divider used to resize a right-docked panel.
+.panel-divider-v {
+  flex-shrink: 0;
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+
+  &:hover {
+    background: $accent;
+  }
 }
 
 // Tab bar
@@ -1706,6 +1732,40 @@ body.resize-v * {
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  // Docked to the right of the terminal area (instead of the bottom).
+  &.right {
+    flex-direction: row;
+    border-top: none;
+    border-left: 1px solid $border;
+
+    .bottom-panel-tabs {
+      flex-direction: column;
+      width: 28px;
+      height: auto;
+      border-bottom: none;
+      border-right: 1px solid $border;
+      padding: 4px 0;
+
+      .tab-btn {
+        writing-mode: vertical-rl;
+        border-radius: 3px 0 0 3px;
+        border-bottom: none;
+        border-left: 2px solid transparent;
+        border-bottom-color: transparent;
+        padding: 10px 3px;
+
+        &.active {
+          border-left-color: $accent;
+          border-bottom-color: transparent;
+        }
+      }
+    }
+
+    .bottom-panel-content {
+      flex: 1;
+    }
   }
 }
 

@@ -125,3 +125,78 @@ export function targetLabel(target: TargetRef): string {
       return `docker-ssh:${target.host}:${target.port}`
   }
 }
+
+// ===== Customizable workspace layout =====
+
+export type DockSide = 'left' | 'right'
+export type DockPos = 'bottom' | 'right'
+
+export interface SectionLayout {
+  visible: boolean
+  collapsed: boolean
+  height?: number
+}
+
+export interface WorkspaceLayout {
+  sidebar: {
+    visible: boolean
+    side: DockSide
+    width: number
+    sections: {
+      connections: SectionLayout
+      files: SectionLayout
+      docker: SectionLayout
+    }
+  }
+  bottomPanel: {
+    visible: boolean
+    pos: DockPos
+    size: number
+  }
+}
+
+export const defaultLayout: WorkspaceLayout = {
+  sidebar: {
+    visible: true,
+    side: 'left',
+    width: 260,
+    sections: {
+      connections: { visible: true, collapsed: false, height: 200 },
+      files: { visible: true, collapsed: false },
+      docker: { visible: true, collapsed: false, height: 220 },
+    },
+  },
+  bottomPanel: {
+    visible: false,
+    pos: 'bottom',
+    size: 240,
+  },
+}
+
+/**
+ * Deep-merge a saved (possibly partial / older) layout onto the current default.
+ * New fields introduced by updates keep the default value; existing values win.
+ */
+export function mergeLayout(base: WorkspaceLayout, override: unknown): WorkspaceLayout {
+  const deepMerge = <T>(b: T, o: unknown): T => {
+    if (o === null || o === undefined || typeof o !== 'object' || Array.isArray(o)) {
+      return (o as T) ?? b
+    }
+    if (typeof b !== 'object' || Array.isArray(b) || b === null) return o as T
+    const result: Record<string, unknown> = { ...(b as Record<string, unknown>) }
+    for (const key of Object.keys(o as Record<string, unknown>)) {
+      const bv = result[key]
+      const ov = (o as Record<string, unknown>)[key]
+      if (
+        bv && typeof bv === 'object' && !Array.isArray(bv) &&
+        ov && typeof ov === 'object' && !Array.isArray(ov)
+      ) {
+        result[key] = deepMerge(bv, ov)
+      } else if (ov !== undefined) {
+        result[key] = ov
+      }
+    }
+    return result as T
+  }
+  return deepMerge(base, override)
+}

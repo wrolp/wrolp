@@ -112,6 +112,16 @@ export async function loadWindowConfig(): Promise<WindowConfig> {
   return await invoke<WindowConfig>('load_window_config')
 }
 
+// ===== Workspace layout =====
+
+export async function loadLayout(): Promise<string> {
+  return await invoke<string>('load_layout')
+}
+
+export async function saveLayout(layout: string): Promise<void> {
+  await invoke('save_layout', { layout })
+}
+
 // ===== Transfer Control =====
 
 export async function pauseTransfer(tabId: number): Promise<void> {

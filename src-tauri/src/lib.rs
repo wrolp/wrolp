@@ -186,6 +186,8 @@ pub fn run() {
       commands::list_docker_containers,
       commands::save_window_config,
       commands::load_window_config,
+      commands::save_layout,
+      commands::load_layout,
       commands::list_sessions,
       commands::get_session_events,
       commands::delete_session,

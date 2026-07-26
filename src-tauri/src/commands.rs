@@ -1779,6 +1779,41 @@ pub async fn load_window_config() -> Result<WindowConfig, String> {
     .map_err(|e| format!("Failed to parse window config: {}", e))
 }
 
+// ==================== Workspace Layout ====================
+
+/// Load the persisted workspace layout (Customizable panels).
+/// Returns "{}" when no file exists so the frontend can apply its defaults.
+#[tauri::command]
+pub async fn load_layout(app: tauri::AppHandle) -> Result<String, String> {
+  let dir = app
+    .path()
+    .app_config_dir()
+    .map_err(|e| e.to_string())?;
+  let path = dir.join("layout.json");
+  if !path.exists() {
+    return Ok(String::from("{}"));
+  }
+  tokio::fs::read_to_string(&path)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Persist the workspace layout as JSON to layout.json.
+#[tauri::command]
+pub async fn save_layout(app: tauri::AppHandle, layout: String) -> Result<(), String> {
+  let dir = app
+    .path()
+    .app_config_dir()
+    .map_err(|e| e.to_string())?;
+  tokio::fs::create_dir_all(&dir)
+    .await
+    .map_err(|e| e.to_string())?;
+  let path = dir.join("layout.json");
+  tokio::fs::write(&path, layout)
+    .await
+    .map_err(|e| e.to_string())
+}
+
 // ==================== Session Recording ====================
 
 /// Flush all in-memory recording buffers to SQLite. Called periodically by a
