@@ -1859,9 +1859,10 @@ body.resize-v * {
 
 .file-target-chip {
   font-size: 10px;
-  color: $accent;
-  background: rgba($accent, 0.12);
-  border: 1px solid rgba($accent, 0.3);
+  font-weight: 600;
+  color: #6ec3f0;
+  background: rgba($accent, 0.28);
+  border: 1px solid rgba(#6ec3f0, 0.55);
   border-radius: 3px;
   padding: 0 5px;
   line-height: 16px;
@@ -1869,6 +1870,20 @@ body.resize-v * {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 140px;
+}
+
+// Distinct, higher-contrast styling for Docker targets so the container name
+// is readable at a glance on the dark panel.
+.file-target-chip.docker {
+  color: #ffd27f;
+  background: rgba(#cca700, 0.22);
+  border-color: rgba(#ffd27f, 0.6);
+}
+
+.file-target-chip.docker-ssh {
+  color: #b4f0c4;
+  background: rgba(#4ec9b0, 0.2);
+  border-color: rgba(#b4f0c4, 0.55);
 }
 
 .docker-panel {

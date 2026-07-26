@@ -601,7 +601,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           Files
           {sessionTabId == null && (
-            <span className="file-target-chip" title={targetLabel(target)}>{targetLabel(target)}</span>
+            <span
+              className={`file-target-chip ${target.kind === 'docker' ? 'docker' : ''}${target.kind === 'dockerSsh' ? 'docker-ssh' : ''}`}
+              title={targetLabel(target)}
+            >{targetLabel(target)}</span>
           )}
         </span>
         {expanded && (
