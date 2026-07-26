@@ -111,6 +111,7 @@ pub async fn open_session_sftp(
     app_handle: app.clone(),
     tab_id,
     is_sftp: true,
+    shell_channel_id: None,
   };
   let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
     .await
@@ -157,6 +158,7 @@ pub async fn open_jump_sftp(
     app_handle: app.clone(),
     tab_id,
     is_sftp: true,
+    shell_channel_id: None,
   };
   let mut handle = client::connect_stream(ssh_config, stream, handler)
     .await

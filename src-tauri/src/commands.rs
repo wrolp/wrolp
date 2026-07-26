@@ -73,11 +73,17 @@ impl Handler for SshHandler {
 
   async fn channel_open_confirmation(
     &mut self,
-    _channel: ChannelId,
+    channel: ChannelId,
     max_packet_size: u32,
     window_size: u32,
     _session: &mut russh::client::Session,
   ) -> Result<(), Self::Error> {
+    // The first opened channel is the interactive PTY shell. Remember its id so
+    // data/extended_data can suppress output from auxiliary channels (docker
+    // exec, ProxyJump) opened later on the same connection. Don't overwrite.
+    if self.shell_channel_id.is_none() {
+      self.shell_channel_id = Some(channel);
+    }
     eprintln!("[russh] channel_open_confirmation max_packet={} window_size={}", max_packet_size, window_size);
     Ok(())
   }
@@ -93,11 +99,11 @@ impl Handler for SshHandler {
 
   async fn data(
     &mut self,
-    _channel: ChannelId,
+    channel: ChannelId,
     data: &[u8],
     _session: &mut russh::client::Session,
   ) -> Result<(), Self::Error> {
-    if !self.is_sftp {
+    if !self.is_sftp && self.is_shell_channel(channel) {
       let text = String::from_utf8_lossy(data);
       self.emit(&text);
       self.record_event("output", &text);
@@ -107,12 +113,12 @@ impl Handler for SshHandler {
 
   async fn extended_data(
     &mut self,
-    _channel: ChannelId,
+    channel: ChannelId,
     _code: u32,
     data: &[u8],
     _session: &mut russh::client::Session,
   ) -> Result<(), Self::Error> {
-    if !self.is_sftp {
+    if !self.is_sftp && self.is_shell_channel(channel) {
       // stderr → display in yellow
       let text = String::from_utf8_lossy(data);
       let formatted = format!("\u{1b}[33m{}\u{1b}[0m", text);
@@ -421,6 +427,7 @@ pub async fn connect(
         app_handle: app_handle.clone(),
         tab_id: tid,
         is_sftp: false,
+        shell_channel_id: None,
       };
       let ssh_config = Arc::new(client::Config::default());
 
@@ -806,6 +813,7 @@ pub async fn poll_working_dir(
     app_handle: app.clone(),
     tab_id,
     is_sftp: true,
+    shell_channel_id: None,
   };
 
   let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)

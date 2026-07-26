@@ -94,6 +94,11 @@ pub struct SshHandler {
   pub tab_id: u32,
   /// When true, suppress terminal output (used for SFTP-only sessions)
   pub is_sftp: bool,
+  /// Channel id of the interactive PTY shell. Only output from this channel is
+  /// shown in the terminal; auxiliary channels (docker exec, ProxyJump) opened
+  /// on the same connection are suppressed. Set on the first channel-open
+  /// confirmation (the PTY shell), and never overwritten.
+  pub shell_channel_id: Option<russh::ChannelId>,
 }
 
 impl SshHandler {
@@ -129,6 +134,16 @@ impl SshHandler {
         }
       }
     }
+  }
+
+  /// Returns true only for data arriving on the interactive PTY shell channel.
+  /// Auxiliary channels (docker exec, ProxyJump) opened on the same SSH
+  /// connection are rejected so their output never reaches the terminal.
+  /// Falls back to true when the shell channel id hasn't been recorded yet.
+  pub fn is_shell_channel(&self, channel: russh::ChannelId) -> bool {
+    self
+      .shell_channel_id
+      .map_or(true, |id| id == channel)
   }
 }
 
