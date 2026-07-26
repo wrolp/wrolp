@@ -235,12 +235,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   useEffect(() => {
     if (isConnected) {
-      loadRootDir(currentPath)
+      // Reset to the target's home directory so that switching to a different
+      // split pane / connection shows that connection's correct root rather
+      // than a stale path carried over from the previous connection.
+      setCurrentPath(defaultPath)
+      setRootPath(defaultPath)
+      loadRootDir(defaultPath)
       if (sessionTabId != null) {
         getSftpUser(sessionTabId).then(setSftpUser).catch(() => {})
       }
     }
-  }, [isConnected, sessionTabId, targetKey])
+  }, [isConnected, sessionTabId, targetKey, defaultPath])
 
   // Shell → FilePanel sync (main session only)
   useEffect(() => {

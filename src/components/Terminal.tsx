@@ -4,9 +4,18 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { connect, sendInput, commitCommand, pollOutput, resizeTerminal } from '../commands'
 
+// Tracks the single "active" terminal instance per session tabId. During a
+// transient double-mount (React mounts the new terminal before unmounting the
+// old one — e.g. on split/close/reconcile), two instances for the same tabId
+// briefly coexist. Only the instance registered here may send input, so the
+// stale duplicate can never echo the same keystroke twice into the SSH session
+// (which produced bugs like typing "ls" reaching the shell as "lss").
+const activeTerminalByTab = new Map<number, Terminal>()
+
 interface TerminalComponentProps {
   tabId: number
   isActive: boolean
+  isFocused?: boolean
   reconnectTrigger?: number
   connectConfig?: {
     id: string
@@ -28,6 +37,7 @@ interface TerminalComponentProps {
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
   isActive,
+  isFocused,
   reconnectTrigger,
   connectConfig,
   autoConnect,
@@ -136,22 +146,42 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     termRef.current = term
     fitRef.current = fitAddon
 
-    // User input → SSH
+    // User input → SSH. During a transient double-mount (React mounts the new
+    // terminal before unmounting the old one — e.g. on split/close/reconcile),
+    // both instances for the same session can briefly be alive. The guard below
+    // (activeTerminalByTab) ensures ONLY the registered, focused instance sends,
+    // so a single keystroke is delivered exactly once — no dropped characters
+    // (janky/laggy echo or input) and no duplicated characters (e.g. "ls"
+    // reaching the shell as "lss").
     term.onData((data) => {
-      if (!isActiveRef.current) return
+      // Only the registered active instance for this tabId may send. Stale
+      // duplicate instances (transient double-mounts) are blocked here, so a
+      // single keystroke is sent exactly once.
+      if (activeTerminalByTab.get(currentTabId) !== term) return
       // Capture the full command line (with tab-completed text) when the user
       // submits it, before the remote echo changes the buffer row.
       if (data.includes('\r') || data.includes('\n')) {
         commitSubmittedCommands(term, data, currentTabId)
       }
-      sendInput(currentTabId, data).catch((err) =>
-        console.error('send_input error:', err),
-      )
+      sendInput(currentTabId, data)
+        .then(() => {
+          // Flush the output buffer right away so the remote echo of the
+          // keystroke we just sent shows up immediately instead of waiting for
+          // the next 100ms poll — otherwise fast typing looks like the echo
+          // "doesn't keep up" (echo lagging behind). pollOutput drains the
+          // buffer, so
+          // this never doubles what the interval poll will later write.
+          return pollOutput(currentTabId)
+        })
+        .then((chunks) => {
+          for (const chunk of chunks) term.write(chunk)
+        })
+        .catch((err) => console.error('send_input error:', err))
     })
 
     // Focus on click
     const handleClick = () => {
-      if (isActiveRef.current) term.focus()
+      term.focus()
     }
     containerRef.current.addEventListener('click', handleClick)
 
@@ -270,6 +300,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       window.removeEventListener('resize', handleResize)
       resizeObserverRef.current?.disconnect()
       resizeObserverRef.current = null
+      // Drop this instance from the active registry if it was the registered
+      // one (so a superseding instance isn't blocked by a disposed entry).
+      if (activeTerminalByTab.get(currentTabId) === term) {
+        activeTerminalByTab.delete(currentTabId)
+      }
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -361,12 +396,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }, [reconnectTrigger])
 
-  // Focus when tab becomes active
+  // Focus when this pane becomes the focused one; explicitly blur when it
+  // loses focus. On focus we also register this instance as the active one for
+  // its tabId in `activeTerminalByTab`, so input is only ever sent from the
+  // live, focused terminal — blocking any stale duplicate (transient
+  // double-mount) from re-sending the same keystroke (e.g. "ls" reaching the
+  // shell as "lss").
   useEffect(() => {
-    if (isActive && termRef.current) {
-      termRef.current.focus()
+    const term = termRef.current
+    if (isFocused && term) {
+      activeTerminalByTab.set(tabIdRef.current, term)
+      term.focus()
+    } else if (!isFocused && term && document.activeElement === term.textarea) {
+      term.blur()
     }
-  }, [isActive])
+  }, [isFocused])
 
   // Close context menu on click anywhere
   useEffect(() => {

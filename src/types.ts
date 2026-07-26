@@ -48,6 +48,10 @@ export interface TabInfo {
   status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'settings'
   errorMessage?: string
   tabType: 'terminal' | 'settings'
+  // When true, this session was created by splitting a tab and is NOT shown as
+  // its own entry in the top tab bar — it lives inside its parent workspace's
+  // pane layout (see App.tsx `splitTrees`).
+  embedded?: boolean
 }
 
 export interface TerminalOutput {

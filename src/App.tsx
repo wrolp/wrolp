@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -15,6 +16,20 @@ import { DockerPanel } from './components/DockerPanel'
 import type { FileTreeHandle } from './components/FilePanel'
 import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout } from './types'
 import { defaultLayout, mergeLayout } from './types'
+import {
+  SplitNode,
+  SplitBranch,
+  SplitLeaf,
+  makeLeaf,
+  findLeaf,
+  collectLeaves,
+  buildTabToLeaf,
+  updateLeafTab,
+  splitLeaf,
+  removeLeafById,
+  adjustSiblingSizes,
+  pruneEmptyLeaves,
+} from './components/splitTree'
 import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout } from './commands'
 import { detectLanguage } from './editor/languages'
 import './styles/App.scss'
@@ -58,6 +73,88 @@ export default function App() {
   // SSH terminal size (cols × rows) reported by the active Terminal component,
   // shown in the shell-pane status bar.
   const [termSize, setTermSize] = useState<{ cols: number; rows: number }>({ cols: 0, rows: 0 })
+
+  // ---------------------------------------------------------------------------
+  // Terminal split layout (Phase 2). The tree is ephemeral (tabIds are
+  // session-scoped) and is intentionally NOT persisted to layout.json.
+  // ---------------------------------------------------------------------------
+  // Each top-level tab (workspace) owns its own split-pane tree, so tabs are
+  // fully isolated and switching tabs shows that tab's own layout. The active
+  // workspace's tree is `splitTree` (derived below) and is rendered inside its
+  // own always-mounted container, toggled by visibility — so sessions are never
+  // remounted and never reconnect when you switch tabs.
+  const [splitTrees, setSplitTrees] = useState<Record<number, SplitNode>>({})
+  const [focusedLeafByRoot, setFocusedLeafByRoot] = useState<Record<number, string>>({})
+  const leafIdCounter = useRef(1)
+  const newLeafId = useCallback(() => `leaf-${leafIdCounter.current++}`, [])
+  // Active workspace's tree (a stable single leaf if missing).
+  const splitTree: SplitNode =
+    activeTabId != null
+      ? splitTrees[activeTabId] ?? makeLeaf(newLeafId(), activeTabId)
+      : makeLeaf('leaf-0')
+  const splitTreeRef = useRef<SplitNode>(splitTree)
+  splitTreeRef.current = splitTree
+  // Focused leaf within the active workspace.
+  const focusedLeafId = activeTabId != null ? focusedLeafByRoot[activeTabId] ?? null : null
+  const focusedLeafIdRef = useRef<string | null>(focusedLeafId)
+  focusedLeafIdRef.current = focusedLeafId
+  // The connection whose remote filesystem the Files panel should show: the
+  // focused pane's session within the active workspace (falls back to the
+  // workspace's own session). Clicking a different split pane switches the
+  // Files panel to that pane's connection.
+  const focusedLeafTabId: number | null =
+    activeTabId != null
+      ? (focusedLeafId ? findLeaf(splitTree, focusedLeafId)?.tabId : null) ?? activeTabId
+      : null
+  const activeTabIdRef = useRef(activeTabId)
+  activeTabIdRef.current = activeTabId
+  const splitTreesRef = useRef(splitTrees)
+  splitTreesRef.current = splitTrees
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  const focusedLeafByRootRef = useRef(focusedLeafByRoot)
+  focusedLeafByRootRef.current = focusedLeafByRoot
+  // Update the active workspace's tree.
+  const updateActiveTree = useCallback(
+    (updater: (t: SplitNode) => SplitNode) => {
+      const root = activeTabIdRef.current
+      if (root == null) return
+      setSplitTrees((prev) => ({ ...prev, [root]: updater(prev[root] ?? makeLeaf(newLeafId(), root)) }))
+    },
+    [newLeafId],
+  )
+  // Focus a pane within the active workspace.
+  const setFocusedLeafId = useCallback((id: string | null) => {
+    const root = activeTabIdRef.current
+    if (root == null) return
+    setFocusedLeafByRoot((prev) => ({ ...prev, [root]: id ?? '' }))
+  }, [])
+
+  // Keep terminal instances mounted even when not shown in any pane by portaling
+  // their DOM into stable containers. Pane-body ref callbacks are cached per leaf
+  // id so React only calls them on mount/unmount (not every render); that lets us
+  // re-trigger portal placement via a render tick.
+  const paneBodyRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const paneBodyRefCallbacks = useRef<Map<string, (el: HTMLDivElement | null) => void>>(new Map())
+  const getPaneBodyRef = useCallback((id: string) => {
+    let cb = paneBodyRefCallbacks.current.get(id)
+    if (!cb) {
+      cb = (el: HTMLDivElement | null) => {
+        if (el) paneBodyRefs.current.set(id, el)
+        else paneBodyRefs.current.delete(id)
+        setPaneRenderTick((t) => (t + 1) % 1_000_000)
+      }
+      paneBodyRefCallbacks.current.set(id, cb)
+    }
+    return cb
+  }, [])
+  const [, setPaneRenderTick] = useState(0)
+  const terminalPoolRef = useRef<HTMLDivElement>(null)
+  const terminalPoolRefCb = useCallback((el: HTMLDivElement | null) => {
+    terminalPoolRef.current = el
+    setPaneRenderTick((t) => (t + 1) % 1_000_000)
+  }, [])
+  const tabToLeafRef = useRef<Map<number, string>>(new Map())
 
   // Reset the Files panel target when switching tabs (targets are tab-scoped).
   useEffect(() => {
@@ -371,20 +468,68 @@ export default function App() {
   }
 
   // Open new tab (create tab only, connect later)
-  const openTab = useCallback((conn: ConnectionConfig) => {
-    const tabId = nextTabId++
-    const newTab: TabInfo = {
-      tabId,
-      connectionId: conn.id,
-      connectionName: conn.name,
-      host: `${conn.host}:${conn.port}`,
-      status: 'connecting',
-      tabType: 'terminal',
-    }
+  // Open a connection as a NEW top-level tab (workspace). Each workspace owns
+  // its own single-pane tree; splitting later adds panes inside it (not a new
+  // top tab). This keeps tabs isolated — switching tabs shows that workspace's
+  // own layout.
+  const openTab = useCallback(
+    (conn: ConnectionConfig) => {
+      const tabId = nextTabId++
+      const newTab: TabInfo = {
+        tabId,
+        connectionId: conn.id,
+        connectionName: conn.name,
+        host: `${conn.host}:${conn.port}`,
+        status: 'connecting',
+        tabType: 'terminal',
+      }
+      setTabs((prev) => [...prev, newTab])
+      const leafId = newLeafId()
+      setSplitTrees((prev) => ({ ...prev, [tabId]: makeLeaf(leafId, tabId) }))
+      setFocusedLeafByRoot((prev) => ({ ...prev, [tabId]: leafId }))
+      setActiveTabId(tabId)
+    },
+    [newLeafId],
+  )
 
-    setTabs((prev) => [...prev, newTab])
-    setActiveTabId(tabId)
-  }, [])
+  // Split the currently focused pane inside the active workspace and open the
+  // chosen connection in the new pane as an EMBEDDED session. The new session is
+  // NOT added to the top tab bar (it lives inside this workspace's pane layout),
+  // so the split never spawns a new top-level tab.
+  const openInSplit = useCallback(
+    (conn: ConnectionConfig, direction: 'row' | 'column') => {
+      const rootId = activeTabIdRef.current
+      if (rootId == null) return
+      const tree = splitTreeRef.current
+      const focus = focusedLeafIdRef.current
+      const focusLeaf = focus ? findLeaf(tree, focus) : null
+      const targetId = focusLeaf ? focus! : collectLeaves(tree)[0]?.id
+      if (!targetId) return
+      const tabId = nextTabId++
+      const newTab: TabInfo = {
+        tabId,
+        connectionId: conn.id,
+        connectionName: conn.name,
+        host: `${conn.host}:${conn.port}`,
+        status: 'connecting',
+        tabType: 'terminal',
+        embedded: true,
+      }
+      setTabs((prev) => [...prev, newTab])
+      const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
+      updateActiveTree(() => nt)
+      if (nl) setFocusedLeafId(nl)
+    },
+    [newLeafId, updateActiveTree],
+  )
+
+  // Right-click → split the current window; default (left-click) opens a new tab.
+  const handleOpenSplit = useCallback(
+    (conn: ConnectionConfig, direction: 'row' | 'column') => {
+      openInSplit(conn, direction)
+    },
+    [openInSplit],
+  )
 
   // Open settings as a tab (reuse if already open)
   const handleOpenSettings = useCallback(() => {
@@ -405,29 +550,49 @@ export default function App() {
     setActiveTabId(tabId)
   }, [tabs])
 
-  // Close tab
-  const closeTab = useCallback(
-    async (tabId: number) => {
-      const tab = tabs.find(t => t.tabId === tabId)
-      // Only disconnect SSH sessions, not settings tab
-      if (tab?.tabType === 'terminal') {
+  // Close a top-level tab (workspace): disconnect and remove its own session
+  // plus every embedded session created by splitting inside it, and drop its
+  // tree.
+  const closeTab = useCallback(async (tabId: number) => {
+    const root = tabsRef.current.find((t) => t.tabId === tabId)
+    if (!root) return
+    // Sessions belonging to this workspace: the root itself + any embedded ones
+    // referenced by its tree.
+    const tree = splitTreesRef.current[tabId]
+    const sessionIds = tree
+      ? collectLeaves(tree)
+          .map((l) => l.tabId)
+          .filter((x): x is number => x != null)
+      : [tabId]
+    for (const sid of sessionIds) {
+      const s = tabsRef.current.find((t) => t.tabId === sid)
+      if (s?.tabType === 'terminal') {
         try {
-          await invoke('disconnect', { tabId })
+          await invoke('disconnect', { tabId: sid })
         } catch (e) {
           console.error('Disconnect error:', e)
         }
       }
-
-      setTabs((prev) => {
-        const newTabs = prev.filter((t) => t.tabId !== tabId)
-        if (activeTabId === tabId) {
-          setActiveTabId(newTabs.length > 0 ? newTabs[newTabs.length - 1].tabId : null)
-        }
-        return newTabs
-      })
-    },
-    [activeTabId, tabs],
-  )
+    }
+    setTabs((prev) => prev.filter((t) => !sessionIds.includes(t.tabId)))
+    setSplitTrees((prev) => {
+      const n = { ...prev }
+      delete n[tabId]
+      return n
+    })
+    setFocusedLeafByRoot((prev) => {
+      const n = { ...prev }
+      delete n[tabId]
+      return n
+    })
+    setActiveTabId((prev) => {
+      if (prev !== tabId) return prev
+      const remaining = tabsRef.current.filter(
+        (t) => t.tabType === 'terminal' && !t.embedded && !sessionIds.includes(t.tabId),
+      )
+      return remaining.length ? remaining[0].tabId : null
+    })
+  }, [])
 
   // Select connection — always open a new tab
   const handleSelectConnection = useCallback(
@@ -644,7 +809,9 @@ export default function App() {
     (tab: TabInfo): string => {
       if (tab.tabType === 'settings') return '⚙ Settings'
       if (!tab.connectionId) return tab.connectionName
-      const siblings = tabs.filter((t) => t.tabType === 'terminal' && t.connectionId === tab.connectionId)
+      const siblings = tabs.filter(
+        (t) => t.tabType === 'terminal' && !t.embedded && t.connectionId === tab.connectionId,
+      )
       if (siblings.length <= 1) return tab.connectionName
       const idx = siblings.findIndex((t) => t.tabId === tab.tabId)
       return `${tab.connectionName} (${idx + 1})`
@@ -662,6 +829,176 @@ export default function App() {
     },
     [openTab],
   )
+
+  // Close a single pane within a workspace. Only that pane's session is
+  // disconnected/removed; the workspace (top tab) stays open as long as at
+  // least one pane remains. The workspace is keyed by its top-tab id (rootId)
+  // and is never re-keyed on pane close, so surviving terminals are never
+  // remounted or reconnected. When the closed pane is the workspace's own
+  // (identity) session but other panes remain, we keep the rootId tab as the
+  // workspace entry (marking it disconnected) and just drop its leaf, rather
+  // than tearing down the whole workspace. Only when the last pane is closed
+  // does the whole workspace close.
+  const closePane = useCallback(
+    (leafId: string) => {
+      const disconnectTab = (id: number) => {
+        const tab = tabsRef.current.find((t) => t.tabId === id)
+        if (tab?.tabType === 'terminal') {
+          try {
+            invoke('disconnect', { tabId: id })
+          } catch (e) {
+            console.error('Disconnect error:', e)
+          }
+        }
+      }
+      // Find which workspace contains this leaf.
+      let rootId: number | null = null
+      let closedTabId: number | null = null
+      for (const [rid, t] of Object.entries(splitTreesRef.current)) {
+        const leaf = findLeaf(t, leafId)
+        if (leaf) {
+          rootId = Number(rid)
+          closedTabId = leaf.tabId ?? null
+          break
+        }
+      }
+      if (rootId == null) return
+      const prevTree = splitTreesRef.current[rootId]
+      const removed = removeLeafById(prevTree, leafId, newLeafId)
+      if (!removed) {
+        // The closed pane was the last one in the workspace -> close it fully.
+        closeTab(rootId)
+        return
+      }
+      const nt = pruneEmptyLeaves(removed, newLeafId)
+      const remainingLeaves = collectLeaves(nt)
+      if (remainingLeaves.length === 0) {
+        closeTab(rootId)
+        return
+      }
+      // Tear down only the closed session's tab.
+      if (closedTabId != null) {
+        if (closedTabId === rootId) {
+          // The workspace's identity pane closed, but others remain. Keep the
+          // rootId tab as the workspace entry (now disconnected) so the top tab
+          // bar stays valid; do not remove it.
+          disconnectTab(rootId)
+          setTabs((prev) => prev.map((t) => (t.tabId === rootId ? { ...t, status: 'disconnected' } : t)))
+        } else {
+          disconnectTab(closedTabId)
+          setTabs((prev) => prev.filter((t) => t.tabId !== closedTabId))
+        }
+      }
+      // Update the tree (functional updater composes correctly with rapid calls).
+      setSplitTrees((prev) => {
+        const tree = prev[rootId]
+        if (!tree) return prev
+        const r = removeLeafById(tree, leafId, newLeafId)
+        if (!r) return prev
+        return { ...prev, [rootId!]: pruneEmptyLeaves(r, newLeafId) }
+      })
+      // Keep focus on a still-present pane.
+      setFocusedLeafByRoot((prev) => {
+        const next: Record<number, string> = { ...prev }
+        const f = next[rootId!]
+        next[rootId!] = f && findLeaf(nt, f) ? f : remainingLeaves[remainingLeaves.length - 1]?.id ?? ''
+        return next
+      })
+    },
+    [newLeafId, closeTab],
+  )
+
+  // Tab-bar click: switch the active workspace. Because each workspace renders
+  // inside its own always-mounted container, switching only toggles visibility —
+  // no portal moves, so sessions are preserved (no reconnect). The focused pane
+  // is reset to the workspace's first pane.
+  const handleTabClick = useCallback((tabId: number) => {
+    setActiveTabId(tabId)
+    const tree = splitTreesRef.current[tabId]
+    if (tree) {
+      const leaves = collectLeaves(tree)
+      setFocusedLeafId(leaves.length ? leaves[0].id : null)
+    } else {
+      setFocusedLeafId(null)
+    }
+  }, [])
+
+  // Drag a split divider to resize two adjacent panes.
+  const handleSplitDividerMouseDown = useCallback(
+    (e: React.MouseEvent, branch: SplitBranch, index: number) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // The divider lives directly inside the workspace container now (no
+      // intermediate .term-split wrapper), so measure the workspace box.
+      const splitEl = (e.currentTarget as HTMLElement).closest('.term-workspace') as HTMLElement | null
+      if (!splitEl) return
+      const rect = splitEl.getBoundingClientRect()
+      const isRow = branch.dir === 'row'
+      const total = isRow ? rect.width : rect.height
+      if (total <= 0) return
+      const startPos = isRow ? e.clientX : e.clientY
+      const sizeA = branch.sizes[index - 1]
+      const sizeB = branch.sizes[index]
+      const startSum = sizeA + sizeB
+      const onMove = (ev: MouseEvent) => {
+        const pos = isRow ? ev.clientX : ev.clientY
+        const delta = ((pos - startPos) / total) * startSum
+        let na = sizeA + delta
+        let nb = sizeB - delta
+        const min = 0.05
+        na = Math.max(min, Math.min(startSum - min, na))
+        nb = startSum - na
+        updateActiveTree((t) => adjustSiblingSizes(t, branch.id, index - 1, index, na, nb))
+      }
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+        document.body.classList.remove('resizing-h', 'resizing-v')
+        document.body.style.userSelect = ''
+        try {
+          getCurrentWindow().setResizable(true)
+        } catch {
+          /* ignore */
+        }
+      }
+      document.body.classList.add(isRow ? 'resizing-h' : 'resizing-v')
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+      try {
+        getCurrentWindow().setResizable(false)
+      } catch {
+        /* ignore — internal resize must still work even if window lock fails */
+      }
+    },
+    [],
+  )
+
+  // Split the active session into a new side-by-side pane (Ctrl+\): open the
+  // same connection again as an embedded pane within the current workspace.
+  const handleSplitTerminal = useCallback(() => {
+    const rootId = activeTabIdRef.current
+    if (rootId == null) return
+    const focus = focusedLeafIdRef.current
+    const tree = splitTreeRef.current
+    const leaf = focus ? findLeaf(tree, focus) : collectLeaves(tree)[0]
+    const sessId = leaf?.tabId
+    const sess = sessId != null ? tabsRef.current.find((t) => t.tabId === sessId) : null
+    if (!sess || sess.tabType !== 'terminal' || !sess.connectionId) return
+    const conn = cachedConnections.find((c) => c.id === sess.connectionId)
+    if (conn) openInSplit(conn, 'row')
+  }, [openInSplit])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const ctrl = e.ctrlKey || e.metaKey
+      if (!ctrl || e.key !== '\\') return
+      e.preventDefault()
+      handleSplitTerminal()
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [handleSplitTerminal])
 
   // Handle connection changes (reload list)
 
@@ -857,193 +1194,394 @@ export default function App() {
   }, [shellHeight])
 
   // Terminals block (reused standalone or inside the editor + shell split)
-  const terminalContent = (
-    <div className="terminal-wrapper">
-      <div className="terminal-tabs">
-      {tabs.length === 0 ? (
-        <div className="terminal-placeholder">
-          <div className="icon">🖥️</div>
-          <div>Welcome to Wrolp Terminal</div>
-          <div style={{ fontSize: '12px' }}>
-            Add a connection from the sidebar to get started
-          </div>
-        </div>
-      ) : (
-        tabs.map((tab) => (
+  // ---- Split-tree render helpers ----
+  // Map every session to the leaf that shows it, across ALL workspaces (leaf
+  // ids are globally unique). Used by terminalPortals to route each terminal
+  // into its own workspace's pane body — every workspace container stays mounted
+  // (just hidden), so sessions never remount or reconnect.
+  const allTabToLeaf = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const root of tabs) {
+      if (root.tabType !== 'terminal' || root.embedded) continue
+      const tree = splitTrees[root.tabId]
+      if (!tree) continue
+      buildTabToLeaf(tree).forEach((v, k) => m.set(k, v))
+    }
+    return m
+  }, [tabs, splitTrees])
+  tabToLeafRef.current = allTabToLeaf
+  const activeTerminalTab = tabs.find((t) => t.tabId === activeTabId)
+  const settingsActive = activeTerminalTab?.tabType === 'settings'
+  const settingsOverlayRef = useRef<HTMLDivElement>(null)
+
+  const renderTerminalForTab = (tab: TabInfo, isFocused: boolean) => {
+    const connectConfig = tab.connectionId
+      ? (() => {
+          const conn = cachedConnections.find((c) => c.id === tab.connectionId)
+          if (!conn) return undefined
+          return {
+            id: conn.id,
+            name: conn.name,
+            host: conn.host,
+            port: conn.port,
+            username: conn.username,
+            password: conn.password,
+            keyPath: conn.keyPath,
+          }
+        })()
+      : undefined
+    return (
+      <div style={{ height: '100%', width: '100%', position: 'relative' }}>
+        {tab.tabType !== 'settings' && (
           <div
-            key={tab.tabId}
             style={{
-              display: tab.tabId === activeTabId ? 'block' : 'none',
+              display: tab.status === 'disconnected' || tab.status === 'error' ? 'none' : 'block',
               height: '100%',
-              position: 'relative',
             }}
           >
-            {/* Terminal area: always mounted to preserve history; hidden when disconnected/error */}
-            {tab.tabType !== 'settings' && (
-              <div style={{ display: tab.status === 'disconnected' || tab.status === 'error' ? 'none' : 'block', height: '100%' }}>
-                <TerminalComponent
-                  tabId={tab.tabId}
-                  isActive={tab.tabId === activeTabId}
-                  reconnectTrigger={reconnectKeys[tab.tabId] || 0}
-                  connectConfig={
-                    tab.connectionId
-                      ? (() => {
-                          const conn = cachedConnections.find((c) => c.id === tab.connectionId)
-                          if (!conn) return undefined
-                          return {
-                            id: conn.id,
-                            name: conn.name,
-                            host: conn.host,
-                            port: conn.port,
-                            username: conn.username,
-                            password: conn.password,
-                            keyPath: conn.keyPath,
-                          }
-                        })()
-                      : undefined
+            <TerminalComponent
+              tabId={tab.tabId}
+              isActive={true}
+              isFocused={isFocused}
+              reconnectTrigger={reconnectKeys[tab.tabId] || 0}
+              connectConfig={connectConfig}
+              autoConnect={!!tab.connectionId}
+              onStatusChange={(status, errorMessage) =>
+                setTabs((prev) =>
+                  prev.map((t) => (t.tabId === tab.tabId ? { ...t, status, errorMessage } : t)),
+                )
+              }
+              onSizeChange={(cols, rows) => {
+                if (isFocused) setTermSize({ cols, rows })
+              }}
+            />
+          </div>
+        )}
+        {tab.tabType === 'settings' && (
+          <div className="settings-tab-content">
+            <h3>Settings</h3>
+            <div className="form-group">
+              <label>Window Opacity: {Math.round(opacity * 100)}%</label>
+              <input
+                type="range"
+                min="20"
+                max="100"
+                value={Math.round(opacity * 100)}
+                onChange={(e) => setOpacity(Number(e.target.value) / 100)}
+                style={{ width: '100%', accentColor: '#007acc' }}
+              />
+            </div>
+            <div className="form-group" style={{ marginTop: 16 }}>
+              <label>Updates</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                <button
+                  className="btn-primary"
+                  onClick={handleCheckUpdate}
+                  disabled={
+                    updateState === 'checking' ||
+                    updateState === 'downloading' ||
+                    updateState === 'installing'
                   }
-                  autoConnect={!!tab.connectionId}
-                  onStatusChange={(status, errorMessage) => {
-                    setTabs((prev) =>
-                      prev.map((t) =>
-                        t.tabId === tab.tabId ? { ...t, status, errorMessage } : t,
-                      ),
-                    )
-                  }}
-                  onSizeChange={(cols, rows) => setTermSize({ cols, rows })}
-                />
-              </div>
-            )}
-
-            {/* Settings tab */}
-            {tab.tabType === 'settings' && (
-              <div className="settings-tab-content">
-                <h3>Settings</h3>
-                <div className="form-group">
-                  <label>Window Opacity: {Math.round(opacity * 100)}%</label>
-                  <input
-                    type="range"
-                    min="20"
-                    max="100"
-                    value={Math.round(opacity * 100)}
-                    onChange={(e) => setOpacity(Number(e.target.value) / 100)}
-                    style={{ width: '100%', accentColor: '#007acc' }}
-                  />
-                </div>
-                <div className="form-group" style={{ marginTop: 16 }}>
-                  <label>Updates</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
-                    <button
-                      className="btn-primary"
-                      onClick={handleCheckUpdate}
-                      disabled={updateState === 'checking' || updateState === 'downloading' || updateState === 'installing'}
-                      style={{ fontSize: '12px', padding: '4px 12px' }}
-                    >
-                      {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
-                    </button>
-                    {updateInfo ? (
-                      <span style={{ color: '#4ec9b0' }}>
-                        New version v{updateInfo.version}
-                      </span>
-                    ) : updateInfo === null && updateState !== 'checking' ? (
-                      <span>Up to date</span>
-                    ) : null}
-                  </div>
-                  {updateInfo && (
-                    <div style={{ marginTop: 8 }}>
-                      <button
-                        className="btn-primary"
-                        onClick={handleDownloadUpdate}
-                        disabled={updateState !== 'idle'}
-                        style={{ fontSize: '12px', padding: '4px 12px' }}
-                      >
-                        {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Download & Install'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Disconnected overlay */}
-            {tab.status === 'disconnected' ? (
-              <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
-                <div className="icon">🔌</div>
-                <div style={{ color: '#f44747' }}>Connection lost</div>
-                <div style={{ fontSize: '12px', color: '#888' }}>
-                  {tab.connectionName} — {tab.host}
-                </div>
-                <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>
-                  Press Enter to retry
-                </div>
-                <button
-                  className="btn-primary"
-                  onClick={() => handleReconnect(tab.tabId)}
-                  style={{ marginTop: 12, fontSize: '13px', padding: '6px 20px' }}
+                  style={{ fontSize: '12px', padding: '4px 12px' }}
                 >
-                  🔄 Reconnect
+                  {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
                 </button>
+                {updateInfo ? (
+                  <span style={{ color: '#4ec9b0' }}>New version v{updateInfo.version}</span>
+                ) : updateInfo === null && updateState !== 'checking' ? (
+                  <span>Up to date</span>
+                ) : null}
               </div>
-            ) : tab.tabType === 'settings' ? null : tab.status === 'error' ? (
-              <div className="terminal-placeholder">
-                <div style={{ color: '#f44747' }}>
-                  Connection failed: {tab.connectionName}
-                </div>
-                {tab.errorMessage && (
-                  <div
-                    style={{
-                      color: '#808080',
-                      fontSize: '12px',
-                      marginTop: '8px',
-                      maxWidth: '500px',
-                      wordBreak: 'break-word',
-                    }}
+              {updateInfo && (
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    className="btn-primary"
+                    onClick={handleDownloadUpdate}
+                    disabled={updateState !== 'idle'}
+                    style={{ fontSize: '12px', padding: '4px 12px' }}
                   >
-                    {tab.errorMessage}
-                  </div>
-                )}
-                <div style={{ fontSize: '12px', color: '#666', marginTop: 12 }}>
-                  Press Enter to retry
+                    {updateState === 'downloading'
+                      ? 'Downloading...'
+                      : updateState === 'installing'
+                        ? 'Installing...'
+                        : 'Download & Install'}
+                  </button>
                 </div>
-                <button
-                  className="btn-primary"
-                  onClick={() => handleReconnect(tab.tabId)}
-                  style={{ marginTop: 8, fontSize: '13px', padding: '6px 20px' }}
-                >
-                  🔄 Reconnect
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ))
-      )}
-      </div>
-      {tabs.length > 0 && (() => {
-        const t = tabs.find((x) => x.tabId === activeTabId)
-        const status = t?.status ?? 'disconnected'
-        return (
-          <div className="terminal-statusbar">
-            <span className="tsb-left">
-              <span className={`tsb-dot ${status}`} title={status} />
-            </span>
-            <span className="tsb-right">
-              {termSize.cols > 0 && (
-                <span className="tsb-size" title="SSH terminal width × height">
-                  {termSize.cols} × {termSize.rows}
-                </span>
               )}
-            </span>
+            </div>
           </div>
-        )
-      })()}
+        )}
+        {tab.tabType !== 'settings' && tab.status === 'disconnected' ? (
+          <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
+            <div className="icon">🔌</div>
+            <div style={{ color: '#f44747' }}>Connection lost</div>
+            <div style={{ fontSize: '12px', color: '#888' }}>
+              {tab.connectionName} — {tab.host}
+            </div>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>Press Enter to retry</div>
+            <button
+              className="btn-primary"
+              onClick={() => handleReconnect(tab.tabId)}
+              style={{ marginTop: 12, fontSize: '13px', padding: '6px 20px' }}
+            >
+              🔄 Reconnect
+            </button>
+          </div>
+        ) : tab.tabType !== 'settings' && tab.status === 'error' ? (
+          <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
+            <div style={{ color: '#f44747' }}>Connection failed: {tab.connectionName}</div>
+            {tab.errorMessage && (
+              <div
+                style={{
+                  color: '#808080',
+                  fontSize: '12px',
+                  marginTop: '8px',
+                  maxWidth: '500px',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {tab.errorMessage}
+              </div>
+            )}
+            <div style={{ fontSize: '12px', color: '#666', marginTop: 12 }}>Press Enter to retry</div>
+            <button
+              className="btn-primary"
+              onClick={() => handleReconnect(tab.tabId)}
+              style={{ marginTop: 8, fontSize: '13px', padding: '6px 20px' }}
+            >
+              🔄 Reconnect
+            </button>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  // Render a workspace's split layout as a FLAT list of absolutely-positioned
+  // panes (one per leaf) plus divider handles. Panes are keyed by their stable
+  // leaf id, so restructuring the tree (split / close) only changes a pane's
+  // position/size — the pane DOM (and the terminal portaled into its body) is
+  // never remounted, so sessions never reconnect on split/close. The recursive
+  // tree is used only to compute each pane's rectangle.
+  interface PaneRect {
+    left: number
+    top: number
+    width: number
+    height: number
+  }
+
+  const renderPane = (
+    leaf: SplitLeaf,
+    focusedLeafIdForRoot: string | null,
+    rect: PaneRect,
+  ): React.ReactElement => {
+    const tab = leaf.tabId != null ? tabs.find((t) => t.tabId === leaf.tabId) : undefined
+    const isFocused = leaf.id === focusedLeafIdForRoot
+    return (
+      <div
+        key={leaf.id}
+        className={`term-pane${isFocused ? ' focused' : ''}`}
+        onMouseDown={() => setFocusedLeafId(leaf.id)}
+        style={{
+          position: 'absolute',
+          left: `${rect.left * 100}%`,
+          top: `${rect.top * 100}%`,
+          width: `${rect.width * 100}%`,
+          height: `${rect.height * 100}%`,
+          display: 'flex',
+          flexDirection: 'column',
+          minWidth: 0,
+          minHeight: 0,
+        }}
+      >
+        <div className="term-pane-header">
+          <span className="term-pane-title">{tab ? getTabLabel(tab) : 'No terminal'}</span>
+          <span
+            className="term-pane-close"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              closePane(leaf.id)
+            }}
+            title="Close pane"
+          >
+            ×
+          </span>
+        </div>
+        <div className="term-pane-body" ref={getPaneBodyRef(leaf.id)}>
+          {leaf.tabId == null && (
+            <div className="terminal-placeholder">
+              <div className="icon">🖥️</div>
+              <div>Select a connection to start</div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const renderWorkspacePanes = (node: SplitNode, focusedLeafIdForRoot: string | null): React.ReactElement[] => {
+    const out: React.ReactElement[] = []
+    const walk = (n: SplitNode, rect: PaneRect) => {
+      if (n.type === 'leaf') {
+        out.push(renderPane(n, focusedLeafIdForRoot, rect))
+        return
+      }
+      const total = n.sizes.reduce((a, b) => a + b, 0) || 1
+      let offset = 0
+      for (let i = 0; i < n.children.length; i++) {
+        const frac = (n.sizes[i] || 0) / total
+        const childRect: PaneRect =
+          n.dir === 'row'
+            ? { left: rect.left + offset * rect.width, top: rect.top, width: frac * rect.width, height: rect.height }
+            : { left: rect.left, top: rect.top + offset * rect.height, width: rect.width, height: frac * rect.height }
+        if (i > 0) {
+          const pct = (n.dir === 'row' ? rect.left + offset * rect.width : rect.top + offset * rect.height) * 100
+          out.push(
+            <div
+              key={`${n.id}-div-${i}`}
+              className={`term-split-divider ${n.dir === 'row' ? 'divider-row' : 'divider-col'}`}
+              style={
+                n.dir === 'row'
+                  ? {
+                      position: 'absolute',
+                      left: `${pct}%`,
+                      top: 0,
+                      width: 4,
+                      height: '100%',
+                      transform: 'translateX(-50%)',
+                      cursor: 'col-resize',
+                      zIndex: 10,
+                    }
+                  : {
+                      position: 'absolute',
+                      left: 0,
+                      top: `${pct}%`,
+                      width: '100%',
+                      height: 4,
+                      transform: 'translateY(-50%)',
+                      cursor: 'row-resize',
+                      zIndex: 10,
+                    }
+              }
+              onMouseDown={(e) => handleSplitDividerMouseDown(e, n, i)}
+            />,
+          )
+        }
+        walk(n.children[i], childRect)
+        offset += frac
+      }
+    }
+    walk(node, { left: 0, top: 0, width: 1, height: 1 })
+    return out
+  }
+
+  // Portals keep each terminal instance mounted (preserving its SSH session and
+  // scrollback) while placing its DOM into the correct pane body, or into the
+  // hidden pool when it isn't shown in any pane.
+  const terminalPortals = tabs
+    .filter((t) => t.tabType === 'terminal' || (t.tabType === 'settings' && settingsActive))
+    .map((tab) => {
+      if (tab.tabType === 'settings') {
+        return settingsOverlayRef.current
+          ? createPortal(renderTerminalForTab(tab, false), settingsOverlayRef.current, String(tab.tabId))
+          : null
+      }
+      // Route each terminal into the leaf that shows it within its own workspace.
+      // Every workspace container is always mounted (only visibility toggles),
+      // so the portal destination never changes on tab switch — sessions stay
+      // mounted and never reconnect.
+      const leafId = allTabToLeaf.get(tab.tabId)
+      const dest = leafId ? paneBodyRefs.current.get(leafId) : null
+      if (!leafId || !dest) return null
+      const isFocused = leafId === (activeTabId != null ? focusedLeafId : null)
+      // Stable key: without it, removing one tab shifts the others' array
+      // index, making React remount the surviving terminal — which re-runs
+      // its connection (looks like the "other pane reconnected").
+      // The wrapper's onMouseDown focuses this pane even though the terminal is
+      // portaled (React events don't bubble through a portal to the pane div),
+      // so clicking a shell window marks its tab as the active/focused one.
+      return createPortal(
+        <div style={{ height: '100%', width: '100%' }} onMouseDown={() => setFocusedLeafId(leafId)}>
+          {renderTerminalForTab(tab, isFocused)}
+        </div>,
+        dest,
+        String(tab.tabId),
+      )
+    })
+
+  // Top-level terminal tabs (workspaces): each renders its own split layout
+  // inside an always-mounted container. Only the active workspace is visible;
+  // switching toggles visibility (never remounts), so sessions persist.
+  const rootTabs = tabs.filter((t) => t.tabType === 'terminal' && !t.embedded)
+
+  const terminalContent = (
+    <div className="terminal-wrapper">
+      <div className="terminal-split-root" style={{ position: 'relative' }}>
+        {!settingsActive &&
+          rootTabs.map((root) => {
+            const tree = splitTrees[root.tabId] ?? makeLeaf(`leaf-${root.tabId}`, root.tabId)
+            return (
+              <div
+                key={root.tabId}
+                className="term-workspace"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: root.tabId === activeTabId ? 'flex' : 'none',
+                  flexDirection: 'column',
+                  minWidth: 0,
+                  minHeight: 0,
+                }}
+              >
+                {renderWorkspacePanes(tree, focusedLeafByRoot[root.tabId] ?? null)}
+              </div>
+            )
+          })}
+        <div
+          ref={settingsOverlayRef}
+          className="settings-overlay"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            overflow: 'auto',
+            display: settingsActive ? 'block' : 'none',
+          }}
+        />
+        {terminalPortals}
+      </div>
+      {tabs.length > 0 &&
+        (() => {
+          // Reflect the focused pane's session (falls back to the workspace root)
+          // so the status bar follows whichever shell window is currently active.
+          const t = tabs.find((x) => x.tabId === focusedLeafTabId)
+          const status = t?.status ?? 'disconnected'
+          return (
+            <div className="terminal-statusbar">
+              <span className="tsb-left">
+                <span className={`tsb-dot ${status}`} title={status} />
+              </span>
+              <span className="tsb-right">
+                {termSize.cols > 0 && (
+                  <span className="tsb-size" title="SSH terminal width × height">
+                    {termSize.cols} × {termSize.rows}
+                  </span>
+                )}
+              </span>
+            </div>
+          )
+        })()}
+      <div ref={terminalPoolRefCb} className="terminal-pool" />
     </div>
   )
 
   // Sidebar body (connections / files / docker), reused for left or right placement.
   const sidebarBody = (() => {
-    const showFilePanel =
-      activeTabId != null &&
-      tabs.find((t) => t.tabId === activeTabId)?.status === 'connected'
+    // Show the Files panel only when the focused pane's connection is connected.
+    // In a split, focusedLeafTabId points at the focused pane's session, so the
+    // panel tracks whichever connection you clicked into.
+    const filesTab = focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
+    const showFilePanel = filesTab?.status === 'connected'
     return (
       <>
         {layout.sidebar.sections.connections.visible && (
@@ -1066,6 +1604,8 @@ export default function App() {
               activeTabId={activeTabId}
               onConnectionChange={handleConnectionChange}
               onSelectConnection={handleSelectConnection}
+              onSplitRight={(conn) => handleOpenSplit(conn, 'row')}
+              onSplitDown={(conn) => handleOpenSplit(conn, 'column')}
               sidebarWidth={sidebarWidth}
               expanded={connectionsExpanded}
               onToggleExpanded={() =>
@@ -1098,13 +1638,13 @@ export default function App() {
               className="collapsible-section"
               style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
             >
-              <FilePanel
-                key={fileTarget ? JSON.stringify(fileTarget) : 'session'}
-                ref={fileTreeRef}
-                tabId={activeTabId}
-                isConnected={true}
-                defaultPath={fileTarget?.kind === 'docker' ? '/' : '.'}
-                targetRef={fileTarget ?? undefined}
+                <FilePanel
+                  key={fileTarget ? JSON.stringify(fileTarget) : 'session'}
+                  ref={fileTreeRef}
+                  tabId={focusedLeafTabId ?? activeTabId ?? 0}
+                  isConnected={true}
+                  defaultPath={fileTarget?.kind === 'docker' ? '/' : '.'}
+                  targetRef={fileTarget ?? undefined}
                 expanded={filesExpanded}
                 onToggleExpanded={() =>
                   updateLayout((l) => ({
@@ -1140,7 +1680,7 @@ export default function App() {
             )}
 
             {/* Docker containers on the connected host */}
-            {layout.sidebar.sections.docker.visible && (
+            {layout.sidebar.sections.docker.visible && activeTabId != null && (
               <div
                 className="collapsible-section"
                 style={dockerExpanded ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' } : { flexShrink: 0 }}
@@ -1217,11 +1757,11 @@ export default function App() {
                 </svg>
               )}
             </button>
-            {tabs.map((tab) => (
+            {tabs.filter((tab) => !tab.embedded).map((tab) => (
               <div
                 key={tab.tabId}
                 className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}`}
-                onClick={() => setActiveTabId(tab.tabId)}
+                onClick={() => handleTabClick(tab.tabId)}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -1240,6 +1780,13 @@ export default function App() {
                 </span>
               </div>
             ))}
+            <button
+              className="tab-split-btn"
+              onClick={handleSplitTerminal}
+              title="Split Terminal (Ctrl+\)"
+            >
+              ⊞
+            </button>
           </div>
 
           {/* Tab right-click context menu */}

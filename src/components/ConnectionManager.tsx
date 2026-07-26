@@ -12,6 +12,8 @@ interface ConnectionManagerProps {
   activeTabId: number | null
   onConnectionChange: () => void
   onSelectConnection: (config: ConnectionConfig) => void
+  onSplitRight: (config: ConnectionConfig) => void
+  onSplitDown: (config: ConnectionConfig) => void
   sidebarWidth: number
   expanded?: boolean
   onToggleExpanded?: () => void
@@ -26,6 +28,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   activeTabId,
   onConnectionChange,
   onSelectConnection,
+  onSplitRight,
+  onSplitDown,
   sidebarWidth,
   expanded = true,
   onToggleExpanded,
@@ -449,6 +453,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          onSplitRight={() => {
+            onSplitRight(contextMenu.conn)
+            setContextMenu(null)
+          }}
+          onSplitDown={() => {
+            onSplitDown(contextMenu.conn)
+            setContextMenu(null)
+          }}
           onEdit={() => {
             handleEdit(contextMenu.conn)
             setContextMenu(null)
@@ -754,12 +766,22 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
 interface ContextMenuProps {
   x: number
   y: number
+  onSplitRight?: () => void
+  onSplitDown?: () => void
   onEdit: () => void
   onDelete: () => void
   onClose: () => void
 }
 
-const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onEdit, onDelete, onClose }) => {
+const ContextMenu: React.FC<ContextMenuProps> = ({
+  x,
+  y,
+  onSplitRight,
+  onSplitDown,
+  onEdit,
+  onDelete,
+  onClose,
+}) => {
   React.useEffect(() => {
     const handler = () => onClose()
     document.addEventListener('click', handler)
@@ -768,6 +790,17 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onEdit, onDelete, onClo
 
   return (
     <div className="context-menu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
+      {onSplitRight && (
+        <div className="context-menu-item" onClick={onSplitRight}>
+          Split Right (horizontal)
+        </div>
+      )}
+      {onSplitDown && (
+        <div className="context-menu-item" onClick={onSplitDown}>
+          Split Down (vertical)
+        </div>
+      )}
+      {(onSplitRight || onSplitDown) && <div className="context-menu-divider" />}
       <div className="context-menu-item" onClick={onEdit}>
         ✏️ Edit
       </div>
