@@ -22,6 +22,7 @@ interface TerminalComponentProps {
     status: 'connecting' | 'connected' | 'error' | 'disconnected',
     errorMessage?: string,
   ) => void
+  onSizeChange?: (cols: number, rows: number) => void
 }
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
@@ -31,6 +32,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   connectConfig,
   autoConnect,
   onStatusChange,
+  onSizeChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -39,6 +41,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const tabIdRef = useRef(tabId)
   const connectConfigRef = useRef(connectConfig)
   const onStatusChangeRef = useRef(onStatusChange)
+  const onSizeChangeRef = useRef(onSizeChange)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const hasRun = useRef(false)
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
@@ -57,12 +60,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange
   })
+  useEffect(() => {
+    onSizeChangeRef.current = onSizeChange
+  })
 
   // Calculate terminal cols/rows and send resize command
   const sendResize = useCallback((term: Terminal) => {
     const cols = term.cols
     const rows = term.rows
     console.log(`[Terminal] resizing to ${cols}x${rows}`)
+    onSizeChangeRef.current?.(cols, rows)
     resizeTerminal(tabIdRef.current, cols, rows).catch((err) =>
       console.error('resize_terminal error:', err),
     )
@@ -200,6 +207,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const cols = term.cols
       const rows = term.rows
       console.log(`[Terminal] initial fit done: ${cols}x${rows}, starting connect`)
+      onSizeChangeRef.current?.(cols, rows)
       onStatusChangeRef.current('connecting')
       connect(
         {
@@ -295,6 +303,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const cols = term.cols
       const rows = term.rows
       console.log(`[Terminal] reconnect: ${cols}x${rows}`)
+      onSizeChangeRef.current?.(cols, rows)
       onStatusChangeRef.current('connecting')
 
       connect(

@@ -494,8 +494,104 @@ body.resize-v * {
 // Terminal wrapper
 .terminal-wrapper {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   padding: 4px;
   overflow: hidden;
+}
+
+.terminal-tabs {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+
+// Status bar pinned to the bottom of the shell (terminal) window
+.terminal-statusbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  margin-top: 3px;
+  padding: 0 10px;
+  background: $bg-secondary;
+  border-top: 1px solid $border;
+  border-radius: 3px;
+  user-select: none;
+  gap: 12px;
+
+  .tsb-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    flex: 1;
+  }
+
+  .tsb-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .tsb-label {
+    font-size: 12px;
+    color: $text-primary;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tsb-size {
+    font-size: 12px;
+    color: #6ec3f0;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .tsb-status {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #fff;
+
+    &.connected {
+      background: #2e7d32;
+    }
+    &.connecting {
+      background: #b58900;
+    }
+    &.error {
+      background: #c5392f;
+    }
+    &.disconnected {
+      background: #555;
+    }
+  }
+
+  .tsb-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+
+    &.connected {
+      background: #4ec9b0;
+    }
+    &.connecting {
+      background: #e2c08d;
+    }
+    &.error {
+      background: #f44747;
+    }
+    &.disconnected {
+      background: #888;
+    }
+  }
 }
 
 // ===== Editor <-> Shell divider & collapsible shell pane =====

@@ -45,6 +45,10 @@ export default function App() {
   const [shellHeight, setShellHeight] = useState(240)
   const [shellCollapsed, setShellCollapsed] = useState(false)
 
+  // SSH terminal size (cols × rows) reported by the active Terminal component,
+  // shown in the shell-pane status bar.
+  const [termSize, setTermSize] = useState<{ cols: number; rows: number }>({ cols: 0, rows: 0 })
+
   // Reset the Files panel target when switching tabs (targets are tab-scoped).
   useEffect(() => {
     setFileTarget(null)
@@ -702,6 +706,7 @@ export default function App() {
   // Terminals block (reused standalone or inside the editor + shell split)
   const terminalContent = (
     <div className="terminal-wrapper">
+      <div className="terminal-tabs">
       {tabs.length === 0 ? (
         <div className="terminal-placeholder">
           <div className="icon">🖥️</div>
@@ -752,6 +757,7 @@ export default function App() {
                       ),
                     )
                   }}
+                  onSizeChange={(cols, rows) => setTermSize({ cols, rows })}
                 />
               </div>
             )}
@@ -858,6 +864,25 @@ export default function App() {
           </div>
         ))
       )}
+      </div>
+      {tabs.length > 0 && (() => {
+        const t = tabs.find((x) => x.tabId === activeTabId)
+        const status = t?.status ?? 'disconnected'
+        return (
+          <div className="terminal-statusbar">
+            <span className="tsb-left">
+              <span className={`tsb-dot ${status}`} title={status} />
+            </span>
+            <span className="tsb-right">
+              {termSize.cols > 0 && (
+                <span className="tsb-size" title="SSH terminal width × height">
+                  {termSize.cols} × {termSize.rows}
+                </span>
+              )}
+            </span>
+          </div>
+        )
+      })()}
     </div>
   )
 
@@ -1088,7 +1113,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Status bar */}
+      {/* Status bar — temporarily disabled
       <div className="status-bar">
         <div className="status-bar-left">
           {(() => {
@@ -1117,7 +1142,7 @@ export default function App() {
           })()}
         </div>
         <div className="status-bar-right">
-          {/* Update available banner */}
+          // Update available banner
           {updateInfo && showUpdateBanner && (
             <div className="update-banner">
               <span className="update-text">
@@ -1132,6 +1157,8 @@ export default function App() {
           <span className="status-text">Wrolp Terminal</span>
         </div>
       </div>
+      */}
+
 
     </div>
   )
