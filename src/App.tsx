@@ -1581,18 +1581,18 @@ export default function App() {
                   ? {
                       position: 'absolute',
                       left: `${pct}%`,
-                      top: 0,
+                      top: `${rect.top * 100}%`,
                       width: 4,
-                      height: '100%',
+                      height: `${rect.height * 100}%`,
                       transform: 'translateX(-50%)',
                       cursor: 'col-resize',
                       zIndex: 10,
                     }
                   : {
                       position: 'absolute',
-                      left: 0,
+                      left: `${rect.left * 100}%`,
                       top: `${pct}%`,
-                      width: '100%',
+                      width: `${rect.width * 100}%`,
                       height: 4,
                       transform: 'translateY(-50%)',
                       cursor: 'row-resize',
