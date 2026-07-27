@@ -170,6 +170,10 @@ export async function deleteSession(sessionId: string): Promise<void> {
   await invoke<void>('delete_session', { sessionId })
 }
 
+export async function deleteAllSessions(): Promise<void> {
+  await invoke<void>('delete_all_sessions')
+}
+
 export async function renameSession(sessionId: string, title: string): Promise<void> {
   await invoke<void>('rename_session', { sessionId, title })
 }

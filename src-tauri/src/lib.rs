@@ -192,6 +192,7 @@ pub fn run() {
       commands::list_sessions,
       commands::get_session_events,
       commands::delete_session,
+      commands::delete_all_sessions,
       commands::rename_session,
       commands::extract_commands,
       commands::commit_command,

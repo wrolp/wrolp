@@ -203,6 +203,16 @@ pub fn delete_session(conn: &Connection, session_id: &str) -> Result<(), String>
   Ok(())
 }
 
+pub fn delete_all_sessions(conn: &Connection) -> Result<(), String> {
+  conn
+    .execute("DELETE FROM session_events", [])
+    .map_err(|e| e.to_string())?;
+  conn
+    .execute("DELETE FROM sessions", [])
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 pub fn rename_session(conn: &Connection, session_id: &str, title: &str) -> Result<(), String> {
   conn
     .execute(

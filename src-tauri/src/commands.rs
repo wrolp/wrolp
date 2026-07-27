@@ -1838,6 +1838,14 @@ pub async fn delete_session(
 }
 
 #[tauri::command]
+pub async fn delete_all_sessions(
+  state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::delete_all_sessions(&conn)
+}
+
+#[tauri::command]
 pub async fn rename_session(
   state: tauri::State<'_, AppState>,
   session_id: String,

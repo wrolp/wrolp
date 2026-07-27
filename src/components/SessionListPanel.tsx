@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import type { ConnectionConfig, SessionSummary } from '../types'
-import { listSessions, deleteSession, renameSession, extractCommands } from '../commands'
+import { listSessions, deleteSession, deleteAllSessions, renameSession, extractCommands } from '../commands'
+import { ConfirmDialog } from './ConfirmDialog'
 import { Icon } from './Icon'
 
 interface SessionListPanelProps {
@@ -19,6 +20,12 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
   const [filterConn, setFilterConn] = useState<string>('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
+  const [confirm, setConfirm] = useState<{
+    title: string
+    message: string
+    danger: boolean
+    onConfirm: () => void
+  } | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -36,11 +43,30 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
     reload()
   }, [reload])
 
-  const handleDelete = async (id: string) => {
-    if (confirm('Delete this session recording?')) {
-      await deleteSession(id)
-      reload()
-    }
+  const handleDelete = (id: string) => {
+    setConfirm({
+      title: 'Delete Session',
+      message: 'Delete this session recording?',
+      danger: false,
+      onConfirm: async () => {
+        await deleteSession(id)
+        setConfirm(null)
+        reload()
+      },
+    })
+  }
+
+  const handleDeleteAll = () => {
+    setConfirm({
+      title: 'Delete All Sessions',
+      message: 'Delete ALL session recordings? This cannot be undone.',
+      danger: true,
+      onConfirm: async () => {
+        await deleteAllSessions()
+        setConfirm(null)
+        reload()
+      },
+    })
   }
 
   const handleRename = async (id: string) => {
@@ -94,6 +120,9 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
           ))}
         </select>
         <button onClick={reload} className="refresh-btn" title="Refresh"><Icon name="refresh" /></button>
+        <button onClick={handleDeleteAll} className="delete-all-btn" title="Delete all sessions">
+          <Icon name="trash" />
+        </button>
         <span className="session-count">{sessions.length} sessions</span>
       </div>
 
@@ -160,6 +189,17 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
             </div>
           ))}
         </div>
+      )}
+
+      {confirm && (
+        <ConfirmDialog
+          title={confirm.title}
+          message={confirm.message}
+          danger={confirm.danger}
+          confirmLabel="Delete"
+          onConfirm={confirm.onConfirm}
+          onCancel={() => setConfirm(null)}
+        />
       )}
     </div>
   )
