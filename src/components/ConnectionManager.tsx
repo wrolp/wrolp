@@ -586,6 +586,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [password, setPassword] = useState(connection?.password || '')
   const [keyPath, setKeyPath] = useState(connection?.keyPath || '')
   const [passphrase, setPassphrase] = useState(connection?.passphrase || '')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showPassphrase, setShowPassphrase] = useState(false)
   const [group, setGroup] = useState(connection?.group || defaultGroup)
   const [description, setDescription] = useState(connection?.description || '')
   const [groupMode, setGroupMode] = useState<'select' | 'new'>(
@@ -732,12 +734,22 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           {authType === 'password' ? (
             <div className="form-group">
               <label>Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password"
-              />
+              <div className="input-with-icon">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                />
+                <button
+                  type="button"
+                  className="input-icon-btn"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  <Icon name={showPassword ? 'eyeOff' : 'eye'} size={16} />
+                </button>
+              </div>
             </div>
           ) : (
             <>
@@ -761,12 +773,22 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               </div>
               <div className="form-group">
                 <label>Passphrase (optional)</label>
-                <input
-                  type="password"
-                  value={passphrase}
-                  onChange={(e) => setPassphrase(e.target.value)}
-                  placeholder="Key passphrase"
-                />
+                <div className="input-with-icon">
+                  <input
+                    type={showPassphrase ? 'text' : 'password'}
+                    value={passphrase}
+                    onChange={(e) => setPassphrase(e.target.value)}
+                    placeholder="Key passphrase"
+                  />
+                  <button
+                    type="button"
+                    className="input-icon-btn"
+                    onClick={() => setShowPassphrase((v) => !v)}
+                    aria-label={showPassphrase ? 'Hide passphrase' : 'Show passphrase'}
+                  >
+                    <Icon name={showPassphrase ? 'eyeOff' : 'eye'} size={16} />
+                  </button>
+                </div>
               </div>
             </>
           )}

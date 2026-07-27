@@ -31,6 +31,8 @@ export type IconName =
   | 'copy'
   | 'paste'
   | 'record'
+  | 'eye'
+  | 'eyeOff'
 
 const PATHS: Record<IconName, ReactNode> = {
   refresh: (
@@ -177,6 +179,19 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   record: <circle cx="12" cy="12" r="7" />,
+  eye: (
+    <>
+      <path d="M12 5C5 5 1 12 1 12s4 7 11 7 11-7 11-7-4-7-11-7z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M12 5C5 5 1 12 1 12s4 7 11 7 11-7 11-7-4-7-11-7z" />
+      <circle cx="12" cy="12" r="2.5" />
+      <line x1="3" y1="3" x2="21" y2="21" />
+    </>
+  ),
 }
 
 export function Icon({
