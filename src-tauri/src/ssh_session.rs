@@ -35,6 +35,114 @@ fn default_port() -> u16 {
   22
 }
 
+/// On-disk connection representation. Secrets are stored as AES-GCM vault blobs
+/// (see `vault.rs`) instead of plaintext. Convert to/from `ConnectionConfig`
+/// via the `from_conn` / `from_persisted` helpers so the in-memory
+/// `ConnectionConfig` keeps holding decrypted secrets (used by `connect`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedConnection {
+  pub id: String,
+  pub name: String,
+  pub host: String,
+  #[serde(default = "default_port")]
+  pub port: u16,
+  pub username: String,
+  /// Base64 AES-GCM blob of the password (nonce || ciphertext), or None.
+  #[serde(default)]
+  pub password_enc: Option<String>,
+  #[serde(default)]
+  pub key_path: Option<String>,
+  /// Base64 AES-GCM blob of the private-key passphrase, or None.
+  #[serde(default)]
+  pub passphrase_enc: Option<String>,
+  #[serde(default)]
+  pub description: Option<String>,
+  #[serde(default)]
+  pub group: Option<String>,
+}
+
+/// Envelope written to `connections.json` so we can detect the encrypted format
+/// (version == 1) versus legacy plaintext files (a bare JSON array).
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedFile {
+  version: u8,
+  connections: Vec<PersistedConnection>,
+}
+
+impl PersistedConnection {
+  /// Build the on-disk form from an in-memory connection, encrypting any secret.
+  fn from_conn(c: &ConnectionConfig) -> Result<PersistedConnection, String> {
+    let password_enc = match &c.password {
+      Some(p) => Some(crate::vault::seal_secret(p)?),
+      None => None,
+    };
+    let passphrase_enc = match &c.passphrase {
+      Some(p) => Some(crate::vault::seal_secret(p)?),
+      None => None,
+    };
+    Ok(PersistedConnection {
+      id: c.id.clone(),
+      name: c.name.clone(),
+      host: c.host.clone(),
+      port: c.port,
+      username: c.username.clone(),
+      password_enc,
+      key_path: c.key_path.clone(),
+      passphrase_enc,
+      description: c.description.clone(),
+      group: c.group.clone(),
+    })
+  }
+}
+
+impl ConnectionConfig {
+  /// Reconstruct an in-memory connection (with decrypted secrets) from storage.
+  fn from_persisted(p: &PersistedConnection) -> Result<ConnectionConfig, String> {
+    let password = match &p.password_enc {
+      Some(e) => Some(crate::vault::open_secret(e)?),
+      None => None,
+    };
+    let passphrase = match &p.passphrase_enc {
+      Some(e) => Some(crate::vault::open_secret(e)?),
+      None => None,
+    };
+    Ok(ConnectionConfig {
+      id: p.id.clone(),
+      name: p.name.clone(),
+      host: p.host.clone(),
+      port: p.port,
+      username: p.username.clone(),
+      password,
+      key_path: p.key_path.clone(),
+      passphrase,
+      description: p.description.clone(),
+      group: p.group.clone(),
+    })
+  }
+}
+
+/// Serialize a slice of connections to disk in the encrypted envelope format.
+pub(crate) fn write_encrypted_connections(
+  path: &std::path::Path,
+  conns: &[ConnectionConfig],
+) -> Result<(), String> {
+  if let Some(parent) = path.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  let mut persisted = Vec::with_capacity(conns.len());
+  for c in conns {
+    persisted.push(PersistedConnection::from_conn(c)?);
+  }
+  let file = PersistedFile {
+    version: 1,
+    connections: persisted,
+  };
+  let content = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+  std::fs::write(path, content).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 /// Terminal output event
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -303,17 +411,45 @@ impl AppState {
   }
 }
 
-/// Load initial connection list from config file
+/// Load initial connection list from config file.
+/// Supports the encrypted envelope format (version == 1) and transparently
+/// migrates legacy plaintext files (`Vec<ConnectionConfig>`) by re-writing
+/// them in the encrypted format on load.
 fn get_initial_connections() -> Vec<ConnectionConfig> {
   let path = get_connections_path();
   if let Some(ref path) = path {
     if path.exists() {
       if let Ok(content) = std::fs::read_to_string(path) {
-        if let Ok(conns) = serde_json::from_str::<Vec<ConnectionConfig>>(&content) {
-          return conns;
-        }
+        return load_connections_content(path, &content);
       }
     }
   }
+  Vec::new()
+}
+
+fn load_connections_content(path: &std::path::Path, content: &str) -> Vec<ConnectionConfig> {
+  // New encrypted format: { "version": 1, "connections": [...] }
+  if let Ok(file) = serde_json::from_str::<PersistedFile>(content) {
+    if file.version == 1 {
+      let mut out = Vec::with_capacity(file.connections.len());
+      for p in &file.connections {
+        match ConnectionConfig::from_persisted(p) {
+          Ok(c) => out.push(c),
+          Err(e) => eprintln!("[connections] failed to decrypt a connection: {}", e),
+        }
+      }
+      return out;
+    }
+  }
+
+  // Legacy plaintext format (bare array of ConnectionConfig). Keep the
+  // decrypted secrets in memory and re-persist them encrypted.
+  if let Ok(old) = serde_json::from_str::<Vec<ConnectionConfig>>(content) {
+    if let Err(e) = write_encrypted_connections(path, &old) {
+      eprintln!("[connections] migration to encrypted format failed: {}", e);
+    }
+    return old;
+  }
+
   Vec::new()
 }

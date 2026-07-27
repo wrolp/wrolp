@@ -588,7 +588,9 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [passphrase, setPassphrase] = useState(connection?.passphrase || '')
   const [group, setGroup] = useState(connection?.group || defaultGroup)
   const [description, setDescription] = useState(connection?.description || '')
-  const [groupFocused, setGroupFocused] = useState(false)
+  const [groupMode, setGroupMode] = useState<'select' | 'new'>(
+    group && !existingGroups.includes(group) ? 'new' : 'select',
+  )
 
   const handleBrowseKey = async () => {
     try {
@@ -635,10 +637,6 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </span>
         </div>
         <div className="modal-body">
-          <div className="form-group">
-            <label>Name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Server" />
-          </div>
           <div className="form-row">
             <div className="form-group">
               <label>Host</label>
@@ -659,6 +657,10 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             </div>
           </div>
           <div className="form-group">
+            <label>Name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Server" />
+          </div>
+          <div className="form-group">
             <label>Username</label>
             <input
               value={username}
@@ -668,33 +670,35 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </div>
           <div className="form-group">
             <label>Group (optional)</label>
-            <input
-              value={group}
-              onChange={(e) => setGroup(e.target.value)}
-              onFocus={() => setGroupFocused(true)}
-              onBlur={() => setTimeout(() => setGroupFocused(false), 120)}
-              placeholder="Production / Staging / ..."
-            />
-            {groupFocused && existingGroups.length > 0 && (
-              <ul className="group-suggestions">
-                {existingGroups
-                  .filter(
-                    (g) =>
-                      g.toLowerCase().includes(group.trim().toLowerCase()) &&
-                      g !== group.trim(),
-                  )
-                  .map((g) => (
-                    <li
-                      key={g}
-                      onMouseDown={(e) => {
-                        e.preventDefault()
-                        setGroup(g)
-                      }}
-                    >
-                      {g}
-                    </li>
-                  ))}
-              </ul>
+            <select
+              className="form-select"
+              value={groupMode === 'new' ? '__new__' : group}
+              onChange={(e) => {
+                const v = e.target.value
+                if (v === '__new__') {
+                  setGroupMode('new')
+                  if (!group) setGroup('')
+                } else {
+                  setGroupMode('select')
+                  setGroup(v)
+                }
+              }}
+            >
+              <option value="">(No Group)</option>
+              {existingGroups.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+              <option value="__new__">+ New Group…</option>
+            </select>
+            {groupMode === 'new' && (
+              <input
+                style={{ marginTop: '6px' }}
+                value={group}
+                onChange={(e) => setGroup(e.target.value)}
+                placeholder="Enter new group name"
+              />
             )}
           </div>
           <div className="form-group">

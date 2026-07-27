@@ -6159,12 +6159,15 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 name = "wrolp-terminal"
 version = "0.0.2"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",
  "encoding_rs",
  "log",
+ "rand",
  "rusqlite",
  "russh",
  "russh-keys",

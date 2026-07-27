@@ -5,6 +5,7 @@ mod db;
 mod docker_fs;
 mod remote_fs;
 mod ssh_session;
+mod vault;
 
 use ssh_session::AppState;
 use tauri::generate_handler;

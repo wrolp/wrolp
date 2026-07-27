@@ -139,20 +139,12 @@ fn get_connections_path() -> Option<std::path::PathBuf> {
   get_data_dir().map(|p| p.join("connections.json"))
 }
 
-/// Persist the current connections list to disk.
+/// Persist the current connections list to disk in the encrypted format.
 async fn persist_connections(state: &tauri::State<'_, AppState>) -> Result<(), String> {
   let path = get_connections_path();
   if let Some(ref path) = path {
-    if let Some(parent) = path.parent() {
-      let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    let content = {
-      let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
-      serde_json::to_string_pretty(&*all_conns).ok()
-    };
-    if let Some(content) = content {
-      let _ = tokio::fs::write(path, content).await;
-    }
+    let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
+    crate::ssh_session::write_encrypted_connections(path, &all_conns)?;
   }
   Ok(())
 }
@@ -182,19 +174,7 @@ pub async fn save_connection(
     }
   }
 
-  let path = get_connections_path();
-  if let Some(ref path) = path {
-    if let Some(parent) = path.parent() {
-      let _ = tokio::fs::create_dir_all(parent).await;
-    }
-    let content = {
-      let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
-      serde_json::to_string_pretty(&*all_conns).ok()
-    };
-    if let Some(content) = content {
-      let _ = tokio::fs::write(path, content).await;
-    }
-  }
+  persist_connections(&state).await?;
   Ok(serde_json::to_string(&config).map_err(|e| e.to_string())?)
 }
 
@@ -211,19 +191,7 @@ pub async fn delete_connection(
   };
 
   if deleted {
-    let path = get_connections_path();
-    if let Some(ref path) = path {
-      if let Some(parent) = path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
-      }
-      let content = {
-        let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&*all_conns).ok()
-      };
-      if let Some(content) = content {
-        let _ = tokio::fs::write(path, content).await;
-      }
-    }
+    persist_connections(&state).await?;
   }
 
   Ok(deleted)
