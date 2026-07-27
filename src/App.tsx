@@ -14,7 +14,7 @@ import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import type { FileTreeHandle } from './components/FilePanel'
-import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout } from './types'
+import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout, FileTargetMode } from './types'
 import { defaultLayout, mergeLayout } from './types'
 import {
   SplitNode,
@@ -29,6 +29,8 @@ import {
   removeLeafById,
   adjustSiblingSizes,
   pruneEmptyLeaves,
+  movePane,
+  DropPosition,
 } from './components/splitTree'
 import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout } from './commands'
 import { detectLanguage } from './editor/languages'
@@ -65,6 +67,8 @@ export default function App() {
   const bottomPanelExpanded = layout.bottomPanel.visible
   // Remote filesystem shown in the Files panel (null = the tab's main session).
   const [fileTarget, setFileTarget] = useState<TargetRef | null>(null)
+  // Which filesystem mode the Files panel switcher is on (ssh / jump / docker).
+  const [fileMode, setFileMode] = useState<FileTargetMode>('ssh')
 
   // Shell (terminal) pane height / collapse when a file editor is open
   const [shellHeight, setShellHeight] = useState(240)
@@ -85,6 +89,42 @@ export default function App() {
   // remounted and never reconnect when you switch tabs.
   const [splitTrees, setSplitTrees] = useState<Record<number, SplitNode>>({})
   const [focusedLeafByRoot, setFocusedLeafByRoot] = useState<Record<number, string>>({})
+  // Phase 3 — terminal pane drag reorder. `source` is the dragged leaf id,
+  // `target`/`position` describe where it would drop. `center` swaps the two
+  // panes' sessions; a direction inserts the source as a sibling of the target.
+  const [paneDrag, setPaneDrag] = useState<{ source: string | null; target: string | null; position: DropPosition | null }>({
+    source: null,
+    target: null,
+    position: null,
+  })
+  // Mirror of `paneDrag` kept in a ref so the drop can be applied reliably in
+  // `onDragEnd` (which ALWAYS fires on release) instead of relying on the native
+  // `drop` event, which is frequently swallowed by the portaled xterm surface.
+  const paneDragRef = useRef<{ source: string | null; target: string | null; position: DropPosition | null }>({
+    source: null,
+    target: null,
+    position: null,
+  })
+  // Phase 3 — panel dock drag (sidebar / bottom panel re-docking). `source` is
+  // which panel is being dragged; `over` is the dock zone currently hovered.
+  // DockZone covers every zone either panel can be dropped into.
+  type DockZone = 'left' | 'right' | 'bottom'
+  const [dockDrag, setDockDrag] = useState<{ source: 'sidebar' | 'bottomPanel' | null; over: DockZone | null }>({
+    source: null,
+    over: null,
+  })
+  const applyDock = (source: 'sidebar' | 'bottomPanel', pos: DockZone) => {
+    if (source === 'sidebar') {
+      if (pos === 'left' || pos === 'right') {
+        updateLayout((l) => ({ ...l, sidebar: { ...l.sidebar, side: pos } }))
+      }
+    } else {
+      if (pos === 'right' || pos === 'bottom') {
+        updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, pos } }))
+      }
+    }
+    setDockDrag({ source: null, over: null })
+  }
   const leafIdCounter = useRef(1)
   const newLeafId = useCallback(() => `leaf-${leafIdCounter.current++}`, [])
   // Active workspace's tree (a stable single leaf if missing).
@@ -130,6 +170,21 @@ export default function App() {
     setFocusedLeafByRoot((prev) => ({ ...prev, [root]: id ?? '' }))
   }, [])
 
+  // Phase 3 — apply a terminal-pane drag drop: move/swap the dragged leaf
+  // relative to the drop target within the active workspace's split tree.
+  const performPaneMove = useCallback(
+    (sourceId: string, targetId: string, position: DropPosition) => {
+      const root = activeTabIdRef.current
+      if (root == null) return
+      setSplitTrees((prev) => {
+        const tree = prev[root]
+        if (!tree) return prev
+        return { ...prev, [root]: movePane(tree, sourceId, targetId, position, newLeafId) }
+      })
+    },
+    [newLeafId],
+  )
+
   // Keep terminal instances mounted even when not shown in any pane by portaling
   // their DOM into stable containers. Pane-body ref callbacks are cached per leaf
   // id so React only calls them on mount/unmount (not every render); that lets us
@@ -159,6 +214,7 @@ export default function App() {
   // Reset the Files panel target when switching tabs (targets are tab-scoped).
   useEffect(() => {
     setFileTarget(null)
+    setFileMode('ssh')
   }, [activeTabId])
 
   // Open (or toggle closed) a Docker container's filesystem in the Files panel.
@@ -170,6 +226,7 @@ export default function App() {
           ? null
           : { kind: 'docker', jumpTabId: activeTabId, container: container.name },
       )
+      setFileMode('docker')
       updateLayout((l) => ({
         ...l,
         sidebar: {
@@ -1377,11 +1434,39 @@ export default function App() {
   ): React.ReactElement => {
     const tab = leaf.tabId != null ? tabs.find((t) => t.tabId === leaf.tabId) : undefined
     const isFocused = leaf.id === focusedLeafIdForRoot
+    const isDragSource = paneDrag.source === leaf.id
+    const dropPos = paneDrag.target === leaf.id ? paneDrag.position : null
+    // Decide where a drop would land from the cursor position within the pane.
+    const computePos = (e: React.DragEvent): DropPosition => {
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      const relX = (e.clientX - r.left) / r.width
+      const relY = (e.clientY - r.top) / r.height
+      if (relX > 0.3 && relX < 0.7 && relY > 0.3 && relY < 0.7) return 'center'
+      if (relX < relY && relX < 1 - relY) return 'left'
+      if (relX > relY && relX > 1 - relY) return 'right'
+      if (relY < relX && relY < 1 - relX) return 'top'
+      return 'bottom'
+    }
     return (
       <div
         key={leaf.id}
-        className={`term-pane${isFocused ? ' focused' : ''}`}
+        className={`term-pane${isFocused ? ' focused' : ''}${isDragSource ? ' drag-source' : ''}${dropPos ? ` drop-${dropPos}` : ''}`}
         onMouseDown={() => setFocusedLeafId(leaf.id)}
+        onDragOver={(e) => {
+          if (!paneDrag.source || paneDrag.source === leaf.id) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+          const pos = computePos(e)
+          if (paneDrag.target !== leaf.id || paneDrag.position !== pos) {
+            setPaneDrag((d) => ({ ...d, target: leaf.id, position: pos }))
+          }
+          paneDragRef.current = { source: paneDrag.source, target: leaf.id, position: pos }
+        }}
+        onDrop={(e) => {
+          // Only accept the drop here; the actual reorder is applied in the
+          // grip's `onDragEnd` (which always fires) using `paneDragRef`.
+          e.preventDefault()
+        }}
         style={{
           position: 'absolute',
           left: `${rect.left * 100}%`,
@@ -1395,6 +1480,28 @@ export default function App() {
         }}
       >
         <div className="term-pane-header">
+          <span
+            className="term-pane-grip"
+            title="Drag to reorder this pane"
+            draggable
+            onMouseDown={(e) => e.stopPropagation()}
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'move'
+              e.dataTransfer.setData('text/plain', leaf.id)
+              setPaneDrag({ source: leaf.id, target: null, position: null })
+              paneDragRef.current = { source: leaf.id, target: null, position: null }
+            }}
+            onDragEnd={() => {
+              const d = paneDragRef.current
+              if (d.source && d.target && d.target !== d.source) {
+                performPaneMove(d.source, d.target, d.position ?? 'center')
+              }
+              paneDragRef.current = { source: null, target: null, position: null }
+              setPaneDrag({ source: null, target: null, position: null })
+            }}
+          >
+            ⠿
+          </span>
           <span className="term-pane-title">{tab ? getTabLabel(tab) : 'No terminal'}</span>
           <span
             className="term-pane-close"
@@ -1416,6 +1523,16 @@ export default function App() {
             </div>
           )}
         </div>
+        {/* VS Code-style drop mask: the whole target pane is highlighted as a
+            droppable region the moment the cursor enters it (base mask), and a
+            stronger overlay shows the exact landing area (left/right/top/
+            bottom/center). The move is applied on mouse-up (onDragEnd). */}
+        {dropPos && (
+          <>
+            <div className="drop-mask drop-mask-base" />
+            <div className={`drop-mask drop-mask-${dropPos}`} />
+          </>
+        )}
       </div>
     )
   }
@@ -1533,6 +1650,16 @@ export default function App() {
                   minWidth: 0,
                   minHeight: 0,
                 }}
+                onDragOver={(e) => {
+                  // Accept the pane drag anywhere inside the workspace so the
+                  // cursor never shows the "no-drop" (prohibited) icon over gaps,
+                  // the source pane, or the terminal surface — the per-pane
+                  // onDragOver still decides where the mask lands.
+                  if (paneDrag.source) {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                  }
+                }}
               >
                 {renderWorkspacePanes(tree, focusedLeafByRoot[root.tabId] ?? null)}
               </div>
@@ -1645,6 +1772,9 @@ export default function App() {
                   isConnected={true}
                   defaultPath={fileTarget?.kind === 'docker' ? '/' : '.'}
                   targetRef={fileTarget ?? undefined}
+                  fileMode={fileMode}
+                  onFileModeChange={setFileMode}
+                  onSelectTarget={setFileTarget}
                 expanded={filesExpanded}
                 onToggleExpanded={() =>
                   updateLayout((l) => ({
@@ -1716,6 +1846,20 @@ export default function App() {
 
   const sidebarEl = showSidebar ? (
     <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+      <div
+        className="panel-drag-handle"
+        title="Drag to re-dock sidebar (left / right)"
+        draggable
+        onMouseDown={(e) => e.stopPropagation()}
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData('text/plain', 'sidebar')
+          setDockDrag({ source: 'sidebar', over: null })
+        }}
+        onDragEnd={() => setDockDrag({ source: null, over: null })}
+      >
+        ⠿
+      </div>
       {sidebarBody}
     </div>
   ) : null
@@ -1866,6 +2010,8 @@ export default function App() {
             activeTabId={activeTabId}
             expanded={bottomPanelExpanded}
             pos={layout.bottomPanel.pos}
+            onDockDragStart={() => setDockDrag({ source: 'bottomPanel', over: null })}
+            onDockDragEnd={() => setDockDrag({ source: null, over: null })}
             onToggleExpanded={() =>
               updateLayout((l) => ({
                 ...l,
@@ -1878,6 +2024,47 @@ export default function App() {
           <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
         )}
         {layout.sidebar.side === 'right' && sidebarEl}
+
+        {/* Phase 3 — dock drop zones, shown while dragging a panel */}
+        {dockDrag.source && (
+          <div className="dock-overlay">
+            {dockDrag.source === 'sidebar' ? (
+              <>
+                <div
+                  className={`dock-zone dock-left${dockDrag.over === 'left' ? ' active' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setDockDrag((d) => ({ ...d, over: 'left' })) }}
+                  onDrop={(e) => { e.preventDefault(); applyDock('sidebar', 'left') }}
+                >
+                  ◧&nbsp;Left
+                </div>
+                <div
+                  className={`dock-zone dock-right${dockDrag.over === 'right' ? ' active' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setDockDrag((d) => ({ ...d, over: 'right' })) }}
+                  onDrop={(e) => { e.preventDefault(); applyDock('sidebar', 'right') }}
+                >
+                  Right&nbsp;◨
+                </div>
+              </>
+            ) : (
+              <>
+                <div
+                  className={`dock-zone dock-right${dockDrag.over === 'right' ? ' active' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setDockDrag((d) => ({ ...d, over: 'right' })) }}
+                  onDrop={(e) => { e.preventDefault(); applyDock('bottomPanel', 'right') }}
+                >
+                  Right&nbsp;◨
+                </div>
+                <div
+                  className={`dock-zone dock-bottom${dockDrag.over === 'bottom' ? ' active' : ''}`}
+                  onDragOver={(e) => { e.preventDefault(); setDockDrag((d) => ({ ...d, over: 'bottom' })) }}
+                  onDrop={(e) => { e.preventDefault(); applyDock('bottomPanel', 'bottom') }}
+                >
+                  ▁&nbsp;Bottom
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Status bar — temporarily disabled

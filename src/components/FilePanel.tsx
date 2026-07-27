@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, useMemo, forwardRef, type ReactNode } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import type { FileEntry, TargetRef } from '../types'
+import type { FileEntry, TargetRef, FileTargetMode, ContainerInfo } from '../types'
 import { targetLabel } from '../types'
-import { fsListFiles, fsUploadFile, fsUploadFileBytes, fsDownloadFile, fsDeleteFile, fsCreateDirectory, fsRenameFile, fsWriteFileContent, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser, sendInput, pollWorkingDir } from '../commands'
+import { fsListFiles, fsUploadFile, fsUploadFileBytes, fsDownloadFile, fsDeleteFile, fsCreateDirectory, fsRenameFile, fsWriteFileContent, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser, sendInput, pollWorkingDir, listDockerContainers } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 
@@ -45,6 +45,15 @@ interface FilePanelProps {
    * session-only features (shell sync, SFTP user switch, transfer pause).
    */
   targetRef?: TargetRef
+  /**
+   * Active filesystem mode for the switcher (`ssh` = local session,
+   * `jump` = ProxyJump remote, `docker` = container). When `jump`/`docker` is
+   * selected but no matching `targetRef` is set, the panel shows a picker/form.
+   */
+  fileMode?: FileTargetMode
+  onFileModeChange?: (mode: FileTargetMode) => void
+  /** Set the active filesystem target (e.g. a selected container or jump host). */
+  onSelectTarget?: (target: TargetRef | null) => void
 }
 
 export interface FileTreeHandle {
@@ -131,6 +140,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   onToggleSync,
   onEditFile,
   targetRef,
+  fileMode = 'ssh',
+  onFileModeChange,
+  onSelectTarget,
 }, ref) {
   // The remote filesystem this panel operates on (defaults to the tab session).
   // Memoized by its serialized form so callbacks/effects get a stable identity.
@@ -140,6 +152,82 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // Session-only tab id (null for jump/docker targets) — gates shell sync, SFTP
   // user switching and transfer pause, which only apply to the main connection.
   const sessionTabId = target.kind === 'session' ? target.tabId : null
+
+  // Jump (ProxyJump remote) connection form state. Shown when the `jump` mode is
+  // active but no jump target has been selected yet.
+  const [jumpHost, setJumpHost] = useState('')
+  const [jumpPort, setJumpPort] = useState(22)
+  const [jumpUser, setJumpUser] = useState('')
+  const [jumpAuthType, setJumpAuthType] = useState<'password' | 'key'>('password')
+  const [jumpPassword, setJumpPassword] = useState('')
+  const [jumpKeyPath, setJumpKeyPath] = useState('')
+  const [jumpPassphrase, setJumpPassphrase] = useState('')
+  const [jumpConnecting, setJumpConnecting] = useState(false)
+  const [jumpError, setJumpError] = useState('')
+
+  // Docker container picker state. Shown when the `docker` mode is active but no
+  // container has been selected yet.
+  const [dockerContainers, setDockerContainers] = useState<ContainerInfo[]>([])
+  const [dockerLoading, setDockerLoading] = useState(false)
+  const [dockerError, setDockerError] = useState('')
+
+  const loadDockerContainers = useCallback(async () => {
+    setDockerLoading(true)
+    setDockerError('')
+    try {
+      setDockerContainers(await listDockerContainers(tabId))
+    } catch (e) {
+      setDockerError(String(e))
+      setDockerContainers([])
+    } finally {
+      setDockerLoading(false)
+    }
+  }, [tabId])
+
+  // Decide what the body should render given the active mode and current target.
+  const showJumpForm = fileMode === 'jump' && target.kind !== 'jumpRemote' && target.kind !== 'dockerSsh'
+  const showDockerPicker = fileMode === 'docker' && target.kind !== 'docker'
+  const showTree = !showJumpForm && !showDockerPicker
+
+  const handleModeClick = (mode: FileTargetMode) => {
+    if (mode === fileMode) {
+      // Clicking the active mode clears the current target, returning to the
+      // picker/form so a different remote/container can be chosen.
+      onSelectTarget?.(null)
+    } else {
+      if (mode === 'docker') loadDockerContainers()
+      // Switching to SSH always shows the local session, so drop any non-session
+      // target that may still be set.
+      if (mode === 'ssh') onSelectTarget?.(null)
+      onFileModeChange?.(mode)
+    }
+  }
+
+  const handleConnectJump = () => {
+    if (!jumpHost.trim() || !jumpUser.trim()) {
+      setJumpError('Host and username are required')
+      return
+    }
+    const auth = {
+      username: jumpUser.trim(),
+      password: jumpAuthType === 'password' ? jumpPassword : undefined,
+      keyPath: jumpAuthType === 'key' ? jumpKeyPath.trim() : undefined,
+      passphrase: jumpAuthType === 'key' ? jumpPassphrase : undefined,
+    }
+    setJumpConnecting(false)
+    setJumpError('')
+    onSelectTarget?.({
+      kind: 'jumpRemote',
+      jumpTabId: tabId,
+      host: jumpHost.trim(),
+      port: Number(jumpPort) || 22,
+      auth,
+    })
+  }
+
+  const handlePickContainer = (c: ContainerInfo) => {
+    onSelectTarget?.({ kind: 'docker', jumpTabId: tabId, container: c.name })
+  }
 
   const [currentPath, setCurrentPath] = useState(defaultPath)
   const [rootPath, setRootPath] = useState(defaultPath)
@@ -611,6 +699,25 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               title={targetLabel(target)}
             >{targetLabel(target)}</span>
           )}
+          {/* Mode switcher: browse the local SSH session, a ProxyJump remote, or a
+              Docker container's filesystem. */}
+          <span className="file-mode-switch" role="tablist">
+            <button
+              className={fileMode === 'ssh' ? 'active' : ''}
+              title="Local SSH session"
+              onClick={() => handleModeClick('ssh')}
+            >SSH</button>
+            <button
+              className={fileMode === 'jump' ? 'active' : ''}
+              title="ProxyJump remote (via this host)"
+              onClick={() => handleModeClick('jump')}
+            >Jump</button>
+            <button
+              className={fileMode === 'docker' ? 'active' : ''}
+              title="Docker container"
+              onClick={() => handleModeClick('docker')}
+            >Docker</button>
+          </span>
         </span>
         {expanded && (
           <div className="file-toolbar">
@@ -640,7 +747,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         )}
       </div>
 
-      {expanded && (
+      {expanded && showTree && (
         <>
           <div className="file-path-bar">
             <span
@@ -726,6 +833,83 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             </div>
           )}
         </>
+      )}
+
+      {/* Jump (ProxyJump remote) connection form — shown in `jump` mode before a
+          target is chosen. The connected host acts as the jump proxy. */}
+      {expanded && showJumpForm && (
+        <div className="file-jump-form">
+          <div className="file-jump-title">Connect via ProxyJump</div>
+          <label>Host
+            <input type="text" value={jumpHost} placeholder="remote host"
+              onChange={(e) => setJumpHost(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
+          </label>
+          <label>Port
+            <input type="number" value={jumpPort}
+              onChange={(e) => setJumpPort(Number(e.target.value) || 22)} />
+          </label>
+          <label>User
+            <input type="text" value={jumpUser} placeholder="username"
+              onChange={(e) => setJumpUser(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
+          </label>
+          <div className="file-auth-type">
+            <button className={jumpAuthType === 'password' ? 'active' : ''} onClick={() => setJumpAuthType('password')}>Password</button>
+            <button className={jumpAuthType === 'key' ? 'active' : ''} onClick={() => setJumpAuthType('key')}>Key</button>
+          </div>
+          {jumpAuthType === 'password' ? (
+            <label>Password
+              <input type="password" value={jumpPassword}
+                onChange={(e) => setJumpPassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
+            </label>
+          ) : (
+            <>
+              <label>Key path
+                <input type="text" value={jumpKeyPath} placeholder="/path/to/key"
+                  onChange={(e) => setJumpKeyPath(e.target.value)} />
+              </label>
+              <label>Passphrase
+                <input type="password" value={jumpPassphrase}
+                  onChange={(e) => setJumpPassphrase(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
+              </label>
+            </>
+          )}
+          {jumpError && <div className="file-error">{jumpError}</div>}
+          <button className="file-jump-connect" onClick={handleConnectJump} disabled={jumpConnecting}>
+            Connect
+          </button>
+          <div className="file-hint">Reached through the current host as a jump proxy.</div>
+        </div>
+      )}
+
+      {/* Docker container picker — shown in `docker` mode before a container is
+          chosen. */}
+      {expanded && showDockerPicker && (
+        <div className="file-docker-picker">
+          <div className="file-docker-head">
+            <span>Docker containers</span>
+            <button title="Refresh" onClick={loadDockerContainers} disabled={dockerLoading}>🔄</button>
+          </div>
+          {dockerError && <div className="file-error">{dockerError}</div>}
+          {dockerLoading && <div className="file-empty">Loading…</div>}
+          {!dockerLoading && !dockerError && dockerContainers.length === 0 && (
+            <div className="file-empty">No containers (or docker not available)</div>
+          )}
+          {dockerContainers.map((c) => (
+            <div key={c.id} className="docker-item" onClick={() => handlePickContainer(c)}
+              title={`${c.name}\n${c.image}\n${c.status}`}>
+              <span className="docker-icon">🐳</span>
+              <div className="docker-info">
+                <div className="docker-name">{c.name}</div>
+                <div className="docker-image">{c.image}</div>
+              </div>
+              <span className={`docker-state ${c.state}`}>{c.state}</span>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* context menu */}

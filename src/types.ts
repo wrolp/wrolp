@@ -116,6 +116,12 @@ export interface ContainerInfo {
   status: string
 }
 
+/**
+ * Which filesystem the Files panel is currently browsing. Drives the mode
+ * switcher (SSH local session / ProxyJump remote / Docker container).
+ */
+export type FileTargetMode = 'ssh' | 'jump' | 'docker'
+
 /** Human-readable label for a target (used in chips / headers). */
 export function targetLabel(target: TargetRef): string {
   switch (target.kind) {

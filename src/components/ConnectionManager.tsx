@@ -36,6 +36,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 }) => {
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
+  const [defaultGroup, setDefaultGroup] = useState<string>('')
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -369,6 +370,18 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                           {isUngrouped ? 'Ungrouped' : key}
                         </span>
                         <span className="conn-group-count">{conns.length}</span>
+                        <button
+                          className="conn-group-add"
+                          title={`Add connection to ${isUngrouped ? 'Ungrouped' : key}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setEditing(null)
+                            setDefaultGroup(isUngrouped ? '' : key)
+                            setShowModal(true)
+                          }}
+                        >
+                          +
+                        </button>
                       </div>
                       {!collapsed &&
                         conns.map((conn) => (
@@ -429,6 +442,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       {showModal && (
         <ConnectionModal
           connection={editing}
+          defaultGroup={defaultGroup}
           existingGroups={Array.from(
             new Set(
               connections
@@ -439,12 +453,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           onClose={() => {
             setShowModal(false)
             setEditing(null)
+            setDefaultGroup('')
           }}
           onSave={(config) => {
             saveConn(config)
             onConnectionChange()
             setShowModal(false)
             setEditing(null)
+            setDefaultGroup('')
           }}
         />
       )}
@@ -546,6 +562,7 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
 
 interface ConnectionModalProps {
   connection: ConnectionConfig | null
+  defaultGroup?: string
   existingGroups: string[]
   onClose: () => void
   onSave: (config: ConnectionConfig) => void
@@ -553,6 +570,7 @@ interface ConnectionModalProps {
 
 export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   connection,
+  defaultGroup = '',
   existingGroups,
   onClose,
   onSave,
@@ -567,7 +585,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [password, setPassword] = useState(connection?.password || '')
   const [keyPath, setKeyPath] = useState(connection?.keyPath || '')
   const [passphrase, setPassphrase] = useState(connection?.passphrase || '')
-  const [group, setGroup] = useState(connection?.group || '')
+  const [group, setGroup] = useState(connection?.group || defaultGroup)
   const [description, setDescription] = useState(connection?.description || '')
   const [groupFocused, setGroupFocused] = useState(false)
 

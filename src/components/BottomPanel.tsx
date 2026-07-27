@@ -11,6 +11,8 @@ interface BottomPanelProps {
   pos?: DockPos
   size?: number
   onToggleExpanded: () => void
+  onDockDragStart?: () => void
+  onDockDragEnd?: () => void
 }
 
 type PanelTab = 'sessions' | 'cmdsets'
@@ -22,6 +24,8 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
   pos = 'bottom',
   size = 240,
   onToggleExpanded,
+  onDockDragStart,
+  onDockDragEnd,
 }) => {
   const [activeTab, setActiveTab] = useState<PanelTab>('sessions')
   const [viewingSession, setViewingSession] = useState<SessionSummary | null>(null)
@@ -57,6 +61,20 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
       }
     >
       <div className="bottom-panel-tabs">
+        <span
+          className="panel-drag-handle"
+          title="Drag to re-dock panel (right / bottom)"
+          draggable
+          onMouseDown={(e) => e.stopPropagation()}
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = 'move'
+            e.dataTransfer.setData('text/plain', 'bottomPanel')
+            onDockDragStart?.()
+          }}
+          onDragEnd={() => onDockDragEnd?.()}
+        >
+          ⠿
+        </span>
         <span
           className={`collapse-chevron${expanded ? ' expanded' : ''}`}
           onClick={onToggleExpanded}

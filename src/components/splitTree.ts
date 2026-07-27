@@ -140,3 +140,66 @@ export function adjustSiblingSizes(
   }
   return node
 }
+
+export type DropPosition = 'left' | 'right' | 'top' | 'bottom' | 'center'
+
+// Swap the session (tabId) shown by two leaves. Used for a 'center' drop and as
+// the robust "reorder in place" primitive for terminal panes.
+export function swapLeafTabs(node: SplitNode, a: string, b: string): SplitNode {
+  const la = findLeaf(node, a)
+  const lb = findLeaf(node, b)
+  if (!la || !lb) return node
+  let n = updateLeafTab(node, a, lb.tabId)
+  n = updateLeafTab(n, b, la.tabId)
+  return n
+}
+
+// Insert `source` as a sibling of the node whose id is `targetId`, before or
+// after it, rebuilding the tree immutably.
+function insertSibling(
+  node: SplitNode,
+  targetId: string,
+  source: SplitNode,
+  before: boolean,
+  makeId: () => string,
+): SplitNode {
+  if (node.type === 'leaf') return node
+  const idx = node.children.findIndex((c) => c.id === targetId)
+  if (idx >= 0) {
+    const children = node.children.slice()
+    const at = before ? idx : idx + 1
+    children.splice(at, 0, source)
+    const sizes = node.sizes.slice()
+    sizes.splice(at, 0, 0.5)
+    const total = sizes.reduce((s, x) => s + x, 0) || 1
+    return { ...node, children, sizes: sizes.map((s) => s / total) }
+  }
+  return { ...node, children: node.children.map((c) => insertSibling(c, targetId, source, before, makeId)) }
+}
+
+// Move the pane `sourceId` relative to `targetId` according to `position`.
+//  - 'center' swaps the two panes' sessions (reorder in place).
+//  - directional ('left'/'right'/'top'/'bottom') makes `source` a sibling of
+//    `target`, inserted before/after, splitting the tree as needed.
+export function movePane(
+  tree: SplitNode,
+  sourceId: string,
+  targetId: string,
+  position: DropPosition,
+  makeId: () => string,
+): SplitNode {
+  if (sourceId === targetId) return tree
+  const source = findLeaf(tree, sourceId)
+  if (!source) return tree
+  if (position === 'center') return swapLeafTabs(tree, sourceId, targetId)
+  const before = position === 'left' || position === 'top'
+  const without = removeLeafById(tree, sourceId, makeId)
+  if (!without) return tree
+  // Target is the only remaining leaf -> wrap both in a fresh split.
+  if (without.type === 'leaf' && without.id === targetId) {
+    const dir: SplitDirection = position === 'top' || position === 'bottom' ? 'column' : 'row'
+    const children = before ? [source, without] : [without, source]
+    return { id: makeId(), type: 'split', dir, children, sizes: [0.5, 0.5] }
+  }
+  return insertSibling(without, targetId, source, before, makeId)
+}
