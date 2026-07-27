@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { connect, sendInput, commitCommand, pollOutput, resizeTerminal } from '../commands'
+import { Icon } from './Icon'
 
 // Tracks the single "active" terminal instance per session tabId. During a
 // transient double-mount (React mounts the new terminal before unmounting the
@@ -473,10 +474,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="context-menu-item" onClick={handleCopy}>
-            📋 Copy
+            <Icon name="copy" /> Copy
           </div>
           <div className="context-menu-item" onClick={handlePaste}>
-            📎 Paste
+            <Icon name="paste" /> Paste
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleSelectAll}>

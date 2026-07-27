@@ -5,6 +5,7 @@ import { targetLabel } from '../types'
 import { fsListFiles, fsUploadFile, fsUploadFileBytes, fsDownloadFile, fsDeleteFile, fsCreateDirectory, fsRenameFile, fsWriteFileContent, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser, sendInput, pollWorkingDir, listDockerContainers } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
+import { Icon } from './Icon'
 
 /* ---------- types ---------- */
 
@@ -669,11 +670,15 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           title={node.path}
         >
           <span className="tree-icon">
-            {node.isDir ? (node.expanded ? '📂' : '📁') : '📄'}
+            {node.isDir ? (
+              <Icon name={node.expanded ? 'folderOpen' : 'folder'} />
+            ) : (
+              <Icon name="file" />
+            )}
           </span>
           <span className="tree-name">{node.name}</span>
           {node.isDir ? null : <span className="tree-size">{formatSize(node.size)}</span>}
-          {node.loading && <span className="tree-spinner">⏳</span>}
+          {node.loading && <span className="tree-spinner"><Icon name="refresh" className="spin" /></span>}
         </div>
         {node.expanded && node.children && renderNodes(node.children, depth + 1)}
       </div>
@@ -726,23 +731,23 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 title={syncEnabled ? 'Disable shell sync' : 'Enable shell sync (cd terminal ↔ files)'}
                 onClick={onToggleSync}
                 className={syncEnabled ? 'sync-active' : ''}
-              >🔗</button>
+              ><Icon name="link" /></button>
             )}
             {sessionTabId != null && (sftpUser ? (
               <>
-                <span className="file-sftp-user" title={`SFTP as: ${sftpUser}`}>🔒{sftpUser}</span>
-                <button title="Restore original user" onClick={handleRevertUser}>↩</button>
+                <span className="file-sftp-user" title={`SFTP as: ${sftpUser}`}><Icon name="lock" />{sftpUser}</span>
+                <button title="Restore original user" onClick={handleRevertUser}><Icon name="undo" /></button>
               </>
             ) : (
-              <button title="Switch SFTP user" onClick={() => setShowSwitchUser(!showSwitchUser)}>👤</button>
+              <button title="Switch SFTP user" onClick={() => setShowSwitchUser(!showSwitchUser)}><Icon name="user" /></button>
             ))}
-            <button title="Upload" onClick={handleUpload}>📤</button>
+            <button title="Upload" onClick={handleUpload}><Icon name="upload" /></button>
             <button title="New item" onClick={() => {
               const btn = document.activeElement as HTMLElement
               const r = btn?.getBoundingClientRect()
               setContextMenu({ x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4, node: null })
-            }}>＋</button>
-            <button title="Refresh" onClick={refresh} disabled={loading}>🔄</button>
+            }}><Icon name="plus" /></button>
+            <button title="Refresh" onClick={refresh} disabled={loading}><Icon name="refresh" /></button>
           </div>
         )}
       </div>
@@ -754,9 +759,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
               onClick={currentPath === rootPath ? undefined : navigateUp}
               title="Parent"
-            >⬆</span>
-            <span className="file-path-home" onClick={goHome} title="Home">🏠</span>
-            <span className="file-path-pin" onClick={() => setRoot(currentPath)} title="Set current directory as root">📌</span>
+            ><Icon name="arrowUp" /></span>
+            <span className="file-path-home" onClick={goHome} title="Home"><Icon name="home" /></span>
+            <span className="file-path-pin" onClick={() => setRoot(currentPath)} title="Set current directory as root"><Icon name="pin" /></span>
             {editingPath ? (
               <input className="file-path-input" type="text" value={editPathValue}
                 onChange={(e) => setEditPathValue(e.target.value)}
@@ -768,7 +773,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               </span>
             )}
             {rootPath !== '.' && (
-              <span className="file-path-root" title={`Root directory: ${rootPath}`}>📌 {rootPath}</span>
+              <span className="file-path-root" title={`Root directory: ${rootPath}`}><Icon name="pin" /> {rootPath}</span>
             )}
           </div>
 
@@ -818,7 +823,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                   <span>{transferStatus}</span>
                   {sessionTabId != null && (
                     <button className="file-pause-btn" onClick={togglePause} title={paused ? 'Resume' : 'Pause'}>
-                      {paused ? '▶' : '⏸'}
+                      {paused ? <Icon name="play" /> : <Icon name="pause" />}
                     </button>
                   )}
                   {transferProgress && transferProgress.total > 0 && (
@@ -891,7 +896,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         <div className="file-docker-picker">
           <div className="file-docker-head">
             <span>Docker containers</span>
-            <button title="Refresh" onClick={loadDockerContainers} disabled={dockerLoading}>🔄</button>
+            <button title="Refresh" onClick={loadDockerContainers} disabled={dockerLoading}><Icon name="refresh" /></button>
           </div>
           {dockerError && <div className="file-error">{dockerError}</div>}
           {dockerLoading && <div className="file-empty">Loading…</div>}
@@ -901,7 +906,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           {dockerContainers.map((c) => (
             <div key={c.id} className="docker-item" onClick={() => handlePickContainer(c)}
               title={`${c.name}\n${c.image}\n${c.status}`}>
-              <span className="docker-icon">🐳</span>
+              <span className="docker-icon"><Icon name="container" /></span>
               <div className="docker-info">
                 <div className="docker-name">{c.name}</div>
                 <div className="docker-image">{c.image}</div>
@@ -918,40 +923,40 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           onClick={(e) => e.stopPropagation()}>
           {contextMenu.node && !contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => handleEdit(contextMenu.node!)}>
-              ✏️ Open
+              <Icon name="edit" /> Open
             </div>
           )}
           {contextMenu.node && !contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => handleDownload(contextMenu.node!)}>
-              📥 Download
+              <Icon name="download" /> Download
             </div>
           )}
           {contextMenu.node && contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => setRoot(contextMenu.node!.path)}>
-              📌 Set as root
+              <Icon name="pin" /> Set as root
             </div>
           )}
           {contextMenu.node && <div className="context-menu-divider" />}
           <div className="context-menu-item" onClick={() => newFile(contextMenu.node)}>
-            📄 New File
+            <Icon name="file" /> New File
           </div>
           <div className="context-menu-item" onClick={() => newFolder(contextMenu.node)}>
-            📁 New Folder
+            <Icon name="folder" /> New Folder
           </div>
           {contextMenu.node && <div className="context-menu-divider" />}
           {contextMenu.node && (
             <div className="context-menu-item" onClick={() => handleRename(contextMenu.node!)}>
-              ✏️ Rename
+              <Icon name="edit" /> Rename
             </div>
           )}
           {contextMenu.node && (
             <div className="context-menu-item" onClick={() => handleDelete(contextMenu.node!)}>
-              🗑️ Delete
+              <Icon name="trash" /> Delete
             </div>
           )}
           {(!contextMenu.node) && <div className="context-menu-divider" />}
           {(!contextMenu.node) && (
-            <div className="context-menu-item" onClick={handleUpload}>📤 Upload here</div>
+            <div className="context-menu-item" onClick={handleUpload}><Icon name="upload" /> Upload here</div>
           )}
         </div>
       )}

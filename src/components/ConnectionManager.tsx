@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import type { ConnectionConfig } from '../types'
 import { saveConnection as saveConn, deleteConnection, reorderConnections, renameGroup, deleteGroup } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
+import { Icon } from './Icon'
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[]
@@ -269,7 +270,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <div className="sidebar-list" ref={listRef} onScroll={onScroll}>
               {connections.length === 0 ? (
                 <div className="empty-state">
-                  <div>🖥️</div>
+                  <div><Icon name="desktop" /></div>
                   <div>No connections yet</div>
                   <div style={{ fontSize: '12px', marginTop: '8px' }}>
                     Click + to add a new SSH connection
@@ -541,7 +542,7 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
       onDrop={(e) => onDrop(e, conn)}
       onDragEnd={onDragEnd}
     >
-      <span className="conn-icon">🔗</span>
+      <span className="conn-icon"><Icon name="link" /></span>
       <div className="conn-info">
         <div className="conn-name">{conn.name}</div>
         {conn.description ? (
@@ -820,10 +821,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
       )}
       {(onSplitRight || onSplitDown) && <div className="context-menu-divider" />}
       <div className="context-menu-item" onClick={onEdit}>
-        ✏️ Edit
+        <Icon name="edit" /> Edit
       </div>
       <div className="context-menu-item" onClick={onDelete}>
-        🗑️ Delete
+        <Icon name="trash" /> Delete
       </div>
     </div>
   )
@@ -855,10 +856,10 @@ const GroupContextMenu: React.FC<GroupContextMenuProps> = ({
   return (
     <div className="context-menu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
       <div className="context-menu-item" onClick={onRename}>
-        ✏️ Rename Group
+        <Icon name="edit" /> Rename Group
       </div>
       <div className="context-menu-item" onClick={onDelete}>
-        🗑️ Delete Group
+        <Icon name="trash" /> Delete Group
       </div>
     </div>
   )

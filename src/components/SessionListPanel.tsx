@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import type { ConnectionConfig, SessionSummary } from '../types'
 import { listSessions, deleteSession, renameSession, extractCommands } from '../commands'
+import { Icon } from './Icon'
 
 interface SessionListPanelProps {
   connections: ConnectionConfig[]
@@ -92,7 +93,7 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
-        <button onClick={reload} className="refresh-btn" title="Refresh">🔄</button>
+        <button onClick={reload} className="refresh-btn" title="Refresh"><Icon name="refresh" /></button>
         <span className="session-count">{sessions.length} sessions</span>
       </div>
 
@@ -138,10 +139,10 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
                   title="Playback"
                   disabled={s.eventCount === 0}
                 >
-                  ▶
+                  <Icon name="play" />
                 </button>
                 <button onClick={() => handleExtract(s.id)} title="Extract commands">
-                  📋
+                  <Icon name="clipboard" />
                 </button>
                 <button
                   onClick={() => {
@@ -150,10 +151,10 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
                   }}
                   title="Rename"
                 >
-                  ✏️
+                  <Icon name="edit" />
                 </button>
                 <button onClick={() => handleDelete(s.id)} title="Delete">
-                  🗑️
+                  <Icon name="trash" />
                 </button>
               </div>
             </div>

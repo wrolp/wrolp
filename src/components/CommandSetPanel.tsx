@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import type { ConnectionConfig, CommandSetDto } from '../types'
 import { listCommandSets, saveCommandSet, deleteCommandSet, sendInput } from '../commands'
+import { Icon } from './Icon'
 
 interface CommandSetPanelProps {
   connections: ConnectionConfig[]
@@ -126,7 +127,7 @@ export const CommandSetPanel: React.FC<CommandSetPanelProps> = ({
                   title="Execute in active terminal"
                   disabled={executing !== null || activeTabId === null}
                 >
-                  {executing === cs.id ? '⏳' : '▶'}
+                  {executing === cs.id ? <Icon name="refresh" className="spin" /> : <Icon name="play" />}
                 </button>
                 <button
                   onClick={() => {
@@ -135,10 +136,10 @@ export const CommandSetPanel: React.FC<CommandSetPanelProps> = ({
                   }}
                   title="Edit"
                 >
-                  ✏️
+                  <Icon name="edit" />
                 </button>
                 <button onClick={() => handleDelete(cs.id)} title="Delete">
-                  🗑️
+                  <Icon name="trash" />
                 </button>
               </div>
             </div>

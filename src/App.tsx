@@ -13,6 +13,7 @@ import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
+import { Icon } from './components/Icon'
 import type { FileTreeHandle } from './components/FilePanel'
 import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout, FileTargetMode } from './types'
 import { defaultLayout, mergeLayout } from './types'
@@ -1381,7 +1382,7 @@ export default function App() {
               onClick={() => handleReconnect(tab.tabId)}
               style={{ marginTop: 12, fontSize: '13px', padding: '6px 20px' }}
             >
-              🔄 Reconnect
+              <Icon name="refresh" /> Reconnect
             </button>
           </div>
         ) : tab.tabType !== 'settings' && tab.status === 'error' ? (
@@ -1406,7 +1407,7 @@ export default function App() {
               onClick={() => handleReconnect(tab.tabId)}
               style={{ marginTop: 8, fontSize: '13px', padding: '6px 20px' }}
             >
-              🔄 Reconnect
+              <Icon name="refresh" /> Reconnect
             </button>
           </div>
         ) : null}
@@ -1518,7 +1519,7 @@ export default function App() {
         <div className="term-pane-body" ref={getPaneBodyRef(leaf.id)}>
           {leaf.tabId == null && (
             <div className="terminal-placeholder">
-              <div className="icon">🖥️</div>
+              <div className="icon"><Icon name="desktop" /></div>
               <div>Select a connection to start</div>
             </div>
           )}

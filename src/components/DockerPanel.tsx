@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { ContainerInfo } from '../types'
 import { listDockerContainers } from '../commands'
+import { Icon } from './Icon'
 
 interface DockerPanelProps {
   /** Connected (jump host) tab used to run `docker ps` / `docker exec`. */
@@ -55,7 +56,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
         <span style={{ flex: 1 }}>Docker</span>
         {expanded && (
           <button className="docker-refresh" title="Refresh containers" onClick={load} disabled={loading}>
-            🔄
+            <Icon name="refresh" />
           </button>
         )}
       </div>
@@ -73,7 +74,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
               onClick={() => onOpenContainer(c)}
               title={`${c.name}\n${c.image}\n${c.status}\n\nClick to ${activeContainer === c.name ? 'close' : 'browse'} files`}
             >
-              <span className="docker-icon">🐳</span>
+              <span className="docker-icon"><Icon name="container" /></span>
               <div className="docker-info">
                 <div className="docker-name">{c.name}</div>
                 <div className="docker-image">{c.image}</div>

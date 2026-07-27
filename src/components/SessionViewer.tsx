@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { SessionEventDto } from '../types'
 import { getSessionEvents } from '../commands'
+import { Icon } from './Icon'
 
 interface SessionViewerProps {
   sessionId: string
@@ -168,13 +169,13 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
   return (
     <div className="session-viewer">
       <div className="session-viewer-header">
-        <span className="session-viewer-title">▶ {sessionTitle}</span>
+        <span className="session-viewer-title"><Icon name="play" /> {sessionTitle}</span>
         <div className="session-viewer-controls">
           <button onClick={isPlaying ? handlePause : handlePlay} disabled={loading || events.length === 0}>
-            {isPlaying ? '⏸' : '▶'}
+            {isPlaying ? <Icon name="pause" /> : <Icon name="play" />}
           </button>
           <button onClick={handleStepBack} disabled={loading || currentIndex === 0}>
-            ⏮
+            <Icon name="stepBack" />
           </button>
           <button onClick={handleStepForward} disabled={loading || currentIndex >= events.length}>
             ⏭

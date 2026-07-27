@@ -2251,6 +2251,17 @@ body.resizing-v {
 }
 
 // Files-panel mode switcher (SSH / Jump / Docker).
+// Spinning icon (loading indicators).
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .file-mode-switch {
   display: inline-flex;
   margin-left: 2px;

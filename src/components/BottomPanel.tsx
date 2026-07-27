@@ -3,6 +3,7 @@ import type { ConnectionConfig, SessionSummary, DockPos } from '../types'
 import { SessionListPanel } from './SessionListPanel'
 import { CommandSetPanel } from './CommandSetPanel'
 import { SessionViewer } from './SessionViewer'
+import { Icon } from './Icon'
 
 interface BottomPanelProps {
   connections: ConnectionConfig[]
@@ -84,13 +85,13 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
           className={`tab-btn${activeTab === 'sessions' ? ' active' : ''}`}
           onClick={() => setActiveTab('sessions')}
         >
-          📹 Sessions
+          <Icon name="record" /> Sessions
         </button>
         <button
           className={`tab-btn${activeTab === 'cmdsets' ? ' active' : ''}`}
           onClick={() => setActiveTab('cmdsets')}
         >
-          📋 Command Sets
+          <Icon name="clipboard" /> Command Sets
         </button>
       </div>
       {expanded && (
