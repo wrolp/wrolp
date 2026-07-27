@@ -562,14 +562,13 @@ body.resize-v * {
   position: relative;
 }
 
-// Status bar pinned to the bottom of the shell (terminal) window
-.terminal-statusbar {
+// Per-shell status bar pinned to the bottom of each shell (terminal) window
+.term-pane-statusbar {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 22px;
-  margin-top: 3px;
   padding: 0 10px;
   background: $bg-secondary;
   border-top: 1px solid $border;
@@ -1077,39 +1076,23 @@ body.resize-v * {
 // Row splits: vertical divider bar, drag left/right
 .term-split-divider.divider-row {
   width: 7px;
-  cursor: col-resize;
-
-  &::after {
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    width: 1px;
-    transform: translateX(-50%);
-  }
+  cursor: ew-resize !important;
 }
 
 // Column splits: horizontal divider bar, drag up/down
 .term-split-divider.divider-col {
   height: 7px;
-  cursor: row-resize;
-
-  &::after {
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 1px;
-    transform: translateY(-50%);
-  }
+  cursor: ns-resize !important;
 }
 
 .resizing-h,
 body.resizing-h {
-  cursor: col-resize !important;
+  cursor: ew-resize !important;
 }
 
 .resizing-v,
 body.resizing-v {
-  cursor: row-resize !important;
+  cursor: ns-resize !important;
 }
 
 .terminal-pool {

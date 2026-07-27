@@ -77,7 +77,9 @@ export default function App() {
 
   // SSH terminal size (cols × rows) reported by the active Terminal component,
   // shown in the shell-pane status bar.
-  const [termSize, setTermSize] = useState<{ cols: number; rows: number }>({ cols: 0, rows: 0 })
+  // Per-pane terminal size, keyed by leaf id so each shell window shows its
+  // own dimensions in its status bar.
+  const [termSizes, setTermSizes] = useState<Record<string, { cols: number; rows: number }>>({})
 
   // ---------------------------------------------------------------------------
   // Terminal split layout (Phase 2). The tree is ephemeral (tabIds are
@@ -1272,7 +1274,7 @@ export default function App() {
   const settingsActive = activeTerminalTab?.tabType === 'settings'
   const settingsOverlayRef = useRef<HTMLDivElement>(null)
 
-  const renderTerminalForTab = (tab: TabInfo, isFocused: boolean) => {
+  const renderTerminalForTab = (tab: TabInfo, isFocused: boolean, leafId?: string) => {
     const connectConfig = tab.connectionId
       ? (() => {
           const conn = cachedConnections.find((c) => c.id === tab.connectionId)
@@ -1310,7 +1312,7 @@ export default function App() {
                 )
               }
               onSizeChange={(cols, rows) => {
-                if (isFocused) setTermSize({ cols, rows })
+                if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
               }}
             />
           </div>
@@ -1524,6 +1526,21 @@ export default function App() {
             </div>
           )}
         </div>
+        <div className="term-pane-statusbar">
+          <div className="tsb-left">
+            <span
+              className={`tsb-dot ${tab?.status ?? 'disconnected'}`}
+              title={tab?.status ?? 'disconnected'}
+            />
+          </div>
+          <div className="tsb-right">
+            {termSizes[leaf.id]?.cols > 0 && (
+              <span className="tsb-size" title="SSH terminal width × height">
+                {termSizes[leaf.id].cols} × {termSizes[leaf.id].rows}
+              </span>
+            )}
+          </div>
+        </div>
         {/* VS Code-style drop mask: the whole target pane is highlighted as a
             droppable region the moment the cursor enters it (base mask), and a
             stronger overlay shows the exact landing area (left/right/top/
@@ -1621,7 +1638,7 @@ export default function App() {
       // so clicking a shell window marks its tab as the active/focused one.
       return createPortal(
         <div style={{ height: '100%', width: '100%' }} onMouseDown={() => setFocusedLeafId(leafId)}>
-          {renderTerminalForTab(tab, isFocused)}
+          {renderTerminalForTab(tab, isFocused, leafId)}
         </div>,
         dest,
         String(tab.tabId),
@@ -1678,27 +1695,6 @@ export default function App() {
         />
         {terminalPortals}
       </div>
-      {tabs.length > 0 &&
-        (() => {
-          // Reflect the focused pane's session (falls back to the workspace root)
-          // so the status bar follows whichever shell window is currently active.
-          const t = tabs.find((x) => x.tabId === focusedLeafTabId)
-          const status = t?.status ?? 'disconnected'
-          return (
-            <div className="terminal-statusbar">
-              <span className="tsb-left">
-                <span className={`tsb-dot ${status}`} title={status} />
-              </span>
-              <span className="tsb-right">
-                {termSize.cols > 0 && (
-                  <span className="tsb-size" title="SSH terminal width × height">
-                    {termSize.cols} × {termSize.rows}
-                  </span>
-                )}
-              </span>
-            </div>
-          )
-        })()}
       <div ref={terminalPoolRefCb} className="terminal-pool" />
     </div>
   )
