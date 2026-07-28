@@ -1189,6 +1189,41 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [dockerHeight])
 
+  // Bottom panel resize when docked to the bottom (horizontal divider -> height).
+  const handleBottomDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const win = getCurrentWindow()
+    win.setResizable(false).catch(() => {})
+    const isDragging = panelDragRef
+    isDragging.current = true
+    const startY = e.clientY
+    const startSize = layout.bottomPanel.size ?? 240
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = startY - ev.clientY
+      const newSize = Math.max(120, Math.min(800, startSize + delta))
+      updateLayout((l) => ({
+        ...l,
+        bottomPanel: {
+          ...l.bottomPanel,
+          size: newSize,
+        },
+      }))
+    }
+    const handleMouseUp = () => {
+      isDragging.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.classList.remove('resize-v')
+      document.body.style.userSelect = ''
+      win.setResizable(true).catch(() => {})
+    }
+    document.body.classList.add('resize-v')
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [layout.bottomPanel.size])
+
   // Bottom panel resize when docked to the right (vertical divider -> width).
   const handlePanelDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -2002,11 +2037,15 @@ export default function App() {
           {layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (
             <div className="panel-divider-v" onMouseDown={handlePanelDividerMouseDown} />
           )}
+          {layout.bottomPanel.pos === 'bottom' && bottomPanelExpanded && (
+            <div className="panel-divider-h" onMouseDown={handleBottomDividerMouseDown} />
+          )}
           <BottomPanel
             connections={connections}
             activeTabId={activeTabId}
             expanded={bottomPanelExpanded}
             pos={layout.bottomPanel.pos}
+            size={layout.bottomPanel.size}
             onDockDragStart={() => setDockDrag({ source: 'bottomPanel', over: null })}
             onDockDragEnd={() => setDockDrag({ source: null, over: null })}
             onToggleExpanded={() =>

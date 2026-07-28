@@ -1916,13 +1916,13 @@ input[type='password']::-ms-clear {
 
 .bottom-panel {
   flex-shrink: 0;
-  border-top: 1px solid $border;
   background: $bg-secondary;
   display: flex;
   flex-direction: column;
 
   &:not(.expanded) {
     height: 28px;
+    border-top: 1px solid $border;
   }
 
   &.expanded {
