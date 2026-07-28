@@ -1688,21 +1688,21 @@ export default function App() {
   const terminalContent = (
     <div className="terminal-wrapper">
       <div className="terminal-split-root" style={{ position: 'relative' }}>
-        {!settingsActive &&
-          rootTabs.map((root) => {
-            const tree = splitTrees[root.tabId] ?? makeLeaf(`leaf-${root.tabId}`, root.tabId)
-            return (
-              <div
-                key={root.tabId}
-                className="term-workspace"
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  display: root.tabId === activeTabId ? 'flex' : 'none',
-                  flexDirection: 'column',
-                  minWidth: 0,
-                  minHeight: 0,
-                }}
+        {rootTabs.map((root) => {
+          const tree = splitTrees[root.tabId] ?? makeLeaf(`leaf-${root.tabId}`, root.tabId)
+          const workspaceHidden = settingsActive || root.tabId !== activeTabId
+          return (
+            <div
+              key={root.tabId}
+              className="term-workspace"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: workspaceHidden ? 'none' : 'flex',
+                flexDirection: 'column',
+                minWidth: 0,
+                minHeight: 0,
+              }}
                 onDragOver={(e) => {
                   // Accept the pane drag anywhere inside the workspace so the
                   // cursor never shows the "no-drop" (prohibited) icon over gaps,
