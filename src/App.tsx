@@ -48,6 +48,8 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
+  const [tabDragIndex, setTabDragIndex] = useState<number | null>(null)
+  const tabDragRef = useRef<number | null>(null)
   // Customizable workspace layout (sidebar side/visibility, panel position,
   // section visibility/collapse, sizes). Persisted to layout.json via loadLayout/saveLayout.
   const [layout, setLayout] = useState<WorkspaceLayout>(defaultLayout)
@@ -981,6 +983,44 @@ export default function App() {
     } else {
       setFocusedLeafId(null)
     }
+  }, [])
+
+  // Tab drag to reorder
+  const handleTabDragStart = useCallback((e: React.DragEvent, index: number) => {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(index))
+    tabDragRef.current = index
+    setTabDragIndex(index)
+  }, [])
+
+  const handleTabDragOver = useCallback((e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (tabDragRef.current !== null && tabDragRef.current !== index) {
+      setTabDragIndex(index)
+    }
+  }, [])
+
+  const handleTabDragEnd = useCallback(() => {
+    tabDragRef.current = null
+    setTabDragIndex(null)
+  }, [])
+
+  const handleTabDrop = useCallback((e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault()
+    const sourceIndex = tabDragRef.current
+    tabDragRef.current = null
+    setTabDragIndex(null)
+    if (sourceIndex === null || sourceIndex === targetIndex) return
+    setTabs((prev) => {
+      const nonEmbedded = prev.filter((t) => !t.embedded)
+      const embedded = prev.filter((t) => t.embedded)
+      if (sourceIndex < 0 || sourceIndex >= nonEmbedded.length ||
+          targetIndex < 0 || targetIndex >= nonEmbedded.length) return prev
+      const [moved] = nonEmbedded.splice(sourceIndex, 1)
+      nonEmbedded.splice(targetIndex, 0, moved)
+      return [...nonEmbedded, ...embedded]
+    })
   }, [])
 
   // Drag a split divider to resize two adjacent panes.
@@ -1933,11 +1973,16 @@ export default function App() {
                 </svg>
               )}
             </button>
-            {tabs.filter((tab) => !tab.embedded).map((tab) => (
+            {tabs.filter((tab) => !tab.embedded).map((tab, idx) => (
               <div
                 key={tab.tabId}
-                className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}`}
+                className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
+                draggable
                 onClick={() => handleTabClick(tab.tabId)}
+                onDragStart={(e) => handleTabDragStart(e, idx)}
+                onDragOver={(e) => handleTabDragOver(e, idx)}
+                onDrop={(e) => handleTabDrop(e, idx)}
+                onDragEnd={handleTabDragEnd}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   e.stopPropagation()

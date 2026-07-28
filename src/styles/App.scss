@@ -520,6 +520,11 @@ body.resize-v * {
     border-bottom: 2px solid $accent-hover;
   }
 
+  &.drag-over {
+    background: rgba($accent, 0.15);
+    border-bottom: 2px solid $accent;
+  }
+
   .tab-close {
     font-size: 14px;
     color: #666;
