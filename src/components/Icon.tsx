@@ -33,6 +33,8 @@ export type IconName =
   | 'record'
   | 'eye'
   | 'eyeOff'
+  | 'search'
+  | 'x'
 
 const PATHS: Record<IconName, ReactNode> = {
   refresh: (
@@ -190,6 +192,18 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M12 5C5 5 1 12 1 12s4 7 11 7 11-7 11-7-4-7-11-7z" />
       <circle cx="12" cy="12" r="2.5" />
       <line x1="3" y1="3" x2="21" y2="21" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </>
+  ),
+  x: (
+    <>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </>
   ),
 }

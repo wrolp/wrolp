@@ -123,6 +123,32 @@ export interface ContainerInfo {
 export type FileTargetMode = 'ssh' | 'jump' | 'docker'
 
 /** Human-readable label for a target (used in chips / headers). */
+// ===== Host Analysis =====
+
+export interface PackageInfo {
+  name: string
+  version: string
+  description?: string
+}
+
+export interface ToolInfo {
+  name: string
+  path?: string
+}
+
+export interface HostAnalysis {
+  tabId: number
+  os: string
+  kernel: string
+  arch: string
+  hostname: string
+  uptime: string
+  packageManager: string
+  packages: PackageInfo[]
+  tools: ToolInfo[]
+  analyzedAt: number
+}
+
 export function targetLabel(target: TargetRef): string {
   switch (target.kind) {
     case 'session':

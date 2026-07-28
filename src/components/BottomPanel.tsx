@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import type { ConnectionConfig, SessionSummary, DockPos } from '../types'
 import { SessionListPanel } from './SessionListPanel'
 import { CommandSetPanel } from './CommandSetPanel'
+import { HostAnalysisPanel } from './HostAnalysisPanel'
 import { SessionViewer } from './SessionViewer'
 import { Icon } from './Icon'
 
@@ -16,7 +17,7 @@ interface BottomPanelProps {
   onDockDragEnd?: () => void
 }
 
-type PanelTab = 'sessions' | 'cmdsets'
+type PanelTab = 'sessions' | 'cmdsets' | 'analysis'
 
 export const BottomPanel: React.FC<BottomPanelProps> = ({
   connections,
@@ -93,6 +94,12 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
         >
           <Icon name="clipboard" /> Command Sets
         </button>
+        <button
+          className={`tab-btn${activeTab === 'analysis' ? ' active' : ''}`}
+          onClick={() => setActiveTab('analysis')}
+        >
+          <Icon name="search" /> Analysis
+        </button>
       </div>
       {expanded && (
         <div className="bottom-panel-content">
@@ -109,6 +116,12 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
               activeTabId={activeTabId}
               prefillCommands={prefillCommands}
               onPrefillConsumed={() => setPrefillCommands(null)}
+            />
+          )}
+          {activeTab === 'analysis' && (
+            <HostAnalysisPanel
+              connections={connections}
+              activeTabId={activeTabId}
             />
           )}
         </div>

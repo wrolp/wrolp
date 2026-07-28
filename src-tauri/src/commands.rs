@@ -1969,3 +1969,24 @@ pub async fn delete_command_set(
   let conn = state.db.lock().map_err(|e| e.to_string())?;
   db::delete_command_set(&conn, &id)
 }
+
+// ==================== Host Analysis ====================
+
+#[tauri::command]
+pub async fn analyze_host(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<crate::host_analysis::HostAnalysis, String> {
+  let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
+  crate::host_analysis::analyze_host(&*handle, tab_id).await
+}
+
+#[tauri::command]
+pub async fn command_help(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  command: String,
+) -> Result<String, String> {
+  let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
+  crate::host_analysis::command_help(&*handle, &command).await
+}

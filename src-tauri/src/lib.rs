@@ -3,6 +3,7 @@
 mod commands;
 mod db;
 mod docker_fs;
+mod host_analysis;
 mod remote_fs;
 mod ssh_session;
 mod vault;
@@ -199,6 +200,8 @@ pub fn run() {
       commands::list_command_sets,
       commands::save_command_set,
       commands::delete_command_set,
+      commands::analyze_host,
+      commands::command_help,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

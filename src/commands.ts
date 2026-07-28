@@ -281,6 +281,16 @@ export async function fsReadFileContent(
     : invoke<FileContent>('target_read_file', { target, path, maxSize: options?.maxSize, encoding: options?.encoding })
 }
 
+// ===== Host Analysis =====
+
+export async function analyzeHost(tabId: number): Promise<import('./types').HostAnalysis> {
+  return await invoke<import('./types').HostAnalysis>('analyze_host', { tabId })
+}
+
+export async function commandHelp(tabId: number, command: string): Promise<string> {
+  return await invoke<string>('command_help', { tabId, command })
+}
+
 export async function fsWriteFileContent(
   target: TargetRef,
   path: string,
