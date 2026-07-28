@@ -113,17 +113,21 @@ impl DockerExecFs {
 }
 
 /// Directory-listing script executed inside the container. Entries are emitted
-/// one per line, fields separated by the ASCII unit separator \x1f:
-/// `type \x1f size \x1f mtime \x1f perms \x1f name`.
+/// one per line, fields separated by the ASCII unit separator \037 (octal for
+/// 0x1f, POSIX-compatible — unlike \x1f which is bash-specific).
 const LIST_SCRIPT: &str = r#"cd "$1" || exit 1
-for n in "$1"/* "$1"/.[!.]* "$1"/..?*; do
-  [ -e "$n" ] || continue
+for n in * .[!.]* ..?*; do
+  [ -e "$n" ] || [ -L "$n" ] || continue
   if [ -d "$n" ]; then t=d; else t=f; fi
-  s=$(stat -c %s "$n" 2>/dev/null || echo 0)
-  m=$(stat -c %Y "$n" 2>/dev/null || echo 0)
-  o=$(stat -c %A "$n" 2>/dev/null || echo "?")
-  b=$(basename -- "$n")
-  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$t" "$s" "$m" "$o" "$b"
+  [ -L "$n" ] && t=l
+  if s=$(stat -c%s "$n" 2>/dev/null) && m=$(stat -c%Y "$n" 2>/dev/null); then
+    o=$(stat -c%A "$n" 2>/dev/null || echo "?")
+  else
+    r=$(ls -ld "$n" 2>/dev/null) || continue
+    set -- $r
+    o="$1"; s="$5"; m="0"
+  fi
+  printf '%s\037%s\037%s\037%s\037%s\n' "$t" "$s" "$m" "$o" "$n"
 done"#;
 
 #[async_trait::async_trait]
