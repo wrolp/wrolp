@@ -60,6 +60,8 @@ export function FileEditor({
   handlersRef.current = { onContentChange, onSave }
 
   const [showMinimap, setShowMinimap] = useState(false)
+  const [showWhitespace, setShowWhitespace] = useState<'none' | 'all' | 'boundary' | 'trailing'>('none')
+  const [tabSize, setTabSize] = useState(2)
 
   const active = tabs.find((t) => t.key === activeKey) || null
 
@@ -87,7 +89,8 @@ export function FileEditor({
         verticalScrollbarSize: 4,
         horizontalScrollbarSize: 4,
       },
-      tabSize: 2,
+      tabSize,
+      renderWhitespace: showWhitespace,
       readOnly: false,
     })
     editorRef.current = editor
@@ -138,12 +141,26 @@ export function FileEditor({
     }
   }, [active?.content, active?.language, active?.lineEnding])
 
-  // Sync minimap visibility (no need to recreate editor)
+  // Sync minimap visibility
   useEffect(() => {
     const editor = editorRef.current
     if (!editor) return
     editor.updateOptions({ minimap: { enabled: showMinimap } })
   }, [showMinimap])
+
+  // Sync whitespace rendering
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.updateOptions({ renderWhitespace: showWhitespace })
+  }, [showWhitespace])
+
+  // Sync tab size
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.updateOptions({ tabSize })
+  }, [tabSize])
 
   if (tabs.length === 0) return null
 
@@ -269,6 +286,27 @@ export function FileEditor({
                 >
                   <option value="LF">LF</option>
                   <option value="CRLF">CRLF</option>
+                </select>
+              </label>
+              <button
+                className={`editor-btn${showWhitespace !== 'none' ? ' active' : ''}`}
+                onClick={() =>
+                  setShowWhitespace((v) =>
+                    v === 'none' ? 'all' : 'none',
+                  )
+                }
+                title={showWhitespace !== 'none' ? 'Hide whitespace' : 'Show whitespace'}
+              >
+                ¶ {showWhitespace !== 'none' ? 'On' : 'Off'}
+              </button>
+              <label className="editor-select tab-size" title="Tab size">
+                <select
+                  value={tabSize}
+                  onChange={(e) => setTabSize(Number(e.target.value))}
+                >
+                  <option value={2}>2</option>
+                  <option value={4}>4</option>
+                  <option value={8}>8</option>
                 </select>
               </label>
               <button

@@ -891,6 +891,10 @@ body.resize-v * {
     }
   }
 
+  .editor-select.tab-size {
+    width: 48px;
+  }
+
   .editor-btn {
     background: $bg-input;
     border: 1px solid $border;
@@ -909,6 +913,12 @@ body.resize-v * {
     &:disabled {
       opacity: 0.4;
       cursor: default;
+    }
+
+    &.active {
+      background: rgba($accent, 0.15);
+      border-color: $accent;
+      color: $accent;
     }
 
     &.primary {
