@@ -291,6 +291,10 @@ export async function commandHelp(tabId: number, command: string): Promise<strin
   return await invoke<string>('command_help', { tabId, command })
 }
 
+export async function analyzeDockerContainer(tabId: number, containerName: string): Promise<import('./types').DockerAnalysis> {
+  return await invoke<import('./types').DockerAnalysis>('analyze_docker_container', { tabId, containerName })
+}
+
 export async function fsWriteFileContent(
   target: TargetRef,
   path: string,

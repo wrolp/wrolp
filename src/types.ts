@@ -149,6 +149,68 @@ export interface HostAnalysis {
   analyzedAt: number
 }
 
+// ---- Docker analysis types ----
+
+export interface PortMapping {
+  containerPort: string
+  hostIp?: string | null
+  hostPort?: string | null
+}
+
+export interface MountInfo {
+  source: string
+  destination: string
+  mode: string
+}
+
+export interface EnvEntry {
+  key: string
+}
+
+export interface ProcessInfo {
+  pid: number
+  user: string
+  cpu: string
+  mem: string
+  command: string
+}
+
+export interface ResourceUsage {
+  cpuPercent: string
+  memUsage: string
+  memLimit: string
+  netIO: string
+  blockIO: string
+  pidCount: string
+}
+
+export interface DockerAnalysis {
+  tabId: number
+  containerName: string
+  containerId: string
+  image: string
+  imageTag: string
+  state: string
+  createdAt: string
+
+  os: string
+  kernel: string
+  arch: string
+  hostname: string
+
+  packageManager: string
+  packages: PackageInfo[]
+  tools: ToolInfo[]
+
+  ports: PortMapping[]
+  mounts: MountInfo[]
+  envKeys: EnvEntry[]
+  processes: ProcessInfo[]
+  resource: ResourceUsage | null
+
+  analyzedAt: number
+}
+
 export function targetLabel(target: TargetRef): string {
   switch (target.kind) {
     case 'session':

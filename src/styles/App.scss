@@ -3014,3 +3014,301 @@ input[type='password']::-ms-clear {
     text-align: center;
   }
 }
+
+// ===== Docker Analysis Panel =====
+
+.docker-analysis-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 13px;
+  overflow-y: auto;
+  padding: 0;
+
+  .analysis-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 24px;
+    color: $text-dim;
+    font-size: 13px;
+  }
+
+  .file-error {
+    padding: 16px;
+    color: $danger;
+    font-size: 13px;
+  }
+
+  .file-empty {
+    padding: 16px;
+    color: $text-dim;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  // ---- Header ----
+  .analysis-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid $border;
+
+    h3 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      color: $text-primary;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .docker-state-badge {
+      font-size: 10px;
+
+      // running = green dot
+      &:has(+ *) {
+        color: $success;
+      }
+    }
+
+    .analysis-meta {
+      font-size: 11px;
+      color: $text-dim;
+      font-family: 'Cascadia Code', Consolas, monospace;
+      margin-top: 2px;
+    }
+  }
+
+  .analysis-refresh-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba($accent, 0.15);
+    border: 1px solid rgba($accent, 0.3);
+    color: $accent;
+    font-size: 11px;
+    padding: 2px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    &:hover { background: rgba($accent, 0.25); }
+  }
+
+  // ---- Resource section ----
+  .danalysis-resource {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px 0;
+
+    .resource-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .resource-label {
+      width: 60px;
+      font-size: 11px;
+      color: $text-dim;
+      font-weight: 600;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .resource-val {
+      font-size: 12px;
+      color: $text-primary;
+      font-family: 'Cascadia Code', Consolas, monospace;
+      flex-shrink: 0;
+    }
+
+    .resource-bar-bg {
+      flex: 1;
+      height: 10px;
+      background: $bg-tertiary;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .resource-bar-fill {
+      height: 100%;
+      background: $accent;
+      border-radius: 5px;
+      transition: width 0.3s ease;
+    }
+  }
+
+  // ---- Tables (ports, mounts, processes) ----
+  .danalysis-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+
+    th {
+      text-align: left;
+      padding: 3px 6px;
+      border-bottom: 1px solid $border;
+      color: $text-muted;
+      font-weight: 600;
+      font-size: 11px;
+      background: $bg-secondary;
+      position: sticky;
+      top: 0;
+    }
+
+    td {
+      padding: 3px 6px;
+      border-bottom: 1px solid rgba($border, 0.3);
+      color: $text-primary;
+      font-family: 'Cascadia Code', Consolas, monospace;
+    }
+
+    tr:hover td {
+      background: $bg-hover;
+    }
+
+    .cell-truncate {
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  // ---- Environment chips ----
+  .env-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 0;
+  }
+
+  .env-chip {
+    background: rgba($accent, 0.08);
+    border: 1px solid rgba($accent, 0.25);
+    color: $accent;
+    font-size: 11px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    padding: 2px 8px;
+    border-radius: 3px;
+    word-break: break-all;
+  }
+
+  // ---- Tool chips ----
+  .tool-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .tool-chip {
+    background: $bg-tertiary;
+    border: 1px solid $border;
+    color: $text-primary;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+  }
+
+  // ---- Package search & table ----
+  .pkg-search {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 4px;
+    margin-bottom: 6px;
+    padding: 4px 8px;
+    background: $bg-primary;
+    border: 1px solid $border;
+    border-radius: 3px;
+    color: $text-primary;
+    font-size: 12px;
+
+    &:focus {
+      outline: none;
+      border-color: $accent;
+    }
+  }
+
+  .pkg-list-container {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .pkg-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+
+    th {
+      position: sticky;
+      top: 0;
+      background: $bg-secondary;
+      text-align: left;
+      padding: 3px 6px;
+      border-bottom: 1px solid $border;
+      color: $text-muted;
+      font-weight: 600;
+      font-size: 11px;
+    }
+
+    td {
+      padding: 2px 6px;
+      border-bottom: 1px solid rgba($border, 0.3);
+      color: $text-primary;
+    }
+
+    tr:hover td {
+      background: $bg-hover;
+    }
+  }
+
+  // ---- Reused general-purpose styles (same as host analysis) ----
+  .analysis-section {
+    padding: 8px 12px;
+    border-top: 1px solid $border;
+
+    h4 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: $text-muted;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+  }
+
+  .analysis-overview {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 6px;
+
+    .analysis-card {
+      background: $bg-tertiary;
+      border: 1px solid $border;
+      border-radius: 4px;
+      padding: 6px 8px;
+
+      .card-label {
+        font-size: 10px;
+        text-transform: uppercase;
+        color: $text-muted;
+        letter-spacing: 0.5px;
+      }
+
+      .card-value {
+        font-size: 13px;
+        color: $text-primary;
+        word-break: break-all;
+        font-family: 'Cascadia Code', Consolas, monospace;
+      }
+    }
+  }
+}
+
+// ---- Remove panel-level padding when Docker or Analysis tab is active ----
+.bottom-panel-content:has(.docker-analysis-panel),
+.bottom-panel-content:has(.host-analysis-panel) {
+  padding: 0;
+}

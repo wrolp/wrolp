@@ -13,6 +13,8 @@ interface DockerPanelProps {
   onOpenContainer: (container: ContainerInfo) => void
   /** Enter a shell inside the container (opens new terminal tab). */
   onEnterShell?: (container: ContainerInfo) => void
+  /** Analyse a Docker container (opens report in BottomPanel). */
+  onAnalyzeContainer?: (container: ContainerInfo) => void
 }
 
 /**
@@ -27,6 +29,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   activeContainer,
   onOpenContainer,
   onEnterShell,
+  onAnalyzeContainer,
 }) => {
   const [containers, setContainers] = useState<ContainerInfo[]>([])
   const [loading, setLoading] = useState(false)
@@ -73,6 +76,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     onEnterShell(ctxMenu.container)
     setCtxMenu(null)
   }, [ctxMenu, onEnterShell])
+
+  const handleAnalyzeContainer = useCallback(() => {
+    if (!ctxMenu || !onAnalyzeContainer) return
+    onAnalyzeContainer(ctxMenu.container)
+    setCtxMenu(null)
+  }, [ctxMenu, onAnalyzeContainer])
 
   return (
     <div className="docker-panel">
@@ -126,6 +135,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
             <Icon name="terminal" size={14} />
             Enter Shell
           </div>
+          {onAnalyzeContainer && (
+            <div className="context-menu-item" onClick={handleAnalyzeContainer}>
+              <Icon name="search" size={14} />
+              Analyze Container
+            </div>
+          )}
         </div>
       )}
     </div>

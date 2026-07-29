@@ -1,8 +1,9 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import type { ConnectionConfig, SessionSummary, DockPos } from '../types'
 import { SessionListPanel } from './SessionListPanel'
 import { CommandSetPanel } from './CommandSetPanel'
 import { HostAnalysisPanel } from './HostAnalysisPanel'
+import { DockerAnalysisPanel } from './DockerAnalysisPanel'
 import { SessionViewer } from './SessionViewer'
 import { Icon } from './Icon'
 
@@ -15,9 +16,13 @@ interface BottomPanelProps {
   onToggleExpanded: () => void
   onDockDragStart?: () => void
   onDockDragEnd?: () => void
+  /** Container to analyse — set by DockerPanel context menu. */
+  dockerAnalysisTarget?: string | null
+  /** Called when Docker analysis completes. */
+  onDockerAnalyzed?: () => void
 }
 
-type PanelTab = 'sessions' | 'cmdsets' | 'analysis'
+type PanelTab = 'sessions' | 'cmdsets' | 'analysis' | 'docker'
 
 export const BottomPanel: React.FC<BottomPanelProps> = ({
   connections,
@@ -28,10 +33,19 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
   onToggleExpanded,
   onDockDragStart,
   onDockDragEnd,
+  dockerAnalysisTarget,
+  onDockerAnalyzed,
 }) => {
   const [activeTab, setActiveTab] = useState<PanelTab>('sessions')
   const [viewingSession, setViewingSession] = useState<SessionSummary | null>(null)
   const [prefillCommands, setPrefillCommands] = useState<string[] | null>(null)
+
+  // Auto-switch to Docker tab when a target is set
+  useEffect(() => {
+    if (dockerAnalysisTarget) {
+      setActiveTab('docker')
+    }
+  }, [dockerAnalysisTarget])
 
   const handleExtractCommands = (commands: string[]) => {
     setPrefillCommands(commands)
@@ -100,6 +114,12 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
         >
           <Icon name="search" /> Analysis
         </button>
+        <button
+          className={`tab-btn${activeTab === 'docker' ? ' active' : ''}`}
+          onClick={() => setActiveTab('docker')}
+        >
+          <Icon name="container" /> Docker
+        </button>
       </div>
       {expanded && (
         <div className="bottom-panel-content">
@@ -122,6 +142,13 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
             <HostAnalysisPanel
               connections={connections}
               activeTabId={activeTabId}
+            />
+          )}
+          {activeTab === 'docker' && (
+            <DockerAnalysisPanel
+              activeTabId={activeTabId}
+              targetContainer={dockerAnalysisTarget ?? null}
+              onAnalyzed={onDockerAnalyzed}
             />
           )}
         </div>

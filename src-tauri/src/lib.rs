@@ -2,6 +2,7 @@
 
 mod commands;
 mod db;
+mod docker_analysis;
 mod docker_fs;
 mod host_analysis;
 mod remote_fs;
@@ -201,6 +202,7 @@ pub fn run() {
       commands::save_command_set,
       commands::delete_command_set,
       commands::analyze_host,
+      commands::analyze_docker_container,
       commands::command_help,
     ])
     .run(tauri::generate_context!())

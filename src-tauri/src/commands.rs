@@ -1990,3 +1990,13 @@ pub async fn command_help(
   let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
   crate::host_analysis::command_help(&*handle, &command).await
 }
+
+#[tauri::command]
+pub async fn analyze_docker_container(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  container_name: String,
+) -> Result<crate::docker_analysis::DockerAnalysis, String> {
+  let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
+  crate::docker_analysis::analyze_docker_container(&*handle, &container_name, tab_id).await
+}

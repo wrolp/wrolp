@@ -70,6 +70,7 @@ export default function App() {
   const bottomPanelExpanded = layout.bottomPanel.visible
   // Remote filesystem shown in the Files panel (null = the tab's main session).
   const [fileTarget, setFileTarget] = useState<TargetRef | null>(null)
+  const [dockerAnalysisTarget, setDockerAnalysisTarget] = useState<string | null>(null)
   // Which filesystem mode the Files panel switcher is on (ssh / jump / docker).
   const [fileMode, setFileMode] = useState<FileTargetMode>('ssh')
 
@@ -281,6 +282,18 @@ export default function App() {
       )
     },
     [activeTabId, tabs, connections],
+  )
+
+  // Trigger Docker container analysis (opens report in bottom panel's "Docker" tab).
+  const handleAnalyzeContainer = useCallback(
+    (container: ContainerInfo) => {
+      setDockerAnalysisTarget(container.name)
+      // Ensure bottom panel is visible
+      if (!layout.bottomPanel.visible) {
+        updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
+      }
+    },
+    [layout.bottomPanel.visible],
   )
 
   // Remote file editor state
@@ -1948,6 +1961,7 @@ export default function App() {
                   activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
                   onOpenContainer={handleOpenContainer}
                   onEnterShell={handleEnterContainerShell}
+                  onAnalyzeContainer={handleAnalyzeContainer}
                 />
               </div>
             )}
@@ -2140,6 +2154,8 @@ export default function App() {
                 bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
               }))
             }
+            dockerAnalysisTarget={dockerAnalysisTarget}
+            onDockerAnalyzed={() => setDockerAnalysisTarget(null)}
           />
         </div>
         {layout.sidebar.side === 'right' && showSidebar && (

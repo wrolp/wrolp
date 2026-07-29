@@ -13,14 +13,14 @@ use crate::remote_fs::RemoteFs;
 use crate::ssh_session::{ContainerInfo, FileEntry, FileMeta, SshHandler};
 
 /// Shell-quote a single argument for the remote (jump host) shell.
-fn shell_quote(s: &str) -> String {
+pub(crate) fn shell_quote(s: &str) -> String {
   format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Run a command on the jump host over an existing SSH handle, capturing
 /// stdout, stderr and exit status. Each argv element is shell-quoted so the
 /// remote shell passes it through unchanged.
-async fn exec_on_jump(
+pub(crate) async fn exec_on_jump(
   jump: &Handle<SshHandler>,
   argv: &[String],
   stdin: Option<&[u8]>,
