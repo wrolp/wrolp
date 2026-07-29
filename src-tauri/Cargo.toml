@@ -2,6 +2,7 @@
 name = "wrolp-terminal"
 version = "0.0.3"
 edition = "2021"
+license = "MIT"
 default-run = "wrolp-terminal"
 
 [dependencies]

@@ -2,6 +2,7 @@
   "name": "wrolp-terminal",
   "private": true,
   "version": "0.0.3",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
