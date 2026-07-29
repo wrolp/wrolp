@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   dockerContainerLogs,
   dockerLogsStreamStart,
   pollDockerLogs,
   stopDockerLogsStream,
 } from '../commands'
+import { parseAnsiToHtml } from '../ansi'
 
 interface DockerLogViewerProps {
   tabId: number
@@ -29,6 +30,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   const [tail, setTail] = useState(initialTail)
   const [autoScroll, setAutoScroll] = useState(true)
   const [wordWrap, setWordWrap] = useState(false)
+  const [color, setColor] = useState(true)
   const [follow, setFollow] = useState(false)
   const logsRef = useRef<HTMLPreElement>(null)
 
@@ -115,12 +117,18 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     })
   }, [startStream, stopStream, fetchLogs])
 
+  // ---- ANSI → coloured HTML (memoized — parsing is O(n)) ----
+  const logsHtml = useMemo(() => {
+    if (!logs) return ''
+    return color ? parseAnsiToHtml(logs) : escapeLogs(logs)
+  }, [logs, color])
+
   // Auto-scroll when new logs arrive
   useEffect(() => {
     if (autoScroll && logsRef.current) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight
     }
-  }, [logs, autoScroll])
+  }, [logsHtml, autoScroll])
 
   // Fetch on mount (non-follow)
   useEffect(() => {
@@ -194,6 +202,14 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
             />
             Wrap
           </label>
+          <label className="dlv-control-item dlv-checkbox">
+            <input
+              type="checkbox"
+              checked={color}
+              onChange={(e) => setColor(e.target.checked)}
+            />
+            Color
+          </label>
         </div>
       </div>
 
@@ -204,9 +220,8 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
           <pre
             className={'dlv-output' + (wordWrap ? ' dlv-output-wrap' : '')}
             ref={logsRef}
-          >
-            {logs}
-          </pre>
+            dangerouslySetInnerHTML={{ __html: logsHtml }}
+          />
         ) : (
           <div className="dlv-empty">
             {loading ? 'Loading logs\u2026' : 'No log output'}
@@ -224,4 +239,12 @@ function trimHead(text: string): string {
   const cut = text.length - MAX_LOG_CHARS
   const nl = text.indexOf('\n', cut)
   return nl >= 0 ? text.slice(nl + 1) : text.slice(cut)
+}
+
+/// Plain HTML-escaped text (no colour parsing) — used when the Color toggle is off.
+function escapeLogs(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
