@@ -34,7 +34,9 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput } from './commands'
+import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion } from './commands'
+import type { AppVersion } from './types'
+import { open } from '@tauri-apps/plugin-shell'
 import { detectLanguage } from './editor/languages'
 import './styles/App.scss'
 
@@ -330,6 +332,12 @@ export default function App() {
     }
   })
   const [opacity, setOpacity] = useState(1)
+  const [appVersion, setAppVersion] = useState<AppVersion | null>(null)
+
+  // Fetch app version info on mount
+  useEffect(() => {
+    getAppVersion().then(setAppVersion).catch(() => {})
+  }, [])
   const [maxScrollback, setMaxScrollback] = useState(() => {
     try {
       const v = localStorage.getItem('wrolp-maxScrollback')
@@ -1550,6 +1558,47 @@ export default function App() {
                 </div>
               )}
             </div>
+            {appVersion && (
+              <div className="form-group" style={{ marginTop: 20, borderTop: '1px solid #333', paddingTop: 16 }}>
+                <label>About</label>
+                <div className="app-version-info">
+                  <div className="app-version-row">
+                    <span className="app-version-label">Version</span>
+                    <span className="app-version-value">{appVersion.version}</span>
+                    {appVersion.gitDirty && <span className="app-version-dirty">(dirty)</span>}
+                  </div>
+                  <div className="app-version-row">
+                    <span className="app-version-label">Git Commit</span>
+                    <span className="app-version-value" title={appVersion.gitCommit}>
+                      {appVersion.gitHash}
+                    </span>
+                  </div>
+                  <div className="app-version-row">
+                    <span className="app-version-label">Branch</span>
+                    <span className="app-version-value">{appVersion.gitBranch}</span>
+                  </div>
+                  <div className="app-version-row">
+                    <span className="app-version-label">Build Time</span>
+                    <span className="app-version-value">
+                      {appVersion.buildTime !== 'unknown'
+                        ? new Date(Number(appVersion.buildTime) * 1000).toLocaleString()
+                        : 'unknown'}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <button
+                      className="app-version-link"
+                      onClick={() => open(appVersion.repoUrl)}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ verticalAlign: 'middle', marginRight: 4 }}>
+                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                      </svg>
+                      GitHub Repository
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
         {tab.tabType !== 'settings' && tab.status === 'disconnected' ? (

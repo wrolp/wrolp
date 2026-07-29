@@ -2183,3 +2183,40 @@ pub async fn stop_docker_logs_stream(
     Ok(false)
   }
 }
+
+// ==================== App Version Info ====================
+
+/// Version info with git commit hash for CI builds.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AppVersion {
+  /// Package version from Cargo.toml (e.g. "0.0.3")
+  pub version: String,
+  /// Short git commit hash (e.g. "a1b2c3d")
+  pub git_hash: String,
+  /// Git branch name (e.g. "main")
+  pub git_branch: String,
+  /// Build timestamp (e.g. "2026-07-30T12:34:56Z")
+  pub build_time: String,
+  /// Full git commit hash
+  pub git_commit: String,
+  /// Whether the working tree was dirty at build time
+  pub git_dirty: bool,
+  /// GitHub repository URL
+  pub repo_url: String,
+}
+
+#[tauri::command]
+pub fn get_app_version() -> AppVersion {
+  AppVersion {
+    version: env!("CARGO_PKG_VERSION").to_string(),
+    git_hash: option_env!("GIT_HASH").unwrap_or("unknown").to_string(),
+    git_branch: option_env!("GIT_BRANCH").unwrap_or("unknown").to_string(),
+    build_time: option_env!("BUILD_TIME").unwrap_or("unknown").to_string(),
+    git_commit: option_env!("GIT_COMMIT").unwrap_or("unknown").to_string(),
+    git_dirty: option_env!("GIT_DIRTY")
+      .map(|s| s == "true")
+      .unwrap_or(false),
+    repo_url: "https://github.com/wrolp/wrolp".to_string(),
+  }
+}

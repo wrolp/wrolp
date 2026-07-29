@@ -281,6 +281,12 @@ export async function fsReadFileContent(
     : invoke<FileContent>('target_read_file', { target, path, maxSize: options?.maxSize, encoding: options?.encoding })
 }
 
+// ===== App Version =====
+
+export async function getAppVersion(): Promise<import('./types').AppVersion> {
+  return await invoke<import('./types').AppVersion>('get_app_version')
+}
+
 // ===== Host Analysis =====
 
 export async function analyzeHost(tabId: number): Promise<import('./types').HostAnalysis> {

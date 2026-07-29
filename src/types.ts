@@ -241,6 +241,18 @@ export function targetLabel(target: TargetRef): string {
   }
 }
 
+// ===== App Version =====
+
+export interface AppVersion {
+  version: string
+  gitHash: string
+  gitBranch: string
+  buildTime: string
+  gitCommit: string
+  gitDirty: boolean
+  repoUrl: string
+}
+
 // ===== Customizable workspace layout =====
 
 export type DockSide = 'left' | 'right'

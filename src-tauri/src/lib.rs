@@ -20,6 +20,7 @@ use tauri::Manager;
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_shell::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       // Initialize SQLite database
@@ -208,6 +209,7 @@ pub fn run() {
       commands::poll_docker_logs,
       commands::stop_docker_logs_stream,
       commands::command_help,
+      commands::get_app_version,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
