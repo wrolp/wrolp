@@ -47,11 +47,16 @@ export interface TabInfo {
   host: string
   status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'settings'
   errorMessage?: string
-  tabType: 'terminal' | 'settings'
+  tabType: 'terminal' | 'settings' | 'dockerLog'
   // When true, this session was created by splitting a tab and is NOT shown as
   // its own entry in the top tab bar — it lives inside its parent workspace's
   // pane layout (see App.tsx `splitTrees`).
   embedded?: boolean
+  // dockerLog tab fields
+  jumpTabId?: number
+  containerName?: string
+  containerId?: string
+  containerImage?: string
 }
 
 export interface TerminalOutput {

@@ -295,6 +295,26 @@ export async function analyzeDockerContainer(tabId: number, containerName: strin
   return await invoke<import('./types').DockerAnalysis>('analyze_docker_container', { tabId, containerName })
 }
 
+export async function dockerContainerLogs(tabId: number, containerName: string, tailLines?: number): Promise<string> {
+  return await invoke<string>('docker_container_logs', { tabId, containerName, tailLines })
+}
+
+export async function dockerLogsStreamStart(
+  tabId: number,
+  containerName: string,
+  tailLines?: number,
+): Promise<string> {
+  return await invoke<string>('docker_logs_stream_start', { tabId, containerName, tailLines })
+}
+
+export async function pollDockerLogs(streamId: string): Promise<string[]> {
+  return await invoke<string[]>('poll_docker_logs', { streamId })
+}
+
+export async function stopDockerLogsStream(streamId: string): Promise<boolean> {
+  return await invoke<boolean>('stop_docker_logs_stream', { streamId })
+}
+
 export async function fsWriteFileContent(
   target: TargetRef,
   path: string,

@@ -13,6 +13,7 @@ import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
+import { DockerLogViewer } from './components/DockerLogViewer'
 import { Icon } from './components/Icon'
 import type { FileTreeHandle } from './components/FilePanel'
 import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout, FileTargetMode } from './types'
@@ -294,6 +295,28 @@ export default function App() {
       }
     },
     [layout.bottomPanel.visible],
+  )
+
+  // Open a Docker container log viewer in a new tab.
+  const handleViewContainerLogs = useCallback(
+    (container: ContainerInfo) => {
+      if (activeTabId == null) return
+      const tabId = nextTabId++
+      const newTab: TabInfo = {
+        tabId,
+        connectionName: `Logs: ${container.name}`,
+        host: `Docker`,
+        status: 'connected',
+        tabType: 'dockerLog',
+        jumpTabId: activeTabId,
+        containerName: container.name,
+        containerId: container.id,
+        containerImage: container.image,
+      }
+      setTabs((prev) => [...prev, newTab])
+      setActiveTabId(tabId)
+    },
+    [activeTabId],
   )
 
   // Remote file editor state
@@ -931,6 +954,7 @@ export default function App() {
   const getTabLabel = useCallback(
     (tab: TabInfo): string => {
       if (tab.tabType === 'settings') return '⚙ Settings'
+      if (tab.tabType === 'dockerLog') return `📋 ${tab.containerName ?? 'Logs'}`
       if (!tab.connectionId) return tab.connectionName
       const siblings = tabs.filter(
         (t) => t.tabType === 'terminal' && !t.embedded && t.connectionId === tab.connectionId,
@@ -1856,6 +1880,28 @@ export default function App() {
     </div>
   )
 
+  // Docker log viewer tabs — always mounted, visibility toggled.
+  const dockerLogTabs = tabs.filter((t) => t.tabType === 'dockerLog' && !t.embedded)
+  const showDockerLog = dockerLogTabs.some((t) => t.tabId === activeTabId)
+  const dockerLogContent = dockerLogTabs.length > 0 ? (
+    <div className="docker-log-tabs-wrapper" style={{ display: showDockerLog ? 'flex' : 'none', flex: 1, minHeight: 0 }}>
+      {dockerLogTabs.map((tab) => (
+        <div
+          key={tab.tabId}
+          className="docker-log-tab-content"
+          style={{ display: tab.tabId === activeTabId ? 'flex' : 'none', flex: 1, minHeight: 0 }}
+        >
+          <DockerLogViewer
+            tabId={tab.tabId}
+            jumpTabId={tab.jumpTabId!}
+            containerName={tab.containerName!}
+            containerImage={tab.containerImage}
+          />
+        </div>
+      ))}
+    </div>
+  ) : null
+
   // Sidebar body (connections / files / docker), reused for left or right placement.
   const sidebarBody = (() => {
     // Show the Files panel only when the focused pane's connection is connected.
@@ -1991,6 +2037,7 @@ export default function App() {
                   onOpenContainer={handleOpenContainer}
                   onEnterShell={handleEnterContainerShell}
                   onAnalyzeContainer={handleAnalyzeContainer}
+                  onViewLogs={handleViewContainerLogs}
                 />
               </div>
             )}
@@ -2155,7 +2202,10 @@ export default function App() {
                 className="shell-pane-body"
                 style={{ height: editorTabs.length === 0 ? undefined : (shellCollapsed ? 0 : shellHeight) }}
               >
-                {terminalContent}
+                <div style={{ display: showDockerLog ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+                  {terminalContent}
+                </div>
+                {dockerLogContent}
               </div>
             </div>,
           ]}

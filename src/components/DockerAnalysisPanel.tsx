@@ -9,7 +9,7 @@ import type {
   ProcessInfo,
   ResourceUsage,
 } from '../types'
-import { analyzeDockerContainer } from '../commands'
+import { analyzeDockerContainer, dockerContainerLogs } from '../commands'
 
 interface Props {
   activeTabId: number | null
@@ -30,6 +30,14 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
   const [error, setError] = useState('')
 
   const [pkgSearch, setPkgSearch] = useState('')
+
+  // Logs viewer state
+  const [logs, setLogs] = useState('')
+  const [logsLoading, setLogsLoading] = useState(false)
+  const [logsError, setLogsError] = useState('')
+  const [logsTail, setLogsTail] = useState(200)
+  const [logsAutoScroll, setLogsAutoScroll] = useState(true)
+  const logsRef = React.useRef<HTMLPreElement>(null)
 
   const runAnalysis = useCallback(async () => {
     if (activeTabId == null || !targetContainer) return
@@ -55,6 +63,36 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
 
   // Manual re-run
   const handleRefresh = () => runAnalysis()
+
+  // Fetch container logs
+  const fetchLogs = useCallback(async () => {
+    if (activeTabId == null || !targetContainer) return
+    setLogsLoading(true)
+    setLogsError('')
+    try {
+      const output = await dockerContainerLogs(activeTabId, targetContainer, logsTail)
+      setLogs(output)
+    } catch (e) {
+      setLogsError(String(e))
+      setLogs('')
+    } finally {
+      setLogsLoading(false)
+    }
+  }, [activeTabId, targetContainer, logsTail])
+
+  // Auto-scroll logs when new content arrives
+  useEffect(() => {
+    if (logsAutoScroll && logsRef.current) {
+      logsRef.current.scrollTop = logsRef.current.scrollHeight
+    }
+  }, [logs, logsAutoScroll])
+
+  // Fetch logs when container/tail lines change
+  useEffect(() => {
+    if (targetContainer) {
+      fetchLogs()
+    }
+  }, [targetContainer, fetchLogs])
 
   if (loading) {
     return (
@@ -198,6 +236,46 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
 
       {/* ---- Resource Usage ---- */}
       {data.resource && <ResourceSection resource={data.resource} />}
+
+      {/* ---- Container Logs ---- */}
+      <div className="analysis-section">
+        <h4>Logs</h4>
+        <div className="danalysis-logs-controls">
+          <label>
+            Tail
+            <input
+              type="number"
+              className="logs-tail-input"
+              min={10}
+              max={10000}
+              step={10}
+              value={logsTail}
+              onChange={(e) => setLogsTail(Math.max(10, Number(e.target.value) || 200))}
+            />
+            lines
+          </label>
+          <button className="logs-fetch-btn" onClick={fetchLogs} disabled={logsLoading}>
+            {logsLoading ? 'Loading\u2026' : 'Refresh'}
+          </button>
+          <label className="logs-autoscroll-label">
+            <input
+              type="checkbox"
+              checked={logsAutoScroll}
+              onChange={(e) => setLogsAutoScroll(e.target.checked)}
+            />
+            Auto-scroll
+          </label>
+        </div>
+        {logsError ? (
+          <div className="logs-error">{logsError}</div>
+        ) : logs ? (
+          <pre className="danalysis-logs-output" ref={logsRef}>{logs}</pre>
+        ) : (
+          <div className="logs-empty">
+            {logsLoading ? 'Loading\u2026' : 'Click Refresh to load logs'}
+          </div>
+        )}
+      </div>
 
       {/* ---- Ports ---- */}
       {data.ports.length > 0 && (

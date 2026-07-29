@@ -393,6 +393,12 @@ pub struct AppState {
   pub db: DbConn,
   /// Active recordings: tab_id → recording buffer
   pub recordings: StdMutex<HashMap<u32, ActiveRecording>>,
+  /// Docker log streaming: stream_id → pending text chunks
+  pub docker_log_buffers: StdMutex<HashMap<String, Vec<String>>>,
+  /// Docker log streaming: stream_id → shutdown sender
+  pub docker_log_streams: StdMutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+  /// Docker log stream ID counter
+  pub next_docker_log_stream_id: AtomicU64,
 }
 
 impl AppState {
@@ -407,6 +413,9 @@ impl AppState {
       next_session_id: AtomicU64::new(1),
       db,
       recordings: StdMutex::new(HashMap::new()),
+      docker_log_buffers: StdMutex::new(HashMap::new()),
+      docker_log_streams: StdMutex::new(HashMap::new()),
+      next_docker_log_stream_id: AtomicU64::new(1),
     }
   }
 }

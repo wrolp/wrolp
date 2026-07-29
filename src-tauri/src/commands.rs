@@ -2000,3 +2000,186 @@ pub async fn analyze_docker_container(
   let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
   crate::docker_analysis::analyze_docker_container(&*handle, &container_name, tab_id).await
 }
+
+/// Fetch logs from a Docker container on the jump host.
+/// Runs `docker logs --tail <tail_lines> --timestamps <container>` and returns the output.
+#[tauri::command]
+pub async fn docker_container_logs(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  container_name: String,
+  tail_lines: Option<u32>,
+) -> Result<String, String> {
+  let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
+  let tail = tail_lines.unwrap_or(200).to_string();
+  let argv = vec![
+    "docker".into(),
+    "logs".into(),
+    "--tail".into(),
+    tail,
+    container_name.clone(),
+  ];
+  match crate::docker_fs::exec_on_jump(&*handle, &argv, None).await {
+    Ok((out, _err, _status)) => {
+      Ok(String::from_utf8_lossy(&out).to_string())
+    }
+    Err(e) => {
+      // docker logs may write to stderr on success on some versions;
+      // return the raw error as text rather than failing
+      Err(format!("docker logs failed for {}: {}", container_name, e))
+    }
+  }
+}
+
+/// Start streaming `docker logs --tail N -f <container>`.
+/// Returns a stream_id for use with `poll_docker_logs` / `stop_docker_logs_stream`.
+#[tauri::command]
+pub async fn docker_logs_stream_start(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  container_name: String,
+  tail_lines: Option<u32>,
+) -> Result<String, String> {
+  let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
+  let tail = tail_lines.unwrap_or(200).to_string();
+
+  let stream_id = {
+    let id = state
+      .next_docker_log_stream_id
+      .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("dlog_{}", id)
+  };
+
+  // Build argv for `docker logs --tail N -f <container>`
+  let argv = vec![
+    "docker".to_string(),
+    "logs".to_string(),
+    "--tail".to_string(),
+    tail,
+    "-f".to_string(),
+    container_name.clone(),
+  ];
+
+  // Open the streaming exec channel
+  let mut channel =
+    crate::docker_fs::exec_streaming_on_jump(&handle, &argv).await?;
+
+  // Create shutdown channel
+  let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+  // Store the shutdown sender
+  {
+    let mut streams = state.docker_log_streams.lock().map_err(|e| e.to_string())?;
+    streams.insert(stream_id.clone(), shutdown_tx);
+  }
+
+  let sid = stream_id.clone();
+  let container = container_name.clone();
+
+  // Spawn background task to read channel output
+  tauri::async_runtime::spawn(async move {
+    use russh::ChannelMsg;
+    let (read_tx, mut read_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+    // Separate task for reading channel messages (channel.wait() is not
+    // directly selectable with shutdown_rx, so we use an mpsc bridge)
+    let read_handle = tokio::spawn(async move {
+      while let Some(msg) = channel.wait().await {
+        match msg {
+          ChannelMsg::Data { data } => {
+            if read_tx.send(data.to_vec()).is_err() {
+              break;
+            }
+          }
+          ChannelMsg::Eof | ChannelMsg::Close => break,
+          _ => {}
+        }
+      }
+    });
+
+    // Main loop: drain reads, check shutdown
+    loop {
+      tokio::select! {
+        _ = &mut shutdown_rx => {
+          eprintln!(
+            "[docker-logs-stream] {} ({}) shutdown signaled",
+            sid, container
+          );
+          break;
+        }
+        data = read_rx.recv() => {
+          match data {
+            Some(chunk) => {
+              if let Some(app_state) = app.try_state::<AppState>() {
+                if let Ok(mut buffers) = app_state.docker_log_buffers.lock() {
+                  buffers
+                    .entry(sid.clone())
+                    .or_default()
+                    .push(String::from_utf8_lossy(&chunk).to_string());
+                }
+              }
+            }
+            None => {
+              // mpsc closed → channel ended
+              eprintln!(
+                "[docker-logs-stream] {} ({}) channel closed",
+                sid, container
+              );
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    read_handle.abort();
+
+    // Clean up stream entry on exit
+    if let Some(app_state) = app.try_state::<AppState>() {
+      if let Ok(mut streams) = app_state.docker_log_streams.lock() {
+        streams.remove(&sid);
+      }
+    }
+  });
+
+  eprintln!(
+    "[docker-logs-stream] started stream_id={} for container={}",
+    stream_id, container_name
+  );
+  Ok(stream_id)
+}
+
+/// Poll new output chunks from a running `docker logs -f` stream.
+#[tauri::command]
+pub async fn poll_docker_logs(
+  state: tauri::State<'_, AppState>,
+  stream_id: String,
+) -> Result<Vec<String>, String> {
+  let mut buffers = state.docker_log_buffers.lock().map_err(|e| e.to_string())?;
+  let chunks = buffers.remove(&stream_id).unwrap_or_default();
+  Ok(chunks)
+}
+
+/// Stop a running `docker logs -f` stream.
+#[tauri::command]
+pub async fn stop_docker_logs_stream(
+  state: tauri::State<'_, AppState>,
+  stream_id: String,
+) -> Result<bool, String> {
+  let tx = {
+    let mut streams = state.docker_log_streams.lock().map_err(|e| e.to_string())?;
+    streams.remove(&stream_id)
+  };
+  if let Some(tx) = tx {
+    let _ = tx.send(());
+    // Also clean up any remaining buffer
+    if let Ok(mut buffers) = state.docker_log_buffers.lock() {
+      buffers.remove(&stream_id);
+    }
+    eprintln!("[docker-logs-stream] stopped stream_id={}", stream_id);
+    Ok(true)
+  } else {
+    Ok(false)
+  }
+}

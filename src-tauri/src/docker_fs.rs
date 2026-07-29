@@ -73,6 +73,33 @@ pub(crate) async fn exec_on_jump(
   Ok((stdout, stderr, status))
 }
 
+/// Open a streaming exec channel on the jump host — for long-running commands
+/// like `docker logs -f`. The caller must read from the returned channel in
+/// a background loop and close it when done.
+pub(crate) async fn exec_streaming_on_jump(
+  jump: &Handle<SshHandler>,
+  argv: &[String],
+) -> Result<russh::Channel<russh::client::Msg>, String> {
+  if jump.is_closed() {
+    return Err("Jump host connection is closed".into());
+  }
+  let cmd = argv
+    .iter()
+    .map(|a| shell_quote(a))
+    .collect::<Vec<_>>()
+    .join(" ");
+
+  let channel = jump
+    .channel_open_session()
+    .await
+    .map_err(|e| format!("Failed to open exec channel: {}", e))?;
+  channel
+    .exec(true, cmd)
+    .await
+    .map_err(|e| format!("Failed to exec on jump host: {}", e))?;
+  Ok(channel)
+}
+
 /// Remote filesystem backed by `docker exec` on the jump host.
 pub struct DockerExecFs {
   jump: Arc<Handle<SshHandler>>,

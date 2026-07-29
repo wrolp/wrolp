@@ -203,6 +203,10 @@ pub fn run() {
       commands::delete_command_set,
       commands::analyze_host,
       commands::analyze_docker_container,
+      commands::docker_container_logs,
+      commands::docker_logs_stream_start,
+      commands::poll_docker_logs,
+      commands::stop_docker_logs_stream,
       commands::command_help,
     ])
     .run(tauri::generate_context!())

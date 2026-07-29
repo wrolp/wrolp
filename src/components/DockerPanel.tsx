@@ -15,6 +15,8 @@ interface DockerPanelProps {
   onEnterShell?: (container: ContainerInfo) => void
   /** Analyse a Docker container (opens report in BottomPanel). */
   onAnalyzeContainer?: (container: ContainerInfo) => void
+  /** View container logs (opens in a new tab). */
+  onViewLogs?: (container: ContainerInfo) => void
 }
 
 /**
@@ -30,6 +32,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onOpenContainer,
   onEnterShell,
   onAnalyzeContainer,
+  onViewLogs,
 }) => {
   const [containers, setContainers] = useState<ContainerInfo[]>([])
   const [loading, setLoading] = useState(false)
@@ -82,6 +85,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     onAnalyzeContainer(ctxMenu.container)
     setCtxMenu(null)
   }, [ctxMenu, onAnalyzeContainer])
+
+  const handleViewLogs = useCallback(() => {
+    if (!ctxMenu || !onViewLogs) return
+    onViewLogs(ctxMenu.container)
+    setCtxMenu(null)
+  }, [ctxMenu, onViewLogs])
 
   return (
     <div className="docker-panel">
@@ -139,6 +148,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
             <div className="context-menu-item" onClick={handleAnalyzeContainer}>
               <Icon name="search" size={14} />
               Analyze Container
+            </div>
+          )}
+          {onViewLogs && (
+            <div className="context-menu-item" onClick={handleViewLogs}>
+              <Icon name="file" size={14} />
+              View Logs
             </div>
           )}
         </div>
