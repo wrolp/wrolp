@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ContainerInfo } from '../types'
 import { listDockerContainers } from '../commands'
 import { Icon } from './Icon'
@@ -38,6 +38,8 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; container: ContainerInfo } | null>(null)
+  const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -70,9 +72,23 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
       // Only show the menu for running containers
       if (container.state !== 'running') return
       setCtxMenu({ x: e.clientX, y: e.clientY, container })
+      setMenuStyle({ left: e.clientX, top: e.clientY })
     },
     [],
   )
+
+  // Adjust menu position when it would overflow the viewport
+  useLayoutEffect(() => {
+    if (!ctxMenu || !menuRef.current) return
+    const menu = menuRef.current
+    const rect = menu.getBoundingClientRect()
+    const overflowY = ctxMenu.y + rect.height - window.innerHeight
+    const overflowX = ctxMenu.x + rect.width - window.innerWidth
+    setMenuStyle({
+      left: overflowX > 0 ? ctxMenu.x - overflowX - 4 : ctxMenu.x,
+      top: overflowY > 0 ? ctxMenu.y - rect.height : ctxMenu.y,
+    })
+  }, [ctxMenu])
 
   const handleEnterShell = useCallback(() => {
     if (!ctxMenu || !onEnterShell) return
@@ -136,8 +152,9 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
       {/* Context menu */}
       {ctxMenu && (
         <div
+          ref={menuRef}
           className="context-menu"
-          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          style={{ left: menuStyle.left, top: menuStyle.top }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="context-menu-item" onClick={handleEnterShell}>
