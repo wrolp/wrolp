@@ -307,6 +307,14 @@ export default function App() {
     }
   })
   const [opacity, setOpacity] = useState(1)
+  const [maxScrollback, setMaxScrollback] = useState(() => {
+    try {
+      const v = localStorage.getItem('wrolp-maxScrollback')
+      return v ? Number(v) : 5000
+    } catch {
+      return 5000
+    }
+  })
   const [reconnectKeys, setReconnectKeys] = useState<Record<number, number>>({})
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
@@ -1434,6 +1442,7 @@ export default function App() {
               reconnectTrigger={reconnectKeys[tab.tabId] || 0}
               connectConfig={connectConfig}
               autoConnect={!!tab.connectionId}
+              maxScrollback={maxScrollback}
               onStatusChange={(status, errorMessage) =>
                 setTabs((prev) =>
                   prev.map((t) => (t.tabId === tab.tabId ? { ...t, status, errorMessage } : t)),
@@ -1458,6 +1467,26 @@ export default function App() {
                 onChange={(e) => setOpacity(Number(e.target.value) / 100)}
                 style={{ width: '100%', accentColor: '#007acc' }}
               />
+            </div>
+            <div className="form-group" style={{ marginTop: 16 }}>
+              <label htmlFor="maxScrollback">Max Scrollback Lines: {maxScrollback}</label>
+              <input
+                id="maxScrollback"
+                type="number"
+                min="100"
+                max="100000"
+                step="100"
+                value={maxScrollback}
+                onChange={(e) => {
+                  const v = Math.max(100, Math.min(100000, Number(e.target.value) || 5000))
+                  setMaxScrollback(v)
+                  try { localStorage.setItem('wrolp-maxScrollback', String(v)) } catch {}
+                }}
+                style={{ width: '120px', marginLeft: 10 }}
+              />
+              <span style={{ fontSize: 11, color: '#888', marginLeft: 8 }}>
+                (applies to new tabs)
+              </span>
             </div>
             <div className="form-group" style={{ marginTop: 16 }}>
               <label>Updates</label>

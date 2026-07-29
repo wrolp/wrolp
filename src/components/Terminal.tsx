@@ -28,6 +28,8 @@ interface TerminalComponentProps {
     keyPath?: string
   }
   autoConnect: boolean
+  /** Maximum scrollback lines to retain (default 5000). */
+  maxScrollback?: number
   onStatusChange: (
     status: 'connecting' | 'connected' | 'error' | 'disconnected',
     errorMessage?: string,
@@ -42,6 +44,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   reconnectTrigger,
   connectConfig,
   autoConnect,
+  maxScrollback,
   onStatusChange,
   onSizeChange,
 }) => {
@@ -115,6 +118,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       cursorBlink: true,
       fontSize: 14,
       fontFamily: '"Fira Code", "Cascadia Code", Consolas, "Courier New", monospace',
+      scrollback: maxScrollback ?? 5000,
       theme: {
         background: '#00000000',
         foreground: '#d4d4d4',
@@ -464,6 +468,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     termRef.current?.selectAll()
   }, [])
 
+  const handleClear = useCallback(() => {
+    setCtxMenu(null)
+    termRef.current?.focus()
+    termRef.current?.clear()
+  }, [])
+
   return (
     <>
       <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
@@ -482,6 +492,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleSelectAll}>
             🔤 Select All
+          </div>
+          <div className="context-menu-divider" />
+          <div className="context-menu-item" onClick={handleClear}>
+            🧹 Clear
           </div>
         </div>
       )}
