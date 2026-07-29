@@ -146,15 +146,22 @@ fn build_inspect_script(container: &str) -> String {
   format!(
     r#"
 docker inspect {container} --format '
-{INSPECT_DELIM_ID}{{{{.Id}}}}
-{INSPECT_DELIM_CREATED}{{{{.Created}}}}
-{INSPECT_DELIM_IMAGE}{{{{.Config.Image}}}}
-{INSPECT_DELIM_STATE}{{{{.State.Status}}}}
-{INSPECT_DELIM_ENV}{{{{range $i, $e := .Config.Env}}}}{{{{$e}}}}
+{INSPECT_DELIM_ID}
+{{{{.Id}}}}
+{INSPECT_DELIM_CREATED}
+{{{{.Created}}}}
+{INSPECT_DELIM_IMAGE}
+{{{{.Config.Image}}}}
+{INSPECT_DELIM_STATE}
+{{{{.State.Status}}}}
+{INSPECT_DELIM_ENV}
+{{{{range $i, $e := .Config.Env}}}}{{{{$e}}}}
 {{{{end}}}}
-{INSPECT_DELIM_PORTS}{{{{range $p, $c := .NetworkSettings.Ports}}}}{{{{printf "%s|%s|%s\n" $p (index $c 0).HostIp (index $c 0).HostPort}}}}
+{INSPECT_DELIM_PORTS}
+{{{{range $p, $c := .NetworkSettings.Ports}}}}{{{{printf "%s|%s|%s\n" $p (index $c 0).HostIp (index $c 0).HostPort}}}}
 {{{{end}}}}
-{INSPECT_DELIM_MOUNTS}{{{{range .Mounts}}}}{{{{printf "%s|%s|%s\n" .Source .Destination .Mode}}}}
+{INSPECT_DELIM_MOUNTS}
+{{{{range .Mounts}}}}{{{{printf "%s|%s|%s\n" .Source .Destination .Mode}}}}
 {{{{end}}}}
 ' 2>/dev/null
 "#,
