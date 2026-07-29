@@ -33,7 +33,7 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout } from './commands'
+import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput } from './commands'
 import { detectLanguage } from './editor/languages'
 import './styles/App.scss'
 
@@ -222,6 +222,23 @@ export default function App() {
     setFileMode('ssh')
   }, [activeTabId])
 
+  // Send any queued post-connect commands (e.g. docker exec) when a tab finishes connecting.
+  const prevStatusesRef = useRef<Record<number, string>>({})
+  useEffect(() => {
+    for (const tab of tabs) {
+      const prev = prevStatusesRef.current[tab.tabId]
+      if (prev !== 'connected' && tab.status === 'connected') {
+        const cmd = pendingCommandsRef.current.get(tab.tabId)
+        if (cmd) {
+          pendingCommandsRef.current.delete(tab.tabId)
+          // Allow the terminal a moment to settle
+          setTimeout(() => sendInput(tab.tabId, cmd), 300)
+        }
+      }
+      prevStatusesRef.current[tab.tabId] = tab.status
+    }
+  }, [tabs])
+
   // Open (or toggle closed) a Docker container's filesystem in the Files panel.
   const handleOpenContainer = useCallback(
     (container: ContainerInfo) => {
@@ -246,6 +263,26 @@ export default function App() {
     [activeTabId],
   )
 
+  // Open a new terminal tab connected to the same jump host and automatically
+  // run `docker exec -it <container> /bin/bash || docker exec -it <container> /bin/sh`
+  const handleEnterContainerShell = useCallback(
+    (container: ContainerInfo) => {
+      if (activeTabId == null) return
+      const activeTab = tabs.find((t) => t.tabId === activeTabId)
+      if (!activeTab?.connectionId) return
+      const conn = connections.find((c) => c.id === activeTab.connectionId)
+      if (!conn) return
+
+      const newTabId = openTab(conn)
+      // Queue the docker exec command to be sent once the tab connects
+      pendingCommandsRef.current.set(
+        newTabId,
+        `docker exec -it ${container.name} /bin/bash || docker exec -it ${container.name} /bin/sh\r`,
+      )
+    },
+    [activeTabId, tabs, connections],
+  )
+
   // Remote file editor state
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
@@ -261,6 +298,8 @@ export default function App() {
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
   const panelDragRef = useRef(false)
+  /** Commands to send after a tab finishes connecting, keyed by tabId. */
+  const pendingCommandsRef = useRef<Map<number, string>>(new Map())
 
   // Update state
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body?: string } | null>(null)
@@ -535,7 +574,7 @@ export default function App() {
   // top tab). This keeps tabs isolated — switching tabs shows that workspace's
   // own layout.
   const openTab = useCallback(
-    (conn: ConnectionConfig) => {
+    (conn: ConnectionConfig): number => {
       const tabId = nextTabId++
       const newTab: TabInfo = {
         tabId,
@@ -550,6 +589,7 @@ export default function App() {
       setSplitTrees((prev) => ({ ...prev, [tabId]: makeLeaf(leafId, tabId) }))
       setFocusedLeafByRoot((prev) => ({ ...prev, [tabId]: leafId }))
       setActiveTabId(tabId)
+      return tabId
     },
     [newLeafId],
   )
@@ -1907,6 +1947,7 @@ export default function App() {
                   }
                   activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
                   onOpenContainer={handleOpenContainer}
+                  onEnterShell={handleEnterContainerShell}
                 />
               </div>
             )}

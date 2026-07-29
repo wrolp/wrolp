@@ -35,6 +35,7 @@ export type IconName =
   | 'eyeOff'
   | 'search'
   | 'x'
+  | 'terminal'
 
 const PATHS: Record<IconName, ReactNode> = {
   refresh: (
@@ -204,6 +205,13 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <line x1="18" y1="6" x2="6" y2="18" />
       <line x1="6" y1="6" x2="18" y2="18" />
+    </>
+  ),
+  terminal: (
+    <>
+      <rect x="4" y="5" width="16" height="13" rx="2" />
+      <polyline points="7 10 9.5 12.5 7 15" />
+      <line x1="11" y1="15.5" x2="17" y2="15.5" />
     </>
   ),
 }
