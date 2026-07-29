@@ -3051,7 +3051,8 @@ input[type='password']::-ms-clear {
 
   // ---- Header ----
   .analysis-header {
-    padding: 10px 12px;
+    position: relative;
+    padding: 10px 12px 10px 12px;
     border-bottom: 1px solid $border;
 
     h3 {
@@ -3092,6 +3093,84 @@ input[type='password']::-ms-clear {
     border-radius: 3px;
     cursor: pointer;
     &:hover { background: rgba($accent, 0.25); }
+  }
+
+  // ---- Orchestration section ----
+  .analysis-orchestration {
+    padding: 8px 12px;
+    border-top: 1px solid $border;
+
+    h4 {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .orch-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 2px 0;
+    }
+
+    .orch-label {
+      width: 60px;
+      font-size: 10px;
+      font-weight: 600;
+      color: $text-muted;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .orch-value {
+      font-size: 12px;
+      color: $text-secondary;
+      font-family: 'Cascadia Code', Consolas, monospace;
+      word-break: break-all;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .orch-compose,
+    .orch-direct {
+      padding: 2px 0;
+    }
+
+    // Inferred compose file path (highlighted)
+    .orch-inferred-file {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      margin: 6px 0 2px;
+      background: rgba($accent, 0.14);
+      border: 1px solid rgba($accent, 0.25);
+      border-radius: 4px;
+    }
+
+    .orch-inferred-icon {
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .orch-inferred-path {
+      font-size: 11px;
+      color: color.adjust($accent, $lightness: 40%);
+      font-family: 'Cascadia Code', Consolas, monospace;
+      word-break: break-all;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .orch-inferred-tag {
+      font-size: 9px;
+      color: $text-dim;
+      background: rgba($accent, 0.12);
+      padding: 1px 5px;
+      border-radius: 2px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
   }
 
   // ---- Resource section ----
@@ -3185,9 +3264,9 @@ input[type='password']::-ms-clear {
   }
 
   .env-chip {
-    background: rgba($accent, 0.08);
-    border: 1px solid rgba($accent, 0.25);
-    color: $accent;
+    background: rgba($accent, 0.18);
+    border: 1px solid rgba($accent, 0.3);
+    color: color.adjust($accent, $lightness: 40%);
     font-size: 11px;
     font-family: 'Cascadia Code', Consolas, monospace;
     padding: 2px 8px;
@@ -3232,8 +3311,24 @@ input[type='password']::-ms-clear {
   }
 
   .pkg-list-container {
-    max-height: 300px;
+    max-height: 360px;
     overflow-y: auto;
+
+    // Force visible scrollbar on Windows
+    &::-webkit-scrollbar {
+      width: 5px;
+    }
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: #555;
+      border-radius: 3px;
+
+      &:hover {
+        background: #777;
+      }
+    }
   }
 
   .pkg-table {
@@ -3244,6 +3339,7 @@ input[type='password']::-ms-clear {
     th {
       position: sticky;
       top: 0;
+      z-index: 1;
       background: $bg-secondary;
       text-align: left;
       padding: 3px 6px;
@@ -3257,6 +3353,10 @@ input[type='password']::-ms-clear {
       padding: 2px 6px;
       border-bottom: 1px solid rgba($border, 0.3);
       color: $text-primary;
+      max-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     tr:hover td {

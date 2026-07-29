@@ -79,6 +79,24 @@ pub struct ToolInfo {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OrchestrationInfo {
+  pub is_compose: bool,
+  /// Docker Compose project name (label: com.docker.compose.project)
+  pub project: Option<String>,
+  /// Docker Compose service name (label: com.docker.compose.service)
+  pub service: Option<String>,
+  /// Docker Compose config file path(s) (label: com.docker.compose.project.config_files)
+  pub config_files: Option<String>,
+  /// Docker Compose working directory (label: com.docker.compose.project.working_dir)
+  pub working_dir: Option<String>,
+  /// Inferred docker-compose.yml path — derived from labels + mount sources.
+  pub inferred_compose_file: Option<String>,
+  /// Non-compose: the start command (Path + Args from docker inspect)
+  pub start_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DockerAnalysis {
   pub tab_id: u32,
   pub container_name: String,
@@ -105,6 +123,8 @@ pub struct DockerAnalysis {
   pub env_keys: Vec<EnvEntry>,
   pub processes: Vec<ProcessInfo>,
   pub resource: Option<ResourceUsage>,
+  /// How the container was created (docker-compose vs direct)
+  pub orchestration: OrchestrationInfo,
 
   pub analyzed_at: i64,
 }
@@ -141,6 +161,8 @@ const INSPECT_DELIM_STATE: &str = "__WROLP_DSTATE__";
 const INSPECT_DELIM_ENV: &str = "__WROLP_DENV__";
 const INSPECT_DELIM_PORTS: &str = "__WROLP_DPORTS__";
 const INSPECT_DELIM_MOUNTS: &str = "__WROLP_DMOUNTS__";
+const INSPECT_DELIM_LABELS: &str = "__WROLP_DLABELS__";
+const INSPECT_DELIM_START_CMD: &str = "__WROLP_DSTARTCMD__";
 
 fn build_inspect_script(container: &str) -> String {
   format!(
@@ -163,6 +185,10 @@ docker inspect {container} --format '
 {INSPECT_DELIM_MOUNTS}
 {{{{range .Mounts}}}}{{{{printf "%s|%s|%s\n" .Source .Destination .Mode}}}}
 {{{{end}}}}
+{INSPECT_DELIM_LABELS}
+{{{{range $k, $v := .Config.Labels}}}}{{{{printf "%s=%s\n" $k $v}}}}{{{{end}}}}
+{INSPECT_DELIM_START_CMD}
+{{{{.Path}}}}{{{{range .Args}}}} {{{{.}}}}{{{{end}}}}
 ' 2>/dev/null
 "#,
     container = crate::docker_fs::shell_quote(container),
@@ -173,6 +199,8 @@ docker inspect {container} --format '
     INSPECT_DELIM_ENV = INSPECT_DELIM_ENV,
     INSPECT_DELIM_PORTS = INSPECT_DELIM_PORTS,
     INSPECT_DELIM_MOUNTS = INSPECT_DELIM_MOUNTS,
+    INSPECT_DELIM_LABELS = INSPECT_DELIM_LABELS,
+    INSPECT_DELIM_START_CMD = INSPECT_DELIM_START_CMD,
   )
 }
 
@@ -188,7 +216,7 @@ fn parse_inspect_section<'a>(lines: &[&'a str], delim: &str) -> Vec<&'a str> {
     for d in &[
       INSPECT_DELIM_ID, INSPECT_DELIM_CREATED, INSPECT_DELIM_IMAGE,
       INSPECT_DELIM_STATE, INSPECT_DELIM_ENV, INSPECT_DELIM_PORTS,
-      INSPECT_DELIM_MOUNTS,
+      INSPECT_DELIM_MOUNTS, INSPECT_DELIM_LABELS, INSPECT_DELIM_START_CMD,
     ] {
       if line.trim() == *d {
         collecting = false;
@@ -206,6 +234,112 @@ fn parse_single_value(lines: &[&str]) -> String {
   lines.first().map(|s| s.to_string()).unwrap_or_else(|| "unknown".into())
 }
 
+/// Infer compose file from docker labels only (no filesystem access).
+/// Priority: config_files label > working_dir label.
+fn infer_compose_file_from_labels(
+  config_files: &Option<String>,
+  working_dir: &Option<String>,
+) -> Option<String> {
+  // Priority 1: config_files label (authoritative, may be comma-separated)
+  if let Some(cf) = config_files {
+    if !cf.is_empty() {
+      return Some(cf.split(',').next().unwrap_or(cf).trim().to_string());
+    }
+  }
+
+  // Priority 2: working_dir label + compose.yml (V2 default)
+  if let Some(wd) = working_dir {
+    if !wd.is_empty() {
+      return Some(format!("{}/compose.yml", wd.trim_end_matches('/')));
+    }
+  }
+
+  None
+}
+
+/// Probe the filesystem via SSH to find a compose file from Docker volume
+/// bind-mount source directories.
+///
+/// Every bind-mount source is treated as a clue: for each source we walk up
+/// the directory tree (source → parent → grandparent) and check for
+/// docker-compose.yml / compose.yml / docker-compose.yaml / compose.yaml.
+/// Named volumes (source does not start with '/') are skipped – they live
+/// inside /var/lib/docker/volumes and don't help locate the compose file.
+async fn probe_compose_file_from_mounts(
+  jump: &Handle<SshHandler>,
+  mounts: &[MountInfo],
+) -> Option<String> {
+  // Only filter truly irrelevant system paths – data/log/config directories
+  // mounted by Compose are valuable clues (they point to the project root).
+  let system_prefixes = [
+    "/proc/", "/sys/", "/dev/", "/run/",
+    "/var/lib/docker/", "/var/lib/containerd/",
+    "/etc/ssl/", "/etc/pki/", "/etc/alternatives/",
+    "/tmp/.X11", "/var/run/",
+  ];
+
+  // Collect candidate directories from every bind-mount source.
+  let mut dirs: Vec<String> = Vec::new();
+  for m in mounts {
+    // Bind mount → source is a host path starting with '/'
+    if !m.source.starts_with('/') { continue; }
+    if system_prefixes.iter().any(|p| m.source.starts_with(p)) { continue; }
+
+    // If source is a single file (has extension) use its parent directory.
+    // Compose files themselves are kept as-is so they match on the first check.
+    let dir = if let Some(slash) = m.source.rfind('/') {
+      let filename = &m.source[slash + 1..];
+      if filename.contains('.') && !filename.ends_with(".yml") && !filename.ends_with(".yaml") {
+        m.source[..slash].to_string()
+      } else {
+        m.source.clone()
+      }
+    } else {
+      continue;
+    };
+
+    // Walk up: from the mount directory all the way toward /.
+    // Stops at root or system prefixes — no fixed depth limit.
+    let mut d = dir;
+    loop {
+      if d.is_empty() || d == "/" { break; }
+      if system_prefixes.iter().any(|p| d.starts_with(p)) { break; }
+      if !dirs.contains(&d) { dirs.push(d.clone()); }
+      if let Some(slash) = d.rfind('/') {
+        d = d[..slash].to_string();
+      } else {
+        break;
+      }
+    }
+  }
+
+  if dirs.is_empty() { return None; }
+
+  // Sort deepest-first → check the most specific directory first.
+  dirs.sort_by(|a, b| b.len().cmp(&a.len()));
+
+  // Single SSH round‑trip: one shell script checks all candidate dirs.
+  let dir_list = dirs.iter()
+    .map(|d| format!("\"{}\"", d))
+    .collect::<Vec<_>>()
+    .join(" ");
+  let script = format!(
+    "for d in {}; do for f in docker-compose.yml compose.yml docker-compose.yaml compose.yaml; do if [ -f \"$d/$f\" ]; then echo \"FOUND:$d/$f\"; exit 0; fi; done; done; exit 1",
+    dir_list
+  );
+
+  let argv = vec!["sh".into(), "-c".into(), script];
+  match crate::docker_fs::exec_on_jump(jump, &argv, None).await {
+    Ok((out, _, 0)) => {
+      String::from_utf8_lossy(&out)
+        .lines()
+        .find(|l| l.starts_with("FOUND:"))
+        .map(|l| l[6..].trim().to_string())
+    }
+    _ => None, // probe failed or not found — non‑critical
+  }
+}
+
 struct InspectMeta {
   container_id: String,
   created_at: String,
@@ -215,6 +349,7 @@ struct InspectMeta {
   env_keys: Vec<EnvEntry>,
   ports: Vec<PortMapping>,
   mounts: Vec<MountInfo>,
+  orchestration: OrchestrationInfo,
 }
 
 fn parse_docker_inspect(output: &str, container_name: &str) -> InspectMeta {
@@ -227,6 +362,8 @@ fn parse_docker_inspect(output: &str, container_name: &str) -> InspectMeta {
   let env_lines = parse_inspect_section(&lines, INSPECT_DELIM_ENV);
   let port_lines = parse_inspect_section(&lines, INSPECT_DELIM_PORTS);
   let mount_lines = parse_inspect_section(&lines, INSPECT_DELIM_MOUNTS);
+  let label_lines = parse_inspect_section(&lines, INSPECT_DELIM_LABELS);
+  let start_cmd_lines = parse_inspect_section(&lines, INSPECT_DELIM_START_CMD);
 
   let container_id = parse_single_value(&id_lines);
   let created_at = parse_single_value(&created_lines);
@@ -299,6 +436,50 @@ fn parse_docker_inspect(output: &str, container_name: &str) -> InspectMeta {
     })
     .collect();
 
+  // --- Orchestration: detect docker-compose vs direct run ---
+  // Parse all labels as "key=value" pairs (produced by range+printf in Go template).
+  let labels: std::collections::HashMap<String, String> = label_lines
+    .iter()
+    .filter_map(|line| {
+      let mut parts = line.splitn(2, '=');
+      let key = parts.next()?.trim().to_string();
+      let value = parts.next().unwrap_or("").trim().to_string();
+      if key.is_empty() { None } else { Some((key, value)) }
+    })
+    .collect();
+
+  // Any label starting with "com.docker.compose." indicates compose usage.
+  let is_compose_from_labels = labels.keys().any(|k| k.starts_with("com.docker.compose."));
+
+  let compose_project = labels.get("com.docker.compose.project").cloned();
+  let compose_service = labels.get("com.docker.compose.service").cloned();
+  let compose_config = labels.get("com.docker.compose.project.config_files").cloned();
+  let compose_workdir = labels.get("com.docker.compose.project.working_dir").cloned();
+
+  // Infer compose file from labels (filesystem probe happens later, async)
+  let inferred_compose_file = infer_compose_file_from_labels(&compose_config, &compose_workdir);
+
+  // A container is compose-managed if labels tell us, OR if we can later find a
+  // compose file on disk (updated in analyze_docker_container after async probe).
+  let is_compose = is_compose_from_labels || inferred_compose_file.is_some();
+
+  let start_command = parse_single_value(&start_cmd_lines);
+  let start_command = if start_command.is_empty() || start_command == "unknown" {
+    None
+  } else {
+    Some(start_command.trim().to_string())
+  };
+
+  let orchestration = OrchestrationInfo {
+    is_compose,
+    project: compose_project,
+    service: compose_service,
+    config_files: compose_config,
+    working_dir: compose_workdir,
+    inferred_compose_file,
+    start_command,
+  };
+
   InspectMeta {
     container_id,
     created_at,
@@ -308,6 +489,7 @@ fn parse_docker_inspect(output: &str, container_name: &str) -> InspectMeta {
     env_keys,
     ports,
     mounts,
+    orchestration,
   }
 }
 
@@ -621,7 +803,18 @@ pub async fn analyze_docker_container(
     crate::docker_fs::exec_on_jump(jump, &inspect_argv, None).await
       .map_err(|e| format!("docker inspect failed: {}", e))?;
   let inspect_text = String::from_utf8_lossy(&inspect_out);
-  let inspect = parse_docker_inspect(&inspect_text, container_name);
+  let mut inspect = parse_docker_inspect(&inspect_text, container_name);
+
+  // If labels gave us a compose file, skip the filesystem probe.
+  // Otherwise, probe the mount-source directories for compose.yml etc.
+  if inspect.orchestration.inferred_compose_file.is_none() {
+    if let Some(path) =
+      probe_compose_file_from_mounts(jump, &inspect.mounts).await
+    {
+      inspect.orchestration.inferred_compose_file = Some(path);
+      inspect.orchestration.is_compose = true;
+    }
+  }
 
   // Layer 2 – in-container probe
   let probe_script = build_container_probe_script();
@@ -666,6 +859,7 @@ pub async fn analyze_docker_container(
     mounts: inspect.mounts,
     env_keys: inspect.env_keys,
     processes,
+    orchestration: inspect.orchestration,
     resource,
     analyzed_at: std::time::SystemTime::now()
       .duration_since(std::time::UNIX_EPOCH)

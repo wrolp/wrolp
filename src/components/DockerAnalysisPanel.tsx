@@ -109,6 +109,75 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
         </div>
       </div>
 
+      {/* ---- Orchestration (docker-compose vs direct run) ---- */}
+      <div className="analysis-section analysis-orchestration">
+        <h4>
+          {data.orchestration.isCompose
+            ? '\u2630 Docker Compose'
+            : '\u2699 Direct Run'}
+        </h4>
+        {/* Inferred compose file — shown for both compose & mount-detected containers */}
+        {data.orchestration.inferredComposeFile && (
+          <div className="orch-inferred-file">
+            <span className="orch-inferred-icon">{'\u{1F4C4}'}</span>
+            <span className="orch-inferred-path" title="compose.yml or docker-compose.yml">{data.orchestration.inferredComposeFile}</span>
+            <span className="orch-inferred-tag">compose file</span>
+          </div>
+        )}
+        {data.orchestration.isCompose ? (
+          <div className="orch-compose">
+            {data.orchestration.project && (
+              <div className="orch-row">
+                <span className="orch-label">Project</span>
+                <span className="orch-value">{data.orchestration.project}</span>
+              </div>
+            )}
+            {data.orchestration.service && (
+              <div className="orch-row">
+                <span className="orch-label">Service</span>
+                <span className="orch-value">{data.orchestration.service}</span>
+              </div>
+            )}
+            {data.orchestration.configFiles && (
+              <div className="orch-row">
+                <span className="orch-label">Config</span>
+                <span className="orch-value" style={{ wordBreak: 'break-all' }}>
+                  {data.orchestration.configFiles}
+                </span>
+              </div>
+            )}
+            {data.orchestration.workingDir && (
+              <div className="orch-row">
+                <span className="orch-label">WorkDir</span>
+                <span className="orch-value">{data.orchestration.workingDir}</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="orch-direct">
+            <div className="orch-row">
+              <span className="orch-label">Image</span>
+              <span className="orch-value">{data.image}:{data.imageTag}</span>
+            </div>
+            {data.orchestration.startCommand ? (
+              <div className="orch-row">
+                <span className="orch-label">Command</span>
+                <span className="orch-value" style={{ wordBreak: 'break-all', fontFamily: "'Cascadia Code', Consolas, monospace" }}>
+                  {data.orchestration.startCommand}
+                </span>
+              </div>
+            ) : (
+              <div className="orch-row">
+                <span className="orch-label">Command</span>
+                <span className="orch-value" style={{ color: 'var(--text-dim, #999)' }}>
+                  (built-in entrypoint / default CMD)
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* ---- Overview ---- */}
       <div className="analysis-section">
         <h4>Overview</h4>

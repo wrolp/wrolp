@@ -184,6 +184,17 @@ export interface ResourceUsage {
   pidCount: string
 }
 
+export interface OrchestrationInfo {
+  isCompose: boolean
+  project?: string
+  service?: string
+  configFiles?: string
+  workingDir?: string
+  /** Inferred docker-compose.yml path from labels + mount sources */
+  inferredComposeFile?: string
+  startCommand?: string
+}
+
 export interface DockerAnalysis {
   tabId: number
   containerName: string
@@ -207,6 +218,7 @@ export interface DockerAnalysis {
   envKeys: EnvEntry[]
   processes: ProcessInfo[]
   resource: ResourceUsage | null
+  orchestration: OrchestrationInfo
 
   analyzedAt: number
 }
