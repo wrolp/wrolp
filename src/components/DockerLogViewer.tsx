@@ -32,11 +32,32 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   const [wordWrap, setWordWrap] = useState(false)
   const [color, setColor] = useState(true)
   const [follow, setFollow] = useState(false)
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const logsRef = useRef<HTMLPreElement>(null)
+  const userAtBottomRef = useRef(true)
 
   // Track active stream so we can stop it on unmount / toggle-off
   const streamIdRef = useRef<string | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ---- detect whether user is scrolled to the bottom ----
+  const handleScroll = useCallback(() => {
+    const el = logsRef.current
+    if (!el) return
+    // 5px threshold — tiny enough to not miss the real bottom
+    userAtBottomRef.current = el.scrollTop + el.clientHeight + 5 >= el.scrollHeight
+    setShowJumpToBottom(!userAtBottomRef.current)
+  }, [])
+
+  // Bind scroll listener on the pre element (re-bind when ref changes)
+  useEffect(() => {
+    const el = logsRef.current
+    if (!el) return
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    // re-evaluate in case the element was already scrolled
+    handleScroll()
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [handleScroll, logs /* re-bind when content changes so scrollHeight is fresh */])
 
   // ---- one-shot fetch (non-follow mode) ----
   const fetchLogs = useCallback(async () => {
@@ -123,9 +144,9 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     return color ? parseAnsiToHtml(logs) : escapeLogs(logs)
   }, [logs, color])
 
-  // Auto-scroll when new logs arrive
+  // Auto-scroll only when user is at the bottom
   useEffect(() => {
-    if (autoScroll && logsRef.current) {
+    if (autoScroll && userAtBottomRef.current && logsRef.current) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight
     }
   }, [logsHtml, autoScroll])
@@ -217,11 +238,29 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
         {error ? (
           <div className="dlv-error">{error}</div>
         ) : logs ? (
-          <pre
-            className={'dlv-output' + (wordWrap ? ' dlv-output-wrap' : '')}
-            ref={logsRef}
-            dangerouslySetInnerHTML={{ __html: logsHtml }}
-          />
+          <>
+            <pre
+              className={'dlv-output' + (wordWrap ? ' dlv-output-wrap' : '')}
+              ref={logsRef}
+              dangerouslySetInnerHTML={{ __html: logsHtml }}
+            />
+            {showJumpToBottom && (
+              <button
+                className="dlv-jump-bottom"
+                onClick={() => {
+                  const el = logsRef.current
+                  if (el) {
+                    el.scrollTop = el.scrollHeight
+                    userAtBottomRef.current = true
+                    setShowJumpToBottom(false)
+                  }
+                }}
+                title="Jump to latest logs"
+              >
+                ↓
+              </button>
+            )}
+          </>
         ) : (
           <div className="dlv-empty">
             {loading ? 'Loading logs\u2026' : 'No log output'}

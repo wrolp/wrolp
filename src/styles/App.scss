@@ -3694,6 +3694,7 @@ input[type='password']::-ms-clear {
     min-height: 0;
     display: flex;
     flex-direction: column;
+    position: relative;
   }
 
   .dlv-output {
@@ -3752,5 +3753,30 @@ input[type='password']::-ms-clear {
     justify-content: center;
     color: $text-muted;
     font-size: 13px;
+  }
+
+  .dlv-jump-bottom {
+    position: absolute;
+    bottom: 10px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid rgba($accent, 0.4);
+    background: rgba(#0d1117, 0.85);
+    color: $accent;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, transform 0.15s;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    z-index: 2;
+
+    &:hover {
+      background: rgba($accent, 0.2);
+      transform: scale(1.1);
+    }
   }
 }
