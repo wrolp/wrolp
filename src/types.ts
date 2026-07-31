@@ -45,9 +45,9 @@ export interface TabInfo {
   connectionId?: string
   connectionName: string
   host: string
-  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'settings'
+  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'settings' | 'aiChat'
   errorMessage?: string
-  tabType: 'terminal' | 'settings' | 'dockerLog'
+  tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat'
   // When true, this session was created by splitting a tab and is NOT shown as
   // its own entry in the top tab bar — it lives inside its parent workspace's
   // pane layout (see App.tsx `splitTrees`).
@@ -251,6 +251,26 @@ export interface AppVersion {
   gitCommit: string
   gitDirty: boolean
   repoUrl: string
+}
+
+// ===== AI Chat =====
+
+export interface AiConfig {
+  endpoint: string
+  apiKeyEnc: string
+  model: string
+  systemPrompt: string
+}
+
+export interface AiMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface AiChatChunk {
+  newText: string
+  done: boolean
+  error: string | null
 }
 
 // ===== Customizable workspace layout =====

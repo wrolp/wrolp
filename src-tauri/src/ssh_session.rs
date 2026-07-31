@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use tauri::Manager;
 use tokio::sync::mpsc;
 
+use crate::ai::AiChatState;
 use crate::db::{DbConn, RecordedEvent};
 
 /// Path to the SSH connections config file
@@ -399,12 +400,17 @@ pub struct AppState {
   pub docker_log_streams: StdMutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
   /// Docker log stream ID counter
   pub next_docker_log_stream_id: AtomicU64,
+  /// AI chat streaming buffers: chat_id → state
+  pub ai_chat_buffers: StdMutex<HashMap<String, AiChatState>>,
+  /// Cached AI configuration (loaded at startup)
+  pub ai_config: StdMutex<Option<crate::ai::AiConfig>>,
 }
 
 impl AppState {
   pub fn new(db: DbConn) -> Self {
     let connections = get_initial_connections();
 
+    let ai_config = crate::ai::load_ai_config().ok();
     Self {
       connections: StdMutex::new(connections),
       sessions: StdMutex::new(HashMap::new()),
@@ -416,6 +422,8 @@ impl AppState {
       docker_log_buffers: StdMutex::new(HashMap::new()),
       docker_log_streams: StdMutex::new(HashMap::new()),
       next_docker_log_stream_id: AtomicU64::new(1),
+      ai_chat_buffers: StdMutex::new(HashMap::new()),
+      ai_config: StdMutex::new(ai_config),
     }
   }
 }

@@ -8,6 +8,7 @@ mod host_analysis;
 mod remote_fs;
 mod ssh_session;
 mod vault;
+mod ai;
 
 use ssh_session::AppState;
 use tauri::generate_handler;
@@ -210,6 +211,13 @@ pub fn run() {
       commands::stop_docker_logs_stream,
       commands::command_help,
       commands::get_app_version,
+      commands::load_ai_config,
+      commands::save_ai_config,
+      commands::encrypt_api_key,
+      commands::decrypt_api_key,
+      commands::ai_chat,
+      commands::start_ai_chat_stream,
+      commands::poll_ai_chunks,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

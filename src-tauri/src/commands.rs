@@ -2220,3 +2220,145 @@ pub fn get_app_version() -> AppVersion {
     repo_url: "https://github.com/wrolp/wrolp".to_string(),
   }
 }
+
+// ==================== AI Chat ====================
+
+use crate::ai::{self, AiConfig, AiMessage, AiChatState};
+
+/// Load the persistent AI configuration from disk.
+#[tauri::command]
+pub async fn load_ai_config(state: tauri::State<'_, AppState>) -> Result<AiConfig, String> {
+    let config = ai::load_ai_config()?;
+    let mut guard = state.ai_config.lock().unwrap();
+    *guard = Some(config.clone());
+    Ok(config)
+}
+
+/// Save the AI configuration to disk. The `api_key_enc` field should already
+/// be encrypted (the frontend encrypts the plaintext key before saving).
+#[tauri::command]
+pub async fn save_ai_config(
+    state: tauri::State<'_, AppState>,
+    config: AiConfig,
+) -> Result<(), String> {
+    ai::save_ai_config(&config)?;
+    let mut guard = state.ai_config.lock().unwrap();
+    *guard = Some(config);
+    Ok(())
+}
+
+/// Encrypt a plain-text API key. Returns the encrypted blob (or empty for empty input).
+#[tauri::command]
+pub async fn encrypt_api_key(key: String) -> Result<String, String> {
+    if key.is_empty() {
+        return Ok(String::new());
+    }
+    crate::vault::seal_secret(&key)
+}
+
+/// Decrypt an encrypted API key blob (for masked display in settings).
+#[tauri::command]
+pub async fn decrypt_api_key(encrypted: String) -> Result<String, String> {
+    if encrypted.is_empty() {
+        return Ok(String::new());
+    }
+    crate::vault::open_secret(&encrypted)
+}
+
+/// Send a non-streaming AI chat request. Returns the full assistant response.
+#[tauri::command]
+pub async fn ai_chat(
+    state: tauri::State<'_, AppState>,
+    messages: Vec<AiMessage>,
+) -> Result<String, String> {
+    let config = state
+        .ai_config
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
+    ai::ai_chat_sync(&config, &messages).await
+}
+
+/// Start a streaming AI chat. Spawns a background task that reads the SSE
+/// stream and pushes chunks into AppState. Call `poll_ai_chunks` to retrieve.
+#[tauri::command]
+pub async fn start_ai_chat_stream(
+    app: tauri::AppHandle,
+    messages: Vec<AiMessage>,
+) -> Result<String, String> {
+    let (config, chat_id) = {
+        let state = app.state::<AppState>();
+        let cfg = state
+            .ai_config
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| {
+                "AI config not loaded. Please configure AI settings first.".to_string()
+            })?;
+        let cid = Uuid::new_v4().to_string();
+        state.ai_chat_buffers.lock().unwrap().insert(
+            cid.clone(),
+            AiChatState {
+                chat_id: cid.clone(),
+                chunks: Vec::new(),
+                done: false,
+                error: None,
+            },
+        );
+        (cfg, cid)
+    };
+
+    let app_clone = app.clone();
+    let cid = chat_id.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let result =
+            ai::execute_streaming_chat(&config, &messages, |chunk| {
+                let state = app_clone.state::<AppState>();
+                let mut guard = state.ai_chat_buffers.lock().unwrap();
+                if let Some(cs) = guard.get_mut(&cid) {
+                    cs.chunks.push(chunk);
+                }
+            })
+            .await;
+
+        let state = app_clone.state::<AppState>();
+        let mut guard = state.ai_chat_buffers.lock().unwrap();
+        if let Some(cs) = guard.get_mut(&cid) {
+            cs.done = true;
+            if let Err(e) = result {
+                cs.error = Some(e);
+            }
+        }
+    });
+
+    Ok(chat_id)
+}
+
+/// Poll for new streaming chunks from an active AI chat.
+/// Returns `(new_text, done, error)`. The entry is removed when done.
+#[tauri::command]
+pub async fn poll_ai_chunks(
+    state: tauri::State<'_, AppState>,
+    chat_id: String,
+) -> Result<Option<(String, bool, Option<String>)>, String> {
+    let mut guard = state.ai_chat_buffers.lock().unwrap();
+    match guard.get_mut(&chat_id) {
+        Some(cs) => {
+            if cs.chunks.is_empty() && !cs.done {
+                return Ok(Some((String::new(), false, None)));
+            }
+            let new_text: String = cs.chunks.drain(..).collect();
+            let done = cs.done;
+            let error = cs.error.clone();
+            if done {
+                guard.remove(&chat_id);
+            }
+            Ok(Some((new_text, done, error)))
+        }
+        None => Ok(None),
+    }
+}
+

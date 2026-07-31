@@ -28,6 +28,8 @@ chrono = "0.4"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures-util = "0.3"
 
 [[bin]]
 name = "wrolp-terminal"

@@ -3,9 +3,10 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 
 interface TitlebarProps {
   onSettings?: () => void
+  onAiChat?: () => void
 }
 
-export const Titlebar: React.FC<TitlebarProps> = ({ onSettings }) => {
+export const Titlebar: React.FC<TitlebarProps> = ({ onSettings, onAiChat }) => {
   const [isMaximized, setIsMaximized] = useState(false)
   const titlebarRef = useRef<HTMLDivElement>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
@@ -62,6 +63,16 @@ export const Titlebar: React.FC<TitlebarProps> = ({ onSettings }) => {
       </span>
 
       <div className="titlebar-actions" ref={controlsRef}>
+        {onAiChat && (
+          <button className="titlebar-btn ai-chat-btn" onClick={onAiChat} title="AI Chat">
+            <svg width="14" height="14" viewBox="0 0 16 16">
+              <path
+                d="M8 0l1.3 4.7L14 3.3l-2.7 3 2.7 3-4.7-1.4L8 16l-1.3-4.7L2 12.7l2.7-3-2.7-3 4.7 1.4L8 0z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        )}
         {onSettings && (
           <button className="titlebar-btn settings-btn" onClick={onSettings} title="Settings">
             <svg width="14" height="14" viewBox="0 0 16 16">

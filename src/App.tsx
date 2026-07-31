@@ -34,9 +34,10 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion } from './commands'
-import type { AppVersion } from './types'
+import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey } from './commands'
+import type { AppVersion, AiConfig } from './types'
 import { open } from '@tauri-apps/plugin-shell'
+import AiChatPanel from './components/AiChatPanel'
 import { detectLanguage } from './editor/languages'
 import './styles/App.scss'
 
@@ -337,6 +338,25 @@ export default function App() {
   // Fetch app version info on mount
   useEffect(() => {
     getAppVersion().then(setAppVersion).catch(() => {})
+  }, [])
+
+  // AI config
+  const [aiConfig, setAiConfig] = useState<AiConfig | null>(null)
+  const [aiApiKeyInput, setAiApiKeyInput] = useState('')
+  const [aiShowKey, setAiShowKey] = useState(false)
+
+  useEffect(() => {
+    loadAiConfig()
+      .then(async (cfg) => {
+        setAiConfig(cfg)
+        if (cfg.apiKeyEnc) {
+          try {
+            const dec = await decryptApiKey(cfg.apiKeyEnc)
+            setAiApiKeyInput(dec)
+          } catch { /* leave empty */ }
+        }
+      })
+      .catch(() => setAiConfig(null))
   }, [])
   const [maxScrollback, setMaxScrollback] = useState(() => {
     try {
@@ -704,6 +724,28 @@ export default function App() {
     setActiveTabId(tabId)
   }, [tabs])
 
+  const [aiContextText, setAiContextText] = useState<string | null>(null)
+
+  // Open AI chat as a tab (reuse if already open)
+  const handleOpenAiChat = useCallback((contextText?: string) => {
+    if (contextText) setAiContextText(contextText)
+    const existing = tabs.find(t => t.tabType === 'aiChat')
+    if (existing) {
+      setActiveTabId(existing.tabId)
+      return
+    }
+    const tabId = nextTabId++
+    const aiChatTab: TabInfo = {
+      tabId,
+      connectionName: 'AI Chat',
+      host: '',
+      status: 'aiChat',
+      tabType: 'aiChat',
+    }
+    setTabs(prev => [...prev, aiChatTab])
+    setActiveTabId(tabId)
+  }, [tabs])
+
   // Close a top-level tab (workspace): disconnect and remove its own session
   // plus every embedded session created by splitting inside it, and drop its
   // tree.
@@ -962,6 +1004,7 @@ export default function App() {
   const getTabLabel = useCallback(
     (tab: TabInfo): string => {
       if (tab.tabType === 'settings') return '⚙ Settings'
+      if (tab.tabType === 'aiChat') return '🤖 AI Chat'
       if (tab.tabType === 'dockerLog') return `📋 ${tab.containerName ?? 'Logs'}`
       if (!tab.connectionId) return tab.connectionName
       const siblings = tabs.filter(
@@ -1440,6 +1483,7 @@ export default function App() {
   tabToLeafRef.current = allTabToLeaf
   const activeTerminalTab = tabs.find((t) => t.tabId === activeTabId)
   const settingsActive = activeTerminalTab?.tabType === 'settings'
+  const aiChatActive = activeTerminalTab?.tabType === 'aiChat'
   const settingsOverlayRef = useRef<HTMLDivElement>(null)
 
   const renderTerminalForTab = (tab: TabInfo, isFocused: boolean, leafId?: string) => {
@@ -1482,6 +1526,9 @@ export default function App() {
               }
               onSizeChange={(cols, rows) => {
                 if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
+              }}
+              onAskAi={(selectedText) => {
+                handleOpenAiChat(selectedText)
               }}
             />
           </div>
@@ -1558,6 +1605,91 @@ export default function App() {
                 </div>
               )}
             </div>
+            {/* AI Configuration */}
+            <div className="form-group" style={{ marginTop: 20, borderTop: '1px solid #333', paddingTop: 16 }}>
+              <label style={{ fontSize: 16, fontWeight: 600 }}>AI Assistant (OpenAI Compatible)</label>
+              <p className="ai-settings-hint">
+                Supports OpenAI, Anthropic (via compatible proxy), Ollama, vLLM, and any OpenAI-compatible API.
+              </p>
+
+              <div className="ai-settings-form">
+                <div className="field-row">
+                  <label htmlFor="ai-endpoint">API Endpoint</label>
+                  <input
+                    id="ai-endpoint"
+                    type="text"
+                    value={aiConfig?.endpoint || 'https://api.openai.com/v1'}
+                    onChange={(e) => setAiConfig((prev) => prev ? { ...prev, endpoint: e.target.value } : null)}
+                    placeholder="https://api.openai.com/v1"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+
+                <div className="field-row">
+                  <label htmlFor="ai-key">API Key</label>
+                  <div className="ai-key-row">
+                    <input
+                      id="ai-key"
+                      type={aiShowKey ? 'text' : 'password'}
+                      value={aiApiKeyInput}
+                      onChange={(e) => setAiApiKeyInput(e.target.value)}
+                      placeholder="sk-..."
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      className="ai-key-toggle"
+                      onClick={() => setAiShowKey(!aiShowKey)}
+                      title={aiShowKey ? 'Hide' : 'Show'}
+                    >
+                      {aiShowKey ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="field-row">
+                  <label htmlFor="ai-model">Model</label>
+                  <input
+                    id="ai-model"
+                    type="text"
+                    value={aiConfig?.model || 'gpt-4o'}
+                    onChange={(e) => setAiConfig((prev) => prev ? { ...prev, model: e.target.value } : null)}
+                    placeholder="gpt-4o"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+
+                <div className="field-row">
+                  <label htmlFor="ai-system-prompt">System Prompt</label>
+                  <textarea
+                    id="ai-system-prompt"
+                    value={aiConfig?.systemPrompt || ''}
+                    onChange={(e) => setAiConfig((prev) => prev ? { ...prev, systemPrompt: e.target.value } : null)}
+                    rows={3}
+                    style={{ width: '100%', resize: 'vertical' }}
+                  />
+                </div>
+
+                <button
+                  className="settings-save-btn"
+                  onClick={async () => {
+                    if (!aiConfig) return
+                    try {
+                      const keyEnc = await encryptApiKey(aiApiKeyInput)
+                      const toSave = { ...aiConfig, apiKeyEnc: keyEnc }
+                      await saveAiConfig(toSave)
+                      setAiConfig(toSave)
+                      alert('AI settings saved.')
+                    } catch (e) {
+                      alert('Failed to save: ' + String(e))
+                    }
+                  }}
+                >
+                  Save AI Settings
+                </button>
+              </div>
+            </div>
+
             {appVersion && (
               <div className="form-group" style={{ marginTop: 20, borderTop: '1px solid #333', paddingTop: 16 }}>
                 <label>About</label>
@@ -1601,7 +1733,14 @@ export default function App() {
             )}
           </div>
         )}
-        {tab.tabType !== 'settings' && tab.status === 'disconnected' ? (
+        {tab.tabType === 'aiChat' && aiConfig && (
+          <AiChatPanel
+            config={aiConfig}
+            initialContext={aiContextText}
+            onContextConsumed={() => setAiContextText(null)}
+          />
+        )}
+        {tab.tabType !== 'settings' && tab.tabType !== 'aiChat' && tab.status === 'disconnected' ? (
           <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
             <div className="icon">🔌</div>
             <div style={{ color: '#f44747' }}>Connection lost</div>
@@ -1885,7 +2024,7 @@ export default function App() {
       <div className="terminal-split-root" style={{ position: 'relative' }}>
         {rootTabs.map((root) => {
           const tree = splitTrees[root.tabId] ?? makeLeaf(`leaf-${root.tabId}`, root.tabId)
-          const workspaceHidden = settingsActive || root.tabId !== activeTabId
+          const workspaceHidden = settingsActive || aiChatActive || root.tabId !== activeTabId
           return (
             <div
               key={root.tabId}
@@ -1920,7 +2059,7 @@ export default function App() {
             position: 'absolute',
             inset: 0,
             overflow: 'auto',
-            display: settingsActive ? 'block' : 'none',
+            display: (settingsActive || aiChatActive) ? 'block' : 'none',
           }}
         />
         {terminalPortals}
@@ -2119,7 +2258,7 @@ export default function App() {
   return (
     <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
-      <Titlebar onSettings={handleOpenSettings} />
+      <Titlebar onSettings={handleOpenSettings} onAiChat={() => handleOpenAiChat()} />
 
       <div className="main-content">
         {layout.sidebar.side === 'left' && sidebarEl}
@@ -2251,10 +2390,19 @@ export default function App() {
                 className="shell-pane-body"
                 style={{ height: editorTabs.length === 0 ? undefined : (shellCollapsed ? 0 : shellHeight) }}
               >
-                <div style={{ display: showDockerLog ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+                <div style={{ display: showDockerLog || aiChatActive ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
                   {terminalContent}
                 </div>
                 {dockerLogContent}
+                {aiChatActive && aiConfig && (
+                  <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <AiChatPanel
+                      config={aiConfig}
+                      initialContext={aiContextText}
+                      onContextConsumed={() => setAiContextText(null)}
+                    />
+                  </div>
+                )}
               </div>
             </div>,
           ]}
@@ -2343,6 +2491,9 @@ export default function App() {
             }
             if (activeTab.tabType === 'settings') {
               return <span className="status-text">⚙ Settings</span>
+            }
+            if (activeTab.tabType === 'aiChat') {
+              return <span className="status-text">🤖 AI Chat</span>
             }
             return (
               <>

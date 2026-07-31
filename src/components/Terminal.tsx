@@ -35,6 +35,7 @@ interface TerminalComponentProps {
     errorMessage?: string,
   ) => void
   onSizeChange?: (cols: number, rows: number) => void
+  onAskAi?: (selectedText: string) => void
 }
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
@@ -47,6 +48,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   maxScrollback,
   onStatusChange,
   onSizeChange,
+  onAskAi,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -474,6 +476,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     termRef.current?.clear()
   }, [])
 
+  const handleAskAi = useCallback(() => {
+    setCtxMenu(null)
+    const term = termRef.current
+    if (!term) return
+    const sel = term.getSelection()
+    if (sel && onAskAi) {
+      onAskAi(sel)
+    }
+  }, [onAskAi])
+
   return (
     <>
       <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
@@ -496,6 +508,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleClear}>
             🧹 Clear
+          </div>
+          <div className="context-menu-divider" />
+          <div className="context-menu-item" onClick={handleAskAi}>
+            🤖 Ask AI
           </div>
         </div>
       )}

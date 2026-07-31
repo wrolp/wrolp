@@ -331,3 +331,37 @@ export async function fsWriteFileContent(
     ? writeFileContent(target.tabId, path, content, encoding)
     : invoke<boolean>('target_write_file', { target, path, content, encoding })
 }
+
+// ===== AI Chat =====
+
+import type { AiConfig, AiMessage } from './types'
+
+export async function loadAiConfig(): Promise<AiConfig> {
+  return await invoke<AiConfig>('load_ai_config')
+}
+
+export async function saveAiConfig(config: AiConfig): Promise<void> {
+  await invoke('save_ai_config', { config })
+}
+
+export async function encryptApiKey(key: string): Promise<string> {
+  return await invoke<string>('encrypt_api_key', { key })
+}
+
+export async function decryptApiKey(encrypted: string): Promise<string> {
+  return await invoke<string>('decrypt_api_key', { encrypted })
+}
+
+export async function aiChat(messages: AiMessage[]): Promise<string> {
+  return await invoke<string>('ai_chat', { messages })
+}
+
+export async function startAiChatStream(messages: AiMessage[]): Promise<string> {
+  return await invoke<string>('start_ai_chat_stream', { messages })
+}
+
+export async function pollAiChunks(
+  chatId: string,
+): Promise<[string, boolean, string | null] | null> {
+  return await invoke<[string, boolean, string | null] | null>('poll_ai_chunks', { chatId })
+}
