@@ -13,6 +13,7 @@ interface DockerLogViewerProps {
   containerName: string
   containerImage?: string
   initialTail?: number
+  onAskAi?: (text: string) => void
 }
 
 const MAX_LOG_CHARS = 200_000 // ~5000 lines — trim head when exceeded
@@ -23,6 +24,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   containerName,
   containerImage,
   initialTail = 200,
+  onAskAi,
 }) => {
   const [logs, setLogs] = useState('')
   const [loading, setLoading] = useState(false)
@@ -35,6 +37,50 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const logsRef = useRef<HTMLPreElement>(null)
   const userAtBottomRef = useRef(true)
+
+  // ---- right-click context menu (Ask AI Assistant) ----
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
+
+  const handleLogContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!onAskAi) return
+      e.preventDefault()
+      e.stopPropagation()
+      setCtxMenu({ x: e.clientX, y: e.clientY })
+    },
+    [onAskAi],
+  )
+
+  // Close the menu on outside click / Escape
+  useEffect(() => {
+    if (!ctxMenu) return
+    const onDown = (e: MouseEvent) => {
+      if (ctxMenuRef.current && !ctxMenuRef.current.contains(e.target as Node)) {
+        setCtxMenu(null)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCtxMenu(null)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [ctxMenu])
+
+  const handleAskAiFromMenu = useCallback(() => {
+    setCtxMenu(null)
+    if (!onAskAi) return
+    // Prefer the user's current text selection; fall back to the full log buffer.
+    const selection = window.getSelection()?.toString().trim()
+    const text = selection || logs
+    if (!text) return
+    const prefix = `The following are logs from Docker container "${containerName}":\n\n`
+    onAskAi(prefix + text)
+  }, [onAskAi, logs, containerName])
 
   // Track active stream so we can stop it on unmount / toggle-off
   const streamIdRef = useRef<string | null>(null)
@@ -242,8 +288,21 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
             <pre
               className={'dlv-output' + (wordWrap ? ' dlv-output-wrap' : '')}
               ref={logsRef}
+              onContextMenu={handleLogContextMenu}
               dangerouslySetInnerHTML={{ __html: logsHtml }}
             />
+            {ctxMenu && (
+              <div
+                ref={ctxMenuRef}
+                className="context-menu dlv-ctx-menu"
+                style={{ left: ctxMenu.x, top: ctxMenu.y }}
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                <div className="context-menu-item" onClick={handleAskAiFromMenu}>
+                  Ask AI Assistant
+                </div>
+              </div>
+            )}
             {showJumpToBottom && (
               <button
                 className="dlv-jump-bottom"

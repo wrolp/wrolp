@@ -2397,6 +2397,7 @@ export default function App() {
             jumpTabId={tab.jumpTabId!}
             containerName={tab.containerName!}
             containerImage={tab.containerImage}
+            onAskAi={(text) => handleOpenAiChat(text)}
           />
         </div>
       ))}
