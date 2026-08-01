@@ -3,7 +3,7 @@ import type { AiEndpointProfile, AiMessage, ToolCallEvent } from '../types'
 import { startAiAgent, pollAiChunks } from '../commands'
 import { Icon } from './Icon'
 
-interface ChatMessage {
+export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
@@ -11,6 +11,21 @@ interface ChatMessage {
 
 interface AiChatPanelProps {
   config: AiEndpointProfile
+  /** Conversation state is owned by App so it persists across tab switches. */
+  messages: ChatMessage[]
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  input: string
+  setInput: React.Dispatch<React.SetStateAction<string>>
+  streaming: boolean
+  setStreaming: React.Dispatch<React.SetStateAction<boolean>>
+  streamingText: string
+  setStreamingText: React.Dispatch<React.SetStateAction<string>>
+  error: string | null
+  setError: React.Dispatch<React.SetStateAction<string | null>>
+  toolCalls: ToolCallEvent[]
+  setToolCalls: React.Dispatch<React.SetStateAction<ToolCallEvent[]>>
+  showSuggestions: boolean
+  setShowSuggestions: React.Dispatch<React.SetStateAction<boolean>>
   /** Text to auto-send as initial user message (e.g. terminal selection). */
   initialContext?: string | null
   /** Called when initialContext has been consumed. */
@@ -39,14 +54,25 @@ const SUGGESTIONS = [
   'Write a backup script',
 ]
 
-export default function AiChatPanel({ config, initialContext, onContextConsumed }: AiChatPanelProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
-  const [streaming, setStreaming] = useState(false)
-  const [streamingText, setStreamingText] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [toolCalls, setToolCalls] = useState<ToolCallEvent[]>([])
-  const [showSuggestions, setShowSuggestions] = useState(true)
+export default function AiChatPanel({
+  config,
+  messages,
+  setMessages,
+  input,
+  setInput,
+  streaming,
+  setStreaming,
+  streamingText,
+  setStreamingText,
+  error,
+  setError,
+  toolCalls,
+  setToolCalls,
+  showSuggestions,
+  setShowSuggestions,
+  initialContext,
+  onContextConsumed,
+}: AiChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pollRef = useRef<number>(0)

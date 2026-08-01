@@ -35,9 +35,9 @@ import {
   DropPosition,
 } from './components/splitTree'
 import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels } from './commands'
-import type { AppVersion, AiConfig, AiEndpointProfile } from './types'
+import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent } from './types'
 import { open } from '@tauri-apps/plugin-shell'
-import AiChatPanel from './components/AiChatPanel'
+import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
 import { detectLanguage } from './editor/languages'
 import './styles/App.scss'
 
@@ -347,6 +347,15 @@ export default function App() {
   const [aiModels, setAiModels] = useState<string[]>([])
   const [aiFetchingModels, setAiFetchingModels] = useState(false)
   const [aiModelManual, setAiModelManual] = useState(false)
+  // AI conversation state lives at the App level so it survives switching tabs
+  // (the AiChatPanel unmounts/remounts when aiChatActive toggles).
+  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([])
+  const [aiInput, setAiInput] = useState('')
+  const [aiStreaming, setAiStreaming] = useState(false)
+  const [aiStreamingText, setAiStreamingText] = useState('')
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [aiToolCalls, setAiToolCalls] = useState<ToolCallEvent[]>([])
+  const [aiShowSuggestions, setAiShowSuggestions] = useState(true)
   const [saveFlash, setSaveFlash] = useState<string | null>(null)
   const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'ai'>('general')
   useEffect(() => {
@@ -2126,13 +2135,6 @@ export default function App() {
             </div>
           </div>
         )}
-        {tab.tabType === 'aiChat' && activeProfile && (
-          <AiChatPanel
-            config={activeProfile}
-            initialContext={aiContextText}
-            onContextConsumed={() => setAiContextText(null)}
-          />
-        )}
         {tab.tabType !== 'settings' && tab.tabType !== 'aiChat' && tab.status === 'disconnected' ? (
           <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
             <div className="icon">🔌</div>
@@ -2791,10 +2793,31 @@ export default function App() {
                   {terminalContent}
                 </div>
                 {dockerLogContent}
-                {aiChatActive && activeProfile && (
-                  <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                {activeProfile && (
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      display: aiChatActive ? 'flex' : 'none',
+                      flexDirection: 'column',
+                    }}
+                  >
                     <AiChatPanel
                       config={activeProfile}
+                      messages={aiMessages}
+                      setMessages={setAiMessages}
+                      input={aiInput}
+                      setInput={setAiInput}
+                      streaming={aiStreaming}
+                      setStreaming={setAiStreaming}
+                      streamingText={aiStreamingText}
+                      setStreamingText={setAiStreamingText}
+                      error={aiError}
+                      setError={setAiError}
+                      toolCalls={aiToolCalls}
+                      setToolCalls={setAiToolCalls}
+                      showSuggestions={aiShowSuggestions}
+                      setShowSuggestions={setAiShowSuggestions}
                       initialContext={aiContextText}
                       onContextConsumed={() => setAiContextText(null)}
                     />
