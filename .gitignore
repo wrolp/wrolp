@@ -4,3 +4,13 @@ src-tauri/gen
 dist
 task
 .tauri
+
+# Local app data (credentials, recordings, window state)
+*.db
+*.db-wal
+*.db-shm
+wrolp-terminal/
+
+# Local connection/window config that may contain secrets
+connections.json
+window.json
