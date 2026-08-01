@@ -404,6 +404,31 @@ export default function App() {
       return 5000
     }
   })
+  // Docker log viewer preferences (persisted; apply to new viewers).
+  const [dockerWordWrap, setDockerWordWrap] = useState(() => {
+    try {
+      const v = localStorage.getItem('wrolp-docker-wordwrap')
+      return v === null ? true : v === '1'
+    } catch {
+      return true
+    }
+  })
+  const [dockerFollow, setDockerFollow] = useState(() => {
+    try {
+      const v = localStorage.getItem('wrolp-docker-follow')
+      return v === null ? true : v === '1'
+    } catch {
+      return true
+    }
+  })
+  const [dockerMaxLines, setDockerMaxLines] = useState(() => {
+    try {
+      const v = localStorage.getItem('wrolp-docker-maxlines')
+      return v ? Number(v) : 5000
+    } catch {
+      return 5000
+    }
+  })
   const [reconnectKeys, setReconnectKeys] = useState<Record<number, number>>({})
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
@@ -1672,6 +1697,61 @@ export default function App() {
                     </div>
                   </div>
 
+                  <div className="settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-icon">🐳</div>
+                      <div>
+                        <h3 className="settings-card-title">Docker Logs</h3>
+                        <p className="settings-card-sub">Defaults for the Docker log viewer.</p>
+                      </div>
+                    </div>
+                    <div className="settings-fields">
+                      <div className="settings-field checkbox-field">
+                        <input
+                          id="docker-wordwrap"
+                          type="checkbox"
+                          checked={dockerWordWrap}
+                          onChange={(e) => {
+                            setDockerWordWrap(e.target.checked)
+                            try { localStorage.setItem('wrolp-docker-wordwrap', e.target.checked ? '1' : '0') } catch {}
+                          }}
+                        />
+                        <label htmlFor="docker-wordwrap" className="settings-label">Auto-wrap lines</label>
+                      </div>
+                      <div className="settings-field checkbox-field">
+                        <input
+                          id="docker-follow"
+                          type="checkbox"
+                          checked={dockerFollow}
+                          onChange={(e) => {
+                            setDockerFollow(e.target.checked)
+                            try { localStorage.setItem('wrolp-docker-follow', e.target.checked ? '1' : '0') } catch {}
+                          }}
+                        />
+                        <label htmlFor="docker-follow" className="settings-label">Follow (auto-scroll to newest)</label>
+                      </div>
+                      <div className="settings-field">
+                        <label htmlFor="docker-maxlines" className="settings-label">Max Retained Lines</label>
+                        <input
+                          id="docker-maxlines"
+                          type="number"
+                          min="100"
+                          max="1000000"
+                          step="100"
+                          className="settings-input"
+                          style={{ width: '140px' }}
+                          value={dockerMaxLines}
+                          onChange={(e) => {
+                            const v = Math.max(100, Math.min(1000000, Number(e.target.value) || 5000))
+                            setDockerMaxLines(v)
+                            try { localStorage.setItem('wrolp-docker-maxlines', String(v)) } catch {}
+                          }}
+                        />
+                        <span className="settings-help">Older lines are dropped so the buffer isn't flooded.</span>
+                      </div>
+                    </div>
+                  </div>
+
                   {appVersion && (
                     <div className="settings-card">
                       <div className="settings-card-header">
@@ -2397,6 +2477,9 @@ export default function App() {
             jumpTabId={tab.jumpTabId!}
             containerName={tab.containerName!}
             containerImage={tab.containerImage}
+            defaultWordWrap={dockerWordWrap}
+            defaultFollow={dockerFollow}
+            maxLines={dockerMaxLines}
             onAskAi={(text) => handleOpenAiChat(text)}
           />
         </div>

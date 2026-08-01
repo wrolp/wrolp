@@ -14,6 +14,9 @@ interface DockerLogViewerProps {
   containerImage?: string
   initialTail?: number
   onAskAi?: (text: string) => void
+  defaultWordWrap?: boolean
+  defaultFollow?: boolean
+  maxLines?: number
 }
 
 const MAX_LOG_CHARS = 200_000 // ~5000 lines — trim head when exceeded
@@ -25,15 +28,18 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   containerImage,
   initialTail = 200,
   onAskAi,
+  defaultWordWrap = true,
+  defaultFollow = true,
+  maxLines = 5000,
 }) => {
   const [logs, setLogs] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [tail, setTail] = useState(initialTail)
   const [autoScroll, setAutoScroll] = useState(true)
-  const [wordWrap, setWordWrap] = useState(false)
+  const [wordWrap, setWordWrap] = useState(defaultWordWrap)
   const [color, setColor] = useState(true)
-  const [follow, setFollow] = useState(false)
+  const [follow, setFollow] = useState(defaultFollow)
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const logsRef = useRef<HTMLPreElement>(null)
   const userAtBottomRef = useRef(true)
@@ -111,7 +117,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     setError('')
     try {
       const output = await dockerContainerLogs(jumpTabId, containerName, tail)
-      setLogs(trimHead(output))
+      setLogs(trimToMaxLines(trimHead(output), maxLines))
     } catch (e) {
       setError(String(e))
       setLogs('')
@@ -143,7 +149,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
         try {
           const chunks = await pollDockerLogs(sid)
           if (chunks.length > 0) {
-            setLogs((prev) => trimHead(prev + chunks.join('')))
+            setLogs((prev) => trimToMaxLines(trimHead(prev + chunks.join('')), maxLines))
           }
         } catch {
           // ignore poll errors — stream may have ended
@@ -337,6 +343,28 @@ function trimHead(text: string): string {
   const cut = text.length - MAX_LOG_CHARS
   const nl = text.indexOf('\n', cut)
   return nl >= 0 ? text.slice(nl + 1) : text.slice(cut)
+}
+
+/// Drop oldest lines so the buffer never exceeds `maxLines`.
+function trimToMaxLines(text: string, maxLines: number): string {
+  if (maxLines <= 0) return text
+  let nlCount = 0
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) nlCount++
+  }
+  if (nlCount <= maxLines) return text
+  // Count newlines from the end to find the cut point that keeps `maxLines` lines.
+  let dropped = 0
+  let idx = -1
+  for (let i = text.length - 1; i >= 0 && dropped < maxLines; i--) {
+    if (text.charCodeAt(i) === 10) {
+      dropped++
+      if (dropped === maxLines) {
+        idx = i + 1
+      }
+    }
+  }
+  return idx > 0 ? text.slice(idx) : text
 }
 
 /// Plain HTML-escaped text (no colour parsing) — used when the Color toggle is off.
