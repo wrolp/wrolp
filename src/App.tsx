@@ -345,6 +345,7 @@ export default function App() {
   const [aiApiKeyInput, setAiApiKeyInput] = useState('')
   const [aiShowKey, setAiShowKey] = useState(false)
   const [saveFlash, setSaveFlash] = useState<string | null>(null)
+  const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'ai'>('general')
   useEffect(() => {
     if (saveFlash) {
       const t = setTimeout(() => setSaveFlash(null), 1800)
@@ -1541,229 +1542,267 @@ export default function App() {
           </div>
         )}
         {tab.tabType === 'settings' && (
-          <div className="settings-tab-content">
-            <h3>Settings</h3>
-            <div className="form-group">
-              <label>Window Opacity: {Math.round(opacity * 100)}%</label>
-              <input
-                type="range"
-                min="20"
-                max="100"
-                value={Math.round(opacity * 100)}
-                onChange={(e) => setOpacity(Number(e.target.value) / 100)}
-                style={{ width: '100%', accentColor: '#007acc' }}
-              />
+          <div className="settings-layout">
+            <div className="settings-sidebar">
+              <button
+                className={'settings-nav-item' + (settingsActiveTab === 'general' ? ' active' : '')}
+                onClick={() => setSettingsActiveTab('general')}
+              >
+                <Icon name="settings" size={15} />
+                General
+              </button>
+              <button
+                className={'settings-nav-item' + (settingsActiveTab === 'ai' ? ' active' : '')}
+                onClick={() => setSettingsActiveTab('ai')}
+              >
+                <Icon name="sparkles" size={15} />
+                AI Assistant
+              </button>
             </div>
-            <div className="form-group" style={{ marginTop: 16 }}>
-              <label htmlFor="maxScrollback">Max Scrollback Lines: {maxScrollback}</label>
-              <input
-                id="maxScrollback"
-                type="number"
-                min="100"
-                max="100000"
-                step="100"
-                value={maxScrollback}
-                onChange={(e) => {
-                  const v = Math.max(100, Math.min(100000, Number(e.target.value) || 5000))
-                  setMaxScrollback(v)
-                  try { localStorage.setItem('wrolp-maxScrollback', String(v)) } catch {}
-                }}
-                style={{ width: '120px', marginLeft: 10 }}
-              />
-              <span style={{ fontSize: 11, color: '#888', marginLeft: 8 }}>
-                (applies to new tabs)
-              </span>
-            </div>
-            <div className="form-group" style={{ marginTop: 16 }}>
-              <label>Updates</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
-                <button
-                  className="btn-primary"
-                  onClick={handleCheckUpdate}
-                  disabled={
-                    updateState === 'checking' ||
-                    updateState === 'downloading' ||
-                    updateState === 'installing'
-                  }
-                  style={{ fontSize: '12px', padding: '4px 12px' }}
-                >
-                  {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
-                </button>
-                {updateInfo ? (
-                  <span style={{ color: '#4ec9b0' }}>New version v{updateInfo.version}</span>
-                ) : updateInfo === null && updateState !== 'checking' ? (
-                  <span>Up to date</span>
-                ) : null}
-              </div>
-              {updateInfo && (
-                <div style={{ marginTop: 8 }}>
-                  <button
-                    className="btn-primary"
-                    onClick={handleDownloadUpdate}
-                    disabled={updateState !== 'idle'}
-                    style={{ fontSize: '12px', padding: '4px 12px' }}
-                  >
-                    {updateState === 'downloading'
-                      ? 'Downloading...'
-                      : updateState === 'installing'
-                        ? 'Installing...'
-                        : 'Download & Install'}
-                  </button>
+
+            <div className="settings-content">
+              {settingsActiveTab === 'general' && (
+                <div className="settings-pane">
+                  <div className="settings-pane-header">
+                    <h3>General</h3>
+                    <p>Application appearance and update preferences.</p>
+                  </div>
+
+                  <div className="settings-card">
+                    <div className="settings-fields">
+                      <div className="settings-field">
+                        <label className="settings-label">Window Opacity</label>
+                        <input
+                          type="range"
+                          min="20"
+                          max="100"
+                          value={Math.round(opacity * 100)}
+                          onChange={(e) => setOpacity(Number(e.target.value) / 100)}
+                          className="settings-range"
+                        />
+                        <span className="settings-help">Current: {Math.round(opacity * 100)}%</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label htmlFor="maxScrollback" className="settings-label">Max Scrollback Lines</label>
+                        <input
+                          id="maxScrollback"
+                          type="number"
+                          min="100"
+                          max="100000"
+                          step="100"
+                          className="settings-input"
+                          style={{ width: '140px' }}
+                          value={maxScrollback}
+                          onChange={(e) => {
+                            const v = Math.max(100, Math.min(100000, Number(e.target.value) || 5000))
+                            setMaxScrollback(v)
+                            try { localStorage.setItem('wrolp-maxScrollback', String(v)) } catch {}
+                          }}
+                        />
+                        <span className="settings-help">Applies to new tabs.</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label className="settings-label">Updates</label>
+                        <div className="settings-update-row">
+                          <button
+                            className="settings-save-btn"
+                            onClick={handleCheckUpdate}
+                            disabled={
+                              updateState === 'checking' ||
+                              updateState === 'downloading' ||
+                              updateState === 'installing'
+                            }
+                          >
+                            {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
+                          </button>
+                          {updateInfo ? (
+                            <span className="settings-update-status">New version v{updateInfo.version}</span>
+                          ) : updateInfo === null && updateState !== 'checking' ? (
+                            <span className="settings-update-status">Up to date</span>
+                          ) : null}
+                        </div>
+                        {updateInfo && (
+                          <div className="settings-update-row" style={{ marginTop: 10 }}>
+                            <button
+                              className="settings-save-btn"
+                              onClick={handleDownloadUpdate}
+                              disabled={updateState !== 'idle'}
+                            >
+                              {updateState === 'downloading'
+                                ? 'Downloading...'
+                                : updateState === 'installing'
+                                  ? 'Installing...'
+                                  : 'Download & Install'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {appVersion && (
+                    <div className="settings-card">
+                      <div className="settings-card-header">
+                        <div className="settings-card-icon">
+                          <Icon name="link" size={16} />
+                        </div>
+                        <div>
+                          <h3 className="settings-card-title">About</h3>
+                          <p className="settings-card-sub">Build and repository information</p>
+                        </div>
+                      </div>
+                      <div className="app-version-info">
+                        <div className="app-version-row">
+                          <span className="app-version-label">Version</span>
+                          <span className="app-version-value">{appVersion.version}</span>
+                          {appVersion.gitDirty && <span className="app-version-dirty">(dirty)</span>}
+                        </div>
+                        <div className="app-version-row">
+                          <span className="app-version-label">Git Commit</span>
+                          <span className="app-version-value" title={appVersion.gitCommit}>
+                            {appVersion.gitHash}
+                          </span>
+                        </div>
+                        <div className="app-version-row">
+                          <span className="app-version-label">Branch</span>
+                          <span className="app-version-value">{appVersion.gitBranch}</span>
+                        </div>
+                        <div className="app-version-row">
+                          <span className="app-version-label">Build Time</span>
+                          <span className="app-version-value">
+                            {appVersion.buildTime !== 'unknown'
+                              ? new Date(Number(appVersion.buildTime) * 1000).toLocaleString()
+                              : 'unknown'}
+                          </span>
+                        </div>
+                        <div style={{ marginTop: 10 }}>
+                          <button
+                            className="app-version-link"
+                            onClick={() => open(appVersion.repoUrl)}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ verticalAlign: 'middle', marginRight: 4 }}>
+                              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                            </svg>
+                            GitHub Repository
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {settingsActiveTab === 'ai' && (
+                <div className="settings-pane">
+                  <div className="settings-pane-header">
+                    <h3>AI Assistant</h3>
+                    <p>OpenAI-compatible chat with built-in tools.</p>
+                  </div>
+
+                  <div className="settings-card ai-settings-card">
+                    <p className="settings-card-desc">
+                      Works with OpenAI, Anthropic (via compatible proxy), Ollama, vLLM, and any
+                      OpenAI-compatible endpoint. The assistant can run read-only tools on your
+                      connected servers to give accurate answers.
+                    </p>
+
+                    <div className="settings-fields">
+                      <div className="settings-field">
+                        <label htmlFor="ai-endpoint" className="settings-label">
+                          <Icon name="link" size={13} /> API Endpoint
+                        </label>
+                        <input
+                          id="ai-endpoint"
+                          type="text"
+                          className="settings-input"
+                          value={aiConfig?.endpoint || 'https://api.openai.com/v1'}
+                          onChange={(e) => setAiConfig((prev) => prev ? { ...prev, endpoint: e.target.value } : null)}
+                          placeholder="https://api.openai.com/v1"
+                        />
+                        <span className="settings-help">Base URL including the <code>/v1</code> path.</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label htmlFor="ai-key" className="settings-label">
+                          <Icon name="lock" size={13} /> API Key
+                        </label>
+                        <div className="settings-input-with-btn">
+                          <input
+                            id="ai-key"
+                            type={aiShowKey ? 'text' : 'password'}
+                            className="settings-input"
+                            value={aiApiKeyInput}
+                            onChange={(e) => setAiApiKeyInput(e.target.value)}
+                            placeholder="sk-..."
+                            autoComplete="off"
+                          />
+                          <button
+                            type="button"
+                            className="settings-icon-btn"
+                            onClick={() => setAiShowKey(!aiShowKey)}
+                            title={aiShowKey ? 'Hide' : 'Show'}
+                          >
+                            <Icon name={aiShowKey ? 'eyeOff' : 'eye'} size={15} />
+                          </button>
+                        </div>
+                        <span className="settings-help">Stored encrypted locally; never sent anywhere except your endpoint.</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label htmlFor="ai-model" className="settings-label">
+                          <Icon name="terminal" size={13} /> Model
+                        </label>
+                        <input
+                          id="ai-model"
+                          type="text"
+                          className="settings-input"
+                          value={aiConfig?.model || 'gpt-4o'}
+                          onChange={(e) => setAiConfig((prev) => prev ? { ...prev, model: e.target.value } : null)}
+                          placeholder="gpt-4o"
+                        />
+                        <span className="settings-help">e.g. gpt-4o, gpt-4o-mini, claude-3-5-sonnet, llama3.1:70b.</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label htmlFor="ai-system-prompt" className="settings-label">
+                          <Icon name="edit" size={13} /> System Prompt
+                        </label>
+                        <textarea
+                          id="ai-system-prompt"
+                          className="settings-input settings-textarea"
+                          value={aiConfig?.systemPrompt || ''}
+                          onChange={(e) => setAiConfig((prev) => prev ? { ...prev, systemPrompt: e.target.value } : null)}
+                          rows={3}
+                        />
+                        <span className="settings-help">Optional instructions that shape the assistant's behavior.</span>
+                      </div>
+                    </div>
+
+                    <div className="settings-actions">
+                      <button
+                        className="settings-save-btn"
+                        onClick={async () => {
+                          if (!aiConfig) return
+                          try {
+                            const keyEnc = await encryptApiKey(aiApiKeyInput)
+                            const toSave = { ...aiConfig, apiKeyEnc: keyEnc }
+                            await saveAiConfig(toSave)
+                            setAiConfig(toSave)
+                            setSaveFlash('ai')
+                          } catch (e) {
+                            alert('Failed to save: ' + String(e))
+                          }
+                        }}
+                      >
+                        {saveFlash === 'ai' ? 'Saved ✓' : 'Save AI Settings'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
-            {/* AI Configuration */}
-            <div className="settings-card ai-settings-card">
-              <div className="settings-card-header">
-                <div className="settings-card-icon">
-                  <Icon name="sparkles" size={18} />
-                </div>
-                <div>
-                  <h3 className="settings-card-title">AI Assistant</h3>
-                  <p className="settings-card-sub">OpenAI-compatible chat with built-in tools</p>
-                </div>
-              </div>
-
-              <p className="settings-card-desc">
-                Works with OpenAI, Anthropic (via compatible proxy), Ollama, vLLM, and any
-                OpenAI-compatible endpoint. The assistant can run read-only tools on your
-                connected servers to give accurate answers.
-              </p>
-
-              <div className="settings-fields">
-                <div className="settings-field">
-                  <label htmlFor="ai-endpoint" className="settings-label">
-                    <Icon name="link" size={13} /> API Endpoint
-                  </label>
-                  <input
-                    id="ai-endpoint"
-                    type="text"
-                    className="settings-input"
-                    value={aiConfig?.endpoint || 'https://api.openai.com/v1'}
-                    onChange={(e) => setAiConfig((prev) => prev ? { ...prev, endpoint: e.target.value } : null)}
-                    placeholder="https://api.openai.com/v1"
-                  />
-                  <span className="settings-help">Base URL including the <code>/v1</code> path.</span>
-                </div>
-
-                <div className="settings-field">
-                  <label htmlFor="ai-key" className="settings-label">
-                    <Icon name="lock" size={13} /> API Key
-                  </label>
-                  <div className="settings-input-with-btn">
-                    <input
-                      id="ai-key"
-                      type={aiShowKey ? 'text' : 'password'}
-                      className="settings-input"
-                      value={aiApiKeyInput}
-                      onChange={(e) => setAiApiKeyInput(e.target.value)}
-                      placeholder="sk-..."
-                      autoComplete="off"
-                    />
-                    <button
-                      type="button"
-                      className="settings-icon-btn"
-                      onClick={() => setAiShowKey(!aiShowKey)}
-                      title={aiShowKey ? 'Hide' : 'Show'}
-                    >
-                      <Icon name={aiShowKey ? 'eyeOff' : 'eye'} size={15} />
-                    </button>
-                  </div>
-                  <span className="settings-help">Stored encrypted locally; never sent anywhere except your endpoint.</span>
-                </div>
-
-                <div className="settings-field">
-                  <label htmlFor="ai-model" className="settings-label">
-                    <Icon name="terminal" size={13} /> Model
-                  </label>
-                  <input
-                    id="ai-model"
-                    type="text"
-                    className="settings-input"
-                    value={aiConfig?.model || 'gpt-4o'}
-                    onChange={(e) => setAiConfig((prev) => prev ? { ...prev, model: e.target.value } : null)}
-                    placeholder="gpt-4o"
-                  />
-                  <span className="settings-help">e.g. gpt-4o, gpt-4o-mini, claude-3-5-sonnet, llama3.1:70b.</span>
-                </div>
-
-                <div className="settings-field">
-                  <label htmlFor="ai-system-prompt" className="settings-label">
-                    <Icon name="edit" size={13} /> System Prompt
-                  </label>
-                  <textarea
-                    id="ai-system-prompt"
-                    className="settings-input settings-textarea"
-                    value={aiConfig?.systemPrompt || ''}
-                    onChange={(e) => setAiConfig((prev) => prev ? { ...prev, systemPrompt: e.target.value } : null)}
-                    rows={3}
-                  />
-                  <span className="settings-help">Optional instructions that shape the assistant's behavior.</span>
-                </div>
-              </div>
-
-              <div className="settings-actions">
-                <button
-                  className="settings-save-btn"
-                  onClick={async () => {
-                    if (!aiConfig) return
-                    try {
-                      const keyEnc = await encryptApiKey(aiApiKeyInput)
-                      const toSave = { ...aiConfig, apiKeyEnc: keyEnc }
-                      await saveAiConfig(toSave)
-                      setAiConfig(toSave)
-                      setSaveFlash('ai')
-                    } catch (e) {
-                      alert('Failed to save: ' + String(e))
-                    }
-                  }}
-                >
-                  {saveFlash === 'ai' ? 'Saved ✓' : 'Save AI Settings'}
-                </button>
-              </div>
-            </div>
-
-            {appVersion && (
-              <div className="form-group" style={{ marginTop: 20, borderTop: '1px solid #333', paddingTop: 16 }}>
-                <label>About</label>
-                <div className="app-version-info">
-                  <div className="app-version-row">
-                    <span className="app-version-label">Version</span>
-                    <span className="app-version-value">{appVersion.version}</span>
-                    {appVersion.gitDirty && <span className="app-version-dirty">(dirty)</span>}
-                  </div>
-                  <div className="app-version-row">
-                    <span className="app-version-label">Git Commit</span>
-                    <span className="app-version-value" title={appVersion.gitCommit}>
-                      {appVersion.gitHash}
-                    </span>
-                  </div>
-                  <div className="app-version-row">
-                    <span className="app-version-label">Branch</span>
-                    <span className="app-version-value">{appVersion.gitBranch}</span>
-                  </div>
-                  <div className="app-version-row">
-                    <span className="app-version-label">Build Time</span>
-                    <span className="app-version-value">
-                      {appVersion.buildTime !== 'unknown'
-                        ? new Date(Number(appVersion.buildTime) * 1000).toLocaleString()
-                        : 'unknown'}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 10 }}>
-                    <button
-                      className="app-version-link"
-                      onClick={() => open(appVersion.repoUrl)}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ verticalAlign: 'middle', marginRight: 4 }}>
-                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-                      </svg>
-                      GitHub Repository
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
         {tab.tabType === 'aiChat' && aiConfig && (
