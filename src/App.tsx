@@ -376,6 +376,26 @@ export default function App() {
   // The profile currently being edited / used (falls back to first profile).
   const activeProfile =
     aiConfig?.profiles.find((p) => p.id === aiConfig.activeId) ?? aiConfig?.profiles[0] ?? null
+
+  // Reload the key input from the active profile's encrypted key whenever the
+  // active profile changes, so each endpoint keeps and shows its own key.
+  useEffect(() => {
+    let cancelled = false
+    if (activeProfile?.apiKeyEnc) {
+      decryptApiKey(activeProfile.apiKeyEnc)
+        .then((dec) => {
+          if (!cancelled) setAiApiKeyInput(dec)
+        })
+        .catch(() => {
+          if (!cancelled) setAiApiKeyInput('')
+        })
+    } else {
+      setAiApiKeyInput('')
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [activeProfile?.id])
   const [maxScrollback, setMaxScrollback] = useState(() => {
     try {
       const v = localStorage.getItem('wrolp-maxScrollback')
