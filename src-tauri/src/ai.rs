@@ -12,9 +12,14 @@ use std::path::PathBuf;
 
 // ---- AI Config ----
 
+/// A single AI provider endpoint configuration (a "profile").
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AiConfig {
+pub struct AiEndpointProfile {
+    /// Stable unique id (UUID) used to reference / activate this profile.
+    pub id: String,
+    /// User-facing label shown in the settings profile list.
+    pub name: String,
     /// API endpoint base URL (e.g. "https://api.openai.com/v1")
     pub endpoint: String,
     /// AES-GCM encrypted API key blob (base64 nonce || ciphertext), or empty if
@@ -34,13 +39,57 @@ fn default_system_prompt() -> String {
      configurations. Be concise and practical.".to_string()
 }
 
-impl AiConfig {
-    pub fn default_config() -> Self {
+impl AiEndpointProfile {
+    pub fn new(name: String, endpoint: String) -> Self {
         Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            endpoint,
+            api_key_enc: String::new(),
+            model: "gpt-4o".to_string(),
+            system_prompt: default_system_prompt(),
+        }
+    }
+}
+
+/// Container holding all saved endpoint profiles plus which one is active.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConfig {
+    pub profiles: Vec<AiEndpointProfile>,
+    /// Id of the active profile. If empty/invalid, the first profile is used.
+    #[serde(default)]
+    pub active_id: String,
+}
+
+impl AiConfig {
+    /// The profile currently selected for use, or `None` if there are no
+    /// profiles at all.
+    pub fn active_profile(&self) -> Option<&AiEndpointProfile> {
+        if self.profiles.is_empty() {
+            return None
+        }
+        if !self.active_id.is_empty() {
+            if let Some(p) = self.profiles.iter().find(|p| p.id == self.active_id) {
+                return Some(p)
+            }
+        }
+        self.profiles.first()
+    }
+
+    pub fn default_config() -> Self {
+        let profile = AiEndpointProfile {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "Default".to_string(),
             endpoint: "https://api.openai.com/v1".to_string(),
             api_key_enc: String::new(),
             model: "gpt-4o".to_string(),
             system_prompt: default_system_prompt(),
+        };
+        let active_id = profile.id.clone();
+        Self {
+            profiles: vec![profile],
+            active_id,
         }
     }
 }
@@ -94,11 +143,51 @@ pub fn load_ai_config() -> Result<AiConfig, String> {
     let path = ai_config_path().ok_or_else(|| "cannot resolve config dir".to_string())?;
     if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        let config: AiConfig = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-        Ok(config)
+        // Try the new multi-profile format first.
+        match serde_json::from_str::<AiConfig>(&content) {
+            Ok(config) => {
+                if config.profiles.is_empty() {
+                    return Ok(AiConfig::default_config())
+                }
+                Ok(config)
+            }
+            // Migrate legacy single-endpoint format ({ endpoint, apiKeyEnc, model, systemPrompt }).
+            Err(_) => match serde_json::from_str::<LegacyAiConfig>(&content) {
+                Ok(legacy) => {
+                    let profile = AiEndpointProfile {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name: "Default".to_string(),
+                        endpoint: legacy.endpoint,
+                        api_key_enc: legacy.api_key_enc,
+                        model: legacy.model,
+                        system_prompt: legacy.system_prompt,
+                    };
+                    let active_id = profile.id.clone();
+                    Ok(AiConfig {
+                        profiles: vec![profile],
+                        active_id,
+                    })
+                }
+                Err(e) => Err(format!("Failed to parse AI config: {}", e)),
+            },
+        }
     } else {
         Ok(AiConfig::default_config())
     }
+}
+
+/// Legacy (pre multi-profile) single-endpoint config shape, used only for
+/// one-time migration of existing `ai_config.json` files.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyAiConfig {
+    endpoint: String,
+    #[serde(default)]
+    api_key_enc: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default = "default_system_prompt")]
+    system_prompt: String,
 }
 
 pub fn save_ai_config(config: &AiConfig) -> Result<(), String> {
@@ -128,7 +217,9 @@ struct OpenAiRequest {
 #[derive(Serialize)]
 struct OpenAiMessage {
     role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // NOTE: must NOT skip when None. Models like gpt-oss reject a missing
+    // `content` field and require it to be an explicit string or `null`
+    // (an assistant message carrying tool_calls uses `null`).
     content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OpenAiToolCall>>,
@@ -384,10 +475,63 @@ fn chat_url(endpoint: &str) -> String {
     format!("{}/chat/completions", endpoint.trim_end_matches('/'))
 }
 
+/// Normalize an endpoint base URL and append `/models` (handling a trailing
+/// `/v1`, `/` or full path gracefully).
+fn models_url(endpoint: &str) -> String {
+    let base = endpoint.trim_end_matches('/');
+    format!("{}/models", base)
+}
+
+/// Query a provider's `/v1/models` (or `/models`) endpoint and return the list
+/// of available model ids. The API key is decrypted from `api_key_enc`.
+pub async fn fetch_models(api_key_enc: &str, endpoint: &str) -> Result<Vec<String>, String> {
+    let api_key = if api_key_enc.is_empty() {
+        String::new()
+    } else {
+        crate::vault::open_secret(api_key_enc)
+            .map_err(|e| format!("Failed to decrypt API key: {}", e))?
+    };
+    let url = models_url(endpoint);
+    let client = reqwest::Client::new();
+    let mut builder = client.get(&url).header("Content-Type", "application/json");
+    if !api_key.is_empty() {
+        builder = builder.header("Authorization", format!("Bearer {}", api_key));
+    }
+    let response = builder.send().await.map_err(|e| format!("Models request failed: {}", e))?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Models endpoint returned {}: {}", status, body));
+    }
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse models response: {}", e))?;
+    let mut models: Vec<String> = Vec::new();
+    if let Some(arr) = body.get("data").and_then(|v| v.as_array()) {
+        for m in arr {
+            if let Some(id) = m.get("id").and_then(|v| v.as_str()) {
+                models.push(id.to_string());
+            }
+        }
+    }
+    if models.is_empty() {
+        // Some providers return a bare array instead of { data: [...] }.
+        if let Some(arr) = body.as_array() {
+            for m in arr {
+                if let Some(id) = m.get("id").and_then(|v| v.as_str()) {
+                    models.push(id.to_string());
+                }
+            }
+        }
+    }
+    Ok(models)
+}
+
 // ---- Non-streaming chat ----
 
 /// Send a non-streaming chat request. Returns the full assistant response text.
-pub async fn ai_chat_sync(config: &AiConfig, messages: &[AiMessage]) -> Result<String, String> {
+pub async fn ai_chat_sync(config: &AiEndpointProfile, messages: &[AiMessage]) -> Result<String, String> {
     let api_key = crate::vault::open_secret(&config.api_key_enc)
         .map_err(|e| format!("Failed to decrypt API key: {}", e))?;
 
@@ -447,7 +591,7 @@ pub async fn ai_chat_sync(config: &AiConfig, messages: &[AiMessage]) -> Result<S
 /// received from the SSE stream. Returns an error if the HTTP request or
 /// stream fails.
 pub async fn execute_streaming_chat(
-    config: &AiConfig,
+    config: &AiEndpointProfile,
     messages: &[AiMessage],
     mut on_chunk: impl FnMut(String),
 ) -> Result<(), String> {
@@ -554,16 +698,19 @@ fn to_openai_messages(messages: &[AiMessage]) -> Vec<OpenAiMessage> {
                     })
                     .collect::<Vec<_>>()
             });
+            let has_tool_calls = tool_calls.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
             OpenAiMessage {
                 role: m.role.clone(),
+                // When an assistant message carries tool_calls, `content` is None
+                // and will be serialized as the explicit `null` that OpenAI-style
+                // models (incl. gpt-oss) require. Regular text messages keep their
+                // content string.
                 content: m.content.clone(),
-                tool_calls: if tool_calls.as_ref().map(|v| v.is_empty()).unwrap_or(true) {
-                    None
-                } else {
-                    tool_calls
-                },
+                tool_calls: if has_tool_calls { tool_calls } else { None },
                 tool_call_id: m.tool_call_id.clone(),
-                name: m.name.clone(),
+                // `role: "tool"` messages must not carry `name` (that field is only
+                // for the legacy `role: "function"` format); some endpoints reject it.
+                name: if m.role == "tool" { None } else { m.name.clone() },
             }
         })
         .collect()
@@ -581,7 +728,7 @@ fn to_openai_messages(messages: &[AiMessage]) -> Vec<OpenAiMessage> {
 /// Returns the final assistant message (with any tool_calls cleared) so the
 /// caller can persist it to history.
 pub async fn run_agent_stream(
-    config: &AiConfig,
+    config: &AiEndpointProfile,
     initial_messages: Vec<AiMessage>,
     mut on_chunk: impl FnMut(String),
     mut on_tool: impl FnMut(ToolCallEvent),

@@ -4593,3 +4593,141 @@ input[type='password']::-ms-clear {
       background: linear-gradient(135deg, $accent, color.adjust($accent, $lightness: 14%));
     }
   }
+
+  .ai-profile-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .ai-profile-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 11px;
+    border: 1px solid $border;
+    border-radius: 8px;
+    background: $bg-primary;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+
+    &:hover {
+      border-color: rgba($accent, 0.45);
+    }
+
+    &.active {
+      border-color: $accent;
+      background: rgba($accent, 0.1);
+    }
+  }
+
+  .ai-profile-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .ai-profile-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: $text-primary;
+  }
+
+  .ai-profile-endpoint {
+    font-size: 11px;
+    color: $text-dim;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 360px;
+  }
+
+  .ai-profile-del {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: $text-muted;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+
+    &:hover:not(:disabled) {
+      background: rgba($danger, 0.16);
+      color: $danger;
+    }
+
+    &:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+  }
+
+  .ai-profile-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 7px 12px;
+    border: 1px dashed rgba($accent, 0.5);
+    border-radius: 8px;
+    background: transparent;
+    color: $accent;
+    font-size: 12.5px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s;
+
+    &:hover {
+      background: rgba($accent, 0.1);
+    }
+
+    svg {
+      flex-shrink: 0;
+    }
+  }
+
+  .settings-model-fetch {
+    margin-top: 8px;
+    align-self: flex-start;
+    padding: 6px 12px;
+    border: 1px solid $border;
+    border-radius: 7px;
+    background: $bg-primary;
+    color: $text-secondary;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+
+    &:hover:not(:disabled) {
+      border-color: $accent;
+      color: $text-primary;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  .settings-checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: $text-secondary;
+    cursor: pointer;
+    user-select: none;
+
+    input {
+      cursor: pointer;
+    }
+  }

@@ -2265,6 +2265,14 @@ pub async fn decrypt_api_key(encrypted: String) -> Result<String, String> {
     crate::vault::open_secret(&encrypted)
 }
 
+/// Fetch the list of model ids available from an AI provider's `/models`
+/// endpoint. `api_key_enc` is the encrypted key blob (empty for keyless
+/// endpoints). Used by the settings UI to populate the model dropdown.
+#[tauri::command]
+pub async fn list_ai_models(api_key_enc: String, endpoint: String) -> Result<Vec<String>, String> {
+    ai::fetch_models(&api_key_enc, &endpoint).await
+}
+
 /// Send a non-streaming AI chat request. Returns the full assistant response.
 #[tauri::command]
 pub async fn ai_chat(
@@ -2277,7 +2285,10 @@ pub async fn ai_chat(
         .unwrap()
         .clone()
         .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
-    ai::ai_chat_sync(&config, &messages).await
+    let profile = config
+        .active_profile()
+        .ok_or_else(|| "No AI endpoint configured.".to_string())?;
+    ai::ai_chat_sync(profile, &messages).await
 }
 
 /// Start a streaming AI chat. Spawns a background task that reads the SSE
@@ -2311,12 +2322,17 @@ pub async fn start_ai_chat_stream(
         (cfg, cid)
     };
 
+    let profile = config
+        .active_profile()
+        .ok_or_else(|| "No AI endpoint configured.".to_string())?
+        .clone();
+
     let app_clone = app.clone();
     let cid = chat_id.clone();
 
     tauri::async_runtime::spawn(async move {
         let result =
-            ai::execute_streaming_chat(&config, &messages, |chunk| {
+            ai::execute_streaming_chat(&profile, &messages, |chunk| {
                 let state = app_clone.state::<AppState>();
                 let mut guard = state.ai_chat_buffers.lock().unwrap();
                 if let Some(cs) = guard.get_mut(&cid) {
@@ -2394,12 +2410,17 @@ pub async fn start_ai_agent(
         (cfg, cid)
     };
 
+    let profile = config
+        .active_profile()
+        .ok_or_else(|| "No AI endpoint configured.".to_string())?
+        .clone();
+
     let app_clone = app.clone();
     let cid = chat_id.clone();
 
     tauri::async_runtime::spawn(async move {
         let result = crate::ai::run_agent_stream(
-            &config,
+            &profile,
             messages,
             |chunk| {
                 let state = app_clone.state::<AppState>();

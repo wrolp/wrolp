@@ -255,11 +255,27 @@ export interface AppVersion {
 
 // ===== AI Chat =====
 
-export interface AiConfig {
+/** A single AI provider endpoint configuration ("profile"). */
+export interface AiEndpointProfile {
+  /** Stable unique id (UUID) referencing this profile. */
+  id: string
+  /** User-facing label shown in the settings profile list. */
+  name: string
+  /** API endpoint base URL (e.g. "https://api.openai.com/v1"). */
   endpoint: string
+  /** AES-GCM encrypted API key blob, or empty if no key set. */
   apiKeyEnc: string
+  /** Model name (e.g. "gpt-4o"). */
   model: string
+  /** System prompt for the AI assistant. */
   systemPrompt: string
+}
+
+/** Container holding all saved endpoint profiles plus the active one. */
+export interface AiConfig {
+  profiles: AiEndpointProfile[]
+  /** Id of the active profile. Falls back to the first profile if invalid. */
+  activeId: string
 }
 
 export interface AiMessage {

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import type { AiConfig, AiMessage, ToolCallEvent } from '../types'
+import type { AiEndpointProfile, AiMessage, ToolCallEvent } from '../types'
 import { startAiAgent, pollAiChunks } from '../commands'
 import { Icon } from './Icon'
 
@@ -10,7 +10,7 @@ interface ChatMessage {
 }
 
 interface AiChatPanelProps {
-  config: AiConfig
+  config: AiEndpointProfile
   /** Text to auto-send as initial user message (e.g. terminal selection). */
   initialContext?: string | null
   /** Called when initialContext has been consumed. */

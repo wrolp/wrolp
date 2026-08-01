@@ -352,6 +352,10 @@ export async function decryptApiKey(encrypted: string): Promise<string> {
   return await invoke<string>('decrypt_api_key', { encrypted })
 }
 
+export async function listAiModels(apiKeyEnc: string, endpoint: string): Promise<string[]> {
+  return await invoke<string[]>('list_ai_models', { apiKeyEnc, endpoint })
+}
+
 export async function aiChat(messages: AiMessage[]): Promise<string> {
   return await invoke<string>('ai_chat', { messages })
 }

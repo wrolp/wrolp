@@ -215,6 +215,7 @@ pub fn run() {
       commands::save_ai_config,
       commands::encrypt_api_key,
       commands::decrypt_api_key,
+      commands::list_ai_models,
       commands::ai_chat,
       commands::start_ai_chat_stream,
       commands::poll_ai_chunks,
