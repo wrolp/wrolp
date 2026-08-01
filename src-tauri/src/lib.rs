@@ -218,6 +218,7 @@ pub fn run() {
       commands::ai_chat,
       commands::start_ai_chat_stream,
       commands::poll_ai_chunks,
+      commands::start_ai_agent,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

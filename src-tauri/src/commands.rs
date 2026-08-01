@@ -2305,6 +2305,7 @@ pub async fn start_ai_chat_stream(
                 chunks: Vec::new(),
                 done: false,
                 error: None,
+                tool_events: Vec::new(),
             },
         );
         (cfg, cid)
@@ -2343,22 +2344,259 @@ pub async fn start_ai_chat_stream(
 pub async fn poll_ai_chunks(
     state: tauri::State<'_, AppState>,
     chat_id: String,
-) -> Result<Option<(String, bool, Option<String>)>, String> {
+) -> Result<Option<(String, bool, Option<String>, Vec<crate::ai::ToolCallEvent>)>, String> {
     let mut guard = state.ai_chat_buffers.lock().unwrap();
     match guard.get_mut(&chat_id) {
         Some(cs) => {
-            if cs.chunks.is_empty() && !cs.done {
-                return Ok(Some((String::new(), false, None)));
+            if cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
+                return Ok(Some((String::new(), false, None, Vec::new())));
             }
             let new_text: String = cs.chunks.drain(..).collect();
             let done = cs.done;
             let error = cs.error.clone();
+            let tool_events = std::mem::take(&mut cs.tool_events);
             if done {
                 guard.remove(&chat_id);
             }
-            Ok(Some((new_text, done, error)))
+            Ok(Some((new_text, done, error, tool_events)))
         }
         None => Ok(None),
     }
+}
+
+/// Start an AI chat that may call tools (agent loop). Streams assistant text
+/// via the same `ai_chat_buffers` polling mechanism, and emits tool-call events
+/// into `AiChatState.tool_events` for the frontend to render tool cards.
+#[tauri::command]
+pub async fn start_ai_agent(
+    app: tauri::AppHandle,
+    messages: Vec<crate::ai::AiMessage>,
+) -> Result<String, String> {
+    let (config, chat_id) = {
+        let state = app.state::<AppState>();
+        let cfg = state
+            .ai_config
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
+        let cid = Uuid::new_v4().to_string();
+        state.ai_chat_buffers.lock().unwrap().insert(
+            cid.clone(),
+            crate::ai::AiChatState {
+                chat_id: cid.clone(),
+                chunks: Vec::new(),
+                done: false,
+                error: None,
+                tool_events: Vec::new(),
+            },
+        );
+        (cfg, cid)
+    };
+
+    let app_clone = app.clone();
+    let cid = chat_id.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let result = crate::ai::run_agent_stream(
+            &config,
+            messages,
+            |chunk| {
+                let state = app_clone.state::<AppState>();
+                let mut guard = state.ai_chat_buffers.lock().unwrap();
+                if let Some(cs) = guard.get_mut(&cid) {
+                    cs.chunks.push(chunk);
+                }
+            },
+            |event| {
+                let state = app_clone.state::<AppState>();
+                let mut guard = state.ai_chat_buffers.lock().unwrap();
+                if let Some(cs) = guard.get_mut(&cid) {
+                    cs.tool_events.push(event);
+                }
+            },
+            |calls| -> futures_util::future::BoxFuture<'static, Vec<crate::ai::ToolResult>> {
+                let app = app_clone.clone();
+                Box::pin(async move { execute_ai_tools(&app, calls).await })
+            },
+        )
+        .await;
+
+        let state = app_clone.state::<AppState>();
+        let mut guard = state.ai_chat_buffers.lock().unwrap();
+        if let Some(cs) = guard.get_mut(&cid) {
+            cs.done = true;
+            if let Err(e) = result {
+                cs.error = Some(e);
+            }
+        }
+    });
+
+    Ok(chat_id)
+}
+
+/// Dangerous command substrings rejected outright when executed through tools.
+fn is_dangerous_command(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+    const DANGEROUS: &[&str] = &[
+        "rm -rf /",
+        "mkfs",
+        "dd if=",
+        ":(){",
+        "shutdown",
+        "reboot",
+        "init 0",
+        "init 6",
+        "> /dev/sda",
+        "chmod -r 000",
+    ];
+    DANGEROUS.iter().any(|d| lower.contains(d))
+}
+
+/// Dangerous command substrings rejected outright when executed through tools.
+
+/// Execute a batch of tool calls (one agent round) using `AppState`.
+/// Returns `(tool_call_id, result_json)` pairs. Each result is a JSON string
+/// so the model can parse it; errors are embedded as `{"error": "..."}`.
+async fn execute_ai_tools(
+    app: &tauri::AppHandle,
+    calls: Vec<crate::ai::OpenAiToolCall>,
+) -> Vec<crate::ai::ToolResult> {
+    let state = app.state::<AppState>();
+    let mut results: Vec<crate::ai::ToolResult> = Vec::new();
+
+    for call in calls {
+        let result = execute_one_tool(&state, &call)
+            .await
+            .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string());
+        results.push((call.id, result));
+    }
+    results
+}
+
+async fn execute_one_tool(
+    state: &tauri::State<'_, AppState>,
+    call: &crate::ai::OpenAiToolCall,
+) -> Result<String, String> {
+    let args: serde_json::Value = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+    let tool = call.name.as_str();
+
+    let outcome: Result<String, String> = match tool {
+        "run_command" => {
+            let tab_id = args
+                .get("tabId")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'tabId'")? as u32;
+            let command = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'command'")?
+                .to_string();
+            if is_dangerous_command(&command) {
+                return Err("Command blocked by safety policy (destructive operation).".into());
+            }
+            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+            let output = crate::host_analysis::exec_on_handle(&*handle, &command).await?;
+            Ok(output)
+        }
+        "analyze_server" => {
+            let tab_id = args
+                .get("tabId")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'tabId'")? as u32;
+            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+            let analysis = crate::host_analysis::analyze_host(&*handle, tab_id).await?;
+            Ok(serde_json::to_string(&analysis).map_err(|e| e.to_string())?)
+        }
+        "list_directory" => {
+            let tab_id = args
+                .get("tabId")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'tabId'")? as u32;
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'path'")?
+                .to_string();
+            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+            let output = crate::host_analysis::exec_on_handle(
+                &*handle,
+                &format!("ls -la --time-style=long-iso {}", shell_quote_arg(&path)),
+            )
+            .await?;
+            Ok(output)
+        }
+        "read_file" => {
+            let tab_id = args
+                .get("tabId")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'tabId'")? as u32;
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'path'")?
+                .to_string();
+            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+            let output = crate::host_analysis::exec_on_handle(
+                &*handle,
+                // Truncate to 64KB to avoid huge payloads
+                &format!("head -c 65536 {}", shell_quote_arg(&path)),
+            )
+            .await?;
+            Ok(output)
+        }
+        "list_connections" => {
+            let connections = state.connections.lock().map_err(|e| e.to_string())?;
+            let slim: Vec<serde_json::Value> = connections
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "id": c.id,
+                        "name": c.name,
+                        "host": c.host,
+                        "port": c.port,
+                        "username": c.username,
+                        "group": c.group,
+                    })
+                })
+                .collect();
+            Ok(serde_json::to_string(&slim).map_err(|e| e.to_string())?)
+        }
+        "search_help" => {
+            let tab_id = args
+                .get("tabId")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing 'tabId'")? as u32;
+            let command = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing 'command'")?
+                .to_string();
+            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+            let help = crate::host_analysis::command_help(&*handle, &command).await?;
+            Ok(help)
+        }
+        other => Err(format!("Unknown tool: {}", other)),
+    };
+
+    match outcome {
+        Ok(text) => {
+            let truncated = if text.chars().count() > 16000 {
+                let mut s: String = text.chars().take(16000).collect();
+                s.push_str("\n... [truncated]");
+                s
+            } else {
+                text
+            };
+            Ok(serde_json::json!({ "output": truncated }).to_string())
+        }
+        Err(e) => Ok(serde_json::json!({ "error": e }).to_string()),
+    }
+}
+
+/// Minimal single-argument shell quoting for safe remote exec.
+fn shell_quote_arg(s: &str) -> String {
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{}'", escaped)
 }
 

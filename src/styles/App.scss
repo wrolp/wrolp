@@ -4021,6 +4021,81 @@ input[type='password']::-ms-clear {
     border-radius: 6px;
   }
 
+  // ---- Tool-call cards (agent mode) ----
+  .ai-tool-calls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 4px 0 8px;
+  }
+
+  .ai-tool-card {
+    border: 1px solid $border;
+    border-radius: 6px;
+    background: $bg-input;
+    overflow: hidden;
+    font-size: 12px;
+
+    &.ai-tool-executing {
+      border-color: color.adjust($accent, $lightness: 8%);
+    }
+
+    &.ai-tool-done {
+      border-color: rgba(#608b4e, 0.5);
+    }
+
+    &.ai-tool-error {
+      border-color: rgba(#f44747, 0.6);
+    }
+  }
+
+  .ai-tool-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    user-select: none;
+
+    &:hover {
+      background: $bg-hover;
+    }
+  }
+
+  .ai-tool-icon {
+    flex-shrink: 0;
+  }
+
+  .ai-tool-name {
+    flex: 1;
+    color: $text-primary;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ai-tool-status {
+    flex-shrink: 0;
+    color: $text-dim;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .ai-tool-result {
+    margin: 0;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.35);
+    color: $text-secondary;
+    font-family: $font-mono;
+    font-size: 11px;
+    max-height: 200px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-top: 1px solid $border;
+  }
+
   .ai-chat-input-area {
     display: flex;
     gap: 8px;

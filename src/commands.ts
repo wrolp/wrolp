@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, FileContent, TargetRef, ContainerInfo } from './types'
+import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, FileContent, TargetRef, ContainerInfo, ToolCallEvent } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -362,6 +362,10 @@ export async function startAiChatStream(messages: AiMessage[]): Promise<string> 
 
 export async function pollAiChunks(
   chatId: string,
-): Promise<[string, boolean, string | null] | null> {
-  return await invoke<[string, boolean, string | null] | null>('poll_ai_chunks', { chatId })
+): Promise<[string, boolean, string | null, ToolCallEvent[]] | null> {
+  return await invoke<[string, boolean, string | null, ToolCallEvent[]] | null>('poll_ai_chunks', { chatId })
+}
+
+export async function startAiAgent(messages: AiMessage[]): Promise<string> {
+  return await invoke<string>('start_ai_agent', { messages })
 }

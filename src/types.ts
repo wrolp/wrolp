@@ -263,8 +263,28 @@ export interface AiConfig {
 }
 
 export interface AiMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content?: string
+  toolCalls?: AiToolCall[]
+  toolCallId?: string
+  name?: string
+}
+
+export interface AiToolCall {
+  id: string
+  name: string
+  arguments: string
+}
+
+export type ToolCallStatus = 'pending' | 'executing' | 'done' | 'error' | 'denied'
+
+export interface ToolCallEvent {
+  id: string
+  name: string
+  arguments: string
+  status: ToolCallStatus
+  result?: string
+  error?: string
 }
 
 export interface AiChatChunk {

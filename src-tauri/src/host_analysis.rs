@@ -51,7 +51,7 @@ pub struct HostAnalysis {
 // Exec helper – run a command on an existing session handle
 // ---------------------------------------------------------------------------
 
-async fn exec_on_handle(
+pub async fn exec_on_handle(
   handle: &Handle<SshHandler>,
   command: &str,
 ) -> Result<String, String> {

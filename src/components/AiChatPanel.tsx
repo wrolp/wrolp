@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import type { AiConfig, AiMessage } from '../types'
-import { startAiChatStream, pollAiChunks } from '../commands'
+import type { AiConfig, AiMessage, ToolCallEvent } from '../types'
+import { startAiAgent, pollAiChunks } from '../commands'
 
 interface ChatMessage {
   id: string
@@ -22,12 +22,22 @@ function nextId(): string {
   return 'ai-msg-' + Date.now().toString(36) + '-' + (++_msgSeq).toString(36)
 }
 
+const TOOL_LABELS: Record<string, string> = {
+  run_command: 'Run command',
+  analyze_server: 'Analyze server',
+  list_directory: 'List directory',
+  read_file: 'Read file',
+  list_connections: 'List connections',
+  search_help: 'Search help',
+}
+
 export default function AiChatPanel({ config, initialContext, onContextConsumed }: AiChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamingText, setStreamingText] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [toolCalls, setToolCalls] = useState<ToolCallEvent[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pollRef = useRef<number>(0)
@@ -35,63 +45,70 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
   // Auto-scroll to bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingText])
+  }, [messages, streamingText, toolCalls])
 
-  // Auto-send initial context text when provided
-  const initialSentRef = useRef(false)
-  useEffect(() => {
-    if (initialContext && !initialSentRef.current) {
-      initialSentRef.current = true
-      // Build message and call handleSend logic directly
-      const askMsg: ChatMessage = {
-        id: nextId(),
-        role: 'user',
-        content: `Help me with this terminal output:\n\n\`\`\`\n${initialContext}\n\`\`\``,
+  // Merge incoming tool events into the displayed list (by id, latest status wins)
+  const mergeToolEvents = useCallback((incoming: ToolCallEvent[]) => {
+    if (incoming.length === 0) return
+    setToolCalls((prev) => {
+      const byId = new Map(prev.map((t) => [t.id, t]))
+      for (const ev of incoming) byId.set(ev.id, ev)
+      // Preserve first-seen order
+      const order = [...prev.map((t) => t.id), ...incoming.map((t) => t.id)]
+      const seen = new Set<string>()
+      const ordered: ToolCallEvent[] = []
+      for (const id of order) {
+        if (seen.has(id)) continue
+        seen.add(id)
+        if (byId.has(id)) ordered.push(byId.get(id)!)
       }
-      setMessages([askMsg])
+      return ordered
+    })
+  }, [])
+
+  // Run the agent loop (streaming text + tool calls)
+  const runAgent = useCallback(
+    (apiMessages: AiMessage[], userDisplay: string) => {
       setStreaming(true)
+      setStreamingText('')
+      setToolCalls([])
+      setError(null)
+      if (userDisplay) {
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: 'user', content: userDisplay },
+        ])
+      }
 
-      const apiMessages: AiMessage[] = [
-        { role: 'system' as const, content: config.systemPrompt },
-        { role: 'user' as const, content: askMsg.content },
-      ]
-
-      startAiChatStream(apiMessages)
+      startAiAgent(apiMessages)
         .then((chatId) => {
           let accumulated = ''
           const poll = () => {
             pollAiChunks(chatId).then((result) => {
               if (result === null) {
                 setStreaming(false)
-                if (accumulated) {
-                  setMessages((prev) => [
-                    ...prev,
-                    { id: nextId(), role: 'assistant', content: accumulated },
-                  ])
-                }
+                finalizeAssistant(accumulated)
                 return
               }
-              const [newText, done, err] = result
+              const [newText, done, err, events] = result
+              if (events && events.length) mergeToolEvents(events)
               if (newText) {
                 accumulated += newText
                 setStreamingText(accumulated)
               }
               if (done || err) {
                 setStreaming(false)
-                if (accumulated) {
-                  setMessages((prev) => [
-                    ...prev,
-                    { id: nextId(), role: 'assistant', content: accumulated },
-                  ])
-                }
-                if (err) setError(err)
+                finalizeAssistant(accumulated, err)
                 setStreamingText('')
+                if (err) setError(err)
                 return
               }
               pollRef.current = window.setTimeout(poll, 100)
             }).catch((e) => {
               setStreaming(false)
               setError(String(e))
+              finalizeAssistant(accumulated, String(e))
+              setStreamingText('')
             })
           }
           poll()
@@ -99,91 +116,48 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
         .catch((e) => {
           setStreaming(false)
           setError(String(e))
+          finalizeAssistant('', String(e))
         })
+    },
+    [mergeToolEvents],
+  )
 
+  const finalizeAssistant = useCallback((text: string, err?: string | null) => {
+    if (text) {
+      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: text }])
+    } else if (err) {
+      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Error: ' + err }])
+    }
+  }, [])
+
+  // Auto-send initial context text when provided
+  const initialSentRef = useRef(false)
+  useEffect(() => {
+    if (initialContext && !initialSentRef.current) {
+      initialSentRef.current = true
+      const askMsg = `Help me with this terminal output:\n\n\`\`\`\n${initialContext}\n\`\`\``
+      const apiMessages: AiMessage[] = [
+        { role: 'system' as const, content: config.systemPrompt },
+        { role: 'user' as const, content: askMsg },
+      ]
+      runAgent(apiMessages, askMsg)
       if (onContextConsumed) onContextConsumed()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialContext])
 
   const handleSend = useCallback(async () => {
     const text = input.trim()
     if (!text || streaming) return
-
-    const userMsg: ChatMessage = { id: nextId(), role: 'user', content: text }
-    setMessages((prev) => [...prev, userMsg])
     setInput('')
-    setError(null)
-    setStreaming(true)
-    setStreamingText('')
 
-    // Build API messages: system prompt + history + current
     const apiMessages: AiMessage[] = [
       { role: 'system' as const, content: config.systemPrompt },
       ...messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       { role: 'user' as const, content: text },
     ]
-
-    try {
-      const chatId = await startAiChatStream(apiMessages)
-
-      // Poll for streaming chunks
-      let accumulated = ''
-      const poll = async () => {
-        try {
-          const result = await pollAiChunks(chatId)
-          if (result === null) {
-            // Chat already cleaned up
-            setStreaming(false)
-            if (accumulated) {
-              setMessages((prev) => [
-                ...prev,
-                { id: nextId(), role: 'assistant', content: accumulated },
-              ])
-            }
-            return
-          }
-          const [newText, done, err] = result
-          if (newText) {
-            accumulated += newText
-            setStreamingText(accumulated)
-          }
-          if (done || err) {
-            setStreaming(false)
-            if (err) {
-              setError(err)
-            }
-            if (accumulated) {
-              setMessages((prev) => [
-                ...prev,
-                { id: nextId(), role: 'assistant', content: accumulated },
-              ])
-            } else if (err && !accumulated) {
-              setMessages((prev) => [
-                ...prev,
-                { id: nextId(), role: 'assistant', content: 'Error: ' + err },
-              ])
-            }
-            setStreamingText('')
-            return
-          }
-          // Continue polling
-          pollRef.current = window.setTimeout(poll, 100)
-        } catch (e) {
-          setStreaming(false)
-          setError(String(e))
-          setStreamingText('')
-        }
-      }
-      poll()
-    } catch (e) {
-      setStreaming(false)
-      setError(String(e))
-      setMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: 'assistant', content: 'Error: ' + String(e) },
-      ])
-    }
-  }, [input, streaming, messages, config])
+    runAgent(apiMessages, text)
+  }, [input, streaming, messages, config, runAgent])
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -203,6 +177,7 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
     if (streaming) return
     setMessages([])
     setError(null)
+    setToolCalls([])
   }
 
   return (
@@ -223,10 +198,11 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
 
       {/* Messages */}
       <div className="ai-chat-messages">
-        {messages.length === 0 && !streaming && (
+        {messages.length === 0 && !streaming && toolCalls.length === 0 && (
           <div className="ai-chat-empty">
             <p>Ask me anything about system administration, commands, debugging, or server management.</p>
             <p>Select text in the terminal, right-click, and choose "Ask AI" to send it as context.</p>
+            <p>The assistant can run read-only tools (run commands, list files, analyze servers) when needed.</p>
           </div>
         )}
 
@@ -239,6 +215,15 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
           </div>
         ))}
 
+        {/* Tool-call cards (during agent loop) */}
+        {toolCalls.length > 0 && (
+          <div className="ai-tool-calls">
+            {toolCalls.map((tc) => (
+              <ToolCallCard key={tc.id} tool={tc} />
+            ))}
+          </div>
+        )}
+
         {/* Streaming indicator */}
         {streaming && streamingText && (
           <div className="ai-chat-msg ai-chat-msg-assistant">
@@ -249,7 +234,7 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
             </div>
           </div>
         )}
-        {streaming && !streamingText && (
+        {streaming && !streamingText && toolCalls.length === 0 && (
           <div className="ai-chat-msg ai-chat-msg-assistant">
             <div className="ai-chat-msg-role">AI</div>
             <div className="ai-chat-msg-content">
@@ -285,6 +270,40 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
           {streaming ? '...' : 'Send'}
         </button>
       </div>
+    </div>
+  )
+}
+
+function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
+  const [expanded, setExpanded] = useState(false)
+  const label = TOOL_LABELS[tool.name] ?? tool.name
+  const isError = tool.status === 'error' || (tool.result?.includes('"error"') ?? false)
+  const icon = tool.status === 'done' ? (isError ? '❌' : '✅') : tool.status === 'executing' ? '⏳' : '🔧'
+
+  let summary = label
+  try {
+    const args = JSON.parse(tool.arguments || '{}')
+    const parts = Object.entries(args)
+      .filter(([k]) => k !== 'tabId')
+      .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    if (parts.length) summary += ` (${parts.join(', ')})`
+    else if (args.tabId !== undefined) summary += ` [tab ${args.tabId}]`
+  } catch {
+    summary += ` ${tool.arguments.slice(0, 60)}`
+  }
+
+  return (
+    <div className={`ai-tool-card ai-tool-${tool.status}${isError ? ' ai-tool-error' : ''}`}>
+      <div className="ai-tool-head" onClick={() => setExpanded((v) => !v)}>
+        <span className="ai-tool-icon">{icon}</span>
+        <span className="ai-tool-name">{summary}</span>
+        <span className="ai-tool-status">{tool.status}</span>
+      </div>
+      {expanded && (tool.result || tool.error) && (
+        <pre className="ai-tool-result">
+          {tool.error ? `Error: ${tool.error}` : tool.result}
+        </pre>
+      )}
     </div>
   )
 }
