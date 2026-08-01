@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug Tauri (dev)",
+      "cargo": {
+        "args": ["build", "--manifest-path", "src-tauri/Cargo.toml"]
+      },
+      "env": {
+        "RUST_BACKTRACE": "1",
+        "RUST_LOG": "debug"
+      },
+      "args": []
+    }
+  ]
+}
