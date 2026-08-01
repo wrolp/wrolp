@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { AiConfig, AiMessage, ToolCallEvent } from '../types'
 import { startAiAgent, pollAiChunks } from '../commands'
+import { Icon } from './Icon'
 
 interface ChatMessage {
   id: string
@@ -22,14 +23,21 @@ function nextId(): string {
   return 'ai-msg-' + Date.now().toString(36) + '-' + (++_msgSeq).toString(36)
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  run_command: 'Run command',
-  analyze_server: 'Analyze server',
-  list_directory: 'List directory',
-  read_file: 'Read file',
-  list_connections: 'List connections',
-  search_help: 'Search help',
+const TOOL_LABELS: Record<string, { label: string; icon: 'terminal' | 'desktop' | 'folder' | 'file' | 'link' | 'search' }> = {
+  run_command: { label: 'Run command', icon: 'terminal' },
+  analyze_server: { label: 'Analyze server', icon: 'desktop' },
+  list_directory: { label: 'List directory', icon: 'folder' },
+  read_file: { label: 'Read file', icon: 'file' },
+  list_connections: { label: 'List connections', icon: 'link' },
+  search_help: { label: 'Search help', icon: 'search' },
 }
+
+const SUGGESTIONS = [
+  'Explain this error and how to fix it',
+  'Optimize my server performance',
+  'Check for security vulnerabilities',
+  'Write a backup script',
+]
 
 export default function AiChatPanel({ config, initialContext, onContextConsumed }: AiChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -38,6 +46,7 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
   const [streamingText, setStreamingText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [toolCalls, setToolCalls] = useState<ToolCallEvent[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pollRef = useRef<number>(0)
@@ -53,7 +62,6 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
     setToolCalls((prev) => {
       const byId = new Map(prev.map((t) => [t.id, t]))
       for (const ev of incoming) byId.set(ev.id, ev)
-      // Preserve first-seen order
       const order = [...prev.map((t) => t.id), ...incoming.map((t) => t.id)]
       const seen = new Set<string>()
       const ordered: ToolCallEvent[] = []
@@ -66,18 +74,23 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
     })
   }, [])
 
-  // Run the agent loop (streaming text + tool calls)
+  const finalizeAssistant = useCallback((text: string, err?: string | null) => {
+    if (text) {
+      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: text }])
+    } else if (err) {
+      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Error: ' + err }])
+    }
+  }, [])
+
   const runAgent = useCallback(
     (apiMessages: AiMessage[], userDisplay: string) => {
+      setShowSuggestions(false)
       setStreaming(true)
       setStreamingText('')
       setToolCalls([])
       setError(null)
       if (userDisplay) {
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: 'user', content: userDisplay },
-        ])
+        setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: userDisplay }])
       }
 
       startAiAgent(apiMessages)
@@ -119,16 +132,24 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
           finalizeAssistant('', String(e))
         })
     },
-    [mergeToolEvents],
+    [mergeToolEvents, finalizeAssistant],
   )
 
-  const finalizeAssistant = useCallback((text: string, err?: string | null) => {
-    if (text) {
-      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: text }])
-    } else if (err) {
-      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Error: ' + err }])
-    }
-  }, [])
+  const handleSend = useCallback(
+    (textOverride?: string) => {
+      const text = (textOverride ?? input).trim()
+      if (!text || streaming) return
+      setInput('')
+
+      const apiMessages: AiMessage[] = [
+        { role: 'system' as const, content: config.systemPrompt },
+        ...messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user' as const, content: text },
+      ]
+      runAgent(apiMessages, text)
+    },
+    [input, streaming, messages, config, runAgent],
+  )
 
   // Auto-send initial context text when provided
   const initialSentRef = useRef(false)
@@ -145,19 +166,6 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialContext])
-
-  const handleSend = useCallback(async () => {
-    const text = input.trim()
-    if (!text || streaming) return
-    setInput('')
-
-    const apiMessages: AiMessage[] = [
-      { role: 'system' as const, content: config.systemPrompt },
-      ...messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-      { role: 'user' as const, content: text },
-    ]
-    runAgent(apiMessages, text)
-  }, [input, streaming, messages, config, runAgent])
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -178,39 +186,81 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
     setMessages([])
     setError(null)
     setToolCalls([])
+    setShowSuggestions(true)
   }
+
+  const hasContent = messages.length > 0 || streaming || toolCalls.length > 0
 
   return (
     <div className="ai-chat-panel">
       {/* Header */}
       <div className="ai-chat-header">
-        <span className="ai-chat-title">AI Assistant</span>
-        <span className="ai-chat-model">{config.model}</span>
+        <div className="ai-chat-avatar" aria-hidden>
+          <Icon name="sparkles" size={16} />
+        </div>
+        <div className="ai-chat-title-group">
+          <span className="ai-chat-title">AI Assistant</span>
+          <span className="ai-chat-subtitle">Ask · Analyze · Automate</span>
+        </div>
+        <span className="ai-chat-model-badge">
+          <Icon name="chevronDown" size={12} />
+          {config.model || 'model'}
+        </span>
         <button
           className="ai-chat-clear-btn"
           onClick={handleClear}
           disabled={streaming}
           title="Clear conversation"
         >
+          <Icon name="trash" size={13} />
           Clear
         </button>
       </div>
 
       {/* Messages */}
       <div className="ai-chat-messages">
-        {messages.length === 0 && !streaming && toolCalls.length === 0 && (
+        {!hasContent && (
           <div className="ai-chat-empty">
-            <p>Ask me anything about system administration, commands, debugging, or server management.</p>
-            <p>Select text in the terminal, right-click, and choose "Ask AI" to send it as context.</p>
-            <p>The assistant can run read-only tools (run commands, list files, analyze servers) when needed.</p>
+            <div className="ai-chat-empty-icon">
+              <Icon name="sparkles" size={32} />
+            </div>
+            <h3 className="ai-chat-empty-title">How can I help you today?</h3>
+            <p className="ai-chat-empty-text">
+              I can run read-only tools on your connected servers — execute commands, browse
+              files, analyze systems, and look up help — to give you accurate answers.
+            </p>
+            <p className="ai-chat-empty-hint">
+              Tip: select text in the terminal, right-click, and choose <b>Ask AI</b> to send it
+              as context.
+            </p>
+
+            {showSuggestions && (
+              <div className="ai-chat-suggestions">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    className="ai-chat-suggestion"
+                    onClick={() => handleSend(s)}
+                    disabled={streaming}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {messages.map((msg) => (
           <div key={msg.id} className={`ai-chat-msg ai-chat-msg-${msg.role}`}>
-            <div className="ai-chat-msg-role">{msg.role === 'user' ? 'You' : 'AI'}</div>
-            <div className="ai-chat-msg-content">
-              <MarkdownText text={msg.content} />
+            <div className="ai-chat-msg-avatar" aria-hidden>
+              {msg.role === 'user' ? <Icon name="user" size={14} /> : <Icon name="sparkles" size={14} />}
+            </div>
+            <div className="ai-chat-msg-body">
+              <div className="ai-chat-msg-role">{msg.role === 'user' ? 'You' : 'AI'}</div>
+              <div className="ai-chat-msg-content">
+                <MarkdownText text={msg.content} />
+              </div>
             </div>
           </div>
         ))}
@@ -218,6 +268,9 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
         {/* Tool-call cards (during agent loop) */}
         {toolCalls.length > 0 && (
           <div className="ai-tool-calls">
+            <div className="ai-tool-calls-label">
+              <Icon name="settings" size={12} /> Tools used
+            </div>
             {toolCalls.map((tc) => (
               <ToolCallCard key={tc.id} tool={tc} />
             ))}
@@ -227,24 +280,39 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
         {/* Streaming indicator */}
         {streaming && streamingText && (
           <div className="ai-chat-msg ai-chat-msg-assistant">
-            <div className="ai-chat-msg-role">AI</div>
-            <div className="ai-chat-msg-content streaming">
-              <MarkdownText text={streamingText} />
-              <span className="ai-chat-cursor" />
+            <div className="ai-chat-msg-avatar" aria-hidden>
+              <Icon name="sparkles" size={14} />
+            </div>
+            <div className="ai-chat-msg-body">
+              <div className="ai-chat-msg-role">AI</div>
+              <div className="ai-chat-msg-content streaming">
+                <MarkdownText text={streamingText} />
+                <span className="ai-chat-cursor" />
+              </div>
             </div>
           </div>
         )}
         {streaming && !streamingText && toolCalls.length === 0 && (
           <div className="ai-chat-msg ai-chat-msg-assistant">
-            <div className="ai-chat-msg-role">AI</div>
-            <div className="ai-chat-msg-content">
-              <span className="ai-chat-typing">Thinking<span className="ai-chat-cursor" /></span>
+            <div className="ai-chat-msg-avatar" aria-hidden>
+              <Icon name="sparkles" size={14} />
+            </div>
+            <div className="ai-chat-msg-body">
+              <div className="ai-chat-msg-role">AI</div>
+              <div className="ai-chat-msg-content">
+                <span className="ai-chat-typing">
+                  Thinking
+                  <span className="ai-chat-cursor" />
+                </span>
+              </div>
             </div>
           </div>
         )}
 
         {error && !streaming && (
-          <div className="ai-chat-error">Error: {error}</div>
+          <div className="ai-chat-error">
+            <Icon name="x" size={13} /> {error}
+          </div>
         )}
 
         <div ref={bottomRef} />
@@ -252,23 +320,29 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
 
       {/* Input */}
       <div className="ai-chat-input-area">
-        <textarea
-          ref={inputRef}
-          className="ai-chat-input"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-          rows={2}
-          disabled={streaming}
-        />
-        <button
-          className="ai-chat-send-btn"
-          onClick={handleSend}
-          disabled={streaming || !input.trim()}
-        >
-          {streaming ? '...' : 'Send'}
-        </button>
+        <div className="ai-chat-input-wrap">
+          <textarea
+            ref={inputRef}
+            className="ai-chat-input"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Message the AI assistant…  (Enter to send, Shift+Enter for newline)"
+            rows={1}
+            disabled={streaming}
+          />
+          <button
+            className="ai-chat-send-btn"
+            onClick={() => handleSend()}
+            disabled={streaming || !input.trim()}
+            title="Send"
+          >
+            {streaming ? <Icon name="pause" size={15} /> : <Icon name="send" size={15} />}
+          </button>
+        </div>
+        <div className="ai-chat-input-hint">
+          AI can use tools on connected servers. Destructive commands are blocked.
+        </div>
       </div>
     </div>
   )
@@ -276,28 +350,33 @@ export default function AiChatPanel({ config, initialContext, onContextConsumed 
 
 function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
   const [expanded, setExpanded] = useState(false)
-  const label = TOOL_LABELS[tool.name] ?? tool.name
+  const meta = TOOL_LABELS[tool.name] ?? { label: tool.name, icon: 'terminal' as const }
   const isError = tool.status === 'error' || (tool.result?.includes('"error"') ?? false)
-  const icon = tool.status === 'done' ? (isError ? '❌' : '✅') : tool.status === 'executing' ? '⏳' : '🔧'
+  const icon = tool.status === 'done' ? (isError ? '✗' : '✓') : tool.status === 'executing' ? '⟳' : '⚙'
 
-  let summary = label
+  let summary = meta.label
   try {
     const args = JSON.parse(tool.arguments || '{}')
     const parts = Object.entries(args)
       .filter(([k]) => k !== 'tabId')
       .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
-    if (parts.length) summary += ` (${parts.join(', ')})`
-    else if (args.tabId !== undefined) summary += ` [tab ${args.tabId}]`
+    if (parts.length) summary += ` · ${parts.join(', ')}`
+    else if (args.tabId !== undefined) summary += ` · tab ${args.tabId}`
   } catch {
-    summary += ` ${tool.arguments.slice(0, 60)}`
+    if (tool.arguments) summary += ` · ${tool.arguments.slice(0, 50)}`
   }
 
   return (
     <div className={`ai-tool-card ai-tool-${tool.status}${isError ? ' ai-tool-error' : ''}`}>
       <div className="ai-tool-head" onClick={() => setExpanded((v) => !v)}>
-        <span className="ai-tool-icon">{icon}</span>
+        <span className="ai-tool-icon">
+          <Icon name={meta.icon} size={13} />
+        </span>
         <span className="ai-tool-name">{summary}</span>
-        <span className="ai-tool-status">{tool.status}</span>
+        <span className="ai-tool-status">
+          <span className="ai-tool-spinner">{icon}</span>
+          {tool.status}
+        </span>
       </div>
       {expanded && (tool.result || tool.error) && (
         <pre className="ai-tool-result">
@@ -310,7 +389,6 @@ function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
 
 /** Very simple markdown-ish rendering: code blocks, inline code, bold, italic. */
 function MarkdownText({ text }: { text: string }) {
-  // Split text by code blocks (``` ... ```)
   const parts: { type: 'text' | 'code'; content: string; lang?: string }[] = []
   let remaining = text
   const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g
@@ -345,15 +423,9 @@ function MarkdownText({ text }: { text: string }) {
 }
 
 function renderInlineMarkdown(text: string): string {
-  return (
-    text
-      // Bold: **text**
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      // Italic: *text*
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      // Inline code: `text`
-      .replace(/`([^`]+)`/g, '<code class="ai-chat-inline-code">$1</code>')
-      // Line breaks
-      .replace(/\n/g, '<br/>')
-  )
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code class="ai-chat-inline-code">$1</code>')
+    .replace(/\n/g, '<br/>')
 }

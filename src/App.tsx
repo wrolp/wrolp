@@ -344,6 +344,13 @@ export default function App() {
   const [aiConfig, setAiConfig] = useState<AiConfig | null>(null)
   const [aiApiKeyInput, setAiApiKeyInput] = useState('')
   const [aiShowKey, setAiShowKey] = useState(false)
+  const [saveFlash, setSaveFlash] = useState<string | null>(null)
+  useEffect(() => {
+    if (saveFlash) {
+      const t = setTimeout(() => setSaveFlash(null), 1800)
+      return () => clearTimeout(t)
+    }
+  }, [saveFlash])
 
   useEffect(() => {
     loadAiConfig()
@@ -1606,70 +1613,96 @@ export default function App() {
               )}
             </div>
             {/* AI Configuration */}
-            <div className="form-group" style={{ marginTop: 20, borderTop: '1px solid #333', paddingTop: 16 }}>
-              <label style={{ fontSize: 16, fontWeight: 600 }}>AI Assistant (OpenAI Compatible)</label>
-              <p className="ai-settings-hint">
-                Supports OpenAI, Anthropic (via compatible proxy), Ollama, vLLM, and any OpenAI-compatible API.
+            <div className="settings-card ai-settings-card">
+              <div className="settings-card-header">
+                <div className="settings-card-icon">
+                  <Icon name="sparkles" size={18} />
+                </div>
+                <div>
+                  <h3 className="settings-card-title">AI Assistant</h3>
+                  <p className="settings-card-sub">OpenAI-compatible chat with built-in tools</p>
+                </div>
+              </div>
+
+              <p className="settings-card-desc">
+                Works with OpenAI, Anthropic (via compatible proxy), Ollama, vLLM, and any
+                OpenAI-compatible endpoint. The assistant can run read-only tools on your
+                connected servers to give accurate answers.
               </p>
 
-              <div className="ai-settings-form">
-                <div className="field-row">
-                  <label htmlFor="ai-endpoint">API Endpoint</label>
+              <div className="settings-fields">
+                <div className="settings-field">
+                  <label htmlFor="ai-endpoint" className="settings-label">
+                    <Icon name="link" size={13} /> API Endpoint
+                  </label>
                   <input
                     id="ai-endpoint"
                     type="text"
+                    className="settings-input"
                     value={aiConfig?.endpoint || 'https://api.openai.com/v1'}
                     onChange={(e) => setAiConfig((prev) => prev ? { ...prev, endpoint: e.target.value } : null)}
                     placeholder="https://api.openai.com/v1"
-                    style={{ width: '100%' }}
                   />
+                  <span className="settings-help">Base URL including the <code>/v1</code> path.</span>
                 </div>
 
-                <div className="field-row">
-                  <label htmlFor="ai-key">API Key</label>
-                  <div className="ai-key-row">
+                <div className="settings-field">
+                  <label htmlFor="ai-key" className="settings-label">
+                    <Icon name="lock" size={13} /> API Key
+                  </label>
+                  <div className="settings-input-with-btn">
                     <input
                       id="ai-key"
                       type={aiShowKey ? 'text' : 'password'}
+                      className="settings-input"
                       value={aiApiKeyInput}
                       onChange={(e) => setAiApiKeyInput(e.target.value)}
                       placeholder="sk-..."
-                      style={{ flex: 1 }}
+                      autoComplete="off"
                     />
                     <button
                       type="button"
-                      className="ai-key-toggle"
+                      className="settings-icon-btn"
                       onClick={() => setAiShowKey(!aiShowKey)}
                       title={aiShowKey ? 'Hide' : 'Show'}
                     >
-                      {aiShowKey ? 'Hide' : 'Show'}
+                      <Icon name={aiShowKey ? 'eyeOff' : 'eye'} size={15} />
                     </button>
                   </div>
+                  <span className="settings-help">Stored encrypted locally; never sent anywhere except your endpoint.</span>
                 </div>
 
-                <div className="field-row">
-                  <label htmlFor="ai-model">Model</label>
+                <div className="settings-field">
+                  <label htmlFor="ai-model" className="settings-label">
+                    <Icon name="terminal" size={13} /> Model
+                  </label>
                   <input
                     id="ai-model"
                     type="text"
+                    className="settings-input"
                     value={aiConfig?.model || 'gpt-4o'}
                     onChange={(e) => setAiConfig((prev) => prev ? { ...prev, model: e.target.value } : null)}
                     placeholder="gpt-4o"
-                    style={{ width: '100%' }}
                   />
+                  <span className="settings-help">e.g. gpt-4o, gpt-4o-mini, claude-3-5-sonnet, llama3.1:70b.</span>
                 </div>
 
-                <div className="field-row">
-                  <label htmlFor="ai-system-prompt">System Prompt</label>
+                <div className="settings-field">
+                  <label htmlFor="ai-system-prompt" className="settings-label">
+                    <Icon name="edit" size={13} /> System Prompt
+                  </label>
                   <textarea
                     id="ai-system-prompt"
+                    className="settings-input settings-textarea"
                     value={aiConfig?.systemPrompt || ''}
                     onChange={(e) => setAiConfig((prev) => prev ? { ...prev, systemPrompt: e.target.value } : null)}
                     rows={3}
-                    style={{ width: '100%', resize: 'vertical' }}
                   />
+                  <span className="settings-help">Optional instructions that shape the assistant's behavior.</span>
                 </div>
+              </div>
 
+              <div className="settings-actions">
                 <button
                   className="settings-save-btn"
                   onClick={async () => {
@@ -1679,13 +1712,13 @@ export default function App() {
                       const toSave = { ...aiConfig, apiKeyEnc: keyEnc }
                       await saveAiConfig(toSave)
                       setAiConfig(toSave)
-                      alert('AI settings saved.')
+                      setSaveFlash('ai')
                     } catch (e) {
                       alert('Failed to save: ' + String(e))
                     }
                   }}
                 >
-                  Save AI Settings
+                  {saveFlash === 'ai' ? 'Saved ✓' : 'Save AI Settings'}
                 </button>
               </div>
             </div>
