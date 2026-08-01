@@ -47,12 +47,16 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   // ---- right-click context menu (Ask AI Assistant) ----
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement>(null)
+  // Capture the selection at right-click time so it isn't lost before the click.
+  const selectedTextRef = useRef<string>('')
 
   const handleLogContextMenu = useCallback(
     (e: React.MouseEvent) => {
       if (!onAskAi) return
       e.preventDefault()
       e.stopPropagation()
+      const selection = window.getSelection()?.toString() ?? ''
+      selectedTextRef.current = selection.trim()
       setCtxMenu({ x: e.clientX, y: e.clientY })
     },
     [onAskAi],
@@ -80,11 +84,11 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   const handleAskAiFromMenu = useCallback(() => {
     setCtxMenu(null)
     if (!onAskAi) return
-    // Prefer the user's current text selection; fall back to the full log buffer.
-    const selection = window.getSelection()?.toString().trim()
-    const text = selection || logs
+    // Use the captured selection if present; otherwise fall back to the full log buffer.
+    const text = selectedTextRef.current || logs
     if (!text) return
-    const prefix = `The following are logs from Docker container "${containerName}":\n\n`
+    const scope = selectedTextRef.current ? 'selected lines' : 'full log'
+    const prefix = `The following are ${scope} from Docker container "${containerName}":\n\n`
     onAskAi(prefix + text)
   }, [onAskAi, logs, containerName])
 
@@ -305,7 +309,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
                 onContextMenu={(e) => e.preventDefault()}
               >
                 <div className="context-menu-item" onClick={handleAskAiFromMenu}>
-                  Ask AI Assistant
+                  {selectedTextRef.current ? 'Ask AI (selected text)' : 'Ask AI (all logs)'}
                 </div>
               </div>
             )}
