@@ -1062,6 +1062,33 @@ body.resize-v * {
     min-width: 0;
     position: relative;
     overflow: hidden;
+    display: flex;
+    flex-direction: row;
+  }
+
+  .term-pane-ai-toggle {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    color: $text-dim;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+    user-select: none;
+
+    &:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    &.active {
+      color: #fff;
+      background: rgba(76, 175, 80, 0.35);
+      border-color: rgba(76, 175, 80, 0.6);
+    }
   }
 }
 
@@ -3935,6 +3962,87 @@ input[type='password']::-ms-clear {
     flex-shrink: 0;
   }
 
+  // Docked AI pane (right/top/bottom/left inside the shell pane)
+  .ai-dock-pane {
+    background: $bg-primary;
+
+    .ai-dock-resize {
+      background: transparent;
+
+      &:hover {
+        background: rgba(76, 175, 80, 0.5);
+      }
+    }
+
+    .ai-dock-bar {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      background: var(--bg-tertiary, #252526);
+      border-bottom: 1px solid var(--border, #333);
+
+      .ai-dock-bar-title {
+        font-size: 11px;
+        color: var(--text-secondary, #aaa);
+        font-weight: 600;
+      }
+
+      .ai-dock-sides {
+        display: flex;
+        gap: 2px;
+        margin-left: auto;
+      }
+
+      .ai-dock-side-btn,
+      .ai-dock-bar-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: $text-dim;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 1;
+        padding: 2px 5px;
+        border-radius: 4px;
+
+        &:hover {
+          color: #fff;
+          background: rgba(255, 255, 255, 0.1);
+        }
+
+        &.active {
+          color: #fff;
+          background: rgba(76, 175, 80, 0.35);
+          border-color: rgba(76, 175, 80, 0.6);
+        }
+      }
+    }
+  }
+
+  // Floating (popped-out) AI panel
+  .ai-floating-panel {
+    .ai-floating-header {
+      flex-shrink: 0;
+
+      .ai-float-header-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: $text-dim;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 1;
+        padding: 2px 8px;
+        border-radius: 4px;
+
+        &:hover {
+          color: #fff;
+          background: rgba(255, 255, 255, 0.12);
+        }
+      }
+    }
+  }
+
   .ai-chat-avatar {
     width: 30px;
     height: 30px;
@@ -3952,18 +4060,25 @@ input[type='password']::-ms-clear {
     display: flex;
     flex-direction: column;
     line-height: 1.25;
+    min-width: 0;
   }
 
   .ai-chat-title {
     font-weight: 600;
     font-size: 13.5px;
     color: $text-primary;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .ai-chat-subtitle {
     font-size: 10.5px;
     color: $text-muted;
     letter-spacing: 0.3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .ai-chat-model-badge {

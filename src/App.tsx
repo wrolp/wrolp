@@ -347,15 +347,56 @@ export default function App() {
   const [aiModels, setAiModels] = useState<string[]>([])
   const [aiFetchingModels, setAiFetchingModels] = useState(false)
   const [aiModelManual, setAiModelManual] = useState(false)
-  // AI conversation state lives at the App level so it survives switching tabs
-  // (the AiChatPanel unmounts/remounts when aiChatActive toggles).
-  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([])
-  const [aiInput, setAiInput] = useState('')
-  const [aiStreaming, setAiStreaming] = useState(false)
-  const [aiStreamingText, setAiStreamingText] = useState('')
-  const [aiError, setAiError] = useState<string | null>(null)
-  const [aiToolCalls, setAiToolCalls] = useState<ToolCallEvent[]>([])
-  const [aiShowSuggestions, setAiShowSuggestions] = useState(true)
+  // AI conversation state is keyed per tab (tabId) so each shell tab keeps its
+  // own conversation, and survives tab switches / panel remounts.
+  type AiConv = {
+    messages: ChatMessage[]
+    input: string
+    streaming: boolean
+    streamingText: string
+    error: string | null
+    toolCalls: ToolCallEvent[]
+    showSuggestions: boolean
+  }
+  const emptyConv = (): AiConv => ({
+    messages: [],
+    input: '',
+    streaming: false,
+    streamingText: '',
+    error: null,
+    toolCalls: [],
+    showSuggestions: true,
+  })
+  const [aiConversations, setAiConversations] = useState<Record<number, AiConv>>({})
+  // Which shell tabs have their AI pane open (docked).
+  const [showAiByTab, setShowAiByTab] = useState<Record<number, boolean>>({})
+  // Dock side of the AI pane per shell tab: 'right' | 'left' | 'top' | 'bottom'.
+  const [aiDockSideByTab, setAiDockSideByTab] = useState<Record<number, 'right' | 'left' | 'top' | 'bottom'>>({})
+  // Dock size (px) of the AI pane per shell tab: width for left/right, height for top/bottom.
+  const [aiDockSizeByTab, setAiDockSizeByTab] = useState<Record<number, number>>({})
+  const aiDockResizeRef = useRef<{ dir: string; sx: number; sy: number; sSize: number } | null>(null)
+  const MIN_DOCK = 140
+  const MAX_DOCK = 900
+  // Which tab's AI is currently floating as a separate draggable panel (null = none).
+  const [aiFloatingTabId, setAiFloatingTabId] = useState<number | null>(null)
+  // Position of the floating AI panel (top-left in px).
+  const [aiFloatPos, setAiFloatPos] = useState<{ x: number; y: number }>({ x: 120, y: 120 })
+  // Size of the floating AI panel (px).
+  const [aiFloatSize, setAiFloatSize] = useState<{ w: number; h: number }>({ w: 420, h: 560 })
+  const aiFloatDragRef = useRef<{ dx: number; dy: number } | null>(null)
+  const aiFloatResizeRef = useRef<{ dir: string; sx: number; sy: number; sw: number; sh: number } | null>(null)
+
+  const getAiConv = useCallback(
+    (tabId: number): AiConv => aiConversations[tabId] ?? emptyConv(),
+    [aiConversations],
+  )
+  const setAiConv = useCallback((tabId: number, updater: AiConv | ((c: AiConv) => AiConv)) => {
+    setAiConversations((prev) => {
+      const cur = prev[tabId] ?? emptyConv()
+      const next = typeof updater === 'function' ? (updater as (c: AiConv) => AiConv)(cur) : { ...cur, ...updater }
+      return { ...prev, [tabId]: next }
+    })
+  }, [])
   const [saveFlash, setSaveFlash] = useState<string | null>(null)
   const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'ai'>('general')
   useEffect(() => {
@@ -798,25 +839,35 @@ export default function App() {
 
   const [aiContextText, setAiContextText] = useState<string | null>(null)
 
-  // Open AI chat as a tab (reuse if already open)
-  const handleOpenAiChat = useCallback((contextText?: string) => {
-    if (contextText) setAiContextText(contextText)
-    const existing = tabs.find(t => t.tabType === 'aiChat')
-    if (existing) {
-      setActiveTabId(existing.tabId)
-      return
-    }
-    const tabId = nextTabId++
-    const aiChatTab: TabInfo = {
-      tabId,
-      connectionName: 'AI Chat',
-      host: '',
-      status: 'aiChat',
-      tabType: 'aiChat',
-    }
-    setTabs(prev => [...prev, aiChatTab])
-    setActiveTabId(tabId)
-  }, [tabs])
+  // Open AI chat. If `tabId` is given, attach to that shell tab (open its
+  // docked AI pane); otherwise open/activate the standalone AI Chat tab.
+  const handleOpenAiChat = useCallback(
+    (contextText?: string, tabId?: number) => {
+      if (contextText) setAiContextText(contextText)
+      if (tabId !== undefined) {
+        setShowAiByTab((prev) => ({ ...prev, [tabId]: true }))
+        setAiFloatingTabId(null)
+        setActiveTabId(tabId)
+        return
+      }
+      const existing = tabs.find((t) => t.tabType === 'aiChat')
+      if (existing) {
+        setActiveTabId(existing.tabId)
+        return
+      }
+      const newTabId = nextTabId++
+      const aiChatTab: TabInfo = {
+        tabId: newTabId,
+        connectionName: 'AI Chat',
+        host: '',
+        status: 'aiChat',
+        tabType: 'aiChat',
+      }
+      setTabs((prev) => [...prev, aiChatTab])
+      setActiveTabId(newTabId)
+    },
+    [tabs],
+  )
 
   // Close a top-level tab (workspace): disconnect and remove its own session
   // plus every embedded session created by splitting inside it, and drop its
@@ -1600,7 +1651,7 @@ export default function App() {
                 if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
               }}
               onAskAi={(selectedText) => {
-                handleOpenAiChat(selectedText)
+                handleOpenAiChat(selectedText, tab.tabId)
               }}
             />
           </div>
@@ -2270,6 +2321,19 @@ export default function App() {
             ⠿
           </span>
           <span className="term-pane-title">{tab ? getTabLabel(tab) : 'No terminal'}</span>
+          {tab?.tabType === 'terminal' && leaf.tabId != null && (
+            <button
+              className={'term-pane-ai-toggle' + (showAiByTab[leaf.tabId] ? ' active' : '')}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowAiByTab((prev) => ({ ...prev, [leaf.tabId as number]: !prev[leaf.tabId as number] }))
+              }}
+              title="Toggle AI chat for this shell"
+            >
+              🤖 AI
+            </button>
+          )}
           <span
             className="term-pane-close"
             onMouseDown={(e) => e.stopPropagation()}
@@ -2282,13 +2346,167 @@ export default function App() {
             ×
           </span>
         </div>
-        <div className="term-pane-body" ref={getPaneBodyRef(leaf.id)}>
-          {leaf.tabId == null && (
-            <div className="terminal-placeholder">
-              <div className="icon"><Icon name="desktop" /></div>
-              <div>Select a connection to start</div>
-            </div>
-          )}
+        <div
+          className="term-pane-body"
+          style={{
+            flexDirection:
+              leaf.tabId != null && showAiByTab[leaf.tabId] && aiFloatingTabId !== leaf.tabId
+                ? (() => {
+                    const s = aiDockSideByTab[leaf.tabId]
+                    return s === 'top' || s === 'bottom' ? 'column' : 'row'
+                  })()
+                : 'row',
+          }}
+        >
+          <div
+            className="term-pane-term"
+            ref={getPaneBodyRef(leaf.id)}
+            style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+          >
+            {leaf.tabId == null && (
+              <div className="terminal-placeholder">
+                <div className="icon"><Icon name="desktop" /></div>
+                <div>Select a connection to start</div>
+              </div>
+            )}
+          </div>
+          {/* Docked AI chat attached to this pane's shell tab */}
+          {tab?.tabType === 'terminal' &&
+            leaf.tabId != null &&
+            activeProfile &&
+            showAiByTab[leaf.tabId] &&
+            aiFloatingTabId !== leaf.tabId && (
+              (() => {
+                const tid = leaf.tabId as number
+                const side = aiDockSideByTab[tid] ?? 'right'
+                const isVertical = side === 'top' || side === 'bottom'
+                const size = aiDockSizeByTab[tid] ?? (isVertical ? 220 : 340)
+                const dockStyle: React.CSSProperties = isVertical
+                  ? {
+                      height: size,
+                      flex: `0 0 ${size}px`,
+                      minWidth: 0,
+                      minHeight: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      borderTop: '1px solid var(--border, #333)',
+                      order: side === 'top' ? -1 : 0,
+                      width: '100%',
+                    }
+                  : {
+                      width: size,
+                      flex: `0 0 ${size}px`,
+                      minWidth: 0,
+                      minHeight: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      borderLeft: '1px solid var(--border, #333)',
+                      order: side === 'left' ? -1 : 0,
+                    }
+                // Resize handle sits on the edge adjacent to the terminal.
+                const startDockResize = (e: React.MouseEvent) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  aiDockResizeRef.current = {
+                    dir: side,
+                    sx: e.clientX,
+                    sy: e.clientY,
+                    sSize: size,
+                  }
+                  const onMove = (ev: MouseEvent) => {
+                    const r = aiDockResizeRef.current
+                    if (!r) return
+                    const delta =
+                      r.dir === 'right'
+                        ? r.sx - ev.clientX
+                        : r.dir === 'left'
+                        ? ev.clientX - r.sx
+                        : r.dir === 'bottom'
+                        ? r.sy - ev.clientY
+                        : ev.clientY - r.sy
+                    const next = Math.max(MIN_DOCK, Math.min(MAX_DOCK, r.sSize + delta))
+                    setAiDockSizeByTab((prev) => ({ ...prev, [tid]: next }))
+                  }
+                  const onUp = () => {
+                    aiDockResizeRef.current = null
+                    window.removeEventListener('mousemove', onMove)
+                    window.removeEventListener('mouseup', onUp)
+                  }
+                  window.addEventListener('mousemove', onMove)
+                  window.addEventListener('mouseup', onUp)
+                }
+                const resizeHandleStyle: React.CSSProperties = isVertical
+                  ? {
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      [side === 'top' ? 'bottom' : 'top']: -3,
+                      height: 6,
+                      cursor: 'ns-resize',
+                      zIndex: 5,
+                    }
+                  : {
+                      position: 'absolute',
+                      top: 0,
+                      bottom: 0,
+                      [side === 'left' ? 'right' : 'left']: -3,
+                      width: 6,
+                      cursor: 'ew-resize',
+                      zIndex: 5,
+                    }
+                return (
+                  <div className="ai-dock-pane" style={{ ...dockStyle, position: 'relative' }}>
+                    <div className="ai-dock-bar">
+                      <span className="ai-dock-bar-title">AI</span>
+                      <div className="ai-dock-sides">
+                        {(['left', 'top', 'right', 'bottom'] as const).map((s) => (
+                          <button
+                            key={s}
+                            className={'ai-dock-side-btn' + (side === s ? ' active' : '')}
+                            onClick={() =>
+                              setAiDockSideByTab((prev) => ({ ...prev, [tid]: s }))
+                            }
+                            title={`Dock ${s}`}
+                          >
+                            {s === 'left' ? '◧' : s === 'right' ? '◨' : s === 'top' ? '▤' : '▥'}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        className="ai-dock-bar-btn"
+                        onClick={() => setAiFloatingTabId(tid)}
+                        title="Pop out to floating window"
+                      >
+                        ⤢
+                      </button>
+                      <button
+                        className="ai-dock-bar-btn"
+                        onClick={() =>
+                          setShowAiByTab((prev) => ({ ...prev, [tid]: false }))
+                        }
+                        title="Close AI pane"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                      <AiChatPanel
+                        tabId={tid}
+                        config={activeProfile}
+                        conv={getAiConv(tid)}
+                        setConv={(u) => setAiConv(tid, u)}
+                        floating={false}
+                        onToggleFloat={() => setAiFloatingTabId(tid)}
+                        onClose={() => setShowAiByTab((prev) => ({ ...prev, [tid]: false }))}
+                        initialContext={aiContextText}
+                        onContextConsumed={() => setAiContextText(null)}
+                      />
+                    </div>
+                    <div className="ai-dock-resize" onMouseDown={startDockResize} style={resizeHandleStyle} />
+                  </div>
+                )
+              })()
+            )}
         </div>
         <div className="term-pane-statusbar">
           <div className="tsb-left">
@@ -2773,61 +2991,189 @@ export default function App() {
               className="shell-pane"
               style={{ flex: editorTabs.length === 0 ? 1 : '0 0 auto', minHeight: 0 }}
             >
-              {editorTabs.length > 0 && (
-                <div className="shell-pane-header">
-                  <span className="shell-pane-title">Shell</span>
-                  <button
-                    className="shell-pane-toggle"
-                    onClick={() => setShellCollapsed((v) => !v)}
-                    title={shellCollapsed ? 'Expand shell' : 'Collapse shell'}
-                  >
-                    {shellCollapsed ? '▲' : '▼'}
-                  </button>
-                </div>
-              )}
+              <div className="shell-pane-header">
+                <span className="shell-pane-title">Shell</span>
+                <button
+                  className="shell-pane-toggle"
+                  onClick={() => setShellCollapsed((v) => !v)}
+                  title={shellCollapsed ? 'Expand shell' : 'Collapse shell'}
+                >
+                  {shellCollapsed ? '▲' : '▼'}
+                </button>
+              </div>
               <div
                 className="shell-pane-body"
                 style={{ height: editorTabs.length === 0 ? undefined : (shellCollapsed ? 0 : shellHeight) }}
               >
-                <div style={{ display: showDockerLog || aiChatActive ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-                  {terminalContent}
-                </div>
-                {dockerLogContent}
-                {activeProfile && (
-                  <div
-                    style={{
-                      flex: 1,
-                      minHeight: 0,
-                      display: aiChatActive ? 'flex' : 'none',
-                      flexDirection: 'column',
-                    }}
-                  >
-                    <AiChatPanel
-                      config={activeProfile}
-                      messages={aiMessages}
-                      setMessages={setAiMessages}
-                      input={aiInput}
-                      setInput={setAiInput}
-                      streaming={aiStreaming}
-                      setStreaming={setAiStreaming}
-                      streamingText={aiStreamingText}
-                      setStreamingText={setAiStreamingText}
-                      error={aiError}
-                      setError={setAiError}
-                      toolCalls={aiToolCalls}
-                      setToolCalls={setAiToolCalls}
-                      showSuggestions={aiShowSuggestions}
-                      setShowSuggestions={setAiShowSuggestions}
-                      initialContext={aiContextText}
-                      onContextConsumed={() => setAiContextText(null)}
-                    />
+                <div style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'row' }}>
+                  <div style={{ display: showDockerLog || aiChatActive ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+                    {terminalContent}
                   </div>
-                )}
+                  {dockerLogContent}
+                  {/* Standalone AI Chat tab (full screen) */}
+                  {activeProfile && aiChatActive && activeTerminalTab && (
+                    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                      <AiChatPanel
+                        tabId={activeTerminalTab.tabId}
+                        config={activeProfile}
+                        conv={getAiConv(activeTerminalTab.tabId)}
+                        setConv={(u) => setAiConv(activeTerminalTab.tabId, u)}
+                        floating={false}
+                        onToggleFloat={() => setAiFloatingTabId(activeTerminalTab.tabId)}
+                        onClose={() => closeTab(activeTerminalTab.tabId)}
+                        initialContext={aiContextText}
+                        onContextConsumed={() => setAiContextText(null)}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>,
           ]}
 
           </div>
+
+          {/* Floating AI chat panel (popped out from a shell tab) */}
+          {aiFloatingTabId !== null && activeProfile && (
+            (() => {
+              const MIN_W = 280
+              const MIN_H = 240
+              const startResize = (e: React.MouseEvent, dir: string) => {
+                e.preventDefault()
+                e.stopPropagation()
+                aiFloatResizeRef.current = {
+                  dir,
+                  sx: e.clientX,
+                  sy: e.clientY,
+                  sw: aiFloatSize.w,
+                  sh: aiFloatSize.h,
+                }
+                const onMove = (ev: MouseEvent) => {
+                  const r = aiFloatResizeRef.current
+                  if (!r) return
+                  let { w, h } = { w: r.sw, h: r.sh }
+                  let { x, y } = aiFloatPos
+                  const dx = ev.clientX - r.sx
+                  const dy = ev.clientY - r.sy
+                  if (r.dir.includes('e')) w = Math.max(MIN_W, r.sw + dx)
+                  if (r.dir.includes('s')) h = Math.max(MIN_H, r.sh + dy)
+                  if (r.dir.includes('w')) {
+                    w = Math.max(MIN_W, r.sw - dx)
+                    x = aiFloatPos.x - (w - r.sw)
+                  }
+                  if (r.dir.includes('n')) {
+                    h = Math.max(MIN_H, r.sh - dy)
+                    y = aiFloatPos.y - (h - r.sh)
+                  }
+                  setAiFloatSize({ w, h })
+                  setAiFloatPos({ x, y })
+                }
+                const onUp = () => {
+                  aiFloatResizeRef.current = null
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                }
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }
+              const resizeHandles: { dir: string; style: React.CSSProperties; cursor: string }[] = [
+                { dir: 'n', style: { top: -3, left: 8, right: 8, height: 6 }, cursor: 'ns-resize' },
+                { dir: 's', style: { bottom: -3, left: 8, right: 8, height: 6 }, cursor: 'ns-resize' },
+                { dir: 'w', style: { left: -3, top: 8, bottom: 8, width: 6 }, cursor: 'ew-resize' },
+                { dir: 'e', style: { right: -3, top: 8, bottom: 8, width: 6 }, cursor: 'ew-resize' },
+                { dir: 'nw', style: { top: -3, left: -3, width: 10, height: 10 }, cursor: 'nwse-resize' },
+                { dir: 'ne', style: { top: -3, right: -3, width: 10, height: 10 }, cursor: 'nesw-resize' },
+                { dir: 'sw', style: { bottom: -3, left: -3, width: 10, height: 10 }, cursor: 'nesw-resize' },
+                { dir: 'se', style: { bottom: -3, right: -3, width: 10, height: 10 }, cursor: 'nwse-resize' },
+              ]
+              return (
+                <div
+                  className="ai-floating-panel"
+                  style={{
+                    position: 'fixed',
+                    left: aiFloatPos.x,
+                    top: aiFloatPos.y,
+                    width: aiFloatSize.w,
+                    height: aiFloatSize.h,
+                    zIndex: 1000,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                    background: 'var(--bg-secondary, #1e1e1e)',
+                    border: '1px solid var(--border, #333)',
+                  }}
+                >
+                  <div
+                    className="ai-floating-header"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 10px',
+                      cursor: 'move',
+                      background: 'var(--bg-tertiary, #252526)',
+                      borderBottom: '1px solid var(--border, #333)',
+                      userSelect: 'none',
+                    }}
+                    onMouseDown={(e) => {
+                      aiFloatDragRef.current = { dx: e.clientX - aiFloatPos.x, dy: e.clientY - aiFloatPos.y }
+                      const onMove = (ev: MouseEvent) => {
+                        setAiFloatPos({ x: ev.clientX - (aiFloatDragRef.current?.dx ?? 0), y: ev.clientY - (aiFloatDragRef.current?.dy ?? 0) })
+                      }
+                      const onUp = () => {
+                        aiFloatDragRef.current = null
+                        window.removeEventListener('mousemove', onMove)
+                        window.removeEventListener('mouseup', onUp)
+                      }
+                      window.addEventListener('mousemove', onMove)
+                      window.addEventListener('mouseup', onUp)
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary, #aaa)' }}>
+                      AI Chat · {tabs.find((t) => t.tabId === aiFloatingTabId)?.connectionName || 'Shell'}
+                    </span>
+                    <button
+                      className="ai-float-header-btn"
+                      onClick={() => setAiFloatingTabId(null)}
+                      title="Dock back"
+                    >
+                      ⤡ Dock
+                    </button>
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <AiChatPanel
+                      tabId={aiFloatingTabId}
+                      config={activeProfile}
+                      conv={getAiConv(aiFloatingTabId)}
+                      setConv={(u) => setAiConv(aiFloatingTabId, u)}
+                      floating
+                      onToggleFloat={() => setAiFloatingTabId(null)}
+                      onClose={() => {
+                        setShowAiByTab((prev) => ({ ...prev, [aiFloatingTabId]: false }))
+                        setAiFloatingTabId(null)
+                      }}
+                      initialContext={aiContextText}
+                      onContextConsumed={() => setAiContextText(null)}
+                    />
+                  </div>
+                  {resizeHandles.map((h) => (
+                    <div
+                      key={h.dir}
+                      onMouseDown={(e) => startResize(e, h.dir)}
+                      style={{
+                        position: 'absolute',
+                        ...h.style,
+                        cursor: h.cursor,
+                        zIndex: 1001,
+                      }}
+                    />
+                  ))}
+                </div>
+              )
+            })()
+          )}
 
           {/* Bottom panel — session recordings & command sets */}
           {layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (

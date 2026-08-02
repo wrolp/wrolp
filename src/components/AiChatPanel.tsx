@@ -9,23 +9,25 @@ export interface ChatMessage {
   content: string
 }
 
+interface AiConv {
+  messages: ChatMessage[]
+  input: string
+  streaming: boolean
+  streamingText: string
+  error: string | null
+  toolCalls: ToolCallEvent[]
+  showSuggestions: boolean
+}
+
 interface AiChatPanelProps {
   config: AiEndpointProfile
-  /** Conversation state is owned by App so it persists across tab switches. */
-  messages: ChatMessage[]
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
-  input: string
-  setInput: React.Dispatch<React.SetStateAction<string>>
-  streaming: boolean
-  setStreaming: React.Dispatch<React.SetStateAction<boolean>>
-  streamingText: string
-  setStreamingText: React.Dispatch<React.SetStateAction<string>>
-  error: string | null
-  setError: React.Dispatch<React.SetStateAction<string | null>>
-  toolCalls: ToolCallEvent[]
-  setToolCalls: React.Dispatch<React.SetStateAction<ToolCallEvent[]>>
-  showSuggestions: boolean
-  setShowSuggestions: React.Dispatch<React.SetStateAction<boolean>>
+  tabId: number
+  /** Conversation state for this tab, owned by App (per-shell persistence). */
+  conv: AiConv
+  setConv: (updater: AiConv | ((c: AiConv) => AiConv)) => void
+  floating?: boolean
+  onToggleFloat?: () => void
+  onClose?: () => void
   /** Text to auto-send as initial user message (e.g. terminal selection). */
   initialContext?: string | null
   /** Called when initialContext has been consumed. */
@@ -56,23 +58,34 @@ const SUGGESTIONS = [
 
 export default function AiChatPanel({
   config,
-  messages,
-  setMessages,
-  input,
-  setInput,
-  streaming,
-  setStreaming,
-  streamingText,
-  setStreamingText,
-  error,
-  setError,
-  toolCalls,
-  setToolCalls,
-  showSuggestions,
-  setShowSuggestions,
+  tabId,
+  conv,
+  setConv,
+  floating = false,
+  onToggleFloat,
+  onClose,
   initialContext,
   onContextConsumed,
 }: AiChatPanelProps) {
+  const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
+
+  // Alias setters that operate on the per-tab conversation object so the rest
+  // of the logic (runAgent / handleSend) stays unchanged.
+  const setMessages = (u: ChatMessage[] | ((p: ChatMessage[]) => ChatMessage[])) =>
+    setConv((c) => ({ ...c, messages: typeof u === 'function' ? u(c.messages) : u }))
+  const setInput = (u: string | ((p: string) => string)) =>
+    setConv((c) => ({ ...c, input: typeof u === 'function' ? u(c.input) : u }))
+  const setStreaming = (u: boolean | ((p: boolean) => boolean)) =>
+    setConv((c) => ({ ...c, streaming: typeof u === 'function' ? u(c.streaming) : u }))
+  const setStreamingText = (u: string | ((p: string) => string)) =>
+    setConv((c) => ({ ...c, streamingText: typeof u === 'function' ? u(c.streamingText) : u }))
+  const setError = (u: string | null | ((p: string | null) => string | null)) =>
+    setConv((c) => ({ ...c, error: typeof u === 'function' ? u(c.error) : u }))
+  const setToolCalls = (u: ToolCallEvent[] | ((p: ToolCallEvent[]) => ToolCallEvent[])) =>
+    setConv((c) => ({ ...c, toolCalls: typeof u === 'function' ? u(c.toolCalls) : u }))
+  const setShowSuggestions = (u: boolean | ((p: boolean) => boolean)) =>
+    setConv((c) => ({ ...c, showSuggestions: typeof u === 'function' ? u(c.showSuggestions) : u }))
+
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pollRef = useRef<number>(0)
@@ -232,6 +245,36 @@ export default function AiChatPanel({
           <Icon name="chevronDown" size={12} />
           {config.model || 'model'}
         </span>
+        {!floating && onToggleFloat && (
+          <button
+            className="ai-chat-clear-btn"
+            onClick={onToggleFloat}
+            title="Pop out as floating window"
+          >
+            <Icon name="externalLink" size={13} />
+            Float
+          </button>
+        )}
+        {floating && onToggleFloat && (
+          <button
+            className="ai-chat-clear-btn"
+            onClick={onToggleFloat}
+            title="Dock back"
+          >
+            <Icon name="minimize" size={13} />
+            Dock
+          </button>
+        )}
+        {onClose && (
+          <button
+            className="ai-chat-clear-btn"
+            onClick={onClose}
+            disabled={streaming}
+            title="Close"
+          >
+            <Icon name="x" size={13} />
+          </button>
+        )}
         <button
           className="ai-chat-clear-btn"
           onClick={handleClear}
