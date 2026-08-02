@@ -1,5 +1,7 @@
 # Wrolp Terminal
 
+[中文文档](./README.zh.md) · [English](#)
+
 A Tauri 2 + React 19 + TypeScript desktop SSH terminal client. The native backend is written in Rust and connects directly to remote servers using the pure-Rust async [`russh`](https://github.com/warp-tech/russh) library. File transfer and remote editing use `russh-sftp`. Windows-first (MSI bundle), but builds on Linux/macOS too.
 
 > **Note**: This README describes the current state of the code. The app has grown well beyond a single-tab JSON terminal — it now includes multi-tab SSH, SFTP file management, a remote file editor, session recording, command sets, Docker/host analysis, an AI assistant with tool-calling, and more.
