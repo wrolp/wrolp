@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import type { SessionEventDto } from '../types'
 import { getSessionEvents } from '../commands'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 interface SessionViewerProps {
   sessionId: string
@@ -17,6 +18,7 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
   sessionTitle,
   onClose,
 }) => {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -177,7 +179,7 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
           <button onClick={handleStepBack} disabled={loading || currentIndex === 0}>
             <Icon name="stepBack" />
           </button>
-          <button onClick={handleStepForward} disabled={loading || currentIndex >= events.length}>
+          <button onClick={handleStepForward} disabled={loading || currentIndex >= events.length} title={t('stepForward')}>
             ⏭
           </button>
           <select
@@ -193,7 +195,7 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
           <span className="time-display">
             {formatTime(currentMs)} / {formatTime(totalMs)}
           </span>
-          <button onClick={onClose} className="close-btn">✕</button>
+          <button onClick={onClose} className="close-btn" title={t('close')}>✕</button>
         </div>
       </div>
       <div className="session-viewer-timeline">
@@ -206,7 +208,7 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
           disabled={loading || events.length === 0}
           className="timeline-slider"
         />
-        <span className="event-count">{currentIndex} / {events.length} events</span>
+        <span className="event-count">{currentIndex} / {events.length} {t('events')}</span>
       </div>
       <div className="session-viewer-terminal" ref={containerRef} />
     </div>

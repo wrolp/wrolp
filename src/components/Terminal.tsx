@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { connect, sendInput, commitCommand, pollOutput, resizeTerminal } from '../commands'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 // Tracks the single "active" terminal instance per session tabId. During a
 // transient double-mount (React mounts the new terminal before unmounting the
@@ -50,6 +51,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onSizeChange,
   onAskAi,
 }) => {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -496,22 +498,22 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="context-menu-item" onClick={handleCopy}>
-            <Icon name="copy" /> Copy
+            <Icon name="copy" /> {t('copy')}
           </div>
           <div className="context-menu-item" onClick={handlePaste}>
-            <Icon name="paste" /> Paste
+            <Icon name="paste" /> {t('paste')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleSelectAll}>
-            🔤 Select All
+            🔤 {t('selectAll')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleClear}>
-            🧹 Clear
+            🧹 {t('clear')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleAskAi}>
-            🤖 Ask AI
+            🤖 {t('aiChatAskAi')}
           </div>
         </div>
       )}

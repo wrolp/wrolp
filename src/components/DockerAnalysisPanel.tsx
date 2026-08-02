@@ -10,6 +10,7 @@ import type {
   ResourceUsage,
 } from '../types'
 import { analyzeDockerContainer, dockerContainerLogs } from '../commands'
+import { useI18n } from '../i18n'
 
 interface Props {
   activeTabId: number | null
@@ -25,6 +26,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
   targetContainer,
   onAnalyzed,
 }) => {
+  const { t } = useI18n()
   const [data, setData] = useState<DockerAnalysis | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -98,7 +100,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
     return (
       <div className="docker-analysis-panel">
         <div className="analysis-loading">
-          <p>Analysing container <strong>{targetContainer}</strong>…</p>
+          <p>{t('analyzingContainer')} <strong>{targetContainer}</strong>…</p>
           <div className="spinner" />
         </div>
       </div>
@@ -118,8 +120,8 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       <div className="docker-analysis-panel">
         <div className="file-empty">
           {targetContainer
-            ? `No data for "${targetContainer}"`
-            : 'Right-click a running container in the Docker panel and choose "Analyze Container".'}
+            ? t('noDataForContainer', { container: targetContainer })
+            : t('dockerAnalyzeHint')}
         </div>
       </div>
     )
@@ -139,8 +141,8 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
           </span>{' '}
           {data.containerName}
         </h3>
-        <button className="analysis-refresh-btn" onClick={handleRefresh} title="Re-analyse">
-          Refresh
+        <button className="analysis-refresh-btn" onClick={handleRefresh} title={t('reAnalyze')}>
+          {t('reAnalyze')}
         </button>
         <div className="analysis-meta">
           Image: {data.image}:{data.imageTag} &middot; ID: {data.containerId}
@@ -151,34 +153,34 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       <div className="analysis-section analysis-orchestration">
         <h4>
           {data.orchestration.isCompose
-            ? '\u2630 Docker Compose'
-            : '\u2699 Direct Run'}
+            ? `☰ ${t('dockerCompose')}`
+            : `⚙ ${t('directRun')}`}
         </h4>
         {/* Inferred compose file — shown for both compose & mount-detected containers */}
         {data.orchestration.inferredComposeFile && (
           <div className="orch-inferred-file">
             <span className="orch-inferred-icon">{'\u{1F4C4}'}</span>
             <span className="orch-inferred-path" title="compose.yml or docker-compose.yml">{data.orchestration.inferredComposeFile}</span>
-            <span className="orch-inferred-tag">compose file</span>
+            <span className="orch-inferred-tag">{t('composeFile')}</span>
           </div>
         )}
         {data.orchestration.isCompose ? (
           <div className="orch-compose">
             {data.orchestration.project && (
               <div className="orch-row">
-                <span className="orch-label">Project</span>
+                <span className="orch-label">{t('orchProject')}</span>
                 <span className="orch-value">{data.orchestration.project}</span>
               </div>
             )}
             {data.orchestration.service && (
               <div className="orch-row">
-                <span className="orch-label">Service</span>
+                <span className="orch-label">{t('orchService')}</span>
                 <span className="orch-value">{data.orchestration.service}</span>
               </div>
             )}
             {data.orchestration.configFiles && (
               <div className="orch-row">
-                <span className="orch-label">Config</span>
+                <span className="orch-label">{t('orchConfig')}</span>
                 <span className="orch-value" style={{ wordBreak: 'break-all' }}>
                   {data.orchestration.configFiles}
                 </span>
@@ -186,7 +188,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
             )}
             {data.orchestration.workingDir && (
               <div className="orch-row">
-                <span className="orch-label">WorkDir</span>
+                <span className="orch-label">{t('orchWorkDir')}</span>
                 <span className="orch-value">{data.orchestration.workingDir}</span>
               </div>
             )}
@@ -194,21 +196,21 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
         ) : (
           <div className="orch-direct">
             <div className="orch-row">
-              <span className="orch-label">Image</span>
+              <span className="orch-label">{t('orchImage')}</span>
               <span className="orch-value">{data.image}:{data.imageTag}</span>
             </div>
             {data.orchestration.startCommand ? (
               <div className="orch-row">
-                <span className="orch-label">Command</span>
+                <span className="orch-label">{t('orchCommand')}</span>
                 <span className="orch-value" style={{ wordBreak: 'break-all', fontFamily: "'Cascadia Code', Consolas, monospace" }}>
                   {data.orchestration.startCommand}
                 </span>
               </div>
             ) : (
               <div className="orch-row">
-                <span className="orch-label">Command</span>
+                <span className="orch-label">{t('orchCommand')}</span>
                 <span className="orch-value" style={{ color: 'var(--text-dim, #999)' }}>
-                  (built-in entrypoint / default CMD)
+                  {t('builtinEntrypoint')}
                 </span>
               </div>
             )}
@@ -218,19 +220,19 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
 
       {/* ---- Overview ---- */}
       <div className="analysis-section">
-        <h4>Overview</h4>
+        <h4>{t('overview')}</h4>
         <div className="analysis-overview">
-          {card('OS', data.os)}
-          {card('Kernel', data.kernel)}
-          {card('Arch', data.arch)}
-          {card('Hostname', data.hostname)}
-          {card('PKG Mgr', data.packageManager)}
-          {card('Packages', String(data.packages.length))}
-          {card('Tools', String(data.tools.length))}
-          {card('Ports', String(data.ports.length))}
-          {card('Mounts', String(data.mounts.length))}
-          {card('Env Keys', String(data.envKeys.length))}
-          {card('Processes', String(data.processes.length))}
+          {card(t('cardOs'), data.os)}
+          {card(t('cardKernel'), data.kernel)}
+          {card(t('cardArch'), data.arch)}
+          {card(t('cardHostname'), data.hostname)}
+          {card(t('cardPkgMgr'), data.packageManager)}
+          {card(t('installedPackages', { n: data.packages.length }), String(data.packages.length))}
+          {card(t('toolsDetected', { n: data.tools.length }), String(data.tools.length))}
+          {card(t('ports', { n: data.ports.length }), String(data.ports.length))}
+          {card(t('mounts', { n: data.mounts.length }), String(data.mounts.length))}
+          {card(t('environment', { n: data.envKeys.length }), String(data.envKeys.length))}
+          {card(t('processes', { n: data.processes.length }), String(data.processes.length))}
         </div>
       </div>
 
@@ -239,10 +241,10 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
 
       {/* ---- Container Logs ---- */}
       <div className="analysis-section">
-        <h4>Logs</h4>
+        <h4>{t('logs')}</h4>
         <div className="danalysis-logs-controls">
           <label>
-            Tail
+            {t('logsTail')}
             <input
               type="number"
               className="logs-tail-input"
@@ -252,10 +254,10 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
               value={logsTail}
               onChange={(e) => setLogsTail(Math.max(10, Number(e.target.value) || 200))}
             />
-            lines
+            {t('logsLines')}
           </label>
           <button className="logs-fetch-btn" onClick={fetchLogs} disabled={logsLoading}>
-            {logsLoading ? 'Loading\u2026' : 'Refresh'}
+            {logsLoading ? t('loading') : t('logsRefresh')}
           </button>
           <label className="logs-autoscroll-label">
             <input
@@ -263,7 +265,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
               checked={logsAutoScroll}
               onChange={(e) => setLogsAutoScroll(e.target.checked)}
             />
-            Auto-scroll
+            {t('logsAutoScroll')}
           </label>
         </div>
         {logsError ? (
@@ -272,7 +274,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
           <pre className="danalysis-logs-output" ref={logsRef}>{logs}</pre>
         ) : (
           <div className="logs-empty">
-            {logsLoading ? 'Loading\u2026' : 'Click Refresh to load logs'}
+            {logsLoading ? t('loading') : t('logsClickRefresh')}
           </div>
         )}
       </div>
@@ -280,12 +282,12 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       {/* ---- Ports ---- */}
       {data.ports.length > 0 && (
         <div className="analysis-section">
-          <h4>Ports ({data.ports.length})</h4>
+          <h4>{t('ports', { n: data.ports.length })}</h4>
           <table className="danalysis-table">
             <thead>
               <tr>
-                <th>Container Port</th>
-                <th>Published</th>
+                <th>{t('containerPort')}</th>
+                <th>{t('published')}</th>
               </tr>
             </thead>
             <tbody>
@@ -307,13 +309,13 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       {/* ---- Mounts ---- */}
       {data.mounts.length > 0 && (
         <div className="analysis-section">
-          <h4>Mounts ({data.mounts.length})</h4>
+          <h4>{t('mounts', { n: data.mounts.length })}</h4>
           <table className="danalysis-table">
             <thead>
               <tr>
-                <th>Source</th>
-                <th>Destination</th>
-                <th>Mode</th>
+                <th>{t('source')}</th>
+                <th>{t('destination')}</th>
+                <th>{t('mode')}</th>
               </tr>
             </thead>
             <tbody>
@@ -332,7 +334,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       {/* ---- Environment ---- */}
       {data.envKeys.length > 0 && (
         <div className="analysis-section">
-          <h4>Environment ({data.envKeys.length} keys)</h4>
+          <h4>{t('environment', { n: data.envKeys.length })}</h4>
           <div className="env-chips">
             {data.envKeys.map((e, i) => (
               <span key={i} className="env-chip">{e.key}</span>
@@ -344,15 +346,15 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       {/* ---- Processes ---- */}
       {data.processes.length > 0 && (
         <div className="analysis-section">
-          <h4>Processes ({data.processes.length})</h4>
+          <h4>{t('processes', { n: data.processes.length })}</h4>
           <table className="danalysis-table">
             <thead>
               <tr>
-                <th>PID</th>
-                <th>User</th>
-                <th>CPU%</th>
-                <th>MEM%</th>
-                <th>Command</th>
+                <th>{t('pid')}</th>
+                <th>{t('user')}</th>
+                <th>{t('pcpu')}</th>
+                <th>{t('pmem')}</th>
+                <th>{t('command')}</th>
               </tr>
             </thead>
             <tbody>
@@ -373,7 +375,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       {/* ---- Tools ---- */}
       {data.tools.length > 0 && (
         <div className="analysis-section">
-          <h4>Tools ({data.tools.length})</h4>
+          <h4>{t('toolsDetected', { n: data.tools.length })}</h4>
           <div className="tool-chips">
             {data.tools.map((t, i) => (
               <span key={i} className="tool-chip">{t.name}</span>
@@ -385,11 +387,11 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       {/* ---- Packages ---- */}
       {data.packages.length > 0 && (
         <div className="analysis-section">
-          <h4>Packages ({filteredPkgs.length}{pkgSearch ? ` / ${data.packages.length}` : ''})</h4>
+          <h4>{t('installedPackages', { n: filteredPkgs.length })}{pkgSearch ? ` / ${data.packages.length}` : ''}</h4>
           <input
             className="pkg-search"
             type="text"
-            placeholder="Search packages…"
+            placeholder={t('searchPackages')}
             value={pkgSearch}
             onChange={(e) => setPkgSearch(e.target.value)}
           />
@@ -429,32 +431,33 @@ function card(label: string, value: string) {
 
 /** Resource usage bars. */
 function ResourceSection({ resource }: { resource: ResourceUsage }) {
+  const { t } = useI18n()
   const cpuVal = parseFloat(resource.cpuPercent) || 0
   return (
     <div className="analysis-section">
-      <h4>Resource Usage</h4>
+      <h4>{t('resourceUsage')}</h4>
       <div className="danalysis-resource">
         <div className="resource-row">
-          <span className="resource-label">CPU</span>
+          <span className="resource-label">{t('resCpu')}</span>
           <div className="resource-bar-bg">
             <div className="resource-bar-fill" style={{ width: `${Math.min(cpuVal, 100)}%` }} />
           </div>
           <span className="resource-val">{resource.cpuPercent}</span>
         </div>
         <div className="resource-row">
-          <span className="resource-label">Mem</span>
+          <span className="resource-label">{t('resMem')}</span>
           <span className="resource-val">{resource.memUsage} / {resource.memLimit}</span>
         </div>
         <div className="resource-row">
-          <span className="resource-label">Net IO</span>
+          <span className="resource-label">{t('resNetIo')}</span>
           <span className="resource-val">{resource.netIO}</span>
         </div>
         <div className="resource-row">
-          <span className="resource-label">Block IO</span>
+          <span className="resource-label">{t('resBlockIo')}</span>
           <span className="resource-val">{resource.blockIO}</span>
         </div>
         <div className="resource-row">
-          <span className="resource-label">PIDs</span>
+          <span className="resource-label">{t('resPids')}</span>
           <span className="resource-val">{resource.pidCount}</span>
         </div>
       </div>

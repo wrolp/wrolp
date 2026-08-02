@@ -3,6 +3,7 @@ import type { ConnectionConfig, SessionSummary } from '../types'
 import { listSessions, deleteSession, deleteAllSessions, renameSession, extractCommands } from '../commands'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 interface SessionListPanelProps {
   connections: ConnectionConfig[]
@@ -15,6 +16,7 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
   onPlaySession,
   onExtractCommands,
 }) => {
+  const { t } = useI18n()
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [filterConn, setFilterConn] = useState<string>('')
@@ -45,8 +47,8 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
 
   const handleDelete = (id: string) => {
     setConfirm({
-      title: 'Delete Session',
-      message: 'Delete this session recording?',
+      title: t('deleteSession'),
+      message: t('deleteSessionConfirm'),
       danger: false,
       onConfirm: async () => {
         await deleteSession(id)
@@ -58,8 +60,8 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
 
   const handleDeleteAll = () => {
     setConfirm({
-      title: 'Delete All Sessions',
-      message: 'Delete ALL session recordings? This cannot be undone.',
+      title: t('deleteAllSessions'),
+      message: t('deleteAllSessionsConfirm'),
       danger: true,
       onConfirm: async () => {
         await deleteAllSessions()
@@ -114,22 +116,22 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
           onChange={(e) => setFilterConn(e.target.value)}
           className="filter-select"
         >
-          <option value="">All connections</option>
+          <option value="">{t('allConnections')}</option>
           {connections.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
-        <button onClick={reload} className="refresh-btn" title="Refresh"><Icon name="refresh" /></button>
-        <button onClick={handleDeleteAll} className="delete-all-btn" title="Delete all sessions">
+        <button onClick={reload} className="refresh-btn" title={t('refresh')}><Icon name="refresh" /></button>
+        <button onClick={handleDeleteAll} className="delete-all-btn" title={t('deleteAllSessions')}>
           <Icon name="trash" />
         </button>
-        <span className="session-count">{sessions.length} sessions</span>
+        <span className="session-count">{t('sessionCount', { n: sessions.length })}</span>
       </div>
 
       {loading ? (
-        <div className="panel-empty">Loading...</div>
+        <div className="panel-empty">{t('loadingSessions')}</div>
       ) : sessions.length === 0 ? (
-        <div className="panel-empty">No recorded sessions yet</div>
+        <div className="panel-empty">{t('noRecordedSessions')}</div>
       ) : (
         <div className="session-table">
           {sessions.map((s) => (
@@ -155,22 +157,22 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
                       setEditTitle(s.title || s.connectionName || '')
                     }}
                   >
-                    {s.title || s.connectionName || 'Unknown'}
+                    {s.title || s.connectionName || t('unknown')}
                   </span>
                 )}
                 <span className="session-meta">
-                  {formatDate(s.startedAt)} · {formatDuration(s.durationSeconds)} · {s.eventCount} events
+                  {formatDate(s.startedAt)} · {formatDuration(s.durationSeconds)} · {s.eventCount} {t('events')}
                 </span>
               </div>
               <div className="session-row-actions">
                 <button
                   onClick={() => onPlaySession(s)}
-                  title="Playback"
+                  title={t('playback')}
                   disabled={s.eventCount === 0}
                 >
                   <Icon name="play" />
                 </button>
-                <button onClick={() => handleExtract(s.id)} title="Extract commands">
+                <button onClick={() => handleExtract(s.id)} title={t('extractCommands')}>
                   <Icon name="clipboard" />
                 </button>
                 <button
@@ -178,11 +180,11 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
                     setEditingId(s.id)
                     setEditTitle(s.title || s.connectionName || '')
                   }}
-                  title="Rename"
+                  title={t('rename')}
                 >
                   <Icon name="edit" />
                 </button>
-                <button onClick={() => handleDelete(s.id)} title="Delete">
+                <button onClick={() => handleDelete(s.id)} title={t('delete')}>
                   <Icon name="trash" />
                 </button>
               </div>
@@ -196,7 +198,7 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
           title={confirm.title}
           message={confirm.message}
           danger={confirm.danger}
-          confirmLabel="Delete"
+          confirmLabel={t('deleteSessionBtn')}
           onConfirm={confirm.onConfirm}
           onCancel={() => setConfirm(null)}
         />

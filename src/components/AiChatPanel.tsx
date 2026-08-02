@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent } from '../types'
 import { startAiAgent, pollAiChunks, listAiModels } from '../commands'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 export interface ChatMessage {
   id: string
@@ -76,6 +77,7 @@ export default function AiChatPanel({
   initialContext,
   onContextConsumed,
 }: AiChatPanelProps) {
+  const { t } = useI18n()
   const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
 
   // Alias setters that operate on the per-tab conversation object so the rest
@@ -274,13 +276,13 @@ export default function AiChatPanel({
           <Icon name="sparkles" size={16} />
         </div>
         <div className="ai-chat-title-group">
-          <span className="ai-chat-title">AI Assistant</span>
+          <span className="ai-chat-title">{t('aiSettingsHeader')}</span>
           <div className="ai-chat-selectors">
             <select
               className="ai-chat-select"
               value={config?.id ?? ''}
               onChange={(e) => onSelectProfile(e.target.value)}
-              title="Select AI endpoint"
+              title={t('selectAiEndpoint')}
             >
               {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -293,25 +295,25 @@ export default function AiChatPanel({
                 className="ai-chat-select ai-chat-model-input"
                 value={config.model || ''}
                 onChange={(e) => onSelectModel(e.target.value)}
-                placeholder="Model name"
-                title="Enter model name manually"
+                placeholder={t('modelName')}
+                title={t('enterModelNameManually')}
               />
             ) : (
               <select
                 className="ai-chat-select"
                 value={config.model || ''}
                 onChange={(e) => onSelectModel(e.target.value)}
-                title="Select model"
+                title={t('selectModel')}
                 disabled={fetchingModels}
               >
-                {fetchingModels && <option value={config.model || ''}>Loading…</option>}
+                {fetchingModels && <option value={config.model || ''}>{t('loadingModels')}</option>}
                 {models.map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
                 ))}
                 {!fetchingModels && models.length === 0 && (
-                  <option value={config.model || ''}>No models available</option>
+                  <option value={config.model || ''}>{t('noModelsAvailable')}</option>
                 )}
               </select>
             )}
@@ -321,20 +323,20 @@ export default function AiChatPanel({
           <button
             className="ai-chat-clear-btn"
             onClick={onToggleFloat}
-            title="Pop out as floating window"
+            title={t('aiChatPopOut')}
           >
             <Icon name="externalLink" size={13} />
-            Float
+            {t('aiChatPopOut')}
           </button>
         )}
         {floating && onToggleFloat && (
           <button
             className="ai-chat-clear-btn"
             onClick={onToggleFloat}
-            title="Dock back"
+            title={t('aiChatDock')}
           >
             <Icon name="minimize" size={13} />
-            Dock
+            {t('aiChatDock')}
           </button>
         )}
         {onClose && (
@@ -342,7 +344,7 @@ export default function AiChatPanel({
             className="ai-chat-clear-btn"
             onClick={onClose}
             disabled={streaming}
-            title="Close"
+            title={t('aiChatClose')}
           >
             <Icon name="x" size={13} />
           </button>
@@ -351,7 +353,7 @@ export default function AiChatPanel({
           className="ai-chat-clear-btn"
           onClick={handleClear}
           disabled={streaming}
-          title="Clear conversation"
+          title={t('clear')}
         >
           <Icon name="trash" size={13} />
           Clear
@@ -365,14 +367,10 @@ export default function AiChatPanel({
             <div className="ai-chat-empty-icon">
               <Icon name="sparkles" size={32} />
             </div>
-            <h3 className="ai-chat-empty-title">How can I help you today?</h3>
-            <p className="ai-chat-empty-text">
-              I can run read-only tools on your connected servers — execute commands, browse
-              files, analyze systems, and look up help — to give you accurate answers.
-            </p>
+            <h3 className="ai-chat-empty-title">{t('aiChatEmptyTitle')}</h3>
+            <p className="ai-chat-empty-text">{t('aiChatEmptyText')}</p>
             <p className="ai-chat-empty-hint">
-              Tip: select text in the terminal, right-click, and choose <b>Ask AI</b> to send it
-              as context.
+              {t('aiChatEmptyHint').replace('“Ask AI”', '“' + t('aiChatAskAi') + '”')}
             </p>
 
             {showSuggestions && (
@@ -398,7 +396,9 @@ export default function AiChatPanel({
               {msg.role === 'user' ? <Icon name="user" size={14} /> : <Icon name="sparkles" size={14} />}
             </div>
             <div className="ai-chat-msg-body">
-              <div className="ai-chat-msg-role">{msg.role === 'user' ? 'You' : 'AI'}</div>
+              <div className="ai-chat-msg-role">
+                {msg.role === 'user' ? t('aiChatRoleYou') : t('aiChatRoleAi')}
+              </div>
               <div className="ai-chat-msg-content">
                 <MarkdownText text={msg.content} />
               </div>
@@ -409,9 +409,9 @@ export default function AiChatPanel({
         {/* Tool-call cards (during agent loop) */}
         {toolCalls.length > 0 && (
           <div className="ai-tool-calls">
-            <div className="ai-tool-calls-label">
-              <Icon name="settings" size={12} /> Tools used
-            </div>
+              <div className="ai-tool-calls-label">
+                <Icon name="settings" size={12} /> {t('aiChatToolsUsed')}
+              </div>
             {toolCalls.map((tc) => (
               <ToolCallCard key={tc.id} tool={tc} />
             ))}
@@ -425,7 +425,7 @@ export default function AiChatPanel({
               <Icon name="sparkles" size={14} />
             </div>
             <div className="ai-chat-msg-body">
-              <div className="ai-chat-msg-role">AI</div>
+              <div className="ai-chat-msg-role">{t('aiChatRoleAi')}</div>
               <div className="ai-chat-msg-content streaming">
                 <MarkdownText text={streamingText} />
                 <span className="ai-chat-cursor" />
@@ -438,14 +438,14 @@ export default function AiChatPanel({
             <div className="ai-chat-msg-avatar" aria-hidden>
               <Icon name="sparkles" size={14} />
             </div>
-            <div className="ai-chat-msg-body">
-              <div className="ai-chat-msg-role">AI</div>
-              <div className="ai-chat-msg-content">
-                <span className="ai-chat-typing">
-                  Thinking
-                  <span className="ai-chat-cursor" />
-                </span>
-              </div>
+              <div className="ai-chat-msg-body">
+                <div className="ai-chat-msg-role">{t('aiChatRoleAi')}</div>
+                <div className="ai-chat-msg-content">
+                  <span className="ai-chat-typing">
+                    {t('aiChatThinking')}
+                    <span className="ai-chat-cursor" />
+                  </span>
+                </div>
             </div>
           </div>
         )}
@@ -468,7 +468,7 @@ export default function AiChatPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message the AI assistant…  (Enter to send, Shift+Enter for newline)"
+            placeholder={t('aiChatPlaceholder')}
             rows={1}
             disabled={streaming}
           />
@@ -476,14 +476,12 @@ export default function AiChatPanel({
             className="ai-chat-send-btn"
             onClick={() => handleSend()}
             disabled={streaming || !input.trim()}
-            title="Send"
+            title={t('aiChatSend')}
           >
             {streaming ? <Icon name="pause" size={15} /> : <Icon name="send" size={15} />}
           </button>
         </div>
-        <div className="ai-chat-input-hint">
-          AI can use tools on connected servers. Destructive commands are blocked.
-        </div>
+        <div className="ai-chat-input-hint">{t('aiChatInputHint')}</div>
       </div>
     </div>
   )

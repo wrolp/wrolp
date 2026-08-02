@@ -6,6 +6,7 @@ import {
   stopDockerLogsStream,
 } from '../commands'
 import { parseAnsiToHtml } from '../ansi'
+import { useI18n } from '../i18n'
 
 interface DockerLogViewerProps {
   tabId: number
@@ -32,6 +33,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   defaultFollow = true,
   maxLines = 5000,
 }) => {
+  const { t } = useI18n()
   const [logs, setLogs] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -309,7 +311,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
                 onContextMenu={(e) => e.preventDefault()}
               >
                 <div className="context-menu-item" onClick={handleAskAiFromMenu}>
-                  {selectedTextRef.current ? 'Ask AI (selected text)' : 'Ask AI (all logs)'}
+                  {selectedTextRef.current ? t('askAiSelectedText') : t('askAiAllLogs')}
                 </div>
               </div>
             )}

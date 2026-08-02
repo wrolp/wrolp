@@ -5,6 +5,7 @@ import type { ConnectionConfig } from '../types'
 import { saveConnection as saveConn, deleteConnection, reorderConnections, renameGroup, deleteGroup } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[]
@@ -35,6 +36,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   expanded = true,
   onToggleExpanded,
 }) => {
+  const { t } = useI18n()
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
   const [defaultGroup, setDefaultGroup] = useState<string>('')
@@ -194,7 +196,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   }
 
   const handleDelete = async (conn: ConnectionConfig) => {
-    if (confirm(`Delete connection "${conn.name}"?`)) {
+    if (confirm(t('deleteConnectionConfirm', { name: conn.name }))) {
       await deleteConnection(conn.id)
       onConnectionChange()
     }
@@ -220,7 +222,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   }
 
   const handleDeleteGroup = async (groupName: string) => {
-    if (confirm(`Delete group "${groupName}"?\nConnections in this group will be moved to Ungrouped.`)) {
+    if (confirm(t('deleteGroupConfirm', { group: groupName }))) {
       await deleteGroup(groupName)
       setCollapsedGroups((prev) => {
         if (!prev.has(groupName)) return prev
@@ -240,9 +242,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           <span
             className={`collapse-chevron${expanded ? ' expanded' : ''}`}
             onClick={onToggleExpanded}
-            title={expanded ? 'Collapse' : 'Expand'}
+            title={expanded ? t('collapse') : t('expand')}
           />
-          <span style={{ flex: 1 }}>Connections</span>
+          <span style={{ flex: 1 }}>{t('connections')}</span>
           {expanded && (
             <button
               onClick={() => {
@@ -271,9 +273,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               {connections.length === 0 ? (
                 <div className="empty-state">
                   <div><Icon name="desktop" /></div>
-                  <div>No connections yet</div>
+                  <div>{t('noConnectionsYet')}</div>
                   <div style={{ fontSize: '12px', marginTop: '8px' }}>
-                    Click + to add a new SSH connection
+                    {t('addSshConnectionHint')}
                   </div>
                 </div>
               ) : grouped.length === 1 && grouped[0][0] === UNGROUPED ? (
@@ -368,12 +370,12 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       >
                         <span className={`collapse-chevron${collapsed ? '' : ' expanded'}`} />
                         <span className="conn-group-name">
-                          {isUngrouped ? 'Ungrouped' : key}
+                          {isUngrouped ? t('ungrouped') : key}
                         </span>
                         <span className="conn-group-count">{conns.length}</span>
                         <button
                           className="conn-group-add"
-                          title={`Add connection to ${isUngrouped ? 'Ungrouped' : key}`}
+                          title={t('addConnectionTo', { group: isUngrouped ? t('ungrouped') : key })}
                           onClick={(e) => {
                             e.stopPropagation()
                             setEditing(null)
@@ -576,6 +578,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   onClose,
   onSave,
 }) => {
+  const { t } = useI18n()
   const [name, setName] = useState(connection?.name || '')
   const [host, setHost] = useState(connection?.host || '')
   const [port, setPort] = useState(connection?.port || 22)
@@ -597,7 +600,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const handleBrowseKey = async () => {
     try {
       const selected = await open({
-        title: 'Select SSH Private Key',
+        title: t('selectSshKey'),
       })
       if (selected) {
         setKeyPath(selected as string)
@@ -611,7 +614,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     const finalName = name.trim() || host.trim() || 'Unnamed'
     const finalUsername = username.trim() || 'root'
     if (!host.trim()) {
-      alert('Please fill in host')
+      alert(t('fillHost'))
       return
     }
     const config: ConnectionConfig = {
@@ -633,7 +636,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     <div className="modal-overlay">
       <div className="modal">
         <div className="modal-header">
-          <h3>{connection ? 'Edit Connection' : 'New Connection'}</h3>
+          <h3>{connection ? t('editConnection') : t('newConnection')}</h3>
           <span onClick={onClose} style={{ cursor: 'pointer', fontSize: '18px', color: '#888' }}>
             ✕
           </span>
@@ -641,7 +644,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
         <div className="modal-body">
           <div className="form-row">
             <div className="form-group">
-              <label>Host</label>
+              <label>{t('host')}</label>
               <input
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
@@ -649,7 +652,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               />
             </div>
             <div className="form-group">
-              <label>Port</label>
+              <label>{t('port')}</label>
               <input
                 type="number"
                 value={port}
@@ -659,11 +662,11 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             </div>
           </div>
           <div className="form-group">
-            <label>Name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Server" />
+            <label>{t('connectionName')}</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('myServer')} />
           </div>
           <div className="form-group">
-            <label>Username</label>
+            <label>{t('username')}</label>
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -671,7 +674,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             />
           </div>
           <div className="form-group">
-            <label>Group (optional)</label>
+            <label>{t('group')} ({t('default')})</label>
             <select
               className="form-select"
               value={groupMode === 'new' ? '__new__' : group}
@@ -686,29 +689,29 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 }
               }}
             >
-              <option value="">(No Group)</option>
+              <option value="">{t('noGroup')}</option>
               {existingGroups.map((g) => (
                 <option key={g} value={g}>
                   {g}
                 </option>
               ))}
-              <option value="__new__">+ New Group…</option>
+              <option value="__new__">{t('newGroup')}</option>
             </select>
             {groupMode === 'new' && (
               <input
                 style={{ marginTop: '6px' }}
                 value={group}
                 onChange={(e) => setGroup(e.target.value)}
-                placeholder="Enter new group name"
+                placeholder={t('newGroupName')}
               />
             )}
           </div>
           <div className="form-group">
-            <label>Description (optional)</label>
+            <label>{t('description')}</label>
             <input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Notes about this connection"
+              placeholder={t('notes')}
             />
           </div>
 
@@ -719,7 +722,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 checked={authType === 'password'}
                 onChange={() => setAuthType('password')}
               />
-              Password
+              {t('authPassword')}
             </label>
             <label>
               <input
@@ -727,25 +730,25 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 checked={authType === 'key'}
                 onChange={() => setAuthType('key')}
               />
-              SSH Key
+              {t('sshKey')}
             </label>
           </div>
 
           {authType === 'password' ? (
             <div className="form-group">
-              <label>Password</label>
+              <label>{t('password')}</label>
               <div className="input-with-icon">
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter password"
+                  placeholder={t('password')}
                 />
                 <button
                   type="button"
                   className="input-icon-btn"
                   onClick={() => setShowPassword((v) => !v)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? t('hidePassword') : t('showPassword')}
                 >
                   <Icon name={showPassword ? 'eyeOff' : 'eye'} size={16} />
                 </button>
@@ -754,7 +757,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           ) : (
             <>
               <div className="form-group">
-                <label>Key Path</label>
+                <label>{t('keyPath')}</label>
                 <div style={{ display: 'flex', gap: '6px' }}>
                   <input
                     value={keyPath}
@@ -767,18 +770,18 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                     onClick={handleBrowseKey}
                     className="btn-browse"
                   >
-                    Browse
+                    {t('browse')}
                   </button>
                 </div>
               </div>
               <div className="form-group">
-                <label>Passphrase (optional)</label>
+                <label>{t('passphrase')}</label>
                 <div className="input-with-icon">
                   <input
                     type={showPassphrase ? 'text' : 'password'}
                     value={passphrase}
                     onChange={(e) => setPassphrase(e.target.value)}
-                    placeholder="Key passphrase"
+                    placeholder={t('passphrase')}
                   />
                   <button
                     type="button"
@@ -795,10 +798,10 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
         </div>
         <div className="modal-footer">
           <button className="btn-cancel" onClick={onClose}>
-            Cancel
+            {t('cancel')}
           </button>
           <button className="btn-primary" onClick={handleSave}>
-            {connection ? 'Update' : 'Create'}
+            {connection ? t('update') : t('create')}
           </button>
         </div>
       </div>
@@ -827,6 +830,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onDelete,
   onClose,
 }) => {
+  const { t } = useI18n()
   React.useEffect(() => {
     const handler = () => onClose()
     document.addEventListener('click', handler)
@@ -837,20 +841,20 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
     <div className="context-menu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
       {onSplitRight && (
         <div className="context-menu-item" onClick={onSplitRight}>
-          Split Right (horizontal)
+          {t('splitRight')}
         </div>
       )}
       {onSplitDown && (
         <div className="context-menu-item" onClick={onSplitDown}>
-          Split Down (vertical)
+          {t('splitDown')}
         </div>
       )}
       {(onSplitRight || onSplitDown) && <div className="context-menu-divider" />}
       <div className="context-menu-item" onClick={onEdit}>
-        <Icon name="edit" /> Edit
+        <Icon name="edit" /> {t('edit')}
       </div>
       <div className="context-menu-item" onClick={onDelete}>
-        <Icon name="trash" /> Delete
+        <Icon name="trash" /> {t('delete')}
       </div>
     </div>
   )
@@ -873,6 +877,7 @@ const GroupContextMenu: React.FC<GroupContextMenuProps> = ({
   onDelete,
   onClose,
 }) => {
+  const { t } = useI18n()
   React.useEffect(() => {
     const handler = () => onClose()
     document.addEventListener('click', handler)
@@ -882,10 +887,10 @@ const GroupContextMenu: React.FC<GroupContextMenuProps> = ({
   return (
     <div className="context-menu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
       <div className="context-menu-item" onClick={onRename}>
-        <Icon name="edit" /> Rename Group
+        <Icon name="edit" /> {t('renameGroup')}
       </div>
       <div className="context-menu-item" onClick={onDelete}>
-        <Icon name="trash" /> Delete Group
+        <Icon name="trash" /> {t('deleteGroup')}
       </div>
     </div>
   )

@@ -39,6 +39,7 @@ import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent } from './t
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
 import { detectLanguage } from './editor/languages'
+import { useI18n, LANG_LABELS } from './i18n'
 import './styles/App.scss'
 
 // Global connection cache
@@ -48,6 +49,7 @@ let cachedConnections: ConnectionConfig[] = []
 let nextTabId = 1
 
 export default function App() {
+  const { t, lang, setLang } = useI18n()
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
@@ -1151,8 +1153,8 @@ export default function App() {
   // Compute tab display label (number tabs sharing the same connection)
   const getTabLabel = useCallback(
     (tab: TabInfo): string => {
-      if (tab.tabType === 'settings') return '⚙ Settings'
-      if (tab.tabType === 'aiChat') return '🤖 AI Chat'
+      if (tab.tabType === 'settings') return '⚙ ' + t('tabSettings')
+      if (tab.tabType === 'aiChat') return '🤖 ' + t('tabAiChat')
       if (tab.tabType === 'dockerLog') return `📋 ${tab.containerName ?? 'Logs'}`
       if (!tab.connectionId) return tab.connectionName
       const siblings = tabs.filter(
@@ -1689,14 +1691,14 @@ export default function App() {
                 onClick={() => setSettingsActiveTab('general')}
               >
                 <Icon name="settings" size={15} />
-                General
+                {t('settingsGeneral')}
               </button>
               <button
                 className={'settings-nav-item' + (settingsActiveTab === 'ai' ? ' active' : '')}
                 onClick={() => setSettingsActiveTab('ai')}
               >
                 <Icon name="sparkles" size={15} />
-                AI Assistant
+                {t('aiSettingsHeader')}
               </button>
             </div>
 
@@ -1704,14 +1706,14 @@ export default function App() {
               {settingsActiveTab === 'general' && (
                 <div className="settings-pane">
                   <div className="settings-pane-header">
-                    <h3>General</h3>
-                    <p>Application appearance and update preferences.</p>
+                    <h3>{t('settingsGeneral')}</h3>
+                    <p>{t('settingsAppearance')}</p>
                   </div>
 
                   <div className="settings-card">
                     <div className="settings-fields">
                       <div className="settings-field">
-                        <label className="settings-label">Window Opacity</label>
+                        <label className="settings-label">{t('windowOpacity')}</label>
                         <input
                           type="range"
                           min="20"
@@ -1724,7 +1726,25 @@ export default function App() {
                       </div>
 
                       <div className="settings-field">
-                        <label htmlFor="maxScrollback" className="settings-label">Max Scrollback Lines</label>
+                        <label htmlFor="ui-language" className="settings-label">{t('language')}</label>
+                        <select
+                          id="ui-language"
+                          className="settings-input"
+                          style={{ width: '200px' }}
+                          value={lang}
+                          onChange={(e) => setLang(e.target.value as 'en' | 'zh')}
+                        >
+                          {(['en', 'zh'] as const).map((l) => (
+                            <option key={l} value={l}>
+                              {LANG_LABELS[l]}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="settings-help">{t('settingsAppearance')}</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label htmlFor="maxScrollback" className="settings-label">{t('maxScrollbackLines')}</label>
                         <input
                           id="maxScrollback"
                           type="number"
@@ -1740,11 +1760,11 @@ export default function App() {
                             try { localStorage.setItem('wrolp-maxScrollback', String(v)) } catch {}
                           }}
                         />
-                        <span className="settings-help">Applies to new tabs.</span>
+                        <span className="settings-help">{t('appliesToNewTabs')}</span>
                       </div>
 
                       <div className="settings-field">
-                        <label className="settings-label">Updates</label>
+                        <label className="settings-label">{t('updates')}</label>
                         <div className="settings-update-row">
                           <button
                             className="settings-save-btn"
@@ -1755,12 +1775,12 @@ export default function App() {
                               updateState === 'installing'
                             }
                           >
-                            {updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
+                            {updateState === 'checking' ? t('loading') : t('checkForUpdates')}
                           </button>
                           {updateInfo ? (
-                            <span className="settings-update-status">New version v{updateInfo.version}</span>
+                            <span className="settings-update-status">{t('newVersion', { ver: updateInfo.version })}</span>
                           ) : updateInfo === null && updateState !== 'checking' ? (
-                            <span className="settings-update-status">Up to date</span>
+                            <span className="settings-update-status">{t('upToDate')}</span>
                           ) : null}
                         </div>
                         {updateInfo && (
@@ -1771,10 +1791,10 @@ export default function App() {
                               disabled={updateState !== 'idle'}
                             >
                               {updateState === 'downloading'
-                                ? 'Downloading...'
+                                ? t('downloading')
                                 : updateState === 'installing'
-                                  ? 'Installing...'
-                                  : 'Download & Install'}
+                                  ? t('installing')
+                                  : t('downloadAndInstall')}
                             </button>
                           </div>
                         )}
@@ -1786,8 +1806,8 @@ export default function App() {
                     <div className="settings-card-header">
                       <div className="settings-card-icon">🐳</div>
                       <div>
-                        <h3 className="settings-card-title">Docker Logs</h3>
-                        <p className="settings-card-sub">Defaults for the Docker log viewer.</p>
+                        <h3 className="settings-card-title">{t('dockerLogs')}</h3>
+                        <p className="settings-card-sub">{t('dockerLogsDesc')}</p>
                       </div>
                     </div>
                     <div className="settings-fields">
@@ -1801,7 +1821,7 @@ export default function App() {
                             try { localStorage.setItem('wrolp-docker-wordwrap', e.target.checked ? '1' : '0') } catch {}
                           }}
                         />
-                        <label htmlFor="docker-wordwrap" className="settings-label">Auto-wrap lines</label>
+                        <label htmlFor="docker-wordwrap" className="settings-label">{t('autoWrapLines')}</label>
                       </div>
                       <div className="settings-field checkbox-field">
                         <input
@@ -1813,10 +1833,10 @@ export default function App() {
                             try { localStorage.setItem('wrolp-docker-follow', e.target.checked ? '1' : '0') } catch {}
                           }}
                         />
-                        <label htmlFor="docker-follow" className="settings-label">Follow (auto-scroll to newest)</label>
+                        <label htmlFor="docker-follow" className="settings-label">{t('followNewest')}</label>
                       </div>
                       <div className="settings-field">
-                        <label htmlFor="docker-maxlines" className="settings-label">Max Retained Lines</label>
+                        <label htmlFor="docker-maxlines" className="settings-label">{t('maxRetainedLines')}</label>
                         <input
                           id="docker-maxlines"
                           type="number"
@@ -1832,7 +1852,7 @@ export default function App() {
                             try { localStorage.setItem('wrolp-docker-maxlines', String(v)) } catch {}
                           }}
                         />
-                        <span className="settings-help">Older lines are dropped so the buffer isn't flooded.</span>
+                        <span className="settings-help">{t('olderLinesDropped')}</span>
                       </div>
                     </div>
                   </div>
@@ -1844,8 +1864,8 @@ export default function App() {
                           <Icon name="link" size={16} />
                         </div>
                         <div>
-                          <h3 className="settings-card-title">About</h3>
-                          <p className="settings-card-sub">Build and repository information</p>
+                          <h3 className="settings-card-title">{t('about')}</h3>
+                          <p className="settings-card-sub">{t('aboutDesc')}</p>
                         </div>
                       </div>
                       <div className="app-version-info">
@@ -1903,8 +1923,8 @@ export default function App() {
                           <Icon name="sparkles" size={16} />
                         </div>
                         <div>
-                          <h3 className="settings-card-title">Endpoints</h3>
-                          <p className="settings-card-sub">Select the active endpoint or add a new one</p>
+                          <h3 className="settings-card-title">{t('endpoints')}</h3>
+                          <p className="settings-card-sub">{t('endpointsDesc')}</p>
                         </div>
                       </div>
 
@@ -1978,7 +1998,7 @@ export default function App() {
                           setAiApiKeyInput('')
                         }}
                       >
-                        <Icon name="plus" size={14} /> Add Endpoint
+                        <Icon name="plus" size={14} /> {t('addEndpoint')}
                       </button>
                     </div>
                   )}
@@ -1994,7 +2014,7 @@ export default function App() {
                       <div className="settings-fields">
                         <div className="settings-field">
                           <label htmlFor="ai-name" className="settings-label">
-                            <Icon name="sparkles" size={13} /> Profile Name
+                            <Icon name="sparkles" size={13} /> {t('connectionName')}
                           </label>
                           <input
                             id="ai-name"
@@ -2019,7 +2039,7 @@ export default function App() {
 
                         <div className="settings-field">
                           <label htmlFor="ai-endpoint" className="settings-label">
-                            <Icon name="link" size={13} /> API Endpoint
+                            <Icon name="link" size={13} /> {t('baseUrl')}
                           </label>
                           <input
                             id="ai-endpoint"
@@ -2045,7 +2065,7 @@ export default function App() {
 
                         <div className="settings-field">
                           <label htmlFor="ai-key" className="settings-label">
-                            <Icon name="lock" size={13} /> API Key
+                            <Icon name="lock" size={13} /> {t('apiKey')}
                           </label>
                           <div className="settings-input-with-btn">
                             <input
@@ -2061,7 +2081,7 @@ export default function App() {
                               type="button"
                               className="settings-icon-btn"
                               onClick={() => setAiShowKey(!aiShowKey)}
-                              title={aiShowKey ? 'Hide' : 'Show'}
+                              title={aiShowKey ? t('off') : t('on')}
                             >
                               <Icon name={aiShowKey ? 'eyeOff' : 'eye'} size={15} />
                             </button>
@@ -2071,7 +2091,7 @@ export default function App() {
 
                         <div className="settings-field">
                           <label htmlFor="ai-model" className="settings-label">
-                            <Icon name="terminal" size={13} /> Model
+                            <Icon name="terminal" size={13} /> {t('model')}
                           </label>
                           {aiModelManual || aiModels.length === 0 ? (
                             <input
@@ -2141,7 +2161,7 @@ export default function App() {
                               }
                             }}
                           >
-                            {aiFetchingModels ? 'Fetching...' : 'Fetch models from /v1/models'}
+                            {aiFetchingModels ? t('downloading') : t('fetchModelsFromV1')}
                           </button>
                           {aiModels.length > 0 && (
                             <label className="settings-checkbox-label">
@@ -2222,22 +2242,22 @@ export default function App() {
         {tab.tabType !== 'settings' && tab.tabType !== 'aiChat' && tab.status === 'disconnected' ? (
           <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
             <div className="icon">🔌</div>
-            <div style={{ color: '#f44747' }}>Connection lost</div>
+            <div style={{ color: '#f44747' }}>{t('connectionLost')}</div>
             <div style={{ fontSize: '12px', color: '#888' }}>
               {tab.connectionName} — {tab.host}
             </div>
-            <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>Press Enter to retry</div>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>{t('pressEnterToRetry')}</div>
             <button
               className="btn-primary"
               onClick={() => handleReconnect(tab.tabId)}
               style={{ marginTop: 12, fontSize: '13px', padding: '6px 20px' }}
             >
-              <Icon name="refresh" /> Reconnect
+              <Icon name="refresh" /> {t('reconnect')}
             </button>
           </div>
         ) : tab.tabType !== 'settings' && tab.status === 'error' ? (
           <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
-            <div style={{ color: '#f44747' }}>Connection failed: {tab.connectionName}</div>
+            <div style={{ color: '#f44747' }}>{t('connectionFailed')}: {tab.connectionName}</div>
             {tab.errorMessage && (
               <div
                 style={{
@@ -2399,7 +2419,7 @@ export default function App() {
             {leaf.tabId == null && (
               <div className="terminal-placeholder">
                 <div className="icon"><Icon name="desktop" /></div>
-                <div>Select a connection to start</div>
+                <div>{t('selectConnectionToStart')}</div>
               </div>
             )}
           </div>
@@ -2521,12 +2541,18 @@ export default function App() {
                       zIndex: 5,
                     }
                 // Clear, grouped side buttons: docking position + pop-out/close.
+                const sideTitle: Record<'left' | 'top' | 'right' | 'bottom', string> = {
+                  left: t('aiChatDockLeft'),
+                  top: t('aiChatDockTop'),
+                  right: t('aiChatDockRight'),
+                  bottom: t('aiChatDockBottom'),
+                }
                 const sideBtn = (s: 'left' | 'top' | 'right' | 'bottom', icon: 'panelLeft' | 'panelTop' | 'panelRight' | 'panelBottom') => (
                   <button
                     key={s}
                     className={'ai-dock-side-btn' + (side === s ? ' active' : '')}
                     onClick={() => setDockSide(s)}
-                    title={`Dock ${s}`}
+                    title={sideTitle[s]}
                   >
                     <Icon name={icon} size={12} />
                   </button>
@@ -2534,7 +2560,7 @@ export default function App() {
                 return (
                   <div className="ai-dock-pane" style={{ ...dockStyle, position: 'relative' }}>
                     <div className="ai-dock-bar" style={{ position: 'relative', zIndex: 6 }}>
-                      <span className="ai-dock-bar-title">AI</span>
+                      <span className="ai-dock-bar-title">{t('aiChatTitle')}</span>
                       <div className="ai-dock-sides">
                         {sideBtn('left', 'panelLeft')}
                         {sideBtn('top', 'panelTop')}
@@ -2544,7 +2570,7 @@ export default function App() {
                       <button
                         className="ai-dock-bar-btn"
                         onClick={() => setAiFloatingTabId(tid)}
-                        title="Pop out to floating window"
+                        title={t('aiChatPopOut')}
                       >
                         ⤢
                       </button>
@@ -2553,7 +2579,7 @@ export default function App() {
                         onClick={() =>
                           setShowAiByTab((prev) => ({ ...prev, [tid]: false }))
                         }
-                        title="Close AI pane"
+                        title={t('aiChatClose')}
                       >
                         ×
                       </button>
@@ -3331,13 +3357,13 @@ export default function App() {
           {(() => {
             const activeTab = tabs.find((t) => t.tabId === activeTabId)
             if (!activeTab) {
-              return <span className="status-text">No active connection</span>
+              return <span className="status-text">{t('noActiveConnection')}</span>
             }
             if (activeTab.tabType === 'settings') {
-              return <span className="status-text">⚙ Settings</span>
+              return <span className="status-text">⚙ {t('tabSettings')}</span>
             }
             if (activeTab.tabType === 'aiChat') {
-              return <span className="status-text">🤖 AI Chat</span>
+              return <span className="status-text">🤖 {t('tabAiChat')}</span>
             }
             return (
               <>
@@ -3361,10 +3387,10 @@ export default function App() {
           {updateInfo && showUpdateBanner && (
             <div className="update-banner">
               <span className="update-text">
-                v{updateInfo.version} available
+                v{updateInfo.version} {t('updateAvailable')}
               </span>
               <button className="update-btn" onClick={handleDownloadUpdate} disabled={updateState !== 'idle'}>
-                {updateState === 'downloading' ? 'Downloading...' : updateState === 'installing' ? 'Installing...' : 'Update'}
+                {updateState === 'downloading' ? t('downloading') : updateState === 'installing' ? t('installing') : t('update')}
               </button>
               <span className="update-close" onClick={() => setShowUpdateBanner(false)}>✕</span>
             </div>

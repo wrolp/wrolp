@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import type { ContainerInfo } from '../types'
 import { listDockerContainers } from '../commands'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 interface DockerPanelProps {
   /** Connected (jump host) tab used to run `docker ps` / `docker exec`. */
@@ -34,6 +35,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onAnalyzeContainer,
   onViewLogs,
 }) => {
+  const { t } = useI18n()
   const [containers, setContainers] = useState<ContainerInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -114,9 +116,9 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
         <span
           className={`collapse-chevron${expanded ? ' expanded' : ''}`}
           onClick={onToggleExpanded}
-          title={expanded ? 'Collapse' : 'Expand'}
+          title={expanded ? t('collapse') : t('expand')}
         />
-        <span style={{ flex: 1 }}>Docker</span>
+        <span style={{ flex: 1 }}>{t('docker')}</span>
         {expanded && (
           <button className="docker-refresh" title="Refresh containers" onClick={load} disabled={loading}>
             <Icon name="refresh" />
@@ -126,9 +128,9 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
       {expanded && (
         <div className="docker-list">
           {error && <div className="file-error">{error}</div>}
-          {loading && <div className="file-empty">Loading…</div>}
+          {loading && <div className="file-empty">{t('loading')}</div>}
           {!loading && !error && containers.length === 0 && (
-            <div className="file-empty">No containers (or docker not available)</div>
+            <div className="file-empty">{t('noContainers')}</div>
           )}
           {containers.map((c) => (
             <div
@@ -136,7 +138,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
               className={`docker-item${activeContainer === c.name ? ' active' : ''}`}
               onClick={() => onOpenContainer(c)}
               onContextMenu={(e) => handleContextMenu(e, c)}
-              title={`${c.name}\n${c.image}\n${c.status}${c.state === 'running' ? '\n\nRight-click → Enter shell' : ''}\n\nClick to ${activeContainer === c.name ? 'close' : 'browse'} files`}
+              title={`${c.name}\n${c.image}\n${c.status}${c.state === 'running' ? '\n\n' + t('rightClickShell') : ''}\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}`}
             >
               <span className="docker-icon"><Icon name="container" /></span>
               <div className="docker-info">
@@ -159,18 +161,18 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
         >
           <div className="context-menu-item" onClick={handleEnterShell}>
             <Icon name="terminal" size={14} />
-            Enter Shell
+            {t('enterShell')}
           </div>
           {onAnalyzeContainer && (
             <div className="context-menu-item" onClick={handleAnalyzeContainer}>
               <Icon name="search" size={14} />
-              Analyze Container
+              {t('analyzeContainer')}
             </div>
           )}
           {onViewLogs && (
             <div className="context-menu-item" onClick={handleViewLogs}>
               <Icon name="file" size={14} />
-              View Logs
+              {t('viewLogs')}
             </div>
           )}
         </div>

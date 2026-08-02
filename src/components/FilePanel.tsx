@@ -6,6 +6,7 @@ import { fsListFiles, fsUploadFile, fsUploadFileBytes, fsDownloadFile, fsDeleteF
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 /* ---------- types ---------- */
 
@@ -145,6 +146,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   onFileModeChange,
   onSelectTarget,
 }, ref) {
+  const { t } = useI18n()
   // The remote filesystem this panel operates on (defaults to the tab session).
   // Memoized by its serialized form so callbacks/effects get a stable identity.
   const targetKey = JSON.stringify(targetRef ?? { kind: 'session' as const, tabId })
@@ -709,45 +711,45 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           <span className="file-mode-switch" role="tablist">
             <button
               className={fileMode === 'ssh' ? 'active' : ''}
-              title="Local SSH session"
+              title={t('localSshSession')}
               onClick={() => handleModeClick('ssh')}
-            >SSH</button>
+            >{t('modeSsh')}</button>
             <button
               className={fileMode === 'jump' ? 'active' : ''}
-              title="ProxyJump remote (via this host)"
+              title={t('proxyJumpRemote')}
               onClick={() => handleModeClick('jump')}
-            >Jump</button>
+            >{t('modeJump')}</button>
             <button
               className={fileMode === 'docker' ? 'active' : ''}
-              title="Docker container"
+              title={t('dockerContainer')}
               onClick={() => handleModeClick('docker')}
-            >Docker</button>
+            >{t('modeDocker')}</button>
           </span>
         </span>
         {expanded && (
           <div className="file-toolbar">
             {onToggleSync && sessionTabId != null && (
               <button
-                title={syncEnabled ? 'Disable shell sync' : 'Enable shell sync (cd terminal ↔ files)'}
+                title={syncEnabled ? t('disableShellSync') : t('enableShellSync')}
                 onClick={onToggleSync}
                 className={syncEnabled ? 'sync-active' : ''}
               ><Icon name="link" /></button>
             )}
             {sessionTabId != null && (sftpUser ? (
               <>
-                <span className="file-sftp-user" title={`SFTP as: ${sftpUser}`}><Icon name="lock" />{sftpUser}</span>
-                <button title="Restore original user" onClick={handleRevertUser}><Icon name="undo" /></button>
+                <span className="file-sftp-user" title={t('sftpAs', { user: sftpUser })}><Icon name="lock" />{sftpUser}</span>
+                <button title={t('restoreOriginalUser')} onClick={handleRevertUser}><Icon name="undo" /></button>
               </>
             ) : (
-              <button title="Switch SFTP user" onClick={() => setShowSwitchUser(!showSwitchUser)}><Icon name="user" /></button>
+              <button title={t('switchSftpUser')} onClick={() => setShowSwitchUser(!showSwitchUser)}><Icon name="user" /></button>
             ))}
-            <button title="Upload" onClick={handleUpload}><Icon name="upload" /></button>
-            <button title="New item" onClick={() => {
+            <button title={t('uploadFile')} onClick={handleUpload}><Icon name="upload" /></button>
+            <button title={t('newItem')} onClick={() => {
               const btn = document.activeElement as HTMLElement
               const r = btn?.getBoundingClientRect()
               setContextMenu({ x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4, node: null })
             }}><Icon name="plus" /></button>
-            <button title="Refresh" onClick={refresh} disabled={loading}><Icon name="refresh" /></button>
+            <button title={t('refresh')} onClick={refresh} disabled={loading}><Icon name="refresh" /></button>
           </div>
         )}
       </div>
@@ -758,15 +760,15 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             <span
               className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
               onClick={currentPath === rootPath ? undefined : navigateUp}
-              title="Parent"
+              title={t('parentDir')}
             ><Icon name="arrowUp" /></span>
-            <span className="file-path-home" onClick={goHome} title="Home"><Icon name="home" /></span>
-            <span className="file-path-pin" onClick={() => setRoot(currentPath)} title="Set current directory as root"><Icon name="pin" /></span>
+            <span className="file-path-home" onClick={goHome} title={t('home')}><Icon name="home" /></span>
+            <span className="file-path-pin" onClick={() => setRoot(currentPath)} title={t('setAsRoot')}><Icon name="pin" /></span>
             {editingPath ? (
               <input className="file-path-input" type="text" value={editPathValue}
                 onChange={(e) => setEditPathValue(e.target.value)}
                 onBlur={commitEditPath} onKeyDown={handlePathKeyDown}
-                placeholder="Enter path..." autoFocus />
+                placeholder={t('enterPath')} autoFocus />
             ) : (
               <span className="file-path-text" title={pathDisplay} onClick={startEditPath}>
                 {pathDisplay}
@@ -779,13 +781,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
           {showSwitchUser && (
             <div className="file-switch-user">
-              <input type="text" placeholder="Username" value={switchUsername}
+              <input type="text" placeholder={t('enterUsername')} value={switchUsername}
                 onChange={(e) => setSwitchUsername(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleSwitchUser() }} />
-              <input type="password" placeholder="Password" value={switchPassword}
+              <input type="password" placeholder={t('enterPassword')} value={switchPassword}
                 onChange={(e) => setSwitchPassword(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleSwitchUser() }} />
-              <button onClick={handleSwitchUser}>Switch</button>
+              <button onClick={handleSwitchUser}>{t('switchUser')}</button>
               <button onClick={() => setShowSwitchUser(false)}>✕</button>
             </div>
           )}
@@ -796,7 +798,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               {error && <div className="file-error">{error}</div>}
               {!loading && renderNodes(tree, 0)}
               {!loading && tree.length === 0 && !error && (
-                <div className="file-empty">Empty directory</div>
+                <div className="file-empty">{t('emptyDirectory')}</div>
               )}
             </div>
 
@@ -844,38 +846,38 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           target is chosen. The connected host acts as the jump proxy. */}
       {expanded && showJumpForm && (
         <div className="file-jump-form">
-          <div className="file-jump-title">Connect via ProxyJump</div>
-          <label>Host
-            <input type="text" value={jumpHost} placeholder="remote host"
+          <div className="file-jump-title">{t('connectViaProxyJump')}</div>
+          <label>{t('host')}
+            <input type="text" value={jumpHost} placeholder={t('remoteHost')}
               onChange={(e) => setJumpHost(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
           </label>
-          <label>Port
+          <label>{t('port')}
             <input type="number" value={jumpPort}
               onChange={(e) => setJumpPort(Number(e.target.value) || 22)} />
           </label>
-          <label>User
-            <input type="text" value={jumpUser} placeholder="username"
+          <label>{t('username')}
+            <input type="text" value={jumpUser} placeholder={t('enterUsername')}
               onChange={(e) => setJumpUser(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
           </label>
           <div className="file-auth-type">
-            <button className={jumpAuthType === 'password' ? 'active' : ''} onClick={() => setJumpAuthType('password')}>Password</button>
-            <button className={jumpAuthType === 'key' ? 'active' : ''} onClick={() => setJumpAuthType('key')}>Key</button>
+            <button className={jumpAuthType === 'password' ? 'active' : ''} onClick={() => setJumpAuthType('password')}>{t('authPassword')}</button>
+            <button className={jumpAuthType === 'key' ? 'active' : ''} onClick={() => setJumpAuthType('key')}>{t('authKey')}</button>
           </div>
           {jumpAuthType === 'password' ? (
-            <label>Password
+            <label>{t('password')}
               <input type="password" value={jumpPassword}
                 onChange={(e) => setJumpPassword(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
             </label>
           ) : (
             <>
-              <label>Key path
+              <label>{t('keyPath')}
                 <input type="text" value={jumpKeyPath} placeholder="/path/to/key"
                   onChange={(e) => setJumpKeyPath(e.target.value)} />
               </label>
-              <label>Passphrase
+              <label>{t('passphrase')}
                 <input type="password" value={jumpPassphrase}
                   onChange={(e) => setJumpPassphrase(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
@@ -884,7 +886,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           )}
           {jumpError && <div className="file-error">{jumpError}</div>}
           <button className="file-jump-connect" onClick={handleConnectJump} disabled={jumpConnecting}>
-            Connect
+            {t('connectTo')}
           </button>
           <div className="file-hint">Reached through the current host as a jump proxy.</div>
         </div>
@@ -895,13 +897,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       {expanded && showDockerPicker && (
         <div className="file-docker-picker">
           <div className="file-docker-head">
-            <span>Docker containers</span>
-            <button title="Refresh" onClick={loadDockerContainers} disabled={dockerLoading}><Icon name="refresh" /></button>
+            <span>{t('dockerContainers')}</span>
+            <button title={t('refresh')} onClick={loadDockerContainers} disabled={dockerLoading}><Icon name="refresh" /></button>
           </div>
           {dockerError && <div className="file-error">{dockerError}</div>}
-          {dockerLoading && <div className="file-empty">Loading…</div>}
+          {dockerLoading && <div className="file-empty">{t('loading')}</div>}
           {!dockerLoading && !dockerError && dockerContainers.length === 0 && (
-            <div className="file-empty">No containers (or docker not available)</div>
+            <div className="file-empty">{t('noContainers')}</div>
           )}
           {dockerContainers.map((c) => (
             <div key={c.id} className="docker-item" onClick={() => handlePickContainer(c)}

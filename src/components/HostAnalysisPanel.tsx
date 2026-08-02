@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { analyzeHost, commandHelp } from '../commands'
 import type { HostAnalysis, PackageInfo, ToolInfo, ConnectionConfig } from '../types'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 interface HostAnalysisPanelProps {
   activeTabId: number | null
@@ -9,6 +10,7 @@ interface HostAnalysisPanelProps {
 }
 
 export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabId, connections }) => {
+  const { t } = useI18n()
   const [analysis, setAnalysis] = useState<HostAnalysis | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -78,10 +80,10 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
           disabled={loading || activeTabId === null}
         >
           <Icon name="refresh" />
-          {loading ? 'Analyzing…' : 'Analyze Host'}
+          {loading ? t('analyzing') : t('analyzeHost')}
         </button>
         {activeTabId === null && (
-          <span className="analysis-hint">Connect to a host first</span>
+          <span className="analysis-hint">{t('connectToHostFirst')}</span>
         )}
       </div>
 
@@ -90,7 +92,7 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
       {loading && (
         <div className="analysis-loading">
           <div className="spinner" />
-          <span>Running analysis…</span>
+          <span>{t('runningAnalysis')}</span>
         </div>
       )}
 
@@ -99,47 +101,47 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
           {/* Overview cards */}
           <div className="analysis-overview">
             <div className="analysis-card">
-              <span className="card-label">OS</span>
+              <span className="card-label">{t('cardOs')}</span>
               <span className="card-value">{analysis.os}</span>
             </div>
             <div className="analysis-card">
-              <span className="card-label">Kernel</span>
+              <span className="card-label">{t('cardKernel')}</span>
               <span className="card-value">{analysis.kernel}</span>
             </div>
             <div className="analysis-card">
-              <span className="card-label">Arch</span>
+              <span className="card-label">{t('cardArch')}</span>
               <span className="card-value">{analysis.arch}</span>
             </div>
             <div className="analysis-card">
-              <span className="card-label">Hostname</span>
+              <span className="card-label">{t('cardHostname')}</span>
               <span className="card-value">{analysis.hostname}</span>
             </div>
             <div className="analysis-card">
-              <span className="card-label">Package Manager</span>
+              <span className="card-label">{t('cardPkgMgr')}</span>
               <span className="card-value">{analysis.packageManager}</span>
             </div>
             <div className="analysis-card">
-              <span className="card-label">Tools Detected</span>
+              <span className="card-label">{t('cardTools')}</span>
               <span className="card-value">{analysis.tools.length}</span>
             </div>
           </div>
 
           {/* Tools section */}
           <div className="analysis-section">
-            <h3>Tools ({analysis.tools.length})</h3>
+            <h3>{t('toolsDetected', { n: analysis.tools.length })}</h3>
             <div className="tools-chips">
               {analysis.tools.map((tool) => (
                 <button
                   key={tool.name}
                   className={`tool-chip${selectedTool === tool.name ? ' active' : ''}`}
                   onClick={() => handleToolClick(tool.name)}
-                  title={`Click to view --help for ${tool.name}`}
+                  title={t('helpOutputFor') + ' ' + tool.name}
                 >
                   {tool.name}
                 </button>
               ))}
               {analysis.tools.length === 0 && (
-                <span className="analysis-empty">No common tools detected</span>
+                <span className="analysis-empty">{t('noCommonTools')}</span>
               )}
             </div>
           </div>
@@ -149,7 +151,7 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
             <div className="analysis-help">
               <div className="help-header">
                 <span className="help-title">
-                  <code>{selectedTool}</code> --help
+                  <code>{selectedTool}</code> {t('helpOutputFor')}
                 </span>
                 <button
                   className="help-close"
@@ -157,23 +159,24 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
                     setSelectedTool(null)
                     setHelpText(null)
                   }}
+                  title={t('close')}
                 >
                   <Icon name="x" size={14} />
                 </button>
               </div>
               <pre className="help-content">
-                {helpLoading ? 'Loading…' : helpText ?? 'No help available'}
+                {helpLoading ? t('loading') : helpText ?? t('noHelpAvailable')}
               </pre>
             </div>
           )}
 
           {/* Packages section */}
           <div className="analysis-section">
-            <h3>Installed Packages ({analysis.packages.length})</h3>
+            <h3>{t('installedPackages', { n: analysis.packages.length })}</h3>
             <input
               type="text"
               className="pkg-search"
-              placeholder="Search packages…"
+              placeholder={t('searchPackages')}
               value={pkgSearch}
               onChange={(e) => setPkgSearch(e.target.value)}
             />
@@ -181,8 +184,8 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
               <table className="pkg-table">
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>Version</th>
+                    <th>{t('pkgName')}</th>
+                    <th>{t('pkgVersion')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -195,10 +198,10 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
                 </tbody>
               </table>
               {filteredPackages.length > 200 && (
-                <div className="pkg-more">Showing first 200 of {filteredPackages.length} packages</div>
+                <div className="pkg-more">{t('pkgShowingFirst', { shown: 200, total: filteredPackages.length })}</div>
               )}
               {filteredPackages.length === 0 && (
-                <div className="analysis-empty">No packages match your search</div>
+                <div className="analysis-empty">{t('pkgNoMatch')}</div>
               )}
             </div>
           </div>

@@ -6,6 +6,7 @@ import { HostAnalysisPanel } from './HostAnalysisPanel'
 import { DockerAnalysisPanel } from './DockerAnalysisPanel'
 import { SessionViewer } from './SessionViewer'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 
 interface BottomPanelProps {
   connections: ConnectionConfig[]
@@ -36,6 +37,7 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
   dockerAnalysisTarget,
   onDockerAnalyzed,
 }) => {
+  const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<PanelTab>('sessions')
   const [viewingSession, setViewingSession] = useState<SessionSummary | null>(null)
   const [prefillCommands, setPrefillCommands] = useState<string[] | null>(null)
@@ -94,31 +96,31 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
         <span
           className={`collapse-chevron${expanded ? ' expanded' : ''}`}
           onClick={onToggleExpanded}
-          title={expanded ? 'Collapse' : 'Expand'}
+          title={expanded ? t('collapse') : t('expand')}
         />
         <button
           className={`tab-btn${activeTab === 'sessions' ? ' active' : ''}`}
           onClick={() => setActiveTab('sessions')}
         >
-          <Icon name="record" /> Sessions
+          <Icon name="record" /> {t('sessions')}
         </button>
         <button
           className={`tab-btn${activeTab === 'cmdsets' ? ' active' : ''}`}
           onClick={() => setActiveTab('cmdsets')}
         >
-          <Icon name="clipboard" /> Command Sets
+          <Icon name="clipboard" /> {t('commandSets')}
         </button>
         <button
           className={`tab-btn${activeTab === 'analysis' ? ' active' : ''}`}
           onClick={() => setActiveTab('analysis')}
         >
-          <Icon name="search" /> Analysis
+          <Icon name="search" /> {t('analysis')}
         </button>
         <button
           className={`tab-btn${activeTab === 'docker' ? ' active' : ''}`}
           onClick={() => setActiveTab('docker')}
         >
-          <Icon name="container" /> Docker
+          <Icon name="container" /> {t('docker')}
         </button>
       </div>
       {expanded && (
