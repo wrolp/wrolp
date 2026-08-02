@@ -2383,10 +2383,15 @@ pub async fn poll_ai_chunks(
 /// Start an AI chat that may call tools (agent loop). Streams assistant text
 /// via the same `ai_chat_buffers` polling mechanism, and emits tool-call events
 /// into `AiChatState.tool_events` for the frontend to render tool cards.
+///
+/// `tab_id` identifies the shell tab this conversation belongs to. It is used to
+/// auto-inject the current server context into the system prompt and to power
+/// the `get_current_server` tool (so the model never has to guess a tab id).
 #[tauri::command]
 pub async fn start_ai_agent(
     app: tauri::AppHandle,
     messages: Vec<crate::ai::AiMessage>,
+    tab_id: Option<u32>,
 ) -> Result<String, String> {
     let (config, chat_id) = {
         let state = app.state::<AppState>();
@@ -2417,11 +2422,35 @@ pub async fn start_ai_agent(
 
     let app_clone = app.clone();
     let cid = chat_id.clone();
+    // Capture the current server context for the active shell tab (if any) so we
+    // can inject it into the system prompt and power the `get_current_server` tool.
+    let current_tab_id = tab_id;
+    let current_server_context = current_tab_id.and_then(|tid| build_current_server_context(&app, tid));
+
+    // Inject the current server context into the system message so the model
+    // always knows which server this conversation is bound to.
+    let messages_with_context: Vec<crate::ai::AiMessage> = if let Some(ctx) = &current_server_context {
+        messages
+            .iter()
+            .map(|m| {
+                if m.role == "system" {
+                    let mut m = m.clone();
+                    let base = m.content.clone().unwrap_or_default();
+                    m.content = Some(format!("{}\n\n{}", base, ctx));
+                    m
+                } else {
+                    m.clone()
+                }
+            })
+            .collect()
+    } else {
+        messages.clone()
+    };
 
     tauri::async_runtime::spawn(async move {
         let result = crate::ai::run_agent_stream(
             &profile,
-            messages,
+            messages_with_context,
             |chunk| {
                 let state = app_clone.state::<AppState>();
                 let mut guard = state.ai_chat_buffers.lock().unwrap();
@@ -2438,7 +2467,8 @@ pub async fn start_ai_agent(
             },
             |calls| -> futures_util::future::BoxFuture<'static, Vec<crate::ai::ToolResult>> {
                 let app = app_clone.clone();
-                Box::pin(async move { execute_ai_tools(&app, calls).await })
+                let tab = current_tab_id;
+                Box::pin(async move { execute_ai_tools(&app, calls, tab).await })
             },
         )
         .await;
@@ -2482,12 +2512,13 @@ fn is_dangerous_command(cmd: &str) -> bool {
 async fn execute_ai_tools(
     app: &tauri::AppHandle,
     calls: Vec<crate::ai::OpenAiToolCall>,
+    current_tab_id: Option<u32>,
 ) -> Vec<crate::ai::ToolResult> {
     let state = app.state::<AppState>();
     let mut results: Vec<crate::ai::ToolResult> = Vec::new();
 
     for call in calls {
-        let result = execute_one_tool(&state, &call)
+        let result = execute_one_tool(&state, &call, current_tab_id)
             .await
             .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string());
         results.push((call.id, result));
@@ -2495,9 +2526,36 @@ async fn execute_ai_tools(
     results
 }
 
+/// Build a human-readable context block describing the shell tab's connected
+/// server (or note that it is not connected). Used to enrich the system prompt.
+fn build_current_server_context(app: &tauri::AppHandle, tab_id: u32) -> Option<String> {
+    let state = app.state::<AppState>();
+    let sessions = state.sessions.lock().ok()?;
+    let sess = sessions.get(&tab_id)?;
+    let cfg = &sess.config;
+    let status = if sess.data_tx.is_some() { "connected" } else { "disconnected" };
+    let block = format!(
+        "[Current Server Context]\n\
+         This conversation is bound to shell tab {tab_id} (connection \"{name}\").\n\
+         Host: {host}:{port}\n\
+         Username: {username}\n\
+         Status: {status}\n\
+         Connection id: {cid}",
+        tab_id = tab_id,
+        name = cfg.name,
+        host = cfg.host,
+        port = cfg.port,
+        username = cfg.username,
+        status = status,
+        cid = cfg.id,
+    );
+    Some(block)
+}
+
 async fn execute_one_tool(
     state: &tauri::State<'_, AppState>,
     call: &crate::ai::OpenAiToolCall,
+    current_tab_id: Option<u32>,
 ) -> Result<String, String> {
     let args: serde_json::Value = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
     let tool = call.name.as_str();
@@ -2596,6 +2654,26 @@ async fn execute_one_tool(
             let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
             let help = crate::host_analysis::command_help(&*handle, &command).await?;
             Ok(help)
+        }
+        "get_current_server" => {
+            // Returns info about the server this conversation is bound to, without
+            // needing the model to supply a tabId.
+            let tab_id = current_tab_id.ok_or(
+                "No shell tab is bound to this AI conversation. Open the AI chat from a shell tab first.",
+            )?;
+            let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+            let sess = sessions.get(&tab_id).ok_or("This tab is not connected to any server.")?;
+            let cfg = &sess.config;
+            let info = serde_json::json!({
+                "tabId": tab_id,
+                "connectionId": cfg.id,
+                "connectionName": cfg.name,
+                "host": cfg.host,
+                "port": cfg.port,
+                "username": cfg.username,
+                "status": if sess.data_tx.is_some() { "connected" } else { "disconnected" },
+            });
+            Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
         }
         other => Err(format!("Unknown tool: {}", other)),
     };

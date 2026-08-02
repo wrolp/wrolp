@@ -437,6 +437,23 @@ pub fn tool_definitions() -> Vec<OpenAiTool> {
                 }),
             },
         },
+        OpenAiTool {
+            tool_type: "function".into(),
+            function: OpenAiFunction {
+                name: "get_current_server".into(),
+                description:
+                    "Get information about the server this AI conversation is currently bound to \
+                     (the shell tab it was opened from) — host, port, username, connection status, \
+                     and the current working directory. Use this to confirm which server you are \
+                     operating on; no tabId argument is needed."
+                        .into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }),
+            },
+        },
     ]
 }
 

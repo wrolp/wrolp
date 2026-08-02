@@ -370,6 +370,6 @@ export async function pollAiChunks(
   return await invoke<[string, boolean, string | null, ToolCallEvent[]] | null>('poll_ai_chunks', { chatId })
 }
 
-export async function startAiAgent(messages: AiMessage[]): Promise<string> {
-  return await invoke<string>('start_ai_agent', { messages })
+export async function startAiAgent(messages: AiMessage[], tabId?: number): Promise<string> {
+  return await invoke<string>('start_ai_agent', { messages, tabId: tabId ?? null })
 }
