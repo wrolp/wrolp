@@ -292,7 +292,7 @@ export interface AiToolCall {
   arguments: string
 }
 
-export type ToolCallStatus = 'pending' | 'executing' | 'done' | 'error' | 'denied'
+export type ToolCallStatus = 'pending' | 'executing' | 'done' | 'error' | 'denied' | 'needs-confirmation'
 
 export interface ToolCallEvent {
   id: string

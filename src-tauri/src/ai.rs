@@ -750,6 +750,7 @@ pub async fn run_agent_stream(
     mut on_chunk: impl FnMut(String),
     mut on_tool: impl FnMut(ToolCallEvent),
     mut execute_tool: impl FnMut(Vec<OpenAiToolCall>) -> futures_util::future::BoxFuture<'static, Vec<ToolResult>>,
+    mut on_confirm_required: impl FnMut(Vec<AiMessage>, Vec<OpenAiToolCall>),
 ) -> Result<AiMessage, String> {
     let api_key = crate::vault::open_secret(&config.api_key_enc)
         .map_err(|e| format!("Failed to decrypt API key: {}", e))?;
@@ -891,6 +892,20 @@ pub async fn run_agent_stream(
         }
 
         let results = execute_tool(calls.clone()).await;
+
+        // If any tool result asks for user confirmation (e.g. a sensitive
+        // command), pause the agent loop: hand the current context to the
+        // caller so it can persist the pending call and ask the user. We do
+        // NOT yet append tool results in this case — `confirm_ai_tool` will
+        // resume the loop with the resolved results.
+        for (_, r) in &results {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(r) {
+                if v.get("needsConfirmation").and_then(|b| b.as_bool()) == Some(true) {
+                    on_confirm_required(messages.clone(), calls.clone());
+                    return Err("__confirmation__".to_string());
+                }
+            }
+        }
 
         // Append tool-result messages and emit done events.
         for call in &calls {

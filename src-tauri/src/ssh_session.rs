@@ -5,7 +5,17 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use tauri::Manager;
 use tokio::sync::mpsc;
 
-use crate::ai::AiChatState;
+use crate::ai::{AiChatState, AiEndpointProfile, AiMessage, OpenAiToolCall};
+
+/// A tool call that needs explicit user confirmation before execution
+/// (e.g. a destructive/sensitive shell command). Saved when the agent loop
+/// pauses so `confirm_ai_tool` can resume it after the user decides.
+pub struct AiPendingConfirm {
+  pub chat_id: String,
+  pub config: AiEndpointProfile,
+  pub messages: Vec<AiMessage>,
+  pub calls: Vec<OpenAiToolCall>,
+}
 use crate::db::{DbConn, RecordedEvent};
 
 /// Path to the SSH connections config file
@@ -404,6 +414,8 @@ pub struct AppState {
   pub ai_chat_buffers: StdMutex<HashMap<String, AiChatState>>,
   /// Cached AI configuration (loaded at startup)
   pub ai_config: StdMutex<Option<crate::ai::AiConfig>>,
+  /// Pending agent pause awaiting user confirmation of a sensitive tool call
+  pub ai_pending: StdMutex<Option<AiPendingConfirm>>,
 }
 
 impl AppState {
@@ -424,6 +436,7 @@ impl AppState {
       next_docker_log_stream_id: AtomicU64::new(1),
       ai_chat_buffers: StdMutex::new(HashMap::new()),
       ai_config: StdMutex::new(ai_config),
+      ai_pending: StdMutex::new(None),
     }
   }
 }

@@ -2469,43 +2469,177 @@ pub async fn start_ai_agent(
         messages.clone()
     };
 
+    let on_confirm = {
+        let app2 = app_clone.clone();
+        let cid2 = cid.clone();
+        let conf2 = config.clone();
+        move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
+            save_pending(&app2, &cid2, &conf2, msgs, calls);
+        }
+    };
+    spawn_agent(app_clone, cid.clone(), config, messages_with_context, current_tab_id, on_confirm);
+
+    Ok(chat_id)
+}
+
+/// Persist an agent-loop pause awaiting user confirmation of a sensitive tool
+/// call, and flag the in-flight tool events as `needs-confirmation` so the
+/// frontend can render an approval prompt.
+fn save_pending(
+    app: &tauri::AppHandle,
+    chat_id: &str,
+    config: &crate::ai::AiEndpointProfile,
+    messages: Vec<crate::ai::AiMessage>,
+    calls: Vec<crate::ai::OpenAiToolCall>,
+) {
+    {
+        let st = app.state::<AppState>();
+        let guard = st.ai_pending.lock();
+        if let Ok(mut g) = guard {
+            *g = Some(crate::ssh_session::AiPendingConfirm {
+                chat_id: chat_id.to_string(),
+                config: config.clone(),
+                messages,
+                calls,
+            });
+        }
+    }
+    {
+        let st = app.state::<AppState>();
+        let guard = st.ai_chat_buffers.lock();
+        if let Ok(mut g) = guard {
+            if let Some(cs) = g.get_mut(chat_id) {
+                for ev in &mut cs.tool_events {
+                    if ev.status == "executing" {
+                        ev.status = "needs-confirmation".to_string();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Spawn the agent loop for a chat, wiring streaming chunks / tool events to the
+/// shared `AiChatState` buffer. Used by both `start_ai_agent` and `confirm_ai_tool`.
+fn spawn_agent(
+    app: tauri::AppHandle,
+    chat_id: String,
+    config: crate::ai::AiEndpointProfile,
+    messages: Vec<crate::ai::AiMessage>,
+    current_tab_id: Option<u32>,
+    on_confirm: impl Fn(Vec<crate::ai::AiMessage>, Vec<crate::ai::OpenAiToolCall>) + Send + 'static,
+) {
     tauri::async_runtime::spawn(async move {
         let result = crate::ai::run_agent_stream(
             &config,
-            messages_with_context,
+            messages,
             |chunk| {
-                let state = app_clone.state::<AppState>();
+                let state = app.state::<AppState>();
                 let mut guard = state.ai_chat_buffers.lock().unwrap();
-                if let Some(cs) = guard.get_mut(&cid) {
+                if let Some(cs) = guard.get_mut(&chat_id) {
                     cs.chunks.push(chunk);
                 }
             },
             |event| {
-                let state = app_clone.state::<AppState>();
+                let state = app.state::<AppState>();
                 let mut guard = state.ai_chat_buffers.lock().unwrap();
-                if let Some(cs) = guard.get_mut(&cid) {
+                if let Some(cs) = guard.get_mut(&chat_id) {
                     cs.tool_events.push(event);
                 }
             },
             |calls| -> futures_util::future::BoxFuture<'static, Vec<crate::ai::ToolResult>> {
-                let app = app_clone.clone();
+                let app = app.clone();
                 let tab = current_tab_id;
                 Box::pin(async move { execute_ai_tools(&app, calls, tab).await })
             },
+            on_confirm,
         )
         .await;
 
-        let state = app_clone.state::<AppState>();
+        let state = app.state::<AppState>();
         let mut guard = state.ai_chat_buffers.lock().unwrap();
-        if let Some(cs) = guard.get_mut(&cid) {
+        if let Some(cs) = guard.get_mut(&chat_id) {
             cs.done = true;
             if let Err(e) = result {
-                cs.error = Some(e);
+                // A confirmation pause is expected — don't surface it as an error.
+                if e != "__confirmation__" {
+                    cs.error = Some(e);
+                }
             }
         }
     });
+}
 
-    Ok(chat_id)
+/// Resolve a paused agent tool call. When `approved`, the pending tool calls
+/// are executed (sensitive commands are force-run); when declined, a rejection
+/// result is fed back to the model. The agent loop then resumes from the
+/// saved message context.
+#[tauri::command]
+pub async fn confirm_ai_tool(
+    app: tauri::AppHandle,
+    chat_id: String,
+    approved: bool,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let pending = {
+        let mut guard = state.ai_pending.lock().map_err(|e| e.to_string())?;
+        guard.take().ok_or("No pending tool confirmation.")?
+    };
+    if pending.chat_id != chat_id {
+        return Err("Chat id mismatch for pending confirmation.".into());
+    }
+
+    // Resolve each pending call: execute if approved (force), else reject.
+    let mut results: Vec<crate::ai::ToolResult> = Vec::new();
+    for call in &pending.calls {
+        let result = if approved {
+            execute_one_tool(&state, call, None, true)
+                .await
+                .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string())
+        } else {
+            serde_json::json!({ "error": "User declined to execute this command." })
+                .to_string()
+        };
+        results.push((call.id.clone(), result));
+    }
+
+    // Append tool-result messages (mirrors run_agent_stream) and resume.
+    let mut messages = pending.messages;
+    for call in &pending.calls {
+        let result = results
+            .iter()
+            .find(|(id, _)| id == &call.id)
+            .map(|(_, r)| r.clone())
+            .unwrap_or_else(|| "{\"error\":\"no result\"}".into());
+        messages.push(crate::ai::AiMessage {
+            role: "tool".into(),
+            content: Some(result),
+            tool_calls: None,
+            tool_call_id: Some(call.id.clone()),
+            name: Some(call.name.clone()),
+        });
+    }
+
+    // Reset the chat buffer so the resumed loop can append cleanly.
+    {
+        let mut guard = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
+        if let Some(cs) = guard.get_mut(&chat_id) {
+            cs.done = false;
+            cs.error = None;
+        }
+    }
+
+    // Reuse the same pause handler so chained sensitive calls keep asking.
+    let on_confirm = {
+        let app2 = app.clone();
+        let cid2 = chat_id.clone();
+        let conf2 = pending.config.clone();
+        move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
+            save_pending(&app2, &cid2, &conf2, msgs, calls);
+        }
+    };
+    spawn_agent(app, chat_id, pending.config, messages, None, on_confirm);
+    Ok(())
 }
 
 /// Dangerous command substrings rejected outright when executed through tools.
@@ -2540,7 +2674,7 @@ async fn execute_ai_tools(
     let mut results: Vec<crate::ai::ToolResult> = Vec::new();
 
     for call in calls {
-        let result = execute_one_tool(&state, &call, current_tab_id)
+        let result = execute_one_tool(&state, &call, current_tab_id, false)
             .await
             .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string());
         results.push((call.id, result));
@@ -2578,6 +2712,7 @@ async fn execute_one_tool(
     state: &tauri::State<'_, AppState>,
     call: &crate::ai::OpenAiToolCall,
     current_tab_id: Option<u32>,
+    force: bool,
 ) -> Result<String, String> {
     let args: serde_json::Value = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
     let tool = call.name.as_str();
@@ -2593,8 +2728,15 @@ async fn execute_one_tool(
                 .and_then(|v| v.as_str())
                 .ok_or("Missing 'command'")?
                 .to_string();
-            if is_dangerous_command(&command) {
-                return Err("Command blocked by safety policy (destructive operation).".into());
+            // Sensitive / destructive commands are NOT silently blocked. Instead
+            // we return a needs-confirmation marker so the agent loop pauses and
+            // the frontend can ask the user whether to proceed. `force` is set by
+            // `confirm_ai_tool` once the user has approved execution.
+            if is_dangerous_command(&command) && !force {
+                return Ok(
+                    serde_json::json!({ "needsConfirmation": true, "command": command })
+                        .to_string(),
+                );
             }
             let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
             let output = crate::host_analysis::exec_on_handle(&*handle, &command).await?;

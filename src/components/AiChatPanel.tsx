@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent } from '../types'
-import { startAiAgent, pollAiChunks, listAiModels } from '../commands'
+import { startAiAgent, pollAiChunks, listAiModels, confirmAiTool } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
@@ -158,6 +158,10 @@ export default function AiChatPanel({
   const setShowSuggestions = (u: boolean | ((p: boolean) => boolean)) =>
     setConv((c) => ({ ...c, showSuggestions: typeof u === 'function' ? u(c.showSuggestions) : u }))
 
+  // Active agent chat id (set once a run starts); used to resume after a
+  // sensitive-tool confirmation.
+  const [chatId, setChatId] = useState<string | null>(null)
+
   // "Copy whole message" feedback: id of the message currently marked copied.
   const [msgCopied, setMsgCopied] = useState<string | null>(null)
   const copyMessage = useCallback((id: string, text: string) => {
@@ -242,6 +246,60 @@ export default function AiChatPanel({
     }
   }, [])
 
+  // Poll the backend for streamed chunks until the agent run finishes.
+  const startPolling = useCallback((id: string) => {
+    let accumulated = ''
+    const poll = () => {
+      pollAiChunks(id).then((result) => {
+        if (result === null) {
+          setStreaming(false)
+          finalizeAssistant(accumulated)
+          return
+        }
+        const [newText, done, err, events] = result
+        if (events && events.length) mergeToolEvents(events)
+        if (newText) {
+          accumulated += newText
+          setStreamingText(accumulated.replace(/^\s+/, ''))
+        }
+        if (done || err) {
+          setStreaming(false)
+          finalizeAssistant(accumulated.trim(), err)
+          setStreamingText('')
+          if (err) setError(err)
+          return
+        }
+        pollRef.current = window.setTimeout(poll, 100)
+      }).catch((e) => {
+        setStreaming(false)
+        setError(String(e))
+        finalizeAssistant(accumulated.trim(), String(e))
+        setStreamingText('')
+      })
+    }
+    poll()
+  }, [finalizeAssistant, mergeToolEvents, setStreaming, setStreamingText, setError])
+
+  // Resume the agent after the user approves/declines a sensitive tool call.
+  const confirmAndResume = useCallback(
+    (approved: boolean) => {
+      if (!chatId) return
+      const id = chatId
+      // Optimistically clear the confirmation prompt.
+      setToolCalls((prev) =>
+        prev.map((tc) =>
+          tc.status === 'needs-confirmation'
+            ? { ...tc, status: approved ? 'executing' : 'denied' }
+            : tc,
+        ),
+      )
+      confirmAiTool(id, approved)
+        .then(() => startPolling(id))
+        .catch((e) => setError(String(e)))
+    },
+    [chatId, setToolCalls, setError, startPolling],
+  )
+
   const runAgent = useCallback(
     (apiMessages: AiMessage[], userDisplay: string) => {
       setShowSuggestions(false)
@@ -254,37 +312,9 @@ export default function AiChatPanel({
       }
 
       startAiAgent(apiMessages, tabId, config)
-        .then((chatId) => {
-          let accumulated = ''
-          const poll = () => {
-            pollAiChunks(chatId).then((result) => {
-              if (result === null) {
-                setStreaming(false)
-                finalizeAssistant(accumulated)
-                return
-              }
-              const [newText, done, err, events] = result
-              if (events && events.length) mergeToolEvents(events)
-              if (newText) {
-                accumulated += newText
-                setStreamingText(accumulated.replace(/^\s+/, ''))
-              }
-              if (done || err) {
-                setStreaming(false)
-                finalizeAssistant(accumulated.trim(), err)
-                setStreamingText('')
-                if (err) setError(err)
-                return
-              }
-              pollRef.current = window.setTimeout(poll, 100)
-            }).catch((e) => {
-              setStreaming(false)
-              setError(String(e))
-              finalizeAssistant(accumulated.trim(), String(e))
-              setStreamingText('')
-            })
-          }
-          poll()
+        .then((id: string) => {
+          setChatId(id)
+          startPolling(id)
         })
         .catch((e) => {
           setStreaming(false)
@@ -509,7 +539,7 @@ export default function AiChatPanel({
                 <Icon name="settings" size={12} /> {t('aiChatToolsUsed')}
               </div>
             {toolCalls.map((tc) => (
-              <ToolCallCard key={tc.id} tool={tc} />
+              <ToolCallCard key={tc.id} tool={tc} onConfirm={confirmAndResume} />
             ))}
           </div>
         )}
@@ -585,12 +615,28 @@ export default function AiChatPanel({
   )
 }
 
-function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
+function ToolCallCard({
+  tool,
+  onConfirm,
+}: {
+  tool: ToolCallEvent
+  onConfirm: (approved: boolean) => void
+}) {
   const [expanded, setExpanded] = useState(false)
   const { t } = useI18n()
   const meta = TOOL_LABELS[tool.name] ?? { label: tool.name, icon: 'terminal' as const }
   const isError = tool.status === 'error' || (tool.result?.includes('"error"') ?? false)
-  const icon = tool.status === 'done' ? (isError ? '✗' : '✓') : tool.status === 'executing' ? '⟳' : '⚙'
+  const isConfirmation = tool.status === 'needs-confirmation'
+  const icon =
+    tool.status === 'done'
+      ? isError
+        ? '✗'
+        : '✓'
+      : tool.status === 'executing'
+        ? '⟳'
+        : isConfirmation
+          ? '⚠'
+          : '⚙'
 
   let summary = meta.label
   try {
@@ -605,7 +651,11 @@ function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
   }
 
   return (
-    <div className={`ai-tool-card ai-tool-${tool.status}${isError ? ' ai-tool-error' : ''}`}>
+    <div
+      className={`ai-tool-card ai-tool-${tool.status}${isError ? ' ai-tool-error' : ''}${
+        isConfirmation ? ' ai-tool-confirm' : ''
+      }`}
+    >
       <div className="ai-tool-head" onClick={() => setExpanded((v) => !v)}>
         <span className="ai-tool-icon">
           <Icon name={meta.icon} size={13} />
@@ -632,6 +682,27 @@ function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
               </pre>
             </div>
           )}
+        </div>
+      )}
+      {isConfirmation && (
+        <div className="ai-tool-confirm-bar">
+          <span className="ai-tool-confirm-text">{t('aiToolConfirm')}</span>
+          <div className="ai-tool-confirm-actions">
+            <button
+              type="button"
+              className="ai-tool-confirm-deny"
+              onClick={() => onConfirm(false)}
+            >
+              {t('aiToolDeny')}
+            </button>
+            <button
+              type="button"
+              className="ai-tool-confirm-allow"
+              onClick={() => onConfirm(true)}
+            >
+              {t('aiToolAllow')}
+            </button>
+          </div>
         </div>
       )}
     </div>
