@@ -224,6 +224,8 @@ const en = {
   aiChatRoleAi: 'AI',
   copyMessage: 'Copy',
   copied: 'Copied',
+  aiToolArgs: 'Arguments',
+  aiToolResult: 'Result',
   aiChatToolsUsed: 'Tools used',
   aiChatAskAi: 'Ask AI',
   aiChatInputHint: 'AI can use tools on connected servers. Destructive commands are blocked.',

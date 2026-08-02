@@ -587,6 +587,7 @@ export default function AiChatPanel({
 
 function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
   const [expanded, setExpanded] = useState(false)
+  const { t } = useI18n()
   const meta = TOOL_LABELS[tool.name] ?? { label: tool.name, icon: 'terminal' as const }
   const isError = tool.status === 'error' || (tool.result?.includes('"error"') ?? false)
   const icon = tool.status === 'done' ? (isError ? '✗' : '✓') : tool.status === 'executing' ? '⟳' : '⚙'
@@ -600,7 +601,7 @@ function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
     if (parts.length) summary += ` · ${parts.join(', ')}`
     else if (args.tabId !== undefined) summary += ` · tab ${args.tabId}`
   } catch {
-    if (tool.arguments) summary += ` · ${tool.arguments.slice(0, 50)}`
+    if (tool.arguments) summary += ` · ${tool.arguments}`
   }
 
   return (
@@ -615,10 +616,23 @@ function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
           {tool.status}
         </span>
       </div>
-      {expanded && (tool.result || tool.error) && (
-        <pre className="ai-tool-result">
-          {tool.error ? `Error: ${tool.error}` : tool.result}
-        </pre>
+      {expanded && (
+        <div className="ai-tool-detail">
+          {tool.arguments && (
+            <div className="ai-tool-detail-block">
+              <div className="ai-tool-detail-label">{t('aiToolArgs')}</div>
+              <pre className="ai-tool-args">{tool.arguments}</pre>
+            </div>
+          )}
+          {(tool.result || tool.error) && (
+            <div className="ai-tool-detail-block">
+              <div className="ai-tool-detail-label">{t('aiToolResult')}</div>
+              <pre className="ai-tool-result">
+                {tool.error ? `Error: ${tool.error}` : tool.result}
+              </pre>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

@@ -225,6 +225,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatRoleAi: 'AI',
   copyMessage: '复制',
   copied: '已复制',
+  aiToolArgs: '参数',
+  aiToolResult: '结果',
   aiChatToolsUsed: '使用过的工具',
   aiChatAskAi: '询问 AI',
   aiChatInputHint: 'AI 可在已连接的服务器上使用工具。破坏性命令会被阻止。',
