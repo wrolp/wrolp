@@ -182,11 +182,11 @@ export default function AiChatPanel({
               if (events && events.length) mergeToolEvents(events)
               if (newText) {
                 accumulated += newText
-                setStreamingText(accumulated)
+                setStreamingText(accumulated.replace(/^\s+/, ''))
               }
               if (done || err) {
                 setStreaming(false)
-                finalizeAssistant(accumulated, err)
+                finalizeAssistant(accumulated.trim(), err)
                 setStreamingText('')
                 if (err) setError(err)
                 return
@@ -195,7 +195,7 @@ export default function AiChatPanel({
             }).catch((e) => {
               setStreaming(false)
               setError(String(e))
-              finalizeAssistant(accumulated, String(e))
+              finalizeAssistant(accumulated.trim(), String(e))
               setStreamingText('')
             })
           }
