@@ -3975,6 +3975,13 @@ input[type='password']::-ms-clear {
   // Docked AI pane (right/top/bottom/left inside the shell pane)
   .ai-dock-pane {
     background: $bg-primary;
+    // The chat panel must fill the space *below* the dock bar (not overlap it),
+    // accounting for both vertical (top/bottom) and horizontal (left/right) docks.
+    & .ai-chat-panel {
+      flex: 1 1 auto;
+      min-height: 0;
+      height: auto;
+    }
 
     .ai-dock-resize {
       background: transparent;

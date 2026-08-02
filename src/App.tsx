@@ -2414,6 +2414,9 @@ export default function App() {
                 const side = aiDockSideByTab[tid] ?? 'right'
                 const isVertical = side === 'top' || side === 'bottom'
                 const size = aiDockSizeByTab[tid] ?? (isVertical ? 220 : 340)
+                // Switch dock side (top/bottom = stacked above/below; left/right = beside).
+                const setDockSide = (s: 'left' | 'top' | 'right' | 'bottom') =>
+                  setAiDockSideByTab((prev) => ({ ...prev, [tid]: s }))
                 const dockStyle: React.CSSProperties = isVertical
                   ? {
                       height: size,
@@ -2422,7 +2425,8 @@ export default function App() {
                       minHeight: 0,
                       display: 'flex',
                       flexDirection: 'column',
-                      borderTop: '1px solid var(--border, #333)',
+                      borderTop: side === 'top' ? '1px solid var(--border, #333)' : 'none',
+                      borderBottom: side === 'bottom' ? '1px solid var(--border, #333)' : 'none',
                       order: side === 'top' ? -1 : 0,
                       width: '100%',
                     }
@@ -2433,7 +2437,8 @@ export default function App() {
                       minHeight: 0,
                       display: 'flex',
                       flexDirection: 'column',
-                      borderLeft: '1px solid var(--border, #333)',
+                      borderLeft: side === 'left' ? '1px solid var(--border, #333)' : 'none',
+                      borderRight: side === 'right' ? '1px solid var(--border, #333)' : 'none',
                       order: side === 'left' ? -1 : 0,
                     }
                 // Resize handle sits on the edge adjacent to the terminal.
@@ -2449,6 +2454,7 @@ export default function App() {
                   const onMove = (ev: MouseEvent) => {
                     const r = aiDockResizeRef.current
                     if (!r) return
+                    // Dragging away from the terminal grows the dock.
                     const delta =
                       r.dir === 'right'
                         ? r.sx - ev.clientX
@@ -2468,6 +2474,8 @@ export default function App() {
                   window.addEventListener('mousemove', onMove)
                   window.addEventListener('mouseup', onUp)
                 }
+                // For vertical docks the handle is horizontal (top/bottom edge);
+                // for horizontal docks it is vertical (left/right edge).
                 const resizeHandleStyle: React.CSSProperties = isVertical
                   ? {
                       position: 'absolute',
@@ -2487,23 +2495,26 @@ export default function App() {
                       cursor: 'ew-resize',
                       zIndex: 5,
                     }
+                // Clear, grouped side buttons: docking position + pop-out/close.
+                const sideBtn = (s: 'left' | 'top' | 'right' | 'bottom', icon: 'panelLeft' | 'panelTop' | 'panelRight' | 'panelBottom') => (
+                  <button
+                    key={s}
+                    className={'ai-dock-side-btn' + (side === s ? ' active' : '')}
+                    onClick={() => setDockSide(s)}
+                    title={`Dock ${s}`}
+                  >
+                    <Icon name={icon} size={12} />
+                  </button>
+                )
                 return (
                   <div className="ai-dock-pane" style={{ ...dockStyle, position: 'relative' }}>
                     <div className="ai-dock-bar">
                       <span className="ai-dock-bar-title">AI</span>
                       <div className="ai-dock-sides">
-                        {(['left', 'top', 'right', 'bottom'] as const).map((s) => (
-                          <button
-                            key={s}
-                            className={'ai-dock-side-btn' + (side === s ? ' active' : '')}
-                            onClick={() =>
-                              setAiDockSideByTab((prev) => ({ ...prev, [tid]: s }))
-                            }
-                            title={`Dock ${s}`}
-                          >
-                            {s === 'left' ? '◧' : s === 'right' ? '◨' : s === 'top' ? '▤' : '▥'}
-                          </button>
-                        ))}
+                        {sideBtn('left', 'panelLeft')}
+                        {sideBtn('top', 'panelTop')}
+                        {sideBtn('right', 'panelRight')}
+                        {sideBtn('bottom', 'panelBottom')}
                       </div>
                       <button
                         className="ai-dock-bar-btn"

@@ -42,6 +42,10 @@ export type IconName =
   | 'settings'
   | 'externalLink'
   | 'minimize'
+  | 'panelTop'
+  | 'panelBottom'
+  | 'panelLeft'
+  | 'panelRight'
 
 const PATHS: Record<IconName, ReactNode> = {
   refresh: (
@@ -247,6 +251,34 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   minimize: <line x1="5" y1="12" x2="19" y2="12" />,
+  // Panel docked at top: a thin bar at top of an outer rectangle.
+  panelTop: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <rect x="5" y="5" width="14" height="5" rx="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // Panel docked at bottom: a thin bar at bottom of an outer rectangle.
+  panelBottom: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <rect x="5" y="14" width="14" height="5" rx="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // Panel docked at left: a thin bar on the left of an outer rectangle.
+  panelLeft: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <rect x="5" y="5" width="5" height="14" rx="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // Panel docked at right: a thin bar on the right of an outer rectangle.
+  panelRight: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <rect x="14" y="5" width="5" height="14" rx="1" fill="currentColor" stroke="none" />
+    </>
+  ),
 }
 
 export function Icon({
