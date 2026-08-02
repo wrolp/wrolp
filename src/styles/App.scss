@@ -4091,21 +4091,40 @@ input[type='password']::-ms-clear {
     white-space: nowrap;
   }
 
-  .ai-chat-model-badge {
-    display: inline-flex;
+  .ai-chat-selectors {
+    display: flex;
     align-items: center;
-    gap: 3px;
-    margin-left: auto;
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .ai-chat-select {
+    appearance: none;
+    max-width: 150px;
     font-size: 11px;
     color: $text-secondary;
     background: $bg-input;
     border: 1px solid $border;
-    padding: 3px 8px;
-    border-radius: 12px;
-    max-width: 180px;
+    padding: 2px 8px;
+    border-radius: 8px;
+    outline: none;
+    cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+
+    &:focus {
+      border-color: $accent;
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+  }
+
+  .ai-chat-model-input {
+    cursor: text;
   }
 
   .ai-chat-clear-btn {

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent } from '../types'
-import { startAiAgent, pollAiChunks } from '../commands'
+import { startAiAgent, pollAiChunks, listAiModels } from '../commands'
 import { Icon } from './Icon'
 
 export interface ChatMessage {
@@ -21,6 +21,12 @@ interface AiConv {
 
 interface AiChatPanelProps {
   config: AiEndpointProfile
+  /** All available endpoint profiles, for the in-panel endpoint switcher. */
+  profiles: AiEndpointProfile[]
+  /** Switch the active endpoint (persisted by the parent). */
+  onSelectProfile: (id: string) => void
+  /** Change the model for the current endpoint (persisted by the parent). */
+  onSelectModel: (model: string) => void
   tabId: number
   /** Conversation state for this tab, owned by App (per-shell persistence). */
   conv: AiConv
@@ -58,6 +64,9 @@ const SUGGESTIONS = [
 
 export default function AiChatPanel({
   config,
+  profiles,
+  onSelectProfile,
+  onSelectModel,
   tabId,
   conv,
   setConv,
@@ -89,6 +98,33 @@ export default function AiChatPanel({
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pollRef = useRef<number>(0)
+
+  // Per-endpoint model list + manual fallback, fetched from /v1/models.
+  const [models, setModels] = useState<string[]>([])
+  const [modelManual, setModelManual] = useState(false)
+  const [fetchingModels, setFetchingModels] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setModelManual(false)
+    setModels([])
+    if (!config?.endpoint) return
+    setFetchingModels(true)
+    listAiModels(config.apiKeyEnc ?? '', config.endpoint)
+      .then((ms) => {
+        if (cancelled) return
+        setModels(ms)
+      })
+      .catch(() => {
+        if (!cancelled) setModelManual(true)
+      })
+      .finally(() => {
+        if (!cancelled) setFetchingModels(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [config?.id, config?.endpoint, config?.apiKeyEnc])
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -239,12 +275,48 @@ export default function AiChatPanel({
         </div>
         <div className="ai-chat-title-group">
           <span className="ai-chat-title">AI Assistant</span>
-          <span className="ai-chat-subtitle">Ask · Analyze · Automate</span>
+          <div className="ai-chat-selectors">
+            <select
+              className="ai-chat-select"
+              value={config?.id ?? ''}
+              onChange={(e) => onSelectProfile(e.target.value)}
+              title="选择 AI endpoint"
+            >
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name || p.endpoint}
+                </option>
+              ))}
+            </select>
+            {modelManual ? (
+              <input
+                className="ai-chat-select ai-chat-model-input"
+                value={config.model || ''}
+                onChange={(e) => onSelectModel(e.target.value)}
+                placeholder="模型名称"
+                title="手动输入模型名称"
+              />
+            ) : (
+              <select
+                className="ai-chat-select"
+                value={config.model || ''}
+                onChange={(e) => onSelectModel(e.target.value)}
+                title="选择模型"
+                disabled={fetchingModels}
+              >
+                {fetchingModels && <option value={config.model || ''}>加载中…</option>}
+                {models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+                {!fetchingModels && models.length === 0 && (
+                  <option value={config.model || ''}>无可用模型</option>
+                )}
+              </select>
+            )}
+          </div>
         </div>
-        <span className="ai-chat-model-badge">
-          <Icon name="chevronDown" size={12} />
-          {config.model || 'model'}
-        </span>
         {!floating && onToggleFloat && (
           <button
             className="ai-chat-clear-btn"

@@ -427,6 +427,31 @@ export default function App() {
   const activeProfile =
     aiConfig?.profiles.find((p) => p.id === aiConfig.activeId) ?? aiConfig?.profiles[0] ?? null
 
+  // Switch the active AI endpoint from within an AI chat panel (persisted).
+  const handleSelectAiProfile = useCallback((id: string) => {
+    setAiConfig((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, activeId: id }
+      saveAiConfig(next).catch(() => {})
+      return next
+    })
+  }, [])
+
+  // Change the model for the active endpoint (persisted).
+  const handleSelectAiModel = useCallback((model: string) => {
+    setAiConfig((prev) => {
+      if (!prev) return prev
+      const next = {
+        ...prev,
+        profiles: prev.profiles.map((p) =>
+          p.id === prev.activeId ? { ...p, model } : p,
+        ),
+      }
+      saveAiConfig(next).catch(() => {})
+      return next
+    })
+  }, [])
+
   // Reload the key input from the active profile's encrypted key whenever the
   // active profile changes, so each endpoint keeps and shows its own key.
   useEffect(() => {
@@ -2501,6 +2526,9 @@ export default function App() {
                       <AiChatPanel
                         tabId={tid}
                         config={activeProfile}
+                        profiles={aiConfig?.profiles ?? []}
+                        onSelectProfile={handleSelectAiProfile}
+                        onSelectModel={handleSelectAiModel}
                         conv={getAiConv(tid)}
                         setConv={(u) => setAiConv(tid, u)}
                         floating={false}
@@ -3024,6 +3052,9 @@ export default function App() {
                       <AiChatPanel
                         tabId={activeTerminalTab.tabId}
                         config={activeProfile}
+                        profiles={aiConfig?.profiles ?? []}
+                        onSelectProfile={handleSelectAiProfile}
+                        onSelectModel={handleSelectAiModel}
                         conv={getAiConv(activeTerminalTab.tabId)}
                         setConv={(u) => setAiConv(activeTerminalTab.tabId, u)}
                         floating={false}
@@ -3154,6 +3185,9 @@ export default function App() {
                     <AiChatPanel
                       tabId={aiFloatingTabId}
                       config={activeProfile}
+                      profiles={aiConfig?.profiles ?? []}
+                      onSelectProfile={handleSelectAiProfile}
+                      onSelectModel={handleSelectAiModel}
                       conv={getAiConv(aiFloatingTabId)}
                       setConv={(u) => setAiConv(aiFloatingTabId, u)}
                       floating
