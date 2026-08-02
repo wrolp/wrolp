@@ -488,7 +488,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
   return (
     <>
-      <div ref={containerRef} style={{ height: '100%', width: '100%' }} />
+      <div ref={containerRef} style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'hidden' }} />
       {ctxMenu && (
         <div
           className="context-menu"

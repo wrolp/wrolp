@@ -1147,6 +1147,17 @@ body.resizing-v {
   cursor: ns-resize !important;
 }
 
+// While an AI dock pane is being resized, swallow pointer events on the
+// terminal so xterm.js doesn't treat the drag as scrolling/selecting content.
+// Only the resize handle itself stays interactive.
+.term-workspace.dock-resizing .term-pane-term,
+.term-workspace.dock-resizing .ai-dock-pane {
+  pointer-events: none;
+}
+.term-workspace.dock-resizing .ai-dock-resize {
+  pointer-events: auto;
+}
+
 .terminal-pool {
   position: absolute;
   left: -100000px;

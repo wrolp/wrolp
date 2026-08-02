@@ -2394,7 +2394,7 @@ export default function App() {
           <div
             className="term-pane-term"
             ref={getPaneBodyRef(leaf.id)}
-            style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+            style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
           >
             {leaf.tabId == null && (
               <div className="terminal-placeholder">
@@ -2445,6 +2445,9 @@ export default function App() {
                 const startDockResize = (e: React.MouseEvent) => {
                   e.preventDefault()
                   e.stopPropagation()
+                  // Capture the workspace element now — `e.currentTarget` is only
+                  // valid during dispatch, so it would be null inside onUp.
+                  const ws = (e.currentTarget as HTMLElement).closest('.term-workspace') as HTMLElement | null
                   aiDockResizeRef.current = {
                     dir: side,
                     sx: e.clientX,
@@ -2470,9 +2473,29 @@ export default function App() {
                     aiDockResizeRef.current = null
                     window.removeEventListener('mousemove', onMove)
                     window.removeEventListener('mouseup', onUp)
+                    // Restore normal interaction / cursor.
+                    document.body.classList.remove('resizing-h', 'resizing-v', 'resizing-dock')
+                    document.body.style.userSelect = ''
+                    if (ws) ws.classList.remove('dock-resizing')
+                    try {
+                      getCurrentWindow().setResizable(true)
+                    } catch {
+                      /* ignore */
+                    }
                   }
+                  // While dragging, block the terminal (xterm) and chat from
+                  // receiving the mouse so the drag resizes the panes instead of
+                  // scrolling/selecting content inside them.
+                  document.body.classList.add(isVertical ? 'resizing-v' : 'resizing-h', 'resizing-dock')
+                  document.body.style.userSelect = 'none'
+                  if (ws) ws.classList.add('dock-resizing')
                   window.addEventListener('mousemove', onMove)
                   window.addEventListener('mouseup', onUp)
+                  try {
+                    getCurrentWindow().setResizable(false)
+                  } catch {
+                    /* ignore — internal resize must still work even if window lock fails */
+                  }
                 }
                 // For vertical docks the handle is horizontal (top/bottom edge);
                 // for horizontal docks it is vertical (left/right edge).
@@ -2481,7 +2504,9 @@ export default function App() {
                       position: 'absolute',
                       left: 0,
                       right: 0,
-                      [side === 'top' ? 'bottom' : 'top']: -3,
+                      // Sit entirely in the gap between panes so it never overlaps
+                      // the chat's top/bottom edge (which would occlude content).
+                      [side === 'top' ? 'bottom' : 'top']: -6,
                       height: 6,
                       cursor: 'ns-resize',
                       zIndex: 5,
@@ -2490,7 +2515,7 @@ export default function App() {
                       position: 'absolute',
                       top: 0,
                       bottom: 0,
-                      [side === 'left' ? 'right' : 'left']: -3,
+                      [side === 'left' ? 'right' : 'left']: -6,
                       width: 6,
                       cursor: 'ew-resize',
                       zIndex: 5,
@@ -2508,7 +2533,7 @@ export default function App() {
                 )
                 return (
                   <div className="ai-dock-pane" style={{ ...dockStyle, position: 'relative' }}>
-                    <div className="ai-dock-bar">
+                    <div className="ai-dock-bar" style={{ position: 'relative', zIndex: 6 }}>
                       <span className="ai-dock-bar-title">AI</span>
                       <div className="ai-dock-sides">
                         {sideBtn('left', 'panelLeft')}
@@ -2533,7 +2558,7 @@ export default function App() {
                         ×
                       </button>
                     </div>
-                    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                       <AiChatPanel
                         tabId={tid}
                         config={activeProfile}
