@@ -9,7 +9,12 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "format": "prettier --write \"src/**/*.{ts,tsx,scss}\""
+    "format": "prettier --write \"src/**/*.{ts,tsx,scss}\"",
+    "postbuild:msi": "node scripts/strip-locale-suffix.mjs",
+    "release": "node scripts/release.mjs",
+    "gen:latest": "node scripts/gen-latest-json.mjs",
+    "upload": "node scripts/upload-release.mjs",
+    "publish": "node scripts/release.mjs && node scripts/upload-release.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

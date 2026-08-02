@@ -1,6 +1,6 @@
 {
   "productName": "wrolp-terminal",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "identifier": "com.wrolp-terminal.app",
   "build": {
     "frontendDist": "../dist",
@@ -32,7 +32,7 @@
       "endpoints": [
         "https://github.com/wrolp/wrolp/releases/latest/download/latest.json"
       ],
-      "pubkey": "YOUR_PUBLIC_KEY_HERE",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE3NTFDQUJDMkMxQTAyRkMKUldUOEFob3N2TXBSRnlEcWZmTDhtUk9KWDVkY00vcGV0M2t2dEZSbVpFR2YvVytubVZZdU5DNGEK",
       "windows": {
         "installMode": "passive"
       }
@@ -41,6 +41,17 @@
   "bundle": {
     "active": true,
     "targets": ["msi"],
+    "shortDescription": "Wrolp Terminal",
+    "longDescription": "A Tauri 2 + React 19 desktop SSH terminal client with SFTP, session recording, Docker/host analysis and an AI assistant.",
+    "category": "DeveloperTool",
+    "publisher": "wrolp",
+    "windows": {
+      "wix": {
+        "language": {
+          "en-US": {}
+        }
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
