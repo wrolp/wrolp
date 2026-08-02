@@ -280,7 +280,7 @@ export default function AiChatPanel({
               className="ai-chat-select"
               value={config?.id ?? ''}
               onChange={(e) => onSelectProfile(e.target.value)}
-              title="选择 AI endpoint"
+              title="Select AI endpoint"
             >
               {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -293,25 +293,25 @@ export default function AiChatPanel({
                 className="ai-chat-select ai-chat-model-input"
                 value={config.model || ''}
                 onChange={(e) => onSelectModel(e.target.value)}
-                placeholder="模型名称"
-                title="手动输入模型名称"
+                placeholder="Model name"
+                title="Enter model name manually"
               />
             ) : (
               <select
                 className="ai-chat-select"
                 value={config.model || ''}
                 onChange={(e) => onSelectModel(e.target.value)}
-                title="选择模型"
+                title="Select model"
                 disabled={fetchingModels}
               >
-                {fetchingModels && <option value={config.model || ''}>加载中…</option>}
+                {fetchingModels && <option value={config.model || ''}>Loading…</option>}
                 {models.map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
                 ))}
                 {!fetchingModels && models.length === 0 && (
-                  <option value={config.model || ''}>无可用模型</option>
+                  <option value={config.model || ''}>No models available</option>
                 )}
               </select>
             )}
