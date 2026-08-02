@@ -222,6 +222,8 @@ const en = {
     'Tip: select text in the terminal, right-click, and choose “Ask AI” to send it as context.',
   aiChatRoleYou: 'You',
   aiChatRoleAi: 'AI',
+  copyMessage: 'Copy',
+  copied: 'Copied',
   aiChatToolsUsed: 'Tools used',
   aiChatAskAi: 'Ask AI',
   aiChatInputHint: 'AI can use tools on connected servers. Destructive commands are blocked.',

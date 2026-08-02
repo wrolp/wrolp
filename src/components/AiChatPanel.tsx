@@ -1,8 +1,69 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent } from '../types'
 import { startAiAgent, pollAiChunks, listAiModels } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
+
+// Map markdown elements to our existing chat styles so the look stays
+// consistent with the previous (hand-rolled) renderer.
+const markdownComponents = {
+  code(props: { className?: string; children?: React.ReactNode }) {
+    const { className, children } = props
+    const match = /language-(\w+)/.exec(className || '')
+    const code = String(children ?? '')
+    // A fenced code block: has a language class, OR its content spans multiple
+    // lines (AI often returns ``` without a language tag). In both cases we
+    // render the block with a copy button. Single-line ```foo``` or bare
+    // backticks are treated as inline code.
+    const isBlock = Boolean(match) || code.includes('\n')
+    if (isBlock) {
+      return <CodeBlock lang={match?.[1] ?? ''} code={code.replace(/\n$/, '')} />
+    }
+    return <code className="ai-chat-inline-code">{children}</code>
+  },
+}
+
+/** Code block with a copy-to-clipboard button. */
+function CodeBlock({ lang, code }: { lang: string; code: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = useCallback(() => {
+    const write = async () => {
+      try {
+        await navigator.clipboard.writeText(code)
+      } catch {
+        // Fallback for non-secure contexts / older WebViews.
+        const ta = document.createElement('textarea')
+        ta.value = code
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    }
+    write()
+  }, [code])
+
+  return (
+    <pre className="ai-chat-code-block">
+      {lang && <span className="ai-chat-code-lang">{lang}</span>}
+      <button
+        className="ai-chat-code-copy"
+        onClick={handleCopy}
+        title={copied ? 'Copied' : 'Copy'}
+        type="button"
+      >
+        {copied ? '✓' : '⧉'}
+      </button>
+      <code>{code}</code>
+    </pre>
+  )
+}
 
 export interface ChatMessage {
   id: string
@@ -96,6 +157,28 @@ export default function AiChatPanel({
     setConv((c) => ({ ...c, toolCalls: typeof u === 'function' ? u(c.toolCalls) : u }))
   const setShowSuggestions = (u: boolean | ((p: boolean) => boolean)) =>
     setConv((c) => ({ ...c, showSuggestions: typeof u === 'function' ? u(c.showSuggestions) : u }))
+
+  // "Copy whole message" feedback: id of the message currently marked copied.
+  const [msgCopied, setMsgCopied] = useState<string | null>(null)
+  const copyMessage = useCallback((id: string, text: string) => {
+    const write = async () => {
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setMsgCopied(id)
+      window.setTimeout(() => setMsgCopied((cur) => (cur === id ? null : cur)), 1500)
+    }
+    write()
+  }, [])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -397,11 +480,24 @@ export default function AiChatPanel({
             </div>
             <div className="ai-chat-msg-body">
               <div className="ai-chat-msg-role">
-                {msg.role === 'user' ? t('aiChatRoleYou') : t('aiChatRoleAi')}
+                <span>{msg.role === 'user' ? t('aiChatRoleYou') : t('aiChatRoleAi')}</span>
               </div>
               <div className="ai-chat-msg-content">
-                <MarkdownText text={msg.content} />
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {msg.content}
+                </ReactMarkdown>
               </div>
+              {msg.role === 'assistant' && !streaming && (
+                <button
+                  className="ai-chat-msg-copy"
+                  type="button"
+                  title={msgCopied === msg.id ? t('copied') : t('copyMessage')}
+                  onClick={() => copyMessage(msg.id, msg.content)}
+                >
+                  <Icon name={msgCopied === msg.id ? 'clipboard' : 'copy'} size={12} />
+                  {msgCopied === msg.id ? t('copied') : t('copyMessage')}
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -427,7 +523,9 @@ export default function AiChatPanel({
             <div className="ai-chat-msg-body">
               <div className="ai-chat-msg-role">{t('aiChatRoleAi')}</div>
               <div className="ai-chat-msg-content streaming">
-                <MarkdownText text={streamingText} />
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {streamingText}
+                </ReactMarkdown>
                 <span className="ai-chat-cursor" />
               </div>
             </div>
@@ -527,44 +625,4 @@ function ToolCallCard({ tool }: { tool: ToolCallEvent }) {
 }
 
 /** Very simple markdown-ish rendering: code blocks, inline code, bold, italic. */
-function MarkdownText({ text }: { text: string }) {
-  const parts: { type: 'text' | 'code'; content: string; lang?: string }[] = []
-  let remaining = text
-  const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g
-  let lastIndex = 0
-  let match: RegExpExecArray | null
 
-  while ((match = codeBlockRegex.exec(remaining)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ type: 'text', content: remaining.slice(lastIndex, match.index) })
-    }
-    parts.push({ type: 'code', content: match[2].replace(/\n$/, ''), lang: match[1] || undefined })
-    lastIndex = match.index + match[0].length
-  }
-  if (lastIndex < remaining.length) {
-    parts.push({ type: 'text', content: remaining.slice(lastIndex) })
-  }
-
-  return (
-    <>
-      {parts.map((part, i) =>
-        part.type === 'code' ? (
-          <pre key={i} className="ai-chat-code-block">
-            {part.lang && <span className="ai-chat-code-lang">{part.lang}</span>}
-            <code>{part.content}</code>
-          </pre>
-        ) : (
-          <span key={i} dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(part.content) }} />
-        ),
-      )}
-    </>
-  )
-}
-
-function renderInlineMarkdown(text: string): string {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code class="ai-chat-inline-code">$1</code>')
-    .replace(/\n/g, '<br/>')
-}

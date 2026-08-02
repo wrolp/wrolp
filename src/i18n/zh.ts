@@ -223,6 +223,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatEmptyHint: '提示：在终端中选中文本，右键并选择“询问 AI”将其作为上下文发送。',
   aiChatRoleYou: '你',
   aiChatRoleAi: 'AI',
+  copyMessage: '复制',
+  copied: '已复制',
   aiChatToolsUsed: '使用过的工具',
   aiChatAskAi: '询问 AI',
   aiChatInputHint: 'AI 可在已连接的服务器上使用工具。破坏性命令会被阻止。',
