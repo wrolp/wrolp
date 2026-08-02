@@ -2278,17 +2278,24 @@ pub async fn list_ai_models(api_key_enc: String, endpoint: String) -> Result<Vec
 pub async fn ai_chat(
     state: tauri::State<'_, AppState>,
     messages: Vec<AiMessage>,
+    profile: Option<crate::ai::AiEndpointProfile>,
 ) -> Result<String, String> {
-    let config = state
-        .ai_config
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
-    let profile = config
-        .active_profile()
-        .ok_or_else(|| "No AI endpoint configured.".to_string())?;
-    ai::ai_chat_sync(profile, &messages).await
+    let profile = match profile {
+        Some(p) => p,
+        None => {
+            let config = state
+                .ai_config
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
+            config
+                .active_profile()
+                .ok_or_else(|| "No AI endpoint configured.".to_string())?
+                .clone()
+        }
+    };
+    ai::ai_chat_sync(&profile, &messages).await
 }
 
 /// Start a streaming AI chat. Spawns a background task that reads the SSE
@@ -2297,17 +2304,10 @@ pub async fn ai_chat(
 pub async fn start_ai_chat_stream(
     app: tauri::AppHandle,
     messages: Vec<AiMessage>,
+    profile: Option<crate::ai::AiEndpointProfile>,
 ) -> Result<String, String> {
-    let (config, chat_id) = {
+    let chat_id = {
         let state = app.state::<AppState>();
-        let cfg = state
-            .ai_config
-            .lock()
-            .unwrap()
-            .clone()
-            .ok_or_else(|| {
-                "AI config not loaded. Please configure AI settings first.".to_string()
-            })?;
         let cid = Uuid::new_v4().to_string();
         state.ai_chat_buffers.lock().unwrap().insert(
             cid.clone(),
@@ -2319,13 +2319,27 @@ pub async fn start_ai_chat_stream(
                 tool_events: Vec::new(),
             },
         );
-        (cfg, cid)
+        cid
     };
 
-    let profile = config
-        .active_profile()
-        .ok_or_else(|| "No AI endpoint configured.".to_string())?
-        .clone();
+    let profile = match profile {
+        Some(p) => p,
+        None => {
+            let state = app.state::<AppState>();
+            let config = state
+                .ai_config
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| {
+                    "AI config not loaded. Please configure AI settings first.".to_string()
+                })?;
+            config
+                .active_profile()
+                .ok_or_else(|| "No AI endpoint configured.".to_string())?
+                .clone()
+        }
+    };
 
     let app_clone = app.clone();
     let cid = chat_id.clone();
@@ -2392,15 +2406,10 @@ pub async fn start_ai_agent(
     app: tauri::AppHandle,
     messages: Vec<crate::ai::AiMessage>,
     tab_id: Option<u32>,
+    profile: Option<crate::ai::AiEndpointProfile>,
 ) -> Result<String, String> {
-    let (config, chat_id) = {
+    let chat_id = {
         let state = app.state::<AppState>();
-        let cfg = state
-            .ai_config
-            .lock()
-            .unwrap()
-            .clone()
-            .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
         let cid = Uuid::new_v4().to_string();
         state.ai_chat_buffers.lock().unwrap().insert(
             cid.clone(),
@@ -2412,13 +2421,26 @@ pub async fn start_ai_agent(
                 tool_events: Vec::new(),
             },
         );
-        (cfg, cid)
+        cid
     };
 
-    let profile = config
-        .active_profile()
-        .ok_or_else(|| "No AI endpoint configured.".to_string())?
-        .clone();
+    // Prefer the profile selected in the UI (passed from the frontend); fall back
+    // to the persisted active profile only if none was provided.
+    let config = match profile {
+        Some(p) => p,
+        None => {
+            let state = app.state::<AppState>();
+            let cfg = state
+                .ai_config
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
+            cfg.active_profile()
+                .cloned()
+                .ok_or_else(|| "No AI endpoint configured.".to_string())?
+        }
+    };
 
     let app_clone = app.clone();
     let cid = chat_id.clone();
@@ -2449,7 +2471,7 @@ pub async fn start_ai_agent(
 
     tauri::async_runtime::spawn(async move {
         let result = crate::ai::run_agent_stream(
-            &profile,
+            &config,
             messages_with_context,
             |chunk| {
                 let state = app_clone.state::<AppState>();

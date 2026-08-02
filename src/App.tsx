@@ -1889,9 +1889,12 @@ export default function App() {
                             key={p.id}
                             className={'ai-profile-item' + (p.id === activeProfile?.id ? ' active' : '')}
                             onClick={() => {
-                              setAiConfig((prev) =>
-                                prev ? { ...prev, activeId: p.id } : prev
-                              )
+                              setAiConfig((prev) => {
+                                if (!prev) return prev
+                                const next = { ...prev, activeId: p.id }
+                                saveAiConfig(next).catch(() => {})
+                                return next
+                              })
                               setAiModels([])
                               setAiModelManual(false)
                             }}
@@ -1914,7 +1917,9 @@ export default function App() {
                                     prev.activeId === p.id
                                       ? profiles[0]?.id ?? ''
                                       : prev.activeId
-                                  return { ...prev, profiles, activeId }
+                                  const next = { ...prev, profiles, activeId }
+                                  saveAiConfig(next).catch(() => {})
+                                  return next
                                 })
                               }}
                             >
@@ -1939,9 +1944,12 @@ export default function App() {
                               activeProfile?.systemPrompt ??
                               'You are a helpful AI assistant integrated into Wrolp Terminal, a remote server management tool. You help users with system administration, command-line operations, debugging, and understanding server configurations. Be concise and practical.',
                           }
-                          setAiConfig((prev) =>
-                            prev ? { ...prev, profiles: [...prev.profiles, newProfile], activeId: id } : prev
-                          )
+                          setAiConfig((prev) => {
+                            if (!prev) return prev
+                            const next = { ...prev, profiles: [...prev.profiles, newProfile], activeId: id }
+                            saveAiConfig(next).catch(() => {})
+                            return next
+                          })
                           setAiApiKeyInput('')
                         }}
                       >

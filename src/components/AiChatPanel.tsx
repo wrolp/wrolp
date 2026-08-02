@@ -132,7 +132,7 @@ export default function AiChatPanel({
         setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: userDisplay }])
       }
 
-      startAiAgent(apiMessages, tabId)
+      startAiAgent(apiMessages, tabId, config)
         .then((chatId) => {
           let accumulated = ''
           const poll = () => {
@@ -171,7 +171,7 @@ export default function AiChatPanel({
           finalizeAssistant('', String(e))
         })
     },
-    [mergeToolEvents, finalizeAssistant, tabId],
+    [mergeToolEvents, finalizeAssistant, tabId, config],
   )
 
   const handleSend = useCallback(
