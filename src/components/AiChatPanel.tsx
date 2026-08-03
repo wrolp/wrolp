@@ -1,33 +1,51 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent } from '../types'
-import { startAiAgent, pollAiChunks, listAiModels, confirmAiTool } from '../commands'
+import { startAiAgent, pollAiChunks, listAiModels, confirmAiTool, sendInput } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
 // Map markdown elements to our existing chat styles so the look stays
 // consistent with the previous (hand-rolled) renderer.
-const markdownComponents = {
-  code(props: { className?: string; children?: React.ReactNode }) {
-    const { className, children } = props
-    const match = /language-(\w+)/.exec(className || '')
-    const code = String(children ?? '')
-    // A fenced code block: has a language class, OR its content spans multiple
-    // lines (AI often returns ``` without a language tag). In both cases we
-    // render the block with a copy button. Single-line ```foo``` or bare
-    // backticks are treated as inline code.
-    const isBlock = Boolean(match) || code.includes('\n')
-    if (isBlock) {
-      return <CodeBlock lang={match?.[1] ?? ''} code={code.replace(/\n$/, '')} />
-    }
-    return <code className="ai-chat-inline-code">{children}</code>
-  },
+function makeMarkdownComponents(onSendToShell: (text: string) => void) {
+  return {
+    code(props: { className?: string; children?: React.ReactNode }) {
+      const { className, children } = props
+      const match = /language-(\w+)/.exec(className || '')
+      const code = String(children ?? '')
+      // A fenced code block: has a language class, OR its content spans multiple
+      // lines (AI often returns ``` without a language tag). In both cases we
+      // render the block with a copy button. Single-line ```foo``` or bare
+      // backticks are treated as inline code.
+      const isBlock = Boolean(match) || code.includes('\n')
+      if (isBlock) {
+        return (
+          <CodeBlock
+            lang={match?.[1] ?? ''}
+            code={code.replace(/\n$/, '')}
+            onSendToShell={onSendToShell}
+          />
+        )
+      }
+      return <code className="ai-chat-inline-code">{children}</code>
+    },
+  }
 }
 
-/** Code block with a copy-to-clipboard button. */
-function CodeBlock({ lang, code }: { lang: string; code: string }) {
+/** Code block with copy and "send to terminal" buttons. */
+function CodeBlock({
+  lang,
+  code,
+  onSendToShell,
+}: {
+  lang: string
+  code: string
+  onSendToShell?: (text: string) => void
+}) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
+  const [sent, setSent] = useState(false)
   const handleCopy = useCallback(() => {
     const write = async () => {
       try {
@@ -49,17 +67,36 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     write()
   }, [code])
 
+  const handleSend = useCallback(() => {
+    if (!onSendToShell) return
+    onSendToShell(code)
+    setSent(true)
+    window.setTimeout(() => setSent(false), 1500)
+  }, [code, onSendToShell])
+
   return (
     <pre className="ai-chat-code-block">
       {lang && <span className="ai-chat-code-lang">{lang}</span>}
-      <button
-        className="ai-chat-code-copy"
-        onClick={handleCopy}
-        title={copied ? 'Copied' : 'Copy'}
-        type="button"
-      >
-        {copied ? '✓' : '⧉'}
-      </button>
+      <div className="ai-chat-code-actions">
+        {onSendToShell && (
+          <button
+            className="ai-chat-code-send"
+            onClick={handleSend}
+            title={t('sendToShell')}
+            type="button"
+          >
+            {sent ? `✓ ${t('sentToShell')}` : '➤'}
+          </button>
+        )}
+        <button
+          className="ai-chat-code-copy"
+          onClick={handleCopy}
+          title={copied ? t('copied') : t('copyMessage')}
+          type="button"
+        >
+          {copied ? '✓' : '⧉'}
+        </button>
+      </div>
       <code>{code}</code>
     </pre>
   )
@@ -141,6 +178,63 @@ export default function AiChatPanel({
   const { t } = useI18n()
   const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
 
+  // Insert command text into the active shell at the cursor position WITHOUT
+  // executing it (no trailing newline). Reuses the same keystroke path as the
+  // terminal's own input.
+  const handleSendToShell = useCallback(
+    (text: string) => {
+      const trimmed = text.replace(/\s+$/, '')
+      if (trimmed.length === 0) return
+      sendInput(tabId, trimmed)
+    },
+    [tabId],
+  )
+
+  // Memoize the markdown component map so unrelated re-renders (e.g. the
+  // floating selection toolbar appearing) don't force react-markdown to
+  // re-parse and rebuild the DOM — which would wipe the native text selection
+  // highlight and make selecting feel sluggish.
+  const mdComponents = useMemo(() => makeMarkdownComponents(handleSendToShell), [handleSendToShell])
+
+  // Capture the current text selection within the chat and position a floating
+  // "send to terminal" toolbar above it.
+  const handleSelectionMouseUp = useCallback(() => {
+    const sel = window.getSelection()
+    const text = sel?.toString().trim() ?? ''
+    const container = messagesRef.current
+    if (!sel || !container || text.length === 0) {
+      setSelection(null)
+      return
+    }
+    // Ignore selections that start outside the chat messages container.
+    let node: Node | null = sel.anchorNode
+    let inside = false
+    while (node) {
+      if (node === container) {
+        inside = true
+        break
+      }
+      node = node.parentNode
+    }
+    if (!inside) {
+      setSelection(null)
+      return
+    }
+    const range = sel.getRangeAt(0)
+    const rect = range.getBoundingClientRect()
+    setSelection({
+      text,
+      top: rect.top - 8,
+      left: rect.left + rect.width / 2,
+    })
+  }, [])
+
+  const clearSelection = useCallback(() => {
+    setSelection(null)
+    window.getSelection()?.removeAllRanges()
+  }, [])
+
+
   // Alias setters that operate on the per-tab conversation object so the rest
   // of the logic (runAgent / handleSend) stays unchanged.
   const setMessages = (u: ChatMessage[] | ((p: ChatMessage[]) => ChatMessage[])) =>
@@ -164,6 +258,12 @@ export default function AiChatPanel({
 
   // "Copy whole message" feedback: id of the message currently marked copied.
   const [msgCopied, setMsgCopied] = useState<string | null>(null)
+  // Floating toolbar shown when the user selects text inside the chat: the
+  // selected text plus its position (relative to the messages container).
+  const messagesRef = useRef<HTMLDivElement>(null)
+  const [selection, setSelection] = useState<{ text: string; top: number; left: number } | null>(
+    null,
+  )
   const copyMessage = useCallback((id: string, text: string) => {
     const write = async () => {
       try {
@@ -474,7 +574,12 @@ export default function AiChatPanel({
       </div>
 
       {/* Messages */}
-      <div className="ai-chat-messages">
+      <div
+        className="ai-chat-messages"
+        ref={messagesRef}
+        onMouseUp={handleSelectionMouseUp}
+        onScroll={() => setSelection(null)}
+      >
         {!hasContent && (
           <div className="ai-chat-empty">
             <div className="ai-chat-empty-icon">
@@ -513,7 +618,7 @@ export default function AiChatPanel({
                 <span>{msg.role === 'user' ? t('aiChatRoleYou') : t('aiChatRoleAi')}</span>
               </div>
               <div className="ai-chat-msg-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                   {msg.content}
                 </ReactMarkdown>
               </div>
@@ -531,6 +636,36 @@ export default function AiChatPanel({
             </div>
           </div>
         ))}
+
+        {/* Floating toolbar for a text selection inside the chat */}
+        {selection && (
+          <div
+            className="ai-chat-selection-bar"
+            style={{
+              top: selection.top,
+              left: selection.left,
+              transform:
+                selection.top < 28 ? 'translate(-50%, 8px)' : 'translate(-50%, -100%)',
+            }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            <button
+              type="button"
+              className="ai-chat-selection-send"
+              title={t('sendToShell')}
+              onClick={() => {
+                // Prefer the live selection (still highlighted); fall back to the
+                // captured text so it works even if the highlight was cleared.
+                const live = window.getSelection()?.toString().trim() ?? ''
+                handleSendToShell(live.length > 0 ? live : selection.text)
+                clearSelection()
+              }}
+            >
+              <Icon name="send" size={12} />
+              {t('sendToShell')}
+            </button>
+          </div>
+        )}
 
         {/* Tool-call cards (during agent loop) */}
         {toolCalls.length > 0 && (
@@ -553,7 +688,7 @@ export default function AiChatPanel({
             <div className="ai-chat-msg-body">
               <div className="ai-chat-msg-role">{t('aiChatRoleAi')}</div>
               <div className="ai-chat-msg-content streaming">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                   {streamingText}
                 </ReactMarkdown>
                 <span className="ai-chat-cursor" />

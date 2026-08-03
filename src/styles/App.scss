@@ -4169,6 +4169,7 @@ input[type='password']::-ms-clear {
   }
 
   .ai-chat-messages {
+    position: relative;
     flex: 1;
     overflow-y: auto;
     padding: 18px;
@@ -4337,6 +4338,35 @@ input[type='password']::-ms-clear {
     }
   }
 
+  .ai-chat-selection-bar {
+    position: fixed;
+    transform: translate(-50%, -100%);
+    z-index: 9999;
+    pointer-events: auto;
+
+    .ai-chat-selection-send {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #fff;
+      background: $accent;
+      border: none;
+      border-radius: 4px;
+      padding: 3px 8px;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      white-space: nowrap;
+
+      &:hover {
+        filter: brightness(1.1);
+      }
+    }
+  }
+
   .ai-chat-msg-content {
     padding: 10px 14px;
     border-radius: 10px;
@@ -4449,11 +4479,18 @@ input[type='password']::-ms-clear {
       border-radius: 3px;
     }
 
-    .ai-chat-code-copy {
+    .ai-chat-code-actions {
       position: absolute;
       top: 4px;
       right: 8px;
       z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .ai-chat-code-copy,
+    .ai-chat-code-send {
       font-size: 12px;
       line-height: 1;
       color: $text-dim;
@@ -4468,6 +4505,10 @@ input[type='password']::-ms-clear {
         color: $text-primary;
         background: rgba(0, 0, 0, 0.55);
       }
+    }
+
+    .ai-chat-code-send {
+      right: 40px;
     }
   }
 

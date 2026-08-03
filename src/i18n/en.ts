@@ -224,6 +224,8 @@ const en = {
   aiChatRoleAi: 'AI',
   copyMessage: 'Copy',
   copied: 'Copied',
+  sendToShell: 'Send to terminal',
+  sentToShell: 'Sent',
   aiToolArgs: 'Arguments',
   aiToolResult: 'Result',
   aiToolConfirm: 'Sensitive command — allow execution?',
