@@ -2,7 +2,7 @@ use super::ssh_session::{
   AppState, ConnectionConfig, ConnectResult, ContainerInfo, FileEntry, SshError, SshHandler, SshSession, SwitchedUser,
   TargetRef, TransferControl, ActiveRecording,
 };
-use crate::db::{self, CommandSetDto, SessionEventDto, SessionSummary};
+use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
 use crate::remote_fs::build_fs;
 use russh::client::{self, Handler};
 use russh::ChannelId;
@@ -1970,6 +1970,34 @@ pub async fn delete_command_set(
   db::delete_command_set(&conn, &id)
 }
 
+// ==================== AI Prompt Templates ====================
+
+#[tauri::command]
+pub async fn list_ai_prompt_templates(
+  state: tauri::State<'_, AppState>,
+) -> Result<Vec<AiPromptTemplate>, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::list_ai_prompt_templates(&conn)
+}
+
+#[tauri::command]
+pub async fn save_ai_prompt_template(
+  state: tauri::State<'_, AppState>,
+  template: AiPromptTemplate,
+) -> Result<String, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::save_ai_prompt_template(&conn, &template)
+}
+
+#[tauri::command]
+pub async fn delete_ai_prompt_template(
+  state: tauri::State<'_, AppState>,
+  id: String,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::delete_ai_prompt_template(&conn, &id)
+}
+
 // ==================== Host Analysis ====================
 
 #[tauri::command]
@@ -2028,6 +2056,28 @@ pub async fn docker_container_logs(
       // return the raw error as text rather than failing
       Err(format!("docker logs failed for {}: {}", container_name, e))
     }
+  }
+}
+
+/// Restart a Docker container on the jump host.
+/// Runs `docker restart <container>`.
+#[tauri::command]
+pub async fn restart_docker_container(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  container_name: String,
+) -> Result<(), String> {
+  let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
+  let argv = vec!["docker".into(), "restart".into(), container_name];
+  match crate::docker_fs::exec_on_jump(&*handle, &argv, None).await {
+    Ok((_out, _err, status)) => {
+      if status == 0 {
+        Ok(())
+      } else {
+        Err(format!("docker restart exited with status {}", status))
+      }
+    }
+    Err(e) => Err(e),
   }
 }
 

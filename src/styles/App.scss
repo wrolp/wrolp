@@ -4221,6 +4221,26 @@ input[type='password']::-ms-clear {
   }
 
   .ai-chat-suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .ai-chat-suggestion-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .ai-chat-suggestion-group-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: $text-dim;
+  }
+
+  .ai-chat-suggestion-chips {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
@@ -4244,6 +4264,262 @@ input[type='password']::-ms-clear {
     &:disabled {
       opacity: 0.5;
       cursor: default;
+    }
+  }
+
+  .ai-chat-suggestion-custom {
+    font-size: 12px;
+    text-align: left;
+    padding: 10px 12px;
+    background: rgba($accent, 0.05);
+    border: 1px dashed rgba($accent, 0.4);
+    border-radius: 8px;
+    color: $text-secondary;
+    cursor: pointer;
+    transition: all 0.15s;
+    &:hover {
+      color: $text-primary;
+      border-color: $accent;
+      background: rgba($accent, 0.1);
+    }
+  }
+
+  .ai-chat-suggestion-manage-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .ai-chat-suggestion-manage {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid $border;
+    background: $bg-input;
+    color: $text-secondary;
+    cursor: pointer;
+    transition: all 0.15s;
+    &:hover {
+      border-color: $accent;
+      color: $text-primary;
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  // ---- Template manager modal ----
+  .ai-tmpl-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    border-radius: inherit;
+  }
+
+  .ai-tmpl-modal {
+    width: 90%;
+    max-width: 420px;
+    max-height: 80%;
+    display: flex;
+    flex-direction: column;
+    background: $bg-secondary;
+    border: 1px solid $border;
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+  }
+
+  .ai-tmpl-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid $border;
+  }
+
+  .ai-tmpl-modal-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: $text-primary;
+  }
+
+  .ai-tmpl-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    overflow-y: auto;
+  }
+
+  .ai-tmpl-empty {
+    font-size: 12px;
+    color: $text-dim;
+    text-align: center;
+    padding: 16px 0;
+  }
+
+  .ai-tmpl-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: 8px;
+  }
+
+  .ai-tmpl-item-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ai-tmpl-item-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: $text-primary;
+  }
+
+  .ai-tmpl-item-prompt {
+    font-size: 11px;
+    color: $text-dim;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ai-tmpl-item-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .ai-tmpl-item-edit,
+  .ai-tmpl-item-del {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border: 1px solid $border;
+    background: transparent;
+    color: $text-secondary;
+    cursor: pointer;
+    transition: all 0.15s;
+    &:hover {
+      color: $text-primary;
+      border-color: $accent;
+    }
+  }
+
+  .ai-tmpl-item-del:hover {
+    color: #e05a5a;
+    border-color: #e05a5a;
+  }
+
+  .ai-tmpl-add-new {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 12px;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px dashed $border;
+    background: transparent;
+    color: $text-secondary;
+    cursor: pointer;
+    transition: all 0.15s;
+    &:hover {
+      color: $accent;
+      border-color: $accent;
+    }
+  }
+
+  .ai-tmpl-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .ai-tmpl-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .ai-tmpl-label {
+    font-size: 11px;
+    color: $text-dim;
+  }
+
+  .ai-tmpl-input,
+  .ai-tmpl-textarea {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    color: $text-primary;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: 8px;
+    outline: none;
+    resize: vertical;
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  .ai-tmpl-form-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .ai-tmpl-save,
+  .ai-tmpl-delete {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid $border;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .ai-tmpl-save {
+    background: $accent;
+    border-color: $accent;
+    color: #fff;
+    &:hover {
+      filter: brightness(1.08);
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+      filter: none;
+    }
+  }
+
+  .ai-tmpl-delete {
+    background: transparent;
+    color: #e05a5a;
+    &:hover {
+      border-color: #e05a5a;
+      background: rgba(224, 90, 90, 0.08);
     }
   }
 

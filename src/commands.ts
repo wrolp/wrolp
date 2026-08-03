@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile } from './types'
+import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, AiPromptTemplate, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -224,6 +224,20 @@ export async function deleteCommandSet(id: string): Promise<void> {
   await invoke<void>('delete_command_set', { id })
 }
 
+// ===== AI Prompt Templates =====
+
+export async function listAiPromptTemplates(): Promise<AiPromptTemplate[]> {
+  return await invoke<AiPromptTemplate[]>('list_ai_prompt_templates')
+}
+
+export async function saveAiPromptTemplate(tpl: AiPromptTemplate): Promise<string> {
+  return await invoke<string>('save_ai_prompt_template', { template: tpl })
+}
+
+export async function deleteAiPromptTemplate(id: string): Promise<void> {
+  await invoke<void>('delete_ai_prompt_template', { id })
+}
+
 // ===== P6: Target-based file operations (jump host / Docker) =====
 
 export async function listDockerContainers(jumpTabId: number): Promise<ContainerInfo[]> {
@@ -303,6 +317,14 @@ export async function analyzeDockerContainer(tabId: number, containerName: strin
 
 export async function dockerContainerLogs(tabId: number, containerName: string, tailLines?: number): Promise<string> {
   return await invoke<string>('docker_container_logs', { tabId, containerName, tailLines })
+}
+
+/** Restart a running Docker container on the jump host. */
+export async function restartDockerContainer(
+  tabId: number,
+  containerName: string,
+): Promise<void> {
+  return await invoke('restart_docker_container', { tabId, containerName })
 }
 
 export async function dockerLogsStreamStart(

@@ -33,3 +33,11 @@ CREATE TABLE IF NOT EXISTS command_sets (
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ai_prompt_templates (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  prompt     TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);

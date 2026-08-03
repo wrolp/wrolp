@@ -312,3 +312,60 @@ pub fn delete_command_set(conn: &Connection, id: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
   Ok(())
 }
+
+// ==================== AI Prompt Templates ====================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiPromptTemplate {
+  pub id: String,
+  pub name: String,
+  pub prompt: String,
+  pub created_at: String,
+  pub updated_at: String,
+}
+
+pub fn list_ai_prompt_templates(conn: &Connection) -> Result<Vec<AiPromptTemplate>, String> {
+  let mut stmt = conn
+    .prepare("SELECT id, name, prompt, created_at, updated_at FROM ai_prompt_templates ORDER BY updated_at DESC")
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map([], |row| {
+      Ok(AiPromptTemplate {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        prompt: row.get(2)?,
+        created_at: row.get(3)?,
+        updated_at: row.get(4)?,
+      })
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+pub fn save_ai_prompt_template(conn: &Connection, tpl: &AiPromptTemplate) -> Result<String, String> {
+  let updated = conn
+    .execute(
+      "UPDATE ai_prompt_templates SET name = ?1, prompt = ?2, updated_at = ?3 WHERE id = ?4",
+      params![tpl.name, tpl.prompt, tpl.updated_at, tpl.id],
+    )
+    .map_err(|e| e.to_string())?;
+  if updated == 0 {
+    conn
+      .execute(
+        "INSERT INTO ai_prompt_templates (id, name, prompt, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![tpl.id, tpl.name, tpl.prompt, tpl.created_at, tpl.updated_at],
+      )
+      .map_err(|e| e.to_string())?;
+  }
+  Ok(tpl.id.clone())
+}
+
+pub fn delete_ai_prompt_template(conn: &Connection, id: &str) -> Result<(), String> {
+  conn
+    .execute("DELETE FROM ai_prompt_templates WHERE id = ?1", params![id])
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}

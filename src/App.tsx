@@ -34,7 +34,7 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels } from './commands'
+import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer } from './commands'
 import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
@@ -303,6 +303,19 @@ export default function App() {
   )
 
   // Open a Docker container log viewer in a new tab.
+  // Restart a Docker container
+  const handleRestartContainer = useCallback(
+    async (container: ContainerInfo) => {
+      if (activeTabId == null) return
+      try {
+        await restartDockerContainer(activeTabId, container.name)
+      } catch (e) {
+        console.error(`Docker restart failed: ${String(e)}`)
+      }
+    },
+    [activeTabId],
+  )
+
   const handleViewContainerLogs = useCallback(
     (container: ContainerInfo) => {
       if (activeTabId == null) return
@@ -2941,6 +2954,7 @@ export default function App() {
                   onEnterShell={handleEnterContainerShell}
                   onAnalyzeContainer={handleAnalyzeContainer}
                   onViewLogs={handleViewContainerLogs}
+                  onRestartContainer={handleRestartContainer}
                 />
               </div>
             )}

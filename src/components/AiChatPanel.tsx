@@ -1,10 +1,20 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AiEndpointProfile, AiMessage, ToolCallEvent } from '../types'
-import { startAiAgent, pollAiChunks, listAiModels, confirmAiTool, sendInput } from '../commands'
+import type { AiEndpointProfile, AiMessage, ToolCallEvent, AiPromptTemplate } from '../types'
+import {
+  startAiAgent,
+  pollAiChunks,
+  listAiModels,
+  confirmAiTool,
+  sendInput,
+  listAiPromptTemplates,
+  saveAiPromptTemplate,
+  deleteAiPromptTemplate,
+} from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
+import type { TranslationKey } from '../i18n/en'
 
 // Map markdown elements to our existing chat styles so the look stays
 // consistent with the previous (hand-rolled) renderer.
@@ -154,11 +164,28 @@ const TOOL_LABELS: Record<string, { label: string; icon: 'terminal' | 'desktop' 
   search_help: { label: 'Search help', icon: 'search' },
 }
 
-const SUGGESTIONS = [
-  'Explain this error and how to fix it',
-  'Optimize my server performance',
-  'Check for security vulnerabilities',
-  'Write a backup script',
+// Built-in server-ops prompt templates, grouped and localized. Each item is an
+// i18n key whose value doubles as the prompt text sent to the AI. Plan B (user
+// templates) appends a "custom" group rendered from loaded `userTemplates`.
+type SuggestionGroup = { titleKey: TranslationKey; keys: TranslationKey[] }
+
+const SUGGESTION_GROUPS: SuggestionGroup[] = [
+  {
+    titleKey: 'aiChatSugTroubleshoot',
+    keys: ['sugExplainError', 'sugTopProcesses', 'sugDiskUsage', 'sugLogErrors'],
+  },
+  {
+    titleKey: 'aiChatSugSecurity',
+    keys: ['sugSecurityAudit', 'sugSshHarden', 'sugFirewall'],
+  },
+  {
+    titleKey: 'aiChatSugBackup',
+    keys: ['sugBackupScript', 'sugCronPlan'],
+  },
+  {
+    titleKey: 'aiChatSugPerf',
+    keys: ['sugPerfTune', 'sugNetworkIssues'],
+  },
 ]
 
 export default function AiChatPanel({
@@ -177,6 +204,78 @@ export default function AiChatPanel({
 }: AiChatPanelProps) {
   const { t } = useI18n()
   const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
+
+  // User-defined prompt templates (Plan B) loaded from the backend.
+  const [userTemplates, setUserTemplates] = useState<AiPromptTemplate[]>([])
+  const [showTemplateManager, setShowTemplateManager] = useState(false)
+
+  const loadUserTemplates = useCallback(async () => {
+    try {
+      setUserTemplates(await listAiPromptTemplates())
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  useEffect(() => {
+    loadUserTemplates()
+  }, [loadUserTemplates])
+
+  // Template manager state (Plan B)
+  const [editingTemplate, setEditingTemplate] = useState<AiPromptTemplate | null>(null)
+  const [tmplName, setTmplName] = useState('')
+  const [tmplPrompt, setTmplPrompt] = useState('')
+  const [tmplSaving, setTmplSaving] = useState(false)
+
+  const openNewTemplate = useCallback(() => {
+    setEditingTemplate(null)
+    setTmplName('')
+    setTmplPrompt('')
+    setShowTemplateManager(true)
+  }, [])
+
+  const openEditTemplate = useCallback((tpl: AiPromptTemplate) => {
+    setEditingTemplate(tpl)
+    setTmplName(tpl.name)
+    setTmplPrompt(tpl.prompt)
+    setShowTemplateManager(true)
+  }, [])
+
+  const handleSaveTemplate = useCallback(async () => {
+    const name = tmplName.trim()
+    const prompt = tmplPrompt.trim()
+    if (name.length === 0 || prompt.length === 0) return
+    setTmplSaving(true)
+    try {
+      const id = editingTemplate?.id ?? crypto.randomUUID()
+      const now = new Date().toISOString()
+      await saveAiPromptTemplate({
+        id,
+        name,
+        prompt,
+        createdAt: editingTemplate?.createdAt ?? now,
+        updatedAt: now,
+      })
+      await loadUserTemplates()
+      setShowTemplateManager(false)
+    } catch {
+      // ignore
+    } finally {
+      setTmplSaving(false)
+    }
+  }, [tmplName, tmplPrompt, editingTemplate, loadUserTemplates])
+
+  const handleDeleteTemplate = useCallback(
+    async (id: string) => {
+      try {
+        await deleteAiPromptTemplate(id)
+        await loadUserTemplates()
+      } catch {
+        // ignore
+      }
+    },
+    [loadUserTemplates],
+  )
 
   // Insert command text into the active shell at the cursor position WITHOUT
   // executing it (no trailing newline). Reuses the same keystroke path as the
@@ -593,16 +692,67 @@ export default function AiChatPanel({
 
             {showSuggestions && (
               <div className="ai-chat-suggestions">
-                {SUGGESTIONS.map((s) => (
+                {SUGGESTION_GROUPS.map((group) => (
+                  <div className="ai-chat-suggestion-group" key={group.titleKey}>
+                    <div className="ai-chat-suggestion-group-title">{t(group.titleKey)}</div>
+                    <div className="ai-chat-suggestion-chips">
+                      {group.keys.map((key) => (
+                        <button
+                          key={key}
+                          className="ai-chat-suggestion"
+                          onClick={() => handleSend(t(key))}
+                          disabled={streaming}
+                        >
+                          {t(key)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {userTemplates.length > 0 && (
+                  <div className="ai-chat-suggestion-group">
+                    <div className="ai-chat-suggestion-group-title">
+                      {t('aiChatSugCustom')}
+                    </div>
+                    <div className="ai-chat-suggestion-chips">
+                      {userTemplates.map((tpl) => (
+                        <button
+                          key={tpl.id}
+                          className="ai-chat-suggestion ai-chat-suggestion-custom"
+                          onClick={() => handleSend(tpl.prompt)}
+                          disabled={streaming}
+                          title={tpl.prompt}
+                        >
+                          {tpl.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="ai-chat-suggestion-manage-row">
                   <button
-                    key={s}
-                    className="ai-chat-suggestion"
-                    onClick={() => handleSend(s)}
+                    type="button"
+                    className="ai-chat-suggestion-manage"
+                    onClick={() => openNewTemplate()}
                     disabled={streaming}
                   >
-                    {s}
+                    <Icon name="plus" size={12} />
+                    {t('aiChatSugAdd')}
                   </button>
-                ))}
+                  {userTemplates.length > 0 && (
+                    <button
+                      type="button"
+                      className="ai-chat-suggestion-manage"
+                      onClick={() => setShowTemplateManager(true)}
+                      disabled={streaming}
+                    >
+                      <Icon name="edit" size={12} />
+                      {t('aiChatSugManage')}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -746,6 +896,115 @@ export default function AiChatPanel({
         </div>
         <div className="ai-chat-input-hint">{t('aiChatInputHint')}</div>
       </div>
+
+      {/* Template manager modal (Plan B) */}
+      {showTemplateManager && (
+        <div className="ai-tmpl-overlay" onClick={() => setShowTemplateManager(false)}>
+          <div className="ai-tmpl-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="ai-tmpl-modal-head">
+              <span className="ai-tmpl-modal-title">
+                {editingTemplate ? t('aiChatSugManage') : t('aiChatSugAdd')}
+              </span>
+              <button
+                type="button"
+                className="ai-chat-clear-btn"
+                onClick={() => setShowTemplateManager(false)}
+                title={t('clear')}
+              >
+                <Icon name="x" size={13} />
+              </button>
+            </div>
+
+            {editingTemplate || tmplName || tmplPrompt ? (
+              <div className="ai-tmpl-form">
+                <label className="ai-tmpl-field">
+                  <span className="ai-tmpl-label">{t('aiChatSugNamePlaceholder')}</span>
+                  <input
+                    className="ai-tmpl-input"
+                    value={tmplName}
+                    onChange={(e) => setTmplName(e.target.value)}
+                    placeholder={t('aiChatSugNamePlaceholder')}
+                  />
+                </label>
+                <label className="ai-tmpl-field">
+                  <span className="ai-tmpl-label">{t('aiChatSugPromptPlaceholder')}</span>
+                  <textarea
+                    className="ai-tmpl-textarea"
+                    value={tmplPrompt}
+                    onChange={(e) => setTmplPrompt(e.target.value)}
+                    placeholder={t('aiChatSugPromptPlaceholder')}
+                    rows={5}
+                  />
+                </label>
+                <div className="ai-tmpl-form-actions">
+                  <button
+                    type="button"
+                    className="ai-tmpl-save"
+                    onClick={handleSaveTemplate}
+                    disabled={tmplSaving || !tmplName.trim() || !tmplPrompt.trim()}
+                  >
+                    {t('aiChatSugSave')}
+                  </button>
+                  {editingTemplate && (
+                    <button
+                      type="button"
+                      className="ai-tmpl-delete"
+                      onClick={() => handleDeleteTemplate(editingTemplate.id)}
+                    >
+                      {t('aiChatSugDelete')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="ai-tmpl-list">
+                {userTemplates.length === 0 ? (
+                  <div className="ai-tmpl-empty">{t('aiChatSugCustomEmpty')}</div>
+                ) : (
+                  userTemplates.map((tpl) => (
+                    <div className="ai-tmpl-item" key={tpl.id}>
+                      <div className="ai-tmpl-item-body">
+                        <div className="ai-tmpl-item-name">{tpl.name}</div>
+                        <div className="ai-tmpl-item-prompt">{tpl.prompt}</div>
+                      </div>
+                      <div className="ai-tmpl-item-actions">
+                        <button
+                          type="button"
+                          className="ai-tmpl-item-edit"
+                          onClick={() => openEditTemplate(tpl)}
+                          title={t('aiChatSugManage')}
+                        >
+                          <Icon name="edit" size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          className="ai-tmpl-item-del"
+                          onClick={() => handleDeleteTemplate(tpl.id)}
+                          title={t('aiChatSugDelete')}
+                        >
+                          <Icon name="trash" size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+                <button
+                  type="button"
+                  className="ai-tmpl-add-new"
+                  onClick={() => {
+                    setEditingTemplate(null)
+                    setTmplName('')
+                    setTmplPrompt('')
+                  }}
+                >
+                  <Icon name="plus" size={12} />
+                  {t('aiChatSugAdd')}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

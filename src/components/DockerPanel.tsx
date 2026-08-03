@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ContainerInfo } from '../types'
-import { listDockerContainers } from '../commands'
+import { listDockerContainers, restartDockerContainer } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
@@ -18,6 +18,8 @@ interface DockerPanelProps {
   onAnalyzeContainer?: (container: ContainerInfo) => void
   /** View container logs (opens in a new tab). */
   onViewLogs?: (container: ContainerInfo) => void
+  /** Restart a running container. */
+  onRestartContainer?: (container: ContainerInfo) => void
 }
 
 /**
@@ -34,6 +36,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onEnterShell,
   onAnalyzeContainer,
   onViewLogs,
+  onRestartContainer,
 }) => {
   const { t } = useI18n()
   const [containers, setContainers] = useState<ContainerInfo[]>([])
@@ -110,6 +113,20 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     setCtxMenu(null)
   }, [ctxMenu, onViewLogs])
 
+  const handleRestart = useCallback(() => {
+    if (!ctxMenu) return
+    const container = ctxMenu.container
+    if (onRestartContainer) {
+      onRestartContainer(container)
+    } else {
+      // Fallback: restart directly and refresh the list
+      restartDockerContainer(jumpTabId, container.name)
+        .then(() => load())
+        .catch((e) => setError(String(e)))
+    }
+    setCtxMenu(null)
+  }, [ctxMenu, jumpTabId, load, onRestartContainer])
+
   return (
     <div className="docker-panel">
       <div className="docker-panel-header">
@@ -169,6 +186,10 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
               {t('analyzeContainer')}
             </div>
           )}
+          <div className="context-menu-item" onClick={handleRestart}>
+            <Icon name="refresh" size={14} />
+            {t('dockerRestart')}
+          </div>
           {onViewLogs && (
             <div className="context-menu-item" onClick={handleViewLogs}>
               <Icon name="file" size={14} />

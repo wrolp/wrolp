@@ -38,6 +38,14 @@ export interface CommandSetDto {
   updatedAt: string
 }
 
+export interface AiPromptTemplate {
+  id: string
+  name: string
+  prompt: string
+  createdAt: string
+  updatedAt: string
+}
+
 export type AuthType = 'password' | 'key'
 
 export interface TabInfo {
