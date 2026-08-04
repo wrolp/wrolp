@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react'
+import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -65,6 +65,28 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  const ctxMenuRef = useRef<HTMLDivElement | null>(null)
+
+  // Keep the right-click menu fully on-screen (e.g. when triggered near the
+  // bottom edge of the shell pane it would otherwise be clipped).
+  useLayoutEffect(() => {
+    if (!ctxMenu) return
+    const el = ctxMenuRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const vh = window.innerHeight
+    const vw = window.innerWidth
+    let top = ctxMenu.y
+    if (top + rect.height > vh - 8) {
+      top = Math.max(8, vh - rect.height - 8)
+    }
+    let left = ctxMenu.x
+    if (left + rect.width > vw - 8) {
+      left = Math.max(8, vw - rect.width - 8)
+    }
+    el.style.top = `${top}px`
+    el.style.left = `${left}px`
+  }, [ctxMenu])
 
   useEffect(() => {
     isActiveRef.current = isActive
@@ -493,6 +515,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       <div ref={containerRef} style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'hidden' }} />
       {ctxMenu && (
         <div
+          ref={ctxMenuRef}
           className="context-menu"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onClick={(e) => e.stopPropagation()}
