@@ -265,6 +265,9 @@ const en = {
   dockerStart: 'Start',
   dockerStop: 'Stop',
   dockerRestart: 'Restart',
+  dockerRestarting: 'Restarting container "{name}" ...',
+  dockerRestarted: 'Container "{name}" restarted',
+  dockerRestartFailed: 'Failed to restart container "{name}": {err}',
 
   // Misc
   reconnect: 'Reconnect',

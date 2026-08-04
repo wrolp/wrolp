@@ -266,6 +266,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   dockerStart: '启动',
   dockerStop: '停止',
   dockerRestart: '重启',
+  dockerRestarting: '正在重启容器 “{name}” ...',
+  dockerRestarted: '容器 “{name}” 已重启',
+  dockerRestartFailed: '重启容器 “{name}” 失败：{err}',
 
   // Misc
   reconnect: '重新连接',

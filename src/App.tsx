@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -54,6 +54,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
+  const tabContextMenuRef = useRef<HTMLDivElement | null>(null)
   const [tabDragIndex, setTabDragIndex] = useState<number | null>(null)
   const tabDragRef = useRef<number | null>(null)
   // Customizable workspace layout (sidebar side/visibility, panel position,
@@ -307,13 +308,17 @@ export default function App() {
   const handleRestartContainer = useCallback(
     async (container: ContainerInfo) => {
       if (activeTabId == null) return
+      setToast({ kind: 'progress', text: t('dockerRestarting', { name: container.name }) })
       try {
         await restartDockerContainer(activeTabId, container.name)
+        setToast({ kind: 'success', text: t('dockerRestarted', { name: container.name }) })
       } catch (e) {
-        console.error(`Docker restart failed: ${String(e)}`)
+        const msg = String(e)
+        console.error(`Docker restart failed: ${msg}`)
+        setToast({ kind: 'error', text: t('dockerRestartFailed', { name: container.name, err: msg }) })
       }
     },
-    [activeTabId],
+    [activeTabId, t],
   )
 
   const handleViewContainerLogs = useCallback(
@@ -420,6 +425,17 @@ export default function App() {
       return () => clearTimeout(t)
     }
   }, [saveFlash])
+
+  // Transient toast notification (auto-dismiss, manually closable)
+  const [toast, setToast] = useState<
+    { kind: 'success' | 'error' | 'progress'; text: string } | null
+  >(null)
+  useEffect(() => {
+    if (toast && toast.kind !== 'progress') {
+      const id = setTimeout(() => setToast(null), 3000)
+      return () => clearTimeout(id)
+    }
+  }, [toast])
 
   useEffect(() => {
     loadAiConfig()
@@ -547,6 +563,27 @@ export default function App() {
     document.addEventListener('click', closeMenu)
     return () => document.removeEventListener('click', closeMenu)
   }, [])
+
+  // Keep the tab context menu fully on-screen (e.g. when triggered near the
+  // bottom edge it would otherwise be clipped).
+  useLayoutEffect(() => {
+    if (!tabContextMenu) return
+    const el = tabContextMenuRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const vh = window.innerHeight
+    let top = tabContextMenu.y
+    if (top + rect.height > vh - 8) {
+      top = Math.max(8, vh - rect.height - 8)
+    }
+    let left = tabContextMenu.x
+    const vw = window.innerWidth
+    if (left + rect.width > vw - 8) {
+      left = Math.max(8, vw - rect.width - 8)
+    }
+    el.style.top = `${top}px`
+    el.style.left = `${left}px`
+  }, [tabContextMenu])
 
   // Listen for unexpected SSH disconnections
   useEffect(() => {
@@ -3061,6 +3098,7 @@ export default function App() {
           {/* Tab right-click context menu */}
           {tabContextMenu && tabContextMenu.tab.tabType === 'terminal' && tabContextMenu.tab.connectionId && (
             <div
+              ref={tabContextMenuRef}
               className="tab-context-menu"
               style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
               onClick={(e) => e.stopPropagation()}
@@ -3413,6 +3451,30 @@ export default function App() {
         </div>
       </div>
       */}
+
+      {toast && (
+        <div
+          className={`toast toast-${toast.kind}`}
+          onClick={() => setToast(null)}
+          title={t('close')}
+        >
+          {toast.kind === 'progress' ? (
+            <span className="toast-spinner" />
+          ) : (
+            <span className="toast-icon">{toast.kind === 'success' ? '✓' : '✕'}</span>
+          )}
+          <span className="toast-text">{toast.text}</span>
+          <span
+            className="toast-close"
+            onClick={(e) => {
+              e.stopPropagation()
+              setToast(null)
+            }}
+          >
+            ✕
+          </span>
+        </div>
+      )}
 
 
     </div>

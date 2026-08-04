@@ -2107,6 +2107,96 @@ input[type='password']::-ms-clear {
   }
 }
 
+// ==================== Toast Notification ====================
+
+.toast {
+  position: fixed;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(30, 30, 34, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  z-index: 9999;
+  cursor: pointer;
+  animation: toast-in 0.2s ease-out;
+
+  &.toast-success {
+    border-left: 3px solid #28c76f;
+  }
+
+  &.toast-error {
+    border-left: 3px solid #f44747;
+  }
+
+  &.toast-progress {
+    border-left: 3px solid #4aa3ff;
+  }
+
+  .toast-icon {
+    font-weight: bold;
+    flex-shrink: 0;
+  }
+
+  .toast-success & .toast-icon {
+    color: #28c76f;
+  }
+
+  .toast-error & .toast-icon {
+    color: #f44747;
+  }
+
+  .toast-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: #4aa3ff;
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: toast-spin 0.7s linear infinite;
+  }
+
+  .toast-text {
+    flex: 1;
+    line-height: 1.4;
+  }
+
+  .toast-close {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    flex-shrink: 0;
+    &:hover {
+      color: #fff;
+    }
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes toast-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 // ==================== Bottom Panel ====================
 
 .bottom-panel {
