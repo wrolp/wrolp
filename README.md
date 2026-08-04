@@ -1,10 +1,40 @@
 # Wrolp Terminal
 
+<p align="center">
+  <img src="public/icon.png" alt="Wrolp Terminal" width="128" />
+</p>
+
+<p align="center">
+  <strong>A modern, Rust-powered desktop SSH terminal client</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/wrolp/wrolp-win/releases"><img src="https://img.shields.io/github/v/release/wrolp/wrolp-win?style=flat-square" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform" />
+  <img src="https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-ff4124?style=flat-square" alt="Built with Tauri" />
+</p>
+
 [中文文档](./README.zh.md) · [English](#)
 
-A Tauri 2 + React 19 + TypeScript desktop SSH terminal client. The native backend is written in Rust and connects directly to remote servers using the pure-Rust async [`russh`](https://github.com/warp-tech/russh) library. File transfer and remote editing use `russh-sftp`. Windows-first (MSI bundle), but builds on Linux/macOS too.
+**Wrolp Terminal** is a Tauri 2 + React 19 + TypeScript desktop SSH terminal client. The native backend is written in Rust and connects directly to remote servers using the pure-Rust async [`russh`](https://github.com/warp-tech/russh) library. File transfer and remote editing use `russh-sftp`. Windows-first (MSI bundle), but builds on Linux/macOS too.
 
 > **Note**: This README describes the current state of the code. The app has grown well beyond a single-tab JSON terminal — it now includes multi-tab SSH, SFTP file management, a remote file editor, session recording, command sets, Docker/host analysis, an AI assistant with tool-calling, and more.
+
+## ✨ Highlights
+
+- 🖥️ **Multi-tab SSH terminal** with xterm.js, password/key auth, and auto-reconnect
+- 📂 **SFTP file manager** — upload/download with pause & resume, remote file tree
+- ✍️ **Remote file editor** (Monaco) with UTF-8/GBK encoding auto-detect
+- 🎬 **Session recording** to SQLite, replayable from the bottom panel
+- 🐳 **Docker & host analysis** — inspect containers, stream logs, analyze servers
+- 🤖 **AI assistant** with tool-calling agent mode and encrypted API-key storage
+- 🪟 **Polished UX** — custom titlebar, tray icon, window geometry persistence, auto-updater
+
+<p align="center">
+  <!-- TODO: add a screenshot -->
+  <!-- <img src="docs/screenshot.png" alt="Wrolp Terminal screenshot" width="720" /> -->
+</p>
 
 ## Features
 
@@ -199,3 +229,15 @@ yarn tauri build
 - Types shared with Rust use `#[serde(rename_all = "camelCase")]` on the Rust side and matching camelCase interfaces in `src/types.ts`.
 - Frontend formatting is enforced by Prettier (`.prettierrc`: singleQuote, no semi, printWidth 100) — run `yarn format`.
 - New backend commands must be registered in both `commands.rs` and the `generate_handler!` list in `lib.rs`.
+
+## License
+
+Released under the [MIT License](./LICENSE). See [LICENSE](./LICENSE) for details.
+
+## Acknowledgements
+
+- [russh](https://github.com/warp-tech/russh) — pure-Rust async SSH client
+- [Tauri](https://tauri.app/) — the app framework
+- [xterm.js](https://xtermjs.org/) — terminal rendering
+- [Monaco Editor](https://microsoft.github.io/monaco-editor/) — code editor
+

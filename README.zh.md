@@ -1,10 +1,40 @@
 # Wrolp Terminal
 
+<p align="center">
+  <img src="public/icon.png" alt="Wrolp Terminal" width="128" />
+</p>
+
+<p align="center">
+  <strong>现代化、基于 Rust 的桌面端 SSH 终端客户端</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/wrolp/wrolp-win/releases"><img src="https://img.shields.io/github/v/release/wrolp/wrolp-win?style=flat-square" alt="Release" /></a>
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform" />
+  <img src="https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-ff4124?style=flat-square" alt="Built with Tauri" />
+</p>
+
 [English](./README.md) · [中文](#)
 
-基于 Tauri 2 + React 19 + TypeScript 的桌面端 SSH 终端客户端。原生后端使用 Rust 编写，通过纯 Rust 异步库 [`russh`](https://github.com/warp-tech/russh) 直连远程服务器。文件传输与远程编辑使用 `russh-sftp`。以 Windows 为主（打包为 MSI），但也支持 Linux / macOS 构建。
+**Wrolp Terminal** 是基于 Tauri 2 + React 19 + TypeScript 的桌面端 SSH 终端客户端。原生后端使用 Rust 编写，通过纯 Rust 异步库 [`russh`](https://github.com/warp-tech/russh) 直连远程服务器。文件传输与远程编辑使用 `russh-sftp`。以 Windows 为主（打包为 MSI），但也支持 Linux / macOS 构建。
 
 > **说明**：本 README 描述了代码当前的状态。应用早已不止是一个单标签 JSON 终端，现已包含多标签 SSH、SFTP 文件管理、远程文件编辑器、会话录制、命令集、Docker / 主机分析、带工具调用的 AI 助手等功能。
+
+## ✨ 功能亮点
+
+- 🖥️ **多标签 SSH 终端** — 基于 xterm.js，支持密码 / 密钥认证与自动重连
+- 📂 **SFTP 文件管理** — 上传 / 下载支持暂停与续传，远程文件树浏览
+- ✍️ **远程文件编辑器**（Monaco）— 自动识别 UTF-8 / GBK 编码
+- 🎬 **会话录制** — 存入 SQLite，可在底部面板回放
+- 🐳 **Docker 与主机分析** — 查看容器、流式日志、分析服务器
+- 🤖 **AI 助手** — 支持工具调用 Agent 模式，API Key 加密存储
+- 🪟 **精致体验** — 自定义标题栏、托盘图标、窗口状态记忆、自动更新
+
+<p align="center">
+  <!-- TODO: 添加截图 -->
+  <!-- <img src="docs/screenshot.png" alt="Wrolp Terminal 截图" width="720" /> -->
+</p>
 
 ## 功能特性
 
