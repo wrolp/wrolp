@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wrolp/wrolp-win/releases"><img src="https://img.shields.io/github/v/release/wrolp/wrolp-win?style=flat-square" alt="Release" /></a>
+  <a href="https://github.com/wrolp/wrolp/releases"><img src="https://img.shields.io/github/v/release/wrolp/wrolp?style=flat-square" alt="Release" /></a>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/built%20with-Tauri%202%20%2B%20Rust-ff4124?style=flat-square" alt="Built with Tauri" />
