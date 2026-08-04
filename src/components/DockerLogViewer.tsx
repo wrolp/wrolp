@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   dockerContainerLogs,
   dockerLogsStreamStart,
@@ -21,6 +21,27 @@ interface DockerLogViewerProps {
 }
 
 const MAX_LOG_CHARS = 200_000 // ~5000 lines — trim head when exceeded
+
+// Measure the rendered pixel height of a text fragment as it would appear inside
+// `source` (same font, padding, border, white-space, width). Used to keep the view
+// anchored when the head of the log buffer is trimmed while the user is scrolled up.
+function measureRemovedHeight(source: HTMLElement, text: string): number {
+  const cs = getComputedStyle(source)
+  const clone = document.createElement('pre')
+  clone.style.cssText = cs.cssText
+  clone.style.position = 'fixed'
+  clone.style.left = '-99999px'
+  clone.style.top = '0'
+  clone.style.visibility = 'hidden'
+  clone.style.height = 'auto'
+  clone.style.width = source.getBoundingClientRect().width + 'px'
+  clone.style.boxSizing = 'border-box'
+  clone.textContent = text
+  document.body.appendChild(clone)
+  const h = clone.scrollHeight
+  document.body.removeChild(clone)
+  return h
+}
 
 export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   tabId,
@@ -45,6 +66,12 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const logsRef = useRef<HTMLPreElement>(null)
   const userAtBottomRef = useRef(true)
+
+  // When new logs arrive while the user is scrolled up, we anchor the view so the
+  // content the user is reading stays put. If the head was trimmed (buffer limit),
+  // we record the removed head text + the pre-trim scrollTop here, then adjust
+  // scrollTop in a layout effect by the removed head's rendered height.
+  const preUpdateRef = useRef<{ scrollTop: number; removedHead: string } | null>(null)
 
   // ---- right-click context menu (Ask AI Assistant) ----
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
@@ -107,15 +134,24 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     setShowJumpToBottom(!userAtBottomRef.current)
   }, [])
 
-  // Bind scroll listener on the pre element (re-bind when ref changes)
-  useEffect(() => {
-    const el = logsRef.current
-    if (!el) return
-    el.addEventListener('scroll', handleScroll, { passive: true })
-    // re-evaluate in case the element was already scrolled
-    handleScroll()
-    return () => el.removeEventListener('scroll', handleScroll)
-  }, [handleScroll, logs /* re-bind when content changes so scrollHeight is fresh */])
+  // The <pre> is only rendered once logs exist, so we attach the scroll listener
+  // via a callback ref — exactly when the element mounts/unmounts. This avoids
+  // re-binding on every log update (which drops scroll events mid-gesture) while
+  // still binding the moment the element first appears.
+  const setLogsEl = useCallback(
+    (el: HTMLPreElement | null) => {
+      const prev = logsRef.current
+      if (prev && prev !== el) {
+        prev.removeEventListener('scroll', handleScroll)
+      }
+      logsRef.current = el
+      if (el) {
+        el.addEventListener('scroll', handleScroll, { passive: true })
+        handleScroll()
+      }
+    },
+    [handleScroll],
+  )
 
   // ---- one-shot fetch (non-follow mode) ----
   const fetchLogs = useCallback(async () => {
@@ -155,7 +191,18 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
         try {
           const chunks = await pollDockerLogs(sid)
           if (chunks.length > 0) {
-            setLogs((prev) => trimToMaxLines(trimHead(prev + chunks.join('')), maxLines))
+            const el = logsRef.current
+            const prevTop = el ? el.scrollTop : 0
+            setLogs((prev) => {
+              const appended = chunks.join('')
+              const next = trimToMaxLines(trimHead(prev + appended), maxLines)
+              // Amount removed from the head (buffer limit). Record it so the
+              // layout effect can keep the user's view anchored.
+              const removedChars = prev.length + appended.length - next.length
+              const removedHead = removedChars > 0 ? prev.substring(0, removedChars) : ''
+              preUpdateRef.current = { scrollTop: prevTop, removedHead }
+              return next
+            })
           }
         } catch {
           // ignore poll errors — stream may have ended
@@ -202,12 +249,33 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     return color ? parseAnsiToHtml(logs) : escapeLogs(logs)
   }, [logs, color])
 
-  // Auto-scroll only when user is at the bottom
+  // Auto-scroll only when the user is at (or very near) the bottom. When the user
+  // has scrolled up, we leave the page still — new logs won't yank the view.
   useEffect(() => {
-    if (autoScroll && userAtBottomRef.current && logsRef.current) {
-      logsRef.current.scrollTop = logsRef.current.scrollHeight
+    const el = logsRef.current
+    if (!el) return
+    if (autoScroll && userAtBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+      // Keep the "at bottom" state authoritative after a programmatic scroll.
+      userAtBottomRef.current = true
+      setShowJumpToBottom(false)
     }
   }, [logsHtml, autoScroll])
+
+  // When the user is scrolled up, keep their view anchored. Appending at the
+  // bottom alone leaves scrollTop unchanged (content stays, only the scrollbar
+  // reflects more content). But if the head was trimmed (buffer limit), the
+  // browser keeps scrollTop constant and the visible text shifts down — so we
+  // subtract the removed head's rendered height before paint.
+  useLayoutEffect(() => {
+    const el = logsRef.current
+    const upd = preUpdateRef.current
+    preUpdateRef.current = null
+    if (!el || !upd || userAtBottomRef.current) return
+    if (!upd.removedHead) return
+    const removedH = measureRemovedHeight(el, upd.removedHead)
+    el.scrollTop = Math.max(0, upd.scrollTop - removedH)
+  }, [logsHtml])
 
   // Fetch on mount (non-follow)
   useEffect(() => {
@@ -299,7 +367,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
           <>
             <pre
               className={'dlv-output' + (wordWrap ? ' dlv-output-wrap' : '')}
-              ref={logsRef}
+              ref={setLogsEl}
               onContextMenu={handleLogContextMenu}
               dangerouslySetInnerHTML={{ __html: logsHtml }}
             />
