@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>现代化、基于 Rust 的桌面端 SSH 终端客户端</strong>
+  <strong>基于 Rust 的桌面端 SSH 终端客户端</strong>
 </p>
 
 <p align="center">
