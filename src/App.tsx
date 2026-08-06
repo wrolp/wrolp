@@ -1770,10 +1770,7 @@ export default function App() {
         {tab.tabType !== 'settings' && (
           <div
             style={{
-              display:
-                tab.status === 'disconnected' || (tab.status === 'error' && !isLocalShell)
-                  ? 'none'
-                  : 'block',
+              display: 'block',
               height: '100%',
             }}
           >
@@ -2358,23 +2355,40 @@ export default function App() {
           </div>
         )}
         {tab.tabType !== 'settings' && tab.tabType !== 'aiChat' && tab.status === 'disconnected' ? (
-          <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
+          <div
+            className="terminal-placeholder"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,0.55)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
             <div className="icon">🔌</div>
             <div style={{ color: '#f44747' }}>{t('connectionLost')}</div>
             <div style={{ fontSize: '12px', color: '#888' }}>
               {tab.connectionName} — {tab.host}
             </div>
-            <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>{t('pressEnterToRetry')}</div>
-            <button
-              className="btn-primary"
-              onClick={() => handleReconnect(tab.tabId)}
-              style={{ marginTop: 12, fontSize: '13px', padding: '6px 20px' }}
-            >
-              <Icon name="refresh" /> {t('reconnect')}
-            </button>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>
+              {t('pressEnterToRetry')} / {t('clickReconnectHint')}
+            </div>
           </div>
         ) : tab.tabType !== 'settings' && tab.status === 'error' ? (
-          <div className="terminal-placeholder" style={{ position: 'absolute', inset: 0 }}>
+          <div
+            className="terminal-placeholder"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,0.55)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
             <div style={{ color: '#f44747' }}>{t('connectionFailed')}: {tab.connectionName}</div>
             {tab.errorMessage && (
               <div
@@ -2389,14 +2403,9 @@ export default function App() {
                 {tab.errorMessage}
               </div>
             )}
-            <div style={{ fontSize: '12px', color: '#666', marginTop: 12 }}>Press Enter to retry</div>
-            <button
-              className="btn-primary"
-              onClick={() => handleReconnect(tab.tabId)}
-              style={{ marginTop: 8, fontSize: '13px', padding: '6px 20px' }}
-            >
-              <Icon name="refresh" /> Reconnect
-            </button>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: 12 }}>
+              Press Enter to retry / {t('clickReconnectHint')}
+            </div>
           </div>
         ) : null}
       </div>
@@ -2492,6 +2501,19 @@ export default function App() {
             ⠿
           </span>
           <span className="term-pane-title">{tab ? getTabLabel(tab) : 'No terminal'}</span>
+          {tab?.tabType === 'terminal' && leaf.tabId != null && (
+            <button
+              className="term-pane-reconnect"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleReconnect(leaf.tabId as number)
+              }}
+              title={t('reconnect')}
+            >
+              <Icon name="refresh" size={12} />
+            </button>
+          )}
           {tab?.tabType === 'terminal' && leaf.tabId != null && (
             <button
               className={'term-pane-ai-toggle' + (showAiByTab[leaf.tabId] ? ' active' : '')}

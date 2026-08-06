@@ -48,6 +48,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   statusError: '错误',
   connectionLost: '连接已断开',
   pressEnterToRetry: '按 Enter 重试',
+  clickReconnectHint: '点击右上角"重新连接"按钮',
   connectionFailed: '连接失败',
 
   // Sidebar / connections

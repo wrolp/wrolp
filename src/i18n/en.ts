@@ -46,6 +46,7 @@ const en = {
   statusError: 'Error',
   connectionLost: 'Connection lost',
   pressEnterToRetry: 'Press Enter to retry',
+  clickReconnectHint: 'click "Reconnect" at the top-right',
   connectionFailed: 'Connection failed',
 
   // Sidebar / connections
