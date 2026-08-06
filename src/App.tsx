@@ -3295,16 +3295,6 @@ export default function App() {
               className="shell-pane"
               style={{ flex: editorTabs.length === 0 ? 1 : '0 0 auto', minHeight: 0 }}
             >
-              <div className="shell-pane-header">
-                <span className="shell-pane-title">Shell</span>
-                <button
-                  className="shell-pane-toggle"
-                  onClick={() => setShellCollapsed((v) => !v)}
-                  title={shellCollapsed ? 'Expand shell' : 'Collapse shell'}
-                >
-                  {shellCollapsed ? '▲' : '▼'}
-                </button>
-              </div>
               <div
                 className="shell-pane-body"
                 style={{ height: editorTabs.length === 0 ? undefined : (shellCollapsed ? 0 : shellHeight) }}
