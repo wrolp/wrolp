@@ -1,4 +1,7 @@
-// Upload built artifacts (.msi + .sig + latest.json) to a GitHub Release.
+// Upload built artifacts (.msi + latest.json) to a GitHub Release.
+// NOTE: the .sig file is intentionally NOT uploaded as a release asset —
+// the signature lives inside latest.json (required by the Tauri updater),
+// and the standalone .sig is kept local-only.
 //
 // One-shot helper that ties together the build pipeline output and publishes
 // it so the Tauri auto-updater endpoint resolves correctly.
@@ -18,9 +21,8 @@
 //     --draft Create as a draft release (no auto-update until published)
 //     --pre   Mark the release as a pre-release
 //
-// The three files uploaded (from src-tauri/target/release/bundle/msi/):
+// The two files uploaded (from src-tauri/target/release/bundle/msi/):
 //   - <productName>_<version>_x64.msi
-//   - <productName>_<version>_x64.msi.sig
 //   - latest.json
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
@@ -72,10 +74,8 @@ if (!msiFile) {
   )
   process.exit(1)
 }
-const sigPath = join(msiDir, msiFile + '.sig')
 const latestPath = join(msiDir, 'latest.json')
 const missing = []
-if (!existsSync(sigPath)) missing.push(sigPath)
 if (!existsSync(latestPath)) missing.push(latestPath)
 if (missing.length) {
   console.error(
@@ -85,7 +85,9 @@ if (missing.length) {
   process.exit(1)
 }
 
-const files = [join(msiDir, msiFile), sigPath, latestPath]
+// Only the MSI + latest.json are uploaded. The .sig is intentionally NOT
+// uploaded (it stays local; the signature is already embedded in latest.json).
+const files = [join(msiDir, msiFile), latestPath]
 
 // ---- check gh CLI ----
 const ghCheck = spawnSync('gh', ['--version'], { stdio: 'ignore', shell: true })
