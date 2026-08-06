@@ -268,6 +268,12 @@ const zh: Partial<Record<TranslationKey, string>> = {
   dockerRestart: '重启',
   dockerRestarting: '正在重启容器 “{name}” ...',
   dockerRestarted: '容器 “{name}” 已重启',
+  // Local terminal
+  localTerminal: '本地终端',
+  openLocalShell: '打开本地终端',
+  recentDirs: '最近目录',
+  clearDirHistory: '清空历史',
+  removeFromHistory: '从历史中移除',
   dockerRestartFailed: '重启容器 “{name}” 失败：{err}',
 
   // Misc

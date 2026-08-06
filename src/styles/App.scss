@@ -1192,6 +1192,74 @@ body.resizing-v {
   }
 }
 
+// Local terminal dropdown (recent directories)
+.local-term-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.local-term-menu {
+  position: absolute;
+  top: 28px;
+  left: 0;
+  min-width: 260px;
+  max-width: 420px;
+  background: $bg-tertiary;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  z-index: 3000;
+  padding: 4px;
+  font-size: 13px;
+
+  .local-term-menu-item {
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: $text-primary;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &:hover {
+      background: $bg-hover;
+    }
+
+    &.dir {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    &.clear {
+      color: $text-dim;
+    }
+  }
+
+  .local-term-menu-sep {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+    margin: 4px 2px;
+  }
+
+  .local-term-dir-path {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .local-term-dir-del {
+    flex-shrink: 0;
+    color: $text-dim;
+    font-size: 14px;
+    padding: 0 2px;
+
+    &:hover {
+      color: $danger;
+    }
+  }
+}
+
 // ===== Settings Tab (VS Code style) =====
 .settings-layout {
   display: flex;

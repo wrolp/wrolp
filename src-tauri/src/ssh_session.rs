@@ -266,6 +266,27 @@ impl SshHandler {
   }
 }
 
+/// Active local shell session (a PTY-backed local process, e.g. cmd/pwsh/bash).
+/// Reads happen on a dedicated std::thread.
+pub struct LocalShell {
+  pub tab_id: u32,
+  /// PTY master used for writing input and resizing.
+  pub master: Box<dyn portable_pty::MasterPty + Send>,
+  /// Writer half of the master (for `write_all`).
+  pub writer: Box<dyn std::io::Write + Send>,
+  /// Child process handle.
+  pub child: Box<dyn portable_pty::Child + Send + Sync>,
+  /// Monotonic version — bumped on each (re)open for the same tab, so a
+  /// superseded reader thread can stop writing into the buffer.
+  pub session_id: u64,
+  /// Last known working directory (cwd at open, or updated by polling).
+  pub cwd: Option<String>,
+  /// Per-tab output queue owned by this LocalShell. The reader thread holds an
+  /// `Arc` clone and writes here, so it never has to reach back into the
+  /// global `AppState` (which is unreliable from a plain `std::thread`).
+  pub output: Arc<StdMutex<Vec<String>>>,
+}
+
 /// Active SSH session
 pub struct SshSession {
   pub tab_id: u32,
@@ -416,6 +437,18 @@ pub struct AppState {
   pub ai_config: StdMutex<Option<crate::ai::AiConfig>>,
   /// Pending agent pause awaiting user confirmation of a sensitive tool call
   pub ai_pending: StdMutex<Option<AiPendingConfirm>>,
+  /// Active local shell sessions: tab_id → LocalShell
+  pub local_shells: StdMutex<HashMap<u32, LocalShell>>,
+  /// Working directory history for local shells (most-recently-used first)
+  pub local_shell_dirs: StdMutex<Vec<LocalShellDir>>,
+}
+
+/// A recorded local-shell working directory (for the "recent directories" list).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct LocalShellDir {
+  pub path: String,
+  pub shell: Option<String>,
+  pub last_used: u64,
 }
 
 impl AppState {
@@ -437,6 +470,8 @@ impl AppState {
       ai_chat_buffers: StdMutex::new(HashMap::new()),
       ai_config: StdMutex::new(ai_config),
       ai_pending: StdMutex::new(None),
+      local_shells: StdMutex::new(HashMap::new()),
+      local_shell_dirs: StdMutex::new(Vec::new()),
     }
   }
 }

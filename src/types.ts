@@ -55,7 +55,7 @@ export interface TabInfo {
   host: string
   status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'settings' | 'aiChat'
   errorMessage?: string
-  tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat'
+  tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat' | 'localShell'
   // When true, this session was created by splitting a tab and is NOT shown as
   // its own entry in the top tab bar — it lives inside its parent workspace's
   // pane layout (see App.tsx `splitTrees`).
@@ -65,6 +65,8 @@ export interface TabInfo {
   containerName?: string
   containerId?: string
   containerImage?: string
+  // localShell tab fields
+  localShellCwd?: string
 }
 
 export interface TerminalOutput {
@@ -127,6 +129,13 @@ export interface ContainerInfo {
   image: string
   state: string
   status: string
+}
+
+/** A recorded local-shell working directory (for the "recent directories" list). */
+export interface LocalShellDir {
+  path: string
+  shell?: string
+  lastUsed: number
 }
 
 /**

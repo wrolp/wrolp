@@ -1,6 +1,6 @@
 use super::ssh_session::{
-  AppState, ConnectionConfig, ConnectResult, ContainerInfo, FileEntry, SshError, SshHandler, SshSession, SwitchedUser,
-  TargetRef, TransferControl, ActiveRecording,
+  AppState, ConnectionConfig, ConnectResult, ContainerInfo, FileEntry, LocalShell, LocalShellDir, SshError,
+  SshHandler, SshSession, SwitchedUser, TargetRef, TransferControl, ActiveRecording,
 };
 use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
 use crate::remote_fs::build_fs;
@@ -9,6 +9,7 @@ use russh::ChannelId;
 use russh_keys::load_secret_key;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex as StdMutex;
 use std::path::PathBuf;
 use tauri::Manager;
 use tauri::Emitter;
@@ -740,8 +741,308 @@ pub async fn poll_output(
   state: tauri::State<'_, AppState>,
   tab_id: u32,
 ) -> Result<Vec<String>, String> {
-  let mut buffers = state.output_buffers.lock().map_err(|e| e.to_string())?;
-  Ok(buffers.remove(&tab_id).unwrap_or_default())
+  let mut result = Vec::new();
+  // SSH output lives in the shared poll buffer.
+  if let Ok(mut buffers) = state.output_buffers.lock() {
+    if let Some(chunks) = buffers.remove(&tab_id) {
+      result.extend(chunks);
+    }
+  }
+  // Local shell output lives in its own per-tab queue (owned by LocalShell).
+  if let Ok(shells) = state.local_shells.lock() {
+    if let Some(sh) = shells.get(&tab_id) {
+      if let Ok(mut q) = sh.output.lock() {
+        result.append(&mut q);
+      }
+    }
+  }
+  Ok(result)
+}
+
+// ==================== Local Shell (Local Terminal) ====================
+
+/// Pick the default local shell command for the current platform.
+fn default_local_shell() -> (String, Vec<String>) {
+  if cfg!(windows) {
+    // Prefer PowerShell, fall back to cmd
+    if let Ok(pwsh) = which_powershell() {
+      return (pwsh, vec![]);
+    }
+    ("cmd.exe".to_string(), vec![])
+  } else {
+    let s = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
+    (s, vec![])
+  }
+}
+
+#[cfg(windows)]
+fn which_powershell() -> Result<String, ()> {
+  for name in ["pwsh.exe", "powershell.exe"] {
+    if let Ok(out) = std::process::Command::new("where").arg(name).output() {
+      if out.status.success() {
+        let found = String::from_utf8_lossy(&out.stdout);
+        if let Some(first) = found.lines().next() {
+          return Ok(first.trim().to_string());
+        }
+      }
+    }
+  }
+  Err(())
+}
+
+#[cfg(not(windows))]
+fn which_powershell() -> Result<String, ()> {
+  Err(())
+}
+
+/// Open a local shell (PTY-backed local process) for the given tab.
+#[tauri::command]
+pub async fn open_local_shell(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  shell: Option<String>,
+  cwd: Option<String>,
+) -> Result<(), String> {
+  // Clear any stale output for this tab
+  {
+    if let Ok(mut buffers) = state.output_buffers.lock() {
+      buffers.remove(&tab_id);
+    }
+  }
+
+  // Remove any existing local shell for this tab
+  {
+    let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+    shells.remove(&tab_id);
+  }
+
+  let shell_for_history = shell.clone();
+  let (shell_cmd, shell_args) = match shell {
+    Some(s) => (s, vec![] as Vec<String>),
+    None => default_local_shell(),
+  };
+
+  // Per-tab output queue owned by this LocalShell. The reader thread holds an
+  // `Arc` clone and writes here, so it never reaches back into the global
+  // `AppState` (which behaves unreliably from a plain `std::thread`).
+  let output = Arc::new(StdMutex::new(Vec::<String>::new()));
+  output.lock().map_err(|e| e.to_string())?.push(format!(
+    "\x1b[36m[local shell] starting '{}' ...\x1b[0m\r\n",
+    shell_cmd
+  ));
+
+  let pty_system = portable_pty::native_pty_system();
+  let pair = pty_system
+    .openpty(portable_pty::PtySize {
+      rows: 24,
+      cols: 80,
+      pixel_width: 0,
+      pixel_height: 0,
+    })
+    .map_err(|e| format!("Failed to open PTY: {}", e))?;
+
+  let mut cmd = portable_pty::CommandBuilder::new(&shell_cmd);
+  if !shell_args.is_empty() {
+    cmd.args(&shell_args);
+  }
+  if let Some(ref dir) = cwd {
+    cmd.cwd(dir);
+  }
+  // Windows: let cmd/pwsh use its default console behavior
+  cmd.env("TERM", "xterm-256color");
+
+  let child = pair
+    .slave
+    .spawn_command(cmd)
+    .map_err(|e| {
+      eprintln!("[open_local_shell] spawn_command failed for '{}': {}", shell_cmd, e);
+      format!("Failed to spawn shell '{}': {}", shell_cmd, e)
+    })?;
+  eprintln!("[open_local_shell] spawned '{}' ok (tab={})", shell_cmd, tab_id);
+
+  let mut reader = pair
+    .master
+    .try_clone_reader()
+    .map_err(|e| format!("Failed to clone PTY reader: {}", e))?;
+
+  let writer = pair
+    .master
+    .take_writer()
+    .map_err(|e| format!("Failed to take PTY writer: {}", e))?;
+
+  let session_id = state.next_session_id.fetch_add(1, Ordering::SeqCst);
+
+  // Register the shell so input/resize/close can find it
+  {
+    let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+    shells.insert(
+      tab_id,
+      LocalShell {
+        tab_id,
+        master: pair.master,
+        writer: Box::new(writer),
+        child,
+        session_id,
+        cwd: cwd.clone(),
+        output: output.clone(),
+      },
+    );
+  }
+
+  // Remember cwd in history (start of list, de-duplicated)
+  {
+    if let Some(ref dir) = cwd {
+      record_local_shell_dir(&state, dir, shell_for_history.as_deref());
+    }
+  }
+
+  // Background reader thread: drain PTY output into this tab's own output queue.
+  // We hold an `Arc` clone of `output`, so we never reach back into the global
+  // `AppState` (which is unreliable from a plain `std::thread`). Each (re)open
+  // creates a fresh `output` Arc, so a superseded thread simply writes to an
+  // orphaned queue the frontend no longer reads from — no stale-data corruption.
+  let reader_tab = tab_id;
+  let reader_output = output.clone();
+  std::thread::spawn(move || {
+    use std::io::Read;
+    let mut buf = [0u8; 4096];
+    loop {
+      match reader.read(&mut buf) {
+        Ok(0) => break, // EOF: process exited
+        Ok(n) => {
+          let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+          if let Ok(mut q) = reader_output.lock() {
+            q.push(chunk);
+          }
+        }
+        Err(_) => break,
+      }
+    }
+    // Process exited — drop the shell registration and notify the frontend.
+    if let Some(state) = app.try_state::<AppState>() {
+      if let Ok(mut shells) = state.local_shells.lock() {
+        shells.remove(&reader_tab);
+      }
+    }
+    let _ = app.emit("connection-closed", serde_json::json!({ "tabId": reader_tab }));
+  });
+
+  Ok(())
+}
+
+/// Send input to a local shell.
+#[tauri::command]
+pub async fn local_send_input(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  data: String,
+) -> Result<bool, String> {
+  let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+  let shell = shells.get_mut(&tab_id).ok_or("Local shell not found")?;
+  use std::io::Write;
+  shell
+    .writer
+    .write_all(data.as_bytes())
+    .map_err(|e| format!("Failed to write to local shell: {}", e))?;
+  let _ = shell.writer.flush();
+  Ok(true)
+}
+
+/// Resize a local shell PTY.
+#[tauri::command]
+pub async fn local_resize(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  cols: u32,
+  rows: u32,
+) -> Result<bool, String> {
+  let shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+  let shell = shells.get(&tab_id).ok_or("Local shell not found")?;
+  shell
+    .master
+    .resize(portable_pty::PtySize {
+      rows: rows as u16,
+      cols: cols as u16,
+      pixel_width: 0,
+      pixel_height: 0,
+    })
+    .map_err(|e| format!("PTY resize failed: {}", e))?;
+  Ok(true)
+}
+
+/// Close a local shell and return its last working directory (if known).
+#[tauri::command]
+pub async fn local_close(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<Option<String>, String> {
+  let cwd = {
+    let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+    match shells.remove(&tab_id) {
+      Some(mut sh) => {
+        let _ = sh.child.kill();
+        sh.cwd.clone()
+      }
+      None => None,
+    }
+  };
+  if let Some(ref dir) = cwd {
+    record_local_shell_dir(&state, dir, None);
+  }
+  Ok(cwd)
+}
+
+/// Get the recorded working-directory history for local shells.
+#[tauri::command]
+pub async fn get_local_shell_dirs(
+  state: tauri::State<'_, AppState>,
+) -> Result<Vec<LocalShellDir>, String> {
+  let dirs = state.local_shell_dirs.lock().map_err(|e| e.to_string())?;
+  Ok(dirs.clone())
+}
+
+/// Remove a single entry (or all entries) from the local-shell directory history.
+#[tauri::command]
+pub async fn clear_local_shell_dirs(
+  state: tauri::State<'_, AppState>,
+  path: Option<String>,
+) -> Result<(), String> {
+  let mut dirs = state.local_shell_dirs.lock().map_err(|e| e.to_string())?;
+  match path {
+    Some(p) => dirs.retain(|d| d.path != p),
+    None => dirs.clear(),
+  }
+  Ok(())
+}
+
+/// Helper: insert/update a directory in the MRU history (max 20 entries).
+fn record_local_shell_dir(state: &AppState, path: &str, shell: Option<&str>) {
+  let mut dirs = match state.local_shell_dirs.lock() {
+    Ok(d) => d,
+    Err(_) => return,
+  };
+  if let Some(existing) = dirs.iter_mut().find(|d| d.path == path) {
+    existing.last_used = now_ms();
+    if shell.is_some() {
+      existing.shell = shell.map(|s| s.to_string());
+    }
+  } else {
+    dirs.push(LocalShellDir {
+      path: path.to_string(),
+      shell: shell.map(|s| s.to_string()),
+      last_used: now_ms(),
+    });
+  }
+  dirs.sort_by(|a, b| b.last_used.cmp(&a.last_used));
+  dirs.truncate(20);
+}
+
+fn now_ms() -> u64 {
+  std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as u64)
+    .unwrap_or(0)
 }
 
 // ==================== SFTP File Operations ====================

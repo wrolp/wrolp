@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, AiPromptTemplate, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile } from './types'
+import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, AiPromptTemplate, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile, LocalShellDir } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -56,6 +56,40 @@ export async function resizeTerminal(tabId: number, cols: number, rows: number):
 /// Poll for new data in SSH output buffer
 export async function pollOutput(tabId: number): Promise<string[]> {
   return await invoke<string[]>('poll_output', { tabId })
+}
+
+/// Open a local shell (PTY-backed local process) for a tab.
+export async function openLocalShell(
+  tabId: number,
+  shell?: string,
+  cwd?: string,
+): Promise<void> {
+  return await invoke('open_local_shell', { tabId, shell: shell ?? null, cwd: cwd ?? null })
+}
+
+/// Send input to a local shell.
+export async function localSendInput(tabId: number, data: string): Promise<boolean> {
+  return await invoke<boolean>('local_send_input', { tabId, data })
+}
+
+/// Resize a local shell PTY.
+export async function localResize(tabId: number, cols: number, rows: number): Promise<boolean> {
+  return await invoke<boolean>('local_resize', { tabId, cols, rows })
+}
+
+/// Close a local shell; returns the last known working directory.
+export async function localClose(tabId: number): Promise<string | null> {
+  return await invoke<string | null>('local_close', { tabId })
+}
+
+/// Get the recorded working-directory history for local shells.
+export async function getLocalShellDirs(): Promise<LocalShellDir[]> {
+  return await invoke<LocalShellDir[]>('get_local_shell_dirs')
+}
+
+/// Remove a single entry (or all) from the local-shell directory history.
+export async function clearLocalShellDirs(path?: string): Promise<void> {
+  return await invoke('clear_local_shell_dirs', { path: path ?? null })
 }
 
 // ===== File Operations =====

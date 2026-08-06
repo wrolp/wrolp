@@ -34,8 +34,8 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer } from './commands'
-import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent } from './types'
+import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalShellDirs, clearLocalShellDirs } from './commands'
+import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent, LocalShellDir } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
 import { detectLanguage } from './editor/languages'
@@ -559,6 +559,7 @@ export default function App() {
       const target = e.target as HTMLElement
       if (target.closest('.tab-context-menu')) return
       setTabContextMenu(null)
+      if (!target.closest('.local-term-wrap')) setLocalDirMenuOpen(false)
     }
     document.addEventListener('click', closeMenu)
     return () => document.removeEventListener('click', closeMenu)
@@ -856,6 +857,52 @@ export default function App() {
     [newLeafId],
   )
 
+  // Open a local shell as a NEW top-level tab (workspace).
+  const openLocalShellTab = useCallback(
+    (cwd?: string): number => {
+      const tabId = nextTabId++
+      const newTab: TabInfo = {
+        tabId,
+        connectionId: undefined,
+        connectionName: t('localTerminal'),
+        host: 'localhost',
+        status: 'connected',
+        tabType: 'localShell',
+        localShellCwd: cwd,
+      }
+      setTabs((prev) => [...prev, newTab])
+      const leafId = newLeafId()
+      setSplitTrees((prev) => ({ ...prev, [tabId]: makeLeaf(leafId, tabId) }))
+      setFocusedLeafByRoot((prev) => ({ ...prev, [tabId]: leafId }))
+      setActiveTabId(tabId)
+      return tabId
+    },
+    [newLeafId, t],
+  )
+
+  // Local shell working-directory history (for the "recent directories" menu)
+  const [localShellDirs, setLocalShellDirs] = useState<LocalShellDir[]>([])
+  const [localDirMenuOpen, setLocalDirMenuOpen] = useState(false)
+
+  const refreshLocalShellDirs = useCallback(() => {
+    getLocalShellDirs()
+      .then(setLocalShellDirs)
+      .catch((e: unknown) => console.error('getLocalShellDirs error:', e))
+  }, [])
+
+  useEffect(() => {
+    refreshLocalShellDirs()
+  }, [refreshLocalShellDirs])
+
+  const handleOpenLocalTerminal = useCallback(
+    (cwd?: string) => {
+      openLocalShellTab(cwd)
+      setLocalDirMenuOpen(false)
+      refreshLocalShellDirs()
+    },
+    [openLocalShellTab, refreshLocalShellDirs],
+  )
+
   // Split the currently focused pane inside the active workspace and open the
   // chosen connection in the new pane as an EMBEDDED session. The new session is
   // NOT added to the top tab bar (it lives inside this workspace's pane layout),
@@ -968,6 +1015,12 @@ export default function App() {
         } catch (e) {
           console.error('Disconnect error:', e)
         }
+      } else if (s?.tabType === 'localShell') {
+        try {
+          await localClose(sid)
+        } catch (e) {
+          console.error('Local shell close error:', e)
+        }
       }
     }
     setTabs((prev) => prev.filter((t) => !sessionIds.includes(t.tabId)))
@@ -984,7 +1037,10 @@ export default function App() {
     setActiveTabId((prev) => {
       if (prev !== tabId) return prev
       const remaining = tabsRef.current.filter(
-        (t) => t.tabType === 'terminal' && !t.embedded && !sessionIds.includes(t.tabId),
+        (t) =>
+          (t.tabType === 'terminal' || t.tabType === 'localShell') &&
+          !t.embedded &&
+          !sessionIds.includes(t.tabId),
       )
       return remaining.length ? remaining[0].tabId : null
     })
@@ -1206,6 +1262,8 @@ export default function App() {
       if (tab.tabType === 'settings') return '⚙ ' + t('tabSettings')
       if (tab.tabType === 'aiChat') return '🤖 ' + t('tabAiChat')
       if (tab.tabType === 'dockerLog') return `📋 ${tab.containerName ?? 'Logs'}`
+      if (tab.tabType === 'localShell')
+        return `🖥 ${tab.localShellCwd ? tab.localShellCwd : t('localTerminal')}`
       if (!tab.connectionId) return tab.connectionName
       const siblings = tabs.filter(
         (t) => t.tabType === 'terminal' && !t.embedded && t.connectionId === tab.connectionId,
@@ -1221,6 +1279,10 @@ export default function App() {
   const duplicateTab = useCallback(
     (tab: TabInfo) => {
       setTabContextMenu(null)
+      if (tab.tabType === 'localShell') {
+        openLocalShellTab(tab.localShellCwd)
+        return
+      }
       if (tab.tabType !== 'terminal' || !tab.connectionId) return
       const conn = cachedConnections.find((c) => c.id === tab.connectionId)
       if (conn) openTab(conn)
@@ -1673,7 +1735,7 @@ export default function App() {
   const allTabToLeaf = useMemo(() => {
     const m = new Map<number, string>()
     for (const root of tabs) {
-      if (root.tabType !== 'terminal' || root.embedded) continue
+      if ((root.tabType !== 'terminal' && root.tabType !== 'localShell') || root.embedded) continue
       const tree = splitTrees[root.tabId]
       if (!tree) continue
       buildTabToLeaf(tree).forEach((v, k) => m.set(k, v))
@@ -1702,12 +1764,16 @@ export default function App() {
           }
         })()
       : undefined
+    const isLocalShell = tab.tabType === 'localShell'
     return (
       <div style={{ height: '100%', width: '100%', position: 'relative' }}>
         {tab.tabType !== 'settings' && (
           <div
             style={{
-              display: tab.status === 'disconnected' || tab.status === 'error' ? 'none' : 'block',
+              display:
+                tab.status === 'disconnected' || (tab.status === 'error' && !isLocalShell)
+                  ? 'none'
+                  : 'block',
               height: '100%',
             }}
           >
@@ -1717,7 +1783,9 @@ export default function App() {
               isFocused={isFocused}
               reconnectTrigger={reconnectKeys[tab.tabId] || 0}
               connectConfig={connectConfig}
-              autoConnect={!!tab.connectionId}
+              autoConnect={!!tab.connectionId || isLocalShell}
+              isLocal={isLocalShell}
+              localCwd={tab.localShellCwd}
               maxScrollback={maxScrollback}
               onStatusChange={(status, errorMessage) =>
                 setTabs((prev) =>
@@ -2745,7 +2813,12 @@ export default function App() {
   // scrollback) while placing its DOM into the correct pane body, or into the
   // hidden pool when it isn't shown in any pane.
   const terminalPortals = tabs
-    .filter((t) => t.tabType === 'terminal' || (t.tabType === 'settings' && settingsActive))
+    .filter(
+      (t) =>
+        t.tabType === 'terminal' ||
+        t.tabType === 'localShell' ||
+        (t.tabType === 'settings' && settingsActive),
+    )
     .map((tab) => {
       if (tab.tabType === 'settings') {
         return settingsOverlayRef.current
@@ -2778,7 +2851,9 @@ export default function App() {
   // Top-level terminal tabs (workspaces): each renders its own split layout
   // inside an always-mounted container. Only the active workspace is visible;
   // switching toggles visibility (never remounts), so sessions persist.
-  const rootTabs = tabs.filter((t) => t.tabType === 'terminal' && !t.embedded)
+  const rootTabs = tabs.filter(
+    (t) => (t.tabType === 'terminal' || t.tabType === 'localShell') && !t.embedded,
+  )
 
   const terminalContent = (
     <div className="terminal-wrapper">
@@ -3093,6 +3168,63 @@ export default function App() {
             >
               ⊞
             </button>
+            <div className="local-term-wrap">
+              <button
+                className="tab-split-btn"
+                onClick={() => setLocalDirMenuOpen((v) => !v)}
+                title={t('openLocalShell')}
+              >
+                &gt;_
+              </button>
+              {localDirMenuOpen && (
+                <div className="local-term-menu">
+                  <div
+                    className="local-term-menu-item"
+                    onClick={() => handleOpenLocalTerminal()}
+                  >
+                    {t('localTerminal')}
+                  </div>
+                  {localShellDirs.length > 0 && (
+                    <>
+                      <div className="local-term-menu-sep" />
+                      {localShellDirs.map((d) => (
+                        <div
+                          key={d.path}
+                          className="local-term-menu-item dir"
+                          title={d.path}
+                          onClick={() => handleOpenLocalTerminal(d.path)}
+                        >
+                          <span className="local-term-dir-path">{d.path}</span>
+                          <span
+                            className="local-term-dir-del"
+                            title={t('removeFromHistory')}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              clearLocalShellDirs(d.path)
+                                .then(refreshLocalShellDirs)
+                                .catch((err: unknown) => console.error(err))
+                            }}
+                          >
+                            ×
+                          </span>
+                        </div>
+                      ))}
+                      <div className="local-term-menu-sep" />
+                      <div
+                        className="local-term-menu-item clear"
+                        onClick={() => {
+                          clearLocalShellDirs()
+                            .then(refreshLocalShellDirs)
+                            .catch((err: unknown) => console.error(err))
+                        }}
+                      >
+                        {t('clearDirHistory')}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Tab right-click context menu */}

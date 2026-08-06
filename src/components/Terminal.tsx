@@ -2,7 +2,16 @@ import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { connect, sendInput, commitCommand, pollOutput, resizeTerminal } from '../commands'
+import {
+  connect,
+  sendInput,
+  commitCommand,
+  pollOutput,
+  resizeTerminal,
+  openLocalShell,
+  localSendInput,
+  localResize,
+} from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
@@ -28,6 +37,10 @@ interface TerminalComponentProps {
     password?: string
     keyPath?: string
   }
+  /** When true, run a local PTY-backed shell instead of an SSH connection. */
+  isLocal?: boolean
+  /** Working directory to start the local shell in (local mode only). */
+  localCwd?: string
   autoConnect: boolean
   /** Maximum scrollback lines to retain (default 5000). */
   maxScrollback?: number
@@ -50,6 +63,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onStatusChange,
   onSizeChange,
   onAskAi,
+  isLocal,
+  localCwd,
 }) => {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -110,10 +125,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const rows = term.rows
     console.log(`[Terminal] resizing to ${cols}x${rows}`)
     onSizeChangeRef.current?.(cols, rows)
-    resizeTerminal(tabIdRef.current, cols, rows).catch((err) =>
-      console.error('resize_terminal error:', err),
-    )
-  }, [])
+    if (isLocal) {
+      localResize(tabIdRef.current, cols, rows).catch((err) =>
+        console.error('local_resize error:', err),
+      )
+    } else {
+      resizeTerminal(tabIdRef.current, cols, rows).catch((err) =>
+        console.error('resize_terminal error:', err),
+      )
+    }
+  }, [isLocal])
 
   // Create terminal + start connection + poll output
   useEffect(() => {
@@ -194,20 +215,26 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (data.includes('\r') || data.includes('\n')) {
         commitSubmittedCommands(term, data, currentTabId)
       }
-      sendInput(currentTabId, data)
-        .then(() => {
-          // Flush the output buffer right away so the remote echo of the
-          // keystroke we just sent shows up immediately instead of waiting for
-          // the next 100ms poll — otherwise fast typing looks like the echo
-          // "doesn't keep up" (echo lagging behind). pollOutput drains the
-          // buffer, so
-          // this never doubles what the interval poll will later write.
-          return pollOutput(currentTabId)
-        })
-        .then((chunks) => {
-          for (const chunk of chunks) term.write(chunk)
-        })
-        .catch((err) => console.error('send_input error:', err))
+      if (isLocal) {
+        localSendInput(currentTabId, data).catch((err) =>
+          console.error('local_send_input error:', err),
+        )
+      } else {
+        sendInput(currentTabId, data)
+          .then(() => {
+            // Flush the output buffer right away so the remote echo of the
+            // keystroke we just sent shows up immediately instead of waiting for
+            // the next 100ms poll — otherwise fast typing looks like the echo
+            // "doesn't keep up" (echo lagging behind). pollOutput drains the
+            // buffer, so
+            // this never doubles what the interval poll will later write.
+            return pollOutput(currentTabId)
+          })
+          .then((chunks) => {
+            for (const chunk of chunks) term.write(chunk)
+          })
+          .catch((err) => console.error('send_input error:', err))
+      }
     })
 
     // Focus on click
@@ -270,32 +297,49 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       console.log(`[Terminal] initial fit done: ${cols}x${rows}, starting connect`)
       onSizeChangeRef.current?.(cols, rows)
       onStatusChangeRef.current('connecting')
-      connect(
-        {
-          id: cfg.id,
-          name: cfg.name || `${cfg.username}@${cfg.host}`,
-          host: cfg.host,
-          port: cfg.port,
-          username: cfg.username,
-          password: cfg.password,
-          keyPath: cfg.keyPath,
-        },
-        currentTabId,
-        cols,
-        rows,
-      )
-        .then(() => {
-          onStatusChangeRef.current('connected')
-          startPolling()
-        })
-        .catch((err) => {
-          const errMsg =
-            typeof err === 'string'
-              ? err
-              : (err as any)?.message || String(err)
-          onStatusChangeRef.current('error', errMsg)
-          console.error('connect error:', err)
-        })
+      if (isLocal) {
+        openLocalShell(currentTabId, undefined, localCwd)
+          .then(() => {
+            onStatusChangeRef.current('connected')
+            startPolling()
+          })
+          .catch((err) => {
+            const errMsg =
+              typeof err === 'string' ? err : (err as any)?.message || String(err)
+            // Show the error inside the terminal instead of hiding the pane,
+            // so the user can see *why* the local shell failed to start.
+            term.write(`\x1b[31m[local shell] failed to start: ${errMsg}\x1b[0m\r\n`)
+            onStatusChangeRef.current('error', errMsg)
+            console.error('open_local_shell error:', err)
+          })
+      } else {
+        connect(
+          {
+            id: cfg.id,
+            name: cfg.name || `${cfg.username}@${cfg.host}`,
+            host: cfg.host,
+            port: cfg.port,
+            username: cfg.username,
+            password: cfg.password,
+            keyPath: cfg.keyPath,
+          },
+          currentTabId,
+          cols,
+          rows,
+        )
+          .then(() => {
+            onStatusChangeRef.current('connected')
+            startPolling()
+          })
+          .catch((err) => {
+            const errMsg =
+              typeof err === 'string'
+                ? err
+                : (err as any)?.message || String(err)
+            onStatusChangeRef.current('error', errMsg)
+            console.error('connect error:', err)
+          })
+      }
     }
 
     const waitForLayoutAndFit = () => {

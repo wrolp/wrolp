@@ -267,6 +267,12 @@ const en = {
   dockerRestart: 'Restart',
   dockerRestarting: 'Restarting container "{name}" ...',
   dockerRestarted: 'Container "{name}" restarted',
+  // Local terminal
+  localTerminal: 'Local Terminal',
+  openLocalShell: 'Open Local Terminal',
+  recentDirs: 'Recent Directories',
+  clearDirHistory: 'Clear History',
+  removeFromHistory: 'Remove from history',
   dockerRestartFailed: 'Failed to restart container "{name}": {err}',
 
   // Misc
