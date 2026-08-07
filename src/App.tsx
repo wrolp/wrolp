@@ -2518,7 +2518,7 @@ export default function App() {
                             model: 'gpt-4o',
                             systemPrompt:
                               activeProfile?.systemPrompt ??
-                              'You are a helpful AI assistant integrated into Wrolp Terminal, a remote server management tool. You help users with system administration, command-line operations, debugging, and understanding server configurations. Be concise and practical.',
+                              'You are the AI assistant built into Wrolp Terminal, an SSH terminal and server operations (DevOps / Ops) tool for system administrators. You help users with system administration, command-line operations, debugging, performance tuning, Docker and service management, and understanding server configurations. When asked, run read-only tools on the connected server to investigate. Be concise, practical, and safety-conscious.',
                           }
                           setAiConfig((prev) => {
                             if (!prev) return prev

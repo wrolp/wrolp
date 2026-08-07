@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>基于 Rust 的桌面端 SSH 终端客户端</strong>
+  <strong>面向运维人员的桌面端 SSH 终端与服务器管理工具</strong>
 </p>
 
 <p align="center">

@@ -175,7 +175,7 @@ const en = {
   maxRetainedLines: 'Max Retained Lines',
   olderLinesDropped: 'Older lines are dropped so the buffer isn’t flooded.',
   about: 'About',
-  aboutDesc: 'Build and repository information',
+  aboutDesc: 'Wrolp Terminal — an SSH terminal and server-ops tool. Build and repository information:',
   language: 'Language',
 
   // Settings: AI
@@ -224,7 +224,7 @@ const en = {
   aiChatError: 'Error',
   aiChatEmptyTitle: 'How can I help you today?',
   aiChatEmptyText:
-    'I can run read-only tools on your connected servers — execute commands, browse files, analyze systems, and look up help — to give you accurate answers.',
+    'I am an ops-focused AI assistant. I can run read-only tools on your connected servers — execute commands, browse files, analyze systems, troubleshoot issues, and inspect Docker and logs — to give you accurate operational guidance.',
   aiChatEmptyHint:
     'Tip: select text in the terminal, right-click, and choose “Ask AI” to send it as context.',
   aiChatRoleYou: 'You',

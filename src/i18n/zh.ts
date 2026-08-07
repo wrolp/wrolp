@@ -177,7 +177,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   maxRetainedLines: '最大保留行数',
   olderLinesDropped: '较旧的行会被丢弃，以免缓冲区被刷满。',
   about: '关于',
-  aboutDesc: '构建与仓库信息',
+  aboutDesc: 'Wrolp Terminal — 面向运维的 SSH 终端与服务器管理工具。构建与仓库信息：',
   language: '语言',
 
   // Settings: AI
@@ -226,7 +226,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatError: '错误',
   aiChatEmptyTitle: '今天我能帮你做什么？',
   aiChatEmptyText:
-    '我可以在你已连接的服务器上运行只读工具——执行命令、浏览文件、分析系统、查阅帮助——从而给出准确的回答。',
+    '我是面向运维的 AI 助手。我可以在你已连接的服务器上运行只读工具——执行命令、浏览文件、分析系统、排查故障、查看 Docker 与日志——从而给出准确的运维建议。',
   aiChatEmptyHint: '提示：在终端中选中文本，右键并选择“询问 AI”将其作为上下文发送。',
   aiChatRoleYou: '你',
   aiChatRoleAi: 'AI',

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A Rust-powered desktop SSH terminal client</strong>
+  <strong>A Rust-powered desktop SSH terminal and server-ops tool</strong>
 </p>
 
 <p align="center">
