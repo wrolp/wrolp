@@ -229,3 +229,108 @@ function reset(s: SgrState) {
   s.italic = false
   s.underline = false
 }
+
+/**
+ * Heuristic syntax highlighter for plain (non-ANSI) log text.
+ * Detects common log patterns and colourises them so the Docker log view
+ * stays readable even when the container emits no ANSI escape codes:
+ *   - RFC3339 / ISO timestamps at the start of a line
+ *   - log levels: TRACE/DEBUG/INFO/NOTICE/WARN/WARNING/ERROR/ERR/FATAL/CRIT
+ *   - key=value pairs and JSON object/array delimiters
+ * Lines that match none of the patterns are passed through unchanged.
+ */
+const ANSI_RE = /\x1b\[/g
+
+export function hasAnsi(text: string): boolean {
+  ANSI_RE.lastIndex = 0
+  return ANSI_RE.test(text)
+}
+
+function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+// RFC3339 / ISO-8601-ish timestamp, optionally with trailing Z / timezone offset.
+const TS_RE =
+  /^(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?) /
+
+const LEVEL_RE =
+  /\b(TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRIT(?:ICAL)?)\b/g
+
+const LEVEL_FG: Record<string, string> = {
+  TRACE: '#7daeec',
+  DEBUG: '#9aa4b2',
+  INFO: '#98c379',
+  NOTICE: '#56b6c2',
+  WARN: '#e5c07b',
+  WARNING: '#e5c07b',
+  ERROR: '#e06c75',
+  ERR: '#e06c75',
+  FATAL: '#f44747',
+  CRIT: '#f44747',
+  CRITICAL: '#f44747',
+}
+
+function highlightLine(line: string): string {
+  if (!line) return ''
+
+  let html = ''
+  let rest = line
+
+  // Leading timestamp
+  const tsMatch = TS_RE.exec(line)
+  if (tsMatch) {
+    html += `<span style="color:#61afef">${esc(tsMatch[0])}</span>`
+    rest = line.slice(tsMatch[0].length)
+  }
+
+  // Levels anywhere in the line (bold + colour)
+  if (LEVEL_RE.test(rest)) {
+    LEVEL_RE.lastIndex = 0
+    let last = 0
+    let m: RegExpExecArray | null
+    let lvlHtml = ''
+    while ((m = LEVEL_RE.exec(rest)) !== null) {
+      const key = m[1]
+      const fg = LEVEL_FG[key] ?? '#e5c07b'
+      lvlHtml += esc(rest.slice(last, m.index))
+      lvlHtml += `<span style="color:${fg};font-weight:bold">${esc(m[0])}</span>`
+      last = m.index + m[0].length
+    }
+    lvlHtml += esc(rest.slice(last))
+    rest = lvlHtml
+  } else {
+    rest = esc(rest)
+  }
+
+  // key=value pairs inside the (possibly already-spanned) text are left as-is
+  // to keep the markup simple; JSON braces get subtle emphasis via CSS class.
+  if (rest.includes('{') || rest.includes('[')) {
+    return `<span class="dlv-log-json">${html}${rest}</span>`
+  }
+  return html + rest
+}
+
+/**
+ * Apply heuristic highlighting to plain text that contains no ANSI codes.
+ * Returns `null` if the text already contains ANSI escapes (caller should
+ * use `parseAnsiToHtml` instead) or is effectively empty.
+ */
+export function highlightPlainLog(text: string): string | null {
+  if (!text || hasAnsi(text)) return null
+
+  const lines = text.split('\n')
+  let anyHighlight = false
+  const out = lines.map((ln) => {
+    const hl = highlightLine(ln)
+    if (hl !== esc(ln)) anyHighlight = true
+    return hl
+  })
+  // If nothing matched our patterns, don't pretend we highlighted — return the
+  // plain escaped text so the view is unchanged.
+  if (!anyHighlight) return null
+  return out.join('\n')
+}

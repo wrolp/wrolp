@@ -4268,6 +4268,11 @@ input[type='password']::-ms-clear {
     word-break: break-all;
   }
 
+  // Heuristic-highlighted lines that contain JSON get subtle emphasis.
+  .dlv-log-json {
+    color: #c9d1d9;
+  }
+
   .dlv-error {
     flex: 1;
     padding: 16px 12px;

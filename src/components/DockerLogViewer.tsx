@@ -5,7 +5,7 @@ import {
   pollDockerLogs,
   stopDockerLogsStream,
 } from '../commands'
-import { parseAnsiToHtml } from '../ansi'
+import { parseAnsiToHtml, highlightPlainLog } from '../ansi'
 import { useI18n } from '../i18n'
 
 interface DockerLogViewerProps {
@@ -244,9 +244,15 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   }, [startStream, stopStream, fetchLogs])
 
   // ---- ANSI → coloured HTML (memoized — parsing is O(n)) ----
+  // When Color is on we first try ANSI parsing. If the log contains no ANSI
+  // escape codes, we fall back to heuristic plain-log highlighting (timestamps,
+  // log levels, JSON) so uncoloured container output is still readable.
   const logsHtml = useMemo(() => {
     if (!logs) return ''
-    return color ? parseAnsiToHtml(logs) : escapeLogs(logs)
+    if (!color) return escapeLogs(logs)
+    const ansi = parseAnsiToHtml(logs)
+    const plain = highlightPlainLog(logs)
+    return plain ?? ansi
   }, [logs, color])
 
   // Auto-scroll only when the user is at (or very near) the bottom. When the user
