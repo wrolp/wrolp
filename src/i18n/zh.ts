@@ -313,6 +313,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
 
   // Misc
   reconnect: '重新连接',
+  startRecording: '开始录制',
+  stopRecording: '停止录制',
+  autoRecordSessions: '自动录制会话',
+  autoRecordSessionsDesc: '连接 SSH 后默认开始录制。关闭后可用每个面板的录制按钮手动录制。',
   retry: '重试',
   copy: '复制',
   paste: '粘贴',

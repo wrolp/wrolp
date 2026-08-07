@@ -148,6 +148,7 @@ export interface WindowConfig {
   opacity: number
   aiInputHeight: number
   collapsedGroups?: string[]
+  autoRecordSessions?: boolean
 }
 
 export async function saveWindowConfig(config: WindowConfig): Promise<void> {
@@ -156,6 +157,22 @@ export async function saveWindowConfig(config: WindowConfig): Promise<void> {
 
 export async function loadWindowConfig(): Promise<WindowConfig> {
   return await invoke<WindowConfig>('load_window_config')
+}
+
+export async function getAutoRecord(): Promise<boolean> {
+  return await invoke<boolean>('get_auto_record')
+}
+
+export async function setAutoRecord(enabled: boolean): Promise<void> {
+  await invoke<void>('set_auto_record', { enabled })
+}
+
+export async function setRecordingEnabled(tabId: number, enabled: boolean): Promise<boolean> {
+  return await invoke<boolean>('set_recording_enabled', { tabId, enabled })
+}
+
+export async function getRecordingEnabled(tabId: number): Promise<boolean> {
+  return await invoke<boolean>('get_recording_enabled', { tabId })
 }
 
 // ===== Workspace layout =====

@@ -643,9 +643,13 @@ pub async fn connect(
     let session_uuid = Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
     let started_at_iso = now.to_rfc3339();
-    let recording_enabled = std::env::var("WROLP_RECORDING")
-      .map(|v| v != "0" && v != "false")
-      .unwrap_or(true);
+    // Recording is OFF by default. It can be enabled globally via the
+    // Settings toggle (persisted in window.json) or forced via the
+    // WROLP_RECORDING environment variable (1/true/0/false).
+    let recording_enabled = match std::env::var("WROLP_RECORDING") {
+      Ok(v) => v != "0" && v != "false",
+      Err(_) => load_window_config_auto_record(),
+    };
 
     // Insert session record into SQLite
     if let Ok(conn) = state.db.lock() {
@@ -2042,6 +2046,39 @@ pub async fn resume_transfer(
 
 // ==================== Window Config Persistence ====================
 
+/// Synchronously read the `auto_record_sessions` flag from window.json.
+/// Used inside `connect()` (which is async but runs on the main thread), so we
+/// read the file directly instead of awaiting a command.
+fn load_window_config_auto_record() -> bool {
+  get_window_config_path()
+    .and_then(|p| std::fs::read_to_string(p).ok())
+    .and_then(|content| serde_json::from_str::<WindowConfig>(&content).ok())
+    .map(|c| c.auto_record_sessions)
+    .unwrap_or(false)
+}
+
+/// Read the current auto-record Sessions setting (Settings page).
+#[tauri::command]
+pub async fn get_auto_record() -> bool {
+  load_window_config_auto_record()
+}
+
+/// Persist the auto-record Sessions setting (Settings page).
+#[tauri::command]
+pub async fn set_auto_record(enabled: bool) -> Result<(), String> {
+  let path = get_window_config_path().ok_or("Cannot determine config directory")?;
+  let mut config = match std::fs::read_to_string(&path)
+    .ok()
+    .and_then(|c| serde_json::from_str::<WindowConfig>(&c).ok())
+  {
+    Some(c) => c,
+    None => WindowConfig::default(),
+  };
+  config.auto_record_sessions = enabled;
+  let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+  std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowConfig {
@@ -2054,6 +2091,8 @@ pub struct WindowConfig {
   pub ai_input_height: f64,
   #[serde(default)]
   pub collapsed_groups: Vec<String>,
+  #[serde(default)]
+  pub auto_record_sessions: bool,
 }
 
 impl Default for WindowConfig {
@@ -2067,6 +2106,7 @@ impl Default for WindowConfig {
       opacity: 1.0,
       ai_input_height: 120.0,
       collapsed_groups: Vec::new(),
+      auto_record_sessions: false,
     }
   }
 }
@@ -2195,6 +2235,34 @@ pub async fn delete_all_sessions(
 ) -> Result<(), String> {
   let conn = state.db.lock().map_err(|e| e.to_string())?;
   db::delete_all_sessions(&conn)
+}
+
+/// Toggle session recording for a specific tab (the per-pane record button).
+/// `enabled` is the desired state. Returns the current state after the change.
+#[tauri::command]
+pub async fn set_recording_enabled(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  enabled: bool,
+) -> Result<bool, String> {
+  let mut recordings = state.recordings.lock().map_err(|e| e.to_string())?;
+  if let Some(rec) = recordings.get_mut(&tab_id) {
+    rec.recording_enabled = enabled;
+    Ok(rec.recording_enabled)
+  } else {
+    // No in-memory recording entry (e.g. local shell) — nothing to toggle.
+    Ok(enabled)
+  }
+}
+
+/// Query whether recording is currently enabled for a tab.
+#[tauri::command]
+pub async fn get_recording_enabled(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<bool, String> {
+  let recordings = state.recordings.lock().map_err(|e| e.to_string())?;
+  Ok(recordings.get(&tab_id).map(|r| r.recording_enabled).unwrap_or(false))
 }
 
 #[tauri::command]

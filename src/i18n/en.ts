@@ -312,6 +312,10 @@ const en = {
 
   // Misc
   reconnect: 'Reconnect',
+  startRecording: 'Start recording',
+  stopRecording: 'Stop recording',
+  autoRecordSessions: 'Auto-record sessions',
+  autoRecordSessionsDesc: 'Start recording automatically after an SSH connection. When off, use the per-pane record button to record manually.',
   retry: 'Retry',
   copy: 'Copy',
   paste: 'Paste',

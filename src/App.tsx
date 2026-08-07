@@ -34,7 +34,7 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalTerminals } from './commands'
+import { loadWindowConfig, saveWindowConfig, setAutoRecord, setRecordingEnabled, getRecordingEnabled, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalTerminals } from './commands'
 import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
@@ -415,6 +415,10 @@ export default function App() {
   const [opacity, setOpacity] = useState(1)
   const [aiInputHeight, setAiInputHeight] = useState(0)
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([])
+  const [autoRecord, setAutoRecordState] = useState(false)
+  // Per-tab recording indicator (map from tabId → recording on/off). Loaded
+  // from the backend so the button reflects the actual state after reconnect.
+  const [recordingByTab, setRecordingByTab] = useState<Record<number, boolean>>({})
   const [appVersion, setAppVersion] = useState<AppVersion | null>(null)
 
   // Fetch app version info on mount
@@ -503,6 +507,31 @@ export default function App() {
         )
         .catch(() => {})
     }, 400)
+  }, [])
+  // Auto-record Sessions toggle (Settings). Persists to window.json so future
+  // connect() calls in Rust pick it up.
+  const handleAutoRecordChange = useCallback((enabled: boolean) => {
+    setAutoRecordState(enabled)
+    setAutoRecord(enabled).catch(() => {})
+  }, [])
+
+  // Toggle session recording for one pane (the record button in the pane
+  // header). Only meaningful for SSH sessions; the button is hidden otherwise.
+  const handleToggleRecording = useCallback(async (tabId: number) => {
+    try {
+      const cur = recordingByTab[tabId] ?? false
+      const next = await setRecordingEnabled(tabId, !cur)
+      setRecordingByTab((prev) => ({ ...prev, [tabId]: next }))
+    } catch {
+      // ignore
+    }
+  }, [recordingByTab])
+
+  // Refresh the recording indicator for a tab (after connect/reconnect).
+  const refreshRecordingState = useCallback((tabId: number) => {
+    getRecordingEnabled(tabId).then((enabled) => {
+      setRecordingByTab((prev) => ({ ...prev, [tabId]: enabled }))
+    }).catch(() => {})
   }, [])
   // Which tab's AI is currently floating as a separate draggable panel (null = none).
   const [aiFloatingTabId, setAiFloatingTabId] = useState<number | null>(null)
@@ -831,6 +860,9 @@ export default function App() {
       }
       if (config.collapsedGroups !== undefined && Array.isArray(config.collapsedGroups)) {
         setCollapsedGroups(config.collapsedGroups)
+      }
+      if (config.autoRecordSessions !== undefined) {
+        setAutoRecordState(config.autoRecordSessions)
       }
     }).catch(() => {})
   }, [])
@@ -1858,11 +1890,14 @@ export default function App() {
               localCwd={tab.localShellCwd}
               localShellType={tab.localShellType}
               maxScrollback={maxScrollback}
-              onStatusChange={(status, errorMessage) =>
+              onStatusChange={(status, errorMessage) => {
                 setTabs((prev) =>
                   prev.map((t) => (t.tabId === tab.tabId ? { ...t, status, errorMessage } : t)),
                 )
-              }
+                if (status === 'connected') {
+                  refreshRecordingState(tab.tabId)
+                }
+              }}
               onSizeChange={(cols, rows) => {
                 if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
               }}
@@ -1950,6 +1985,17 @@ export default function App() {
                           }}
                         />
                         <span className="settings-help">{t('appliesToNewTabs')}</span>
+                      </div>
+
+                      <div className="settings-field checkbox-field">
+                        <input
+                          id="auto-record-sessions"
+                          type="checkbox"
+                          checked={autoRecord}
+                          onChange={(e) => handleAutoRecordChange(e.target.checked)}
+                        />
+                        <label htmlFor="auto-record-sessions" className="settings-label">{t('autoRecordSessions')}</label>
+                        <span className="settings-help">{t('autoRecordSessionsDesc')}</span>
                       </div>
 
                       <div className="settings-field">
@@ -2585,6 +2631,20 @@ export default function App() {
               title={t('reconnect')}
             >
               <Icon name="refresh" size={12} />
+            </button>
+          )}
+          {/* Session recording toggle — only for SSH terminal sessions. */}
+          {tab?.tabType === 'terminal' && leaf.tabId != null && (
+            <button
+              className={'term-pane-record' + (recordingByTab[leaf.tabId] ? ' active' : '')}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleToggleRecording(leaf.tabId as number)
+              }}
+              title={recordingByTab[leaf.tabId] ? t('stopRecording') : t('startRecording')}
+            >
+              <span className="term-pane-record-dot" />
             </button>
           )}
           {(tab?.tabType === 'terminal' || tab?.tabType === 'localShell') && leaf.tabId != null && (

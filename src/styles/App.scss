@@ -1173,6 +1173,46 @@ body.resize-v * {
     }
   }
 
+  .term-pane-record {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    color: $text-dim;
+    cursor: pointer;
+    padding: 2px 5px;
+    border-radius: 4px;
+    margin-left: 4px;
+    line-height: 1;
+    user-select: none;
+
+    .term-pane-record-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: $text-dim;
+      transition: background 0.15s ease;
+    }
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    &.active {
+      .term-pane-record-dot {
+        background: #4caf50;
+        box-shadow: 0 0 4px rgba(76, 175, 80, 0.7);
+        animation: term-record-blink 1.2s ease-in-out infinite;
+      }
+    }
+  }
+}
+
+@keyframes term-record-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 // File editor tabs sharing the pane header with the AI button.
