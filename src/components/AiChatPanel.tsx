@@ -553,6 +553,28 @@ export default function AiChatPanel({
     e.target.value = ''
   }, [])
 
+  // Fill the input box with text (e.g. a clicked template) instead of sending it,
+  // so the user can review/edit before asking.
+  const fillInput = useCallback(
+    (text: string) => {
+      setInput((prev) => {
+        const next = prev.trim().length > 0 ? prev + '\n' + text : text
+        // Defer until the controlled value has rendered, then move the caret to
+        // the end and scroll the textarea to the last line.
+        requestAnimationFrame(() => {
+          const el = inputRef.current
+          if (!el) return
+          const pos = el.value.length
+          el.focus()
+          el.setSelectionRange(pos, pos)
+          el.scrollTop = el.scrollHeight
+        })
+        return next
+      })
+    },
+    [],
+  )
+
   const handleSend = useCallback(
     (textOverride?: string) => {
       const text = (textOverride ?? input).trim()
@@ -577,9 +599,17 @@ export default function AiChatPanel({
   useEffect(() => {
     if (initialContext && !initialSentRef.current) {
       initialSentRef.current = true
-      setInput(`Help me with this terminal output:\n\n\`\`\`\n${initialContext}\n\`\`\``)
-      // Defer focus until after the controlled value has rendered.
-      requestAnimationFrame(() => inputRef.current?.focus())
+      const ctxText = `Help me with this terminal output:\n\n\`\`\`\n${initialContext}\n\`\`\``
+      setInput(ctxText)
+      // Defer focus/caret/scroll until after the controlled value has rendered.
+      requestAnimationFrame(() => {
+        const el = inputRef.current
+        if (!el) return
+        const pos = el.value.length
+        el.focus()
+        el.setSelectionRange(pos, pos)
+        el.scrollTop = el.scrollHeight
+      })
       if (onContextConsumed) onContextConsumed()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -756,7 +786,7 @@ export default function AiChatPanel({
                         <button
                           key={key}
                           className="ai-chat-suggestion"
-                          onClick={() => handleSend(t(key))}
+                          onClick={() => fillInput(t(key))}
                           disabled={streaming}
                         >
                           {t(key)}
@@ -776,7 +806,7 @@ export default function AiChatPanel({
                         <button
                           key={tpl.id}
                           className="ai-chat-suggestion ai-chat-suggestion-custom"
-                          onClick={() => handleSend(tpl.prompt)}
+                          onClick={() => fillInput(tpl.prompt)}
                           disabled={streaming}
                           title={tpl.prompt}
                         >
