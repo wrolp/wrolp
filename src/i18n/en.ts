@@ -5,6 +5,8 @@ const en = {
   appName: 'Wrolp Terminal',
   loading: 'Loading…',
   close: 'Close',
+  resize: 'Resize',
+  floatPane: 'Float window',
   cancel: 'Cancel',
   new: 'New',
   connection: 'Connection',

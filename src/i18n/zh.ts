@@ -7,6 +7,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   appName: 'Wrolp 终端',
   loading: '加载中…',
   close: '关闭',
+  resize: '调整大小',
+  floatPane: '浮动窗口',
   cancel: '取消',
   new: '新建',
   connection: '连接',

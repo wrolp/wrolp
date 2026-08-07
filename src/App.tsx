@@ -15,8 +15,9 @@ import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
 import { Icon } from './components/Icon'
+import FloatingWindow from './components/FloatingWindow'
 import type { FileTreeHandle } from './components/FilePanel'
-import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout, FileTargetMode, LocalTerminalEntry } from './types'
+import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout, FileTargetMode, LocalTerminalEntry, FloatingItem, FloatingKind } from './types'
 import { defaultLayout, mergeLayout } from './types'
 import {
   SplitNode,
@@ -228,6 +229,11 @@ export default function App() {
         tabType: 'terminal',
         embedded: true,
         dockerContainer,
+        // Persisted so the shell re-enters the container on every reconnect
+        // (e.g. when the pane is floated/restored and reconnects).
+        postConnectCmd: dockerContainer
+          ? `docker exec -it ${dockerContainer} /bin/bash || docker exec -it ${dockerContainer} /bin/sh\r`
+          : undefined,
       }
       setTabs((prev) => [...prev, newTab])
       const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
@@ -285,15 +291,17 @@ export default function App() {
     setFileMode('ssh')
   }, [activeTabId])
 
-  // Send any queued post-connect commands (e.g. docker exec) when a tab finishes connecting.
+  // Send any post-connect command (e.g. docker exec) when a tab finishes
+  // connecting. The command is persisted on the tab (`postConnectCmd`) so it is
+  // re-sent on every reconnect — floating/restoring a docker-shell pane triggers
+  // a fresh SSH connect, and without this the pane would show the host shell.
   const prevStatusesRef = useRef<Record<number, string>>({})
   useEffect(() => {
     for (const tab of tabs) {
       const prev = prevStatusesRef.current[tab.tabId]
       if (prev !== 'connected' && tab.status === 'connected') {
-        const cmd = pendingCommandsRef.current.get(tab.tabId)
+        const cmd = tab.postConnectCmd
         if (cmd) {
-          pendingCommandsRef.current.delete(tab.tabId)
           // Allow the terminal a moment to settle
           setTimeout(() => sendInput(tab.tabId, cmd), 300)
         }
@@ -338,12 +346,9 @@ export default function App() {
       if (!conn) return
 
       const newTabId = openInSplit(conn, 'column', container.name)
+      // The docker exec command is persisted on the new tab (postConnectCmd),
+      // so it is sent on connect and re-sent on any reconnect (float/restore).
       if (newTabId == null) return
-      // Queue the docker exec command to be sent once the pane's tab connects
-      pendingCommandsRef.current.set(
-        newTabId,
-        `docker exec -it ${container.name} /bin/bash || docker exec -it ${container.name} /bin/sh\r`,
-      )
     },
     [activeTabId, tabs, connections, openInSplit],
   )
@@ -403,10 +408,14 @@ export default function App() {
 
   // Remote file editor state
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
+  const editorTabsRef = useRef(editorTabs)
+  editorTabsRef.current = editorTabs
   const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
   // Which view occupies the shell pane area: 'terminal' or the key of the
   // active editor tab (editor replaces the terminal area).
   const [shellView, setShellView] = useState<'terminal' | string>('terminal')
+  const shellViewRef = useRef(shellView)
+  shellViewRef.current = shellView
   const [syncEnabled, setSyncEnabled] = useState(() => {
     try {
       return localStorage.getItem('wrolp-sync-enabled') === '1'
@@ -684,8 +693,6 @@ export default function App() {
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
   const panelDragRef = useRef(false)
-  /** Commands to send after a tab finishes connecting, keyed by tabId. */
-  const pendingCommandsRef = useRef<Map<number, string>>(new Map())
 
   // Update state
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body?: string } | null>(null)
@@ -1506,6 +1513,132 @@ export default function App() {
     [newLeafId, closeTab],
   )
 
+  // ===== Floating (pop-out) panes =====
+  // Floated panes are removed from the split-tree layout (their leaf is pruned)
+  // and re-rendered as draggable, top-most overlays inside the same window. The
+  // underlying session keeps running; closing the overlay restores the exact
+  // previous tree so the pane returns to its spot.
+  const [floatingItems, setFloatingItems] = useState<FloatingItem[]>([])
+  const floatingItemsRef = useRef(floatingItems)
+  floatingItemsRef.current = floatingItems
+  // floatId -> { rootId, tree } snapshot taken when the pane was floated.
+  const floatRestoreRef = useRef<Record<string, { rootId: number; tree: SplitNode }>>({})
+  const floatingZRef = useRef(10)
+
+  const floatPane = useCallback(
+    (leafId: string) => {
+      // Locate the leaf + its workspace root.
+      let rootId: number | null = null
+      let leaf: SplitLeaf | null = null
+      for (const [rid, tree] of Object.entries(splitTreesRef.current)) {
+        const l = findLeaf(tree, leafId)
+        if (l) {
+          rootId = Number(rid)
+          leaf = l
+          break
+        }
+      }
+      if (rootId == null || !leaf || leaf.tabId == null) return
+      const tabId = leaf.tabId
+      const tab = tabsRef.current.find((t) => t.tabId === tabId)
+      if (!tab) return
+      const floatId = `float-${leafId}`
+      if (floatingItemsRef.current.some((i) => i.floatId === floatId)) return
+
+      // Decide what the pane is currently showing. Note: the docker log / file
+      // editor views are overlays on top of a connection's terminal leaf, so the
+      // leaf's tabId is the *connection* tabId, not the dockerLog/editor tabId.
+      const sv = shellViewRef.current
+      let kind: FloatingKind = 'terminal'
+      let editorKey: string | undefined
+      let dockerLogTabId: number | undefined
+      let title = getTabLabel(tab)
+      if (sv.startsWith('dockerlog:')) {
+        const dlId = Number(sv.slice('dockerlog:'.length))
+        const dl = dockerLogTabsRef.current.find((d) => d.tabId === dlId)
+        // The log view is shown on the leaf whose terminal tabId matches the
+        // dockerLog tab's jumpTabId (the connection it belongs to).
+        if (dl && dl.jumpTabId === tabId) {
+          kind = 'dockerLog'
+          dockerLogTabId = dl.tabId
+          title = `${t('dockerLogs')}: ${dl.containerName ?? dlId}`
+        }
+      } else if (editorTabsRef.current.some((e) => e.key === sv)) {
+        kind = 'editor'
+        editorKey = sv
+        const et = editorTabsRef.current.find((e) => e.key === sv)
+        if (et) title = et.name
+      }
+
+      // Snapshot the tree so we can restore the pane exactly on close.
+      floatRestoreRef.current[floatId] = { rootId, tree: splitTreesRef.current[rootId] }
+
+      // Prune the leaf from the layout (session is NOT torn down).
+      setSplitTrees((prev) => {
+        const tree = prev[rootId]
+        if (!tree) return prev
+        const r = removeLeafById(tree, leafId, newLeafId)
+        if (!r) {
+          // The floated leaf was the root's only leaf — removeLeafById returns
+          // null (no node left). Replace the tree with an empty placeholder so
+          // the original pane disappears (otherwise the terminal stays mounted
+          // AND the floating copy renders → two live instances, input echoes).
+          return { ...prev, [rootId]: makeLeaf(newLeafId()) }
+        }
+        return { ...prev, [rootId]: pruneEmptyLeaves(r, newLeafId) }
+      })
+      setFocusedLeafByRoot((prev) => {
+        const next = { ...prev }
+        if (next[rootId] === leafId) delete next[rootId]
+        return next
+      })
+
+      const z = ++floatingZRef.current
+      setFloatingItems((prev) => [
+        ...prev,
+        {
+          floatId,
+          kind,
+          tabId,
+          editorKey,
+          dockerLogTabId,
+          title,
+          x: 120,
+          y: 90,
+          w: 640,
+          h: 420,
+          z,
+        },
+      ])
+    },
+    [newLeafId, getTabLabel],
+  )
+
+  const closeFloating = useCallback((floatId: string) => {
+    const snap = floatRestoreRef.current[floatId]
+    if (snap) {
+      const { rootId, tree } = snap
+      setSplitTrees((prev) => ({ ...prev, [rootId]: tree }))
+      const leafId = floatId.replace('float-', '')
+      setFocusedLeafByRoot((prev) => ({ ...prev, [rootId]: leafId }))
+      delete floatRestoreRef.current[floatId]
+    }
+    setFloatingItems((prev) => prev.filter((i) => i.floatId !== floatId))
+  }, [])
+
+  const bringFloatingToFront = useCallback((floatId: string) => {
+    const z = ++floatingZRef.current
+    setFloatingItems((prev) => prev.map((i) => (i.floatId === floatId ? { ...i, z } : i)))
+  }, [])
+
+  const moveFloating = useCallback((floatId: string, x: number, y: number) => {
+    setFloatingItems((prev) => prev.map((i) => (i.floatId === floatId ? { ...i, x, y } : i)))
+  }, [])
+
+  const resizeFloating = useCallback((floatId: string, w: number, h: number) => {
+    setFloatingItems((prev) => prev.map((i) => (i.floatId === floatId ? { ...i, w, h } : i)))
+  }, [])
+
   // Tab-bar click: switch the active workspace. Because each workspace renders
   // inside its own always-mounted container, switching only toggles visibility —
   // no portal moves, so sessions are preserved (no reconnect). The focused pane
@@ -1841,6 +1974,53 @@ export default function App() {
 
   // Editor <-> Shell vertical divider drag-to-resize (only when a file editor is open)
   // Terminals block (reused standalone or inside the editor + shell split)
+  // ---- Floating pane content ----
+  // Renders the same content a floated pane would show, hosted inside the
+  // FloatingWindow overlay. Reuses the exact component wiring used inside a
+  // normal pane so behaviour is identical.
+  const renderFloatingContent = (item: FloatingItem) => {
+    const tab = tabs.find((t) => t.tabId === item.tabId)
+    if (!tab) return null
+    if (item.kind === 'editor' && item.editorKey) {
+      const et = editorTabs.find((e) => e.key === item.editorKey)
+      if (!et) return null
+      return (
+        <FileEditor
+          tabs={editorTabs}
+          activeKey={item.editorKey}
+          onSelect={(key) => {
+            setActiveEditorKey(key)
+            setShellView(key)
+          }}
+          onClose={closeEditorTab}
+          onContentChange={handleEditorContentChange}
+          onSave={handleSaveEditorTab}
+          onChangeLanguage={changeEditorTabLanguage}
+          onChangeEncoding={changeEditorTabEncoding}
+          onChangeLineEnding={changeEditorTabLineEnding}
+          hideTabs
+        />
+      )
+    }
+    if (item.kind === 'dockerLog') {
+      const dl = dockerLogTabs.find((d) => d.tabId === item.dockerLogTabId)
+      if (!dl) return null
+      return (
+        <DockerLogViewer
+          tabId={dl.tabId}
+          jumpTabId={dl.jumpTabId!}
+          containerName={dl.containerName!}
+          containerImage={dl.containerImage}
+          defaultWordWrap={dockerWordWrap}
+          defaultFollow={dockerFollow}
+          maxLines={dockerMaxLines}
+          onAskAi={(text) => handleOpenAiChat(text)}
+        />
+      )
+    }
+    // terminal / docker shell — reuse the same renderer the panes use.
+    return renderTerminalForTab(tab, true, item.floatId)
+  }
   // ---- Split-tree render helpers ----
   // Map every session to the leaf that shows it, across ALL workspaces (leaf
   // ids are globally unique). Used by terminalPortals to route each terminal
@@ -1979,7 +2159,7 @@ export default function App() {
                       <div className="settings-field">
                         <label htmlFor="maxScrollback" className="settings-label">{t('maxScrollbackLines')}</label>
                         <input
-                          id="maxScrollback"
+                          id="maxScro[plugin:vite:css] [sass] Error: Undefined variable.llback"
                           type="number"
                           min="100"
                           max="100000"
@@ -2557,6 +2737,8 @@ export default function App() {
   // Defined BEFORE renderPane/terminalContent so the pane header (which renders
   // the log tabs) can reference them without hitting a temporal-dead-zone error.
   const dockerLogTabs = tabs.filter((t) => t.tabType === 'dockerLog' && t.embedded)
+  const dockerLogTabsRef = useRef(dockerLogTabs)
+  dockerLogTabsRef.current = dockerLogTabs
   const activeDockerLogTab = dockerLogTabs.find((t) => shellView === `dockerlog:${t.tabId}`) ?? null
 
   const renderPane = (
@@ -2738,6 +2920,17 @@ export default function App() {
               ))}
             </div>
           )}
+          <span
+            className="term-pane-float"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              floatPane(leaf.id)
+            }}
+            title={t('floatPane')}
+          >
+            ⤢
+          </span>
           <span
             className="term-pane-close"
             onMouseDown={(e) => e.stopPropagation()}
@@ -3171,6 +3364,23 @@ export default function App() {
               </div>
             )
           })}
+
+          {/* Floating (pop-out) panes: draggable overlays rendered inside the
+              same window. Each mirrors a pane currently removed from the split
+              tree; closing one restores the pane to its original spot. */}
+          {floatingItems.map((item) => (
+            <FloatingWindow
+              key={item.floatId}
+              item={item}
+              t={t}
+              onClose={() => closeFloating(item.floatId)}
+              onFocus={() => bringFloatingToFront(item.floatId)}
+              onMove={(x, y) => moveFloating(item.floatId, x, y)}
+              onResize={(w, h) => resizeFloating(item.floatId, w, h)}
+            >
+              {renderFloatingContent(item)}
+            </FloatingWindow>
+          ))}
         <div
           ref={settingsOverlayRef}
           className="settings-overlay"

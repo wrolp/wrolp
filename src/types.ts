@@ -72,6 +72,10 @@ export interface TabInfo {
   // When set, this terminal tab is a shell running inside a Docker container
   // (`docker exec`). The value is the container name.
   dockerContainer?: string
+  // Command sent automatically each time this tab (re)connects. Used by the
+  // docker-shell pane so floating/restoring the pane — which triggers a fresh
+  // SSH connect — re-enters the container instead of showing the host shell.
+  postConnectCmd?: string
 }
 
 export interface TerminalOutput {
@@ -268,6 +272,34 @@ export function targetLabel(target: TargetRef): string {
     case 'dockerSsh':
       return `docker-ssh:${target.host}:${target.port}`
   }
+}
+
+// ===== Floating (pop-out) panes =====
+
+/** What kind of content a floating pane hosts. */
+export type FloatingKind = 'terminal' | 'editor' | 'dockerLog'
+
+/**
+ * A pane that has been "popped out" of the main split tree into a draggable,
+ * top-most overlay inside the same window. The underlying session (keyed by
+ * `tabId` in the Rust backend) keeps running; on close the leaf is re-inserted
+ * into the split tree so the pane returns to the layout.
+ */
+export interface FloatingItem {
+  floatId: string
+  kind: FloatingKind
+  /** Terminal session tabId (terminal / dockerLog / the editor's host session). */
+  tabId: number
+  /** For `editor`: the EditorTab.key being floated. */
+  editorKey?: string
+  /** For `dockerLog`: the dockerLog tabId (== tabId here). */
+  dockerLogTabId?: number
+  title: string
+  x: number
+  y: number
+  w: number
+  h: number
+  z: number
 }
 
 // ===== App Version =====
