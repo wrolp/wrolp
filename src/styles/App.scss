@@ -194,6 +194,10 @@ body.resize-v * {
     font-size: 12px;
     font-weight: 600;
     color: #bbbbbb;
+
+    .collapse-chevron {
+      margin-right: 6px;
+    }
   }
 
   &-list-wrapper {
@@ -253,7 +257,7 @@ body.resize-v * {
   padding: 4px 8px 2px;
 
   .collapse-chevron {
-    margin-right: 10px;
+    margin-right: 2px;
   }
 
   cursor: pointer;
@@ -1910,6 +1914,10 @@ input[type='password']::-ms-clear {
     color: #bbbbbb;
     flex-shrink: 0;
 
+    .collapse-chevron {
+      margin-right: 6px;
+    }
+
     .file-toolbar {
       display: flex;
       gap: 2px;
@@ -2934,21 +2942,20 @@ input[type='password']::-ms-clear {
 }
 
 .docker-panel-header {
-  flex-shrink: 0;
-  height: 28px;
   display: flex;
   align-items: center;
-  padding: 0 8px 0 10px;
-  background: $bg-secondary;
+  gap: 4px;
+  padding: 4px 8px;
   border-bottom: 1px solid $border;
   font-size: 12px;
-  color: $text-primary;
+  font-weight: 600;
+  color: #bbbbbb;
+  flex-shrink: 0;
   user-select: none;
 
   .collapse-chevron {
     cursor: pointer;
-    color: $text-muted;
-    margin-right: 10px;
+    margin-right: 6px;
     &:hover { color: $text-primary; }
   }
 

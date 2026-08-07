@@ -69,6 +69,9 @@ export interface TabInfo {
   // localShell tab fields
   localShellCwd?: string
   localShellType?: string
+  // When set, this terminal tab is a shell running inside a Docker container
+  // (`docker exec`). The value is the container name.
+  dockerContainer?: string
 }
 
 export interface TerminalOutput {

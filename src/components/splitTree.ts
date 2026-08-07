@@ -154,27 +154,47 @@ export function swapLeafTabs(node: SplitNode, a: string, b: string): SplitNode {
   return n
 }
 
-// Insert `source` as a sibling of the node whose id is `targetId`, before or
-// after it, rebuilding the tree immutably.
+// Insert `source` as a sibling of the node whose id is `targetId`, positioned
+// relative to it per `dir` (row = left/right, column = top/bottom), rebuilding
+// the tree immutably. When `dir` differs from the branch's own direction, the
+// target child is replaced by a fresh branch of direction `dir` containing the
+// target and the source — so dropping one pane to the right of another inside
+// a vertical stack produces a horizontal split, not another vertical slot.
 function insertSibling(
   node: SplitNode,
   targetId: string,
   source: SplitNode,
   before: boolean,
+  dir: SplitDirection,
   makeId: () => string,
 ): SplitNode {
   if (node.type === 'leaf') return node
   const idx = node.children.findIndex((c) => c.id === targetId)
   if (idx >= 0) {
+    // Same direction as this branch → insert inline.
+    if (node.dir === dir) {
+      const children = node.children.slice()
+      const at = before ? idx : idx + 1
+      children.splice(at, 0, source)
+      const sizes = node.sizes.slice()
+      sizes.splice(at, 0, 0.5)
+      const total = sizes.reduce((s, x) => s + x, 0) || 1
+      return { ...node, children, sizes: sizes.map((s) => s / total) }
+    }
+    // Different direction → replace the target with a nested split in `dir`.
     const children = node.children.slice()
-    const at = before ? idx : idx + 1
-    children.splice(at, 0, source)
-    const sizes = node.sizes.slice()
-    sizes.splice(at, 0, 0.5)
-    const total = sizes.reduce((s, x) => s + x, 0) || 1
-    return { ...node, children, sizes: sizes.map((s) => s / total) }
+    const child = children[idx]
+    const nested: SplitNode = {
+      id: makeId(),
+      type: 'split',
+      dir,
+      children: before ? [source, child] : [child, source],
+      sizes: [0.5, 0.5],
+    }
+    children[idx] = nested
+    return { ...node, children }
   }
-  return { ...node, children: node.children.map((c) => insertSibling(c, targetId, source, before, makeId)) }
+  return { ...node, children: node.children.map((c) => insertSibling(c, targetId, source, before, dir, makeId)) }
 }
 
 // Move the pane `sourceId` relative to `targetId` according to `position`.
@@ -193,13 +213,13 @@ export function movePane(
   if (!source) return tree
   if (position === 'center') return swapLeafTabs(tree, sourceId, targetId)
   const before = position === 'left' || position === 'top'
+  const dir: SplitDirection = position === 'top' || position === 'bottom' ? 'column' : 'row'
   const without = removeLeafById(tree, sourceId, makeId)
   if (!without) return tree
   // Target is the only remaining leaf -> wrap both in a fresh split.
   if (without.type === 'leaf' && without.id === targetId) {
-    const dir: SplitDirection = position === 'top' || position === 'bottom' ? 'column' : 'row'
     const children = before ? [source, without] : [without, source]
     return { id: makeId(), type: 'split', dir, children, sizes: [0.5, 0.5] }
   }
-  return insertSibling(without, targetId, source, before, makeId)
+  return insertSibling(without, targetId, source, before, dir, makeId)
 }

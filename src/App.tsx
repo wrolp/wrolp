@@ -184,6 +184,39 @@ export default function App() {
     setFocusedLeafByRoot((prev) => ({ ...prev, [root]: id ?? '' }))
   }, [])
 
+  // Split the currently focused pane inside the active workspace and open the
+  // chosen connection in the new pane as an EMBEDDED session. The new session is
+  // NOT added to the top tab bar (it lives inside this workspace's pane layout),
+  // so the split never spawns a new top-level tab. Returns the new tab id.
+  const openInSplit = useCallback(
+    (conn: ConnectionConfig, direction: 'row' | 'column', dockerContainer?: string): number | null => {
+      const rootId = activeTabIdRef.current
+      if (rootId == null) return null
+      const tree = splitTreeRef.current
+      const focus = focusedLeafIdRef.current
+      const focusLeaf = focus ? findLeaf(tree, focus) : null
+      const targetId = focusLeaf ? focus! : collectLeaves(tree)[0]?.id
+      if (!targetId) return null
+      const tabId = nextTabId++
+      const newTab: TabInfo = {
+        tabId,
+        connectionId: conn.id,
+        connectionName: conn.name,
+        host: `${conn.host}:${conn.port}`,
+        status: 'connecting',
+        tabType: 'terminal',
+        embedded: true,
+        dockerContainer,
+      }
+      setTabs((prev) => [...prev, newTab])
+      const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
+      updateActiveTree(() => nt)
+      if (nl) setFocusedLeafId(nl)
+      return tabId
+    },
+    [newLeafId, updateActiveTree, setFocusedLeafId],
+  )
+
   // Phase 3 — apply a terminal-pane drag drop: move/swap the dragged leaf
   // relative to the drop target within the active workspace's split tree.
   const performPaneMove = useCallback(
@@ -272,8 +305,9 @@ export default function App() {
     [activeTabId],
   )
 
-  // Open a new terminal tab connected to the same jump host and automatically
-  // run `docker exec -it <container> /bin/bash || docker exec -it <container> /bin/sh`
+  // Open a new pane (split) inside the current workspace connected to the same
+  // jump host and automatically run
+  // `docker exec -it <container> /bin/bash || docker exec -it <container> /bin/sh`
   const handleEnterContainerShell = useCallback(
     (container: ContainerInfo) => {
       if (activeTabId == null) return
@@ -282,14 +316,15 @@ export default function App() {
       const conn = connections.find((c) => c.id === activeTab.connectionId)
       if (!conn) return
 
-      const newTabId = openTab(conn)
-      // Queue the docker exec command to be sent once the tab connects
+      const newTabId = openInSplit(conn, 'column', container.name)
+      if (newTabId == null) return
+      // Queue the docker exec command to be sent once the pane's tab connects
       pendingCommandsRef.current.set(
         newTabId,
         `docker exec -it ${container.name} /bin/bash || docker exec -it ${container.name} /bin/sh\r`,
       )
     },
-    [activeTabId, tabs, connections],
+    [activeTabId, tabs, connections, openInSplit],
   )
 
   // Trigger Docker container analysis (opens report in bottom panel's "Docker" tab).
@@ -961,37 +996,6 @@ export default function App() {
     [openLocalShellTab],
   )
 
-  // Split the currently focused pane inside the active workspace and open the
-  // chosen connection in the new pane as an EMBEDDED session. The new session is
-  // NOT added to the top tab bar (it lives inside this workspace's pane layout),
-  // so the split never spawns a new top-level tab.
-  const openInSplit = useCallback(
-    (conn: ConnectionConfig, direction: 'row' | 'column') => {
-      const rootId = activeTabIdRef.current
-      if (rootId == null) return
-      const tree = splitTreeRef.current
-      const focus = focusedLeafIdRef.current
-      const focusLeaf = focus ? findLeaf(tree, focus) : null
-      const targetId = focusLeaf ? focus! : collectLeaves(tree)[0]?.id
-      if (!targetId) return
-      const tabId = nextTabId++
-      const newTab: TabInfo = {
-        tabId,
-        connectionId: conn.id,
-        connectionName: conn.name,
-        host: `${conn.host}:${conn.port}`,
-        status: 'connecting',
-        tabType: 'terminal',
-        embedded: true,
-      }
-      setTabs((prev) => [...prev, newTab])
-      const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
-      updateActiveTree(() => nt)
-      if (nl) setFocusedLeafId(nl)
-    },
-    [newLeafId, updateActiveTree],
-  )
-
   // Right-click → split the current window; default (left-click) opens a new tab.
   const handleOpenSplit = useCallback(
     (conn: ConnectionConfig, direction: 'row' | 'column') => {
@@ -1328,6 +1332,7 @@ export default function App() {
       if (tab.tabType === 'dockerLog') return `📋 ${tab.containerName ?? 'Logs'}`
       if (tab.tabType === 'localShell')
         return `🖥 ${tab.localShellCwd ? tab.localShellCwd : t('localTerminal')}`
+      if (tab.dockerContainer) return `🐳 ${tab.dockerContainer}`
       if (!tab.connectionId) return tab.connectionName
       const siblings = tabs.filter(
         (t) => t.tabType === 'terminal' && !t.embedded && t.connectionId === tab.connectionId,
