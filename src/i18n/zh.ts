@@ -318,6 +318,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   paste: '粘贴',
   splitTerminal: '拆分终端',
   closeTerminal: '关闭终端',
+  shellTerminal: '终端',
   noActiveConnection: '无活动连接',
   updateAvailable: '可用',
 

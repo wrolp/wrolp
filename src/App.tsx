@@ -83,8 +83,6 @@ export default function App() {
   const [fileMode, setFileMode] = useState<FileTargetMode>('ssh')
 
   // Shell (terminal) pane height / collapse when a file editor is open
-  const [shellHeight, setShellHeight] = useState(240)
-  const [shellCollapsed, setShellCollapsed] = useState(false)
 
   // SSH terminal size (cols × rows) reported by the active Terminal component,
   // shown in the shell-pane status bar.
@@ -183,6 +181,29 @@ export default function App() {
     if (root == null) return
     setFocusedLeafByRoot((prev) => ({ ...prev, [root]: id ?? '' }))
   }, [])
+
+  // When the user clicks a different shell (split pane), sync the Files panel
+  // with the newly focused session: a Docker shell shows that container's file
+  // panel; a regular host shell shows the host's session file panel.
+  const prevFocusedLeafTabIdRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (prevFocusedLeafTabIdRef.current === focusedLeafTabId) return
+    prevFocusedLeafTabIdRef.current = focusedLeafTabId
+    const focusedTab = focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
+    if (!focusedTab) return
+    const container = focusedTab.dockerContainer
+    if (container) {
+      // Focused shell is inside a Docker container → show its file panel.
+      // The docker exec runs on the same SSH session the shell uses, so that
+      // session's tabId is the jump host for the container file ops.
+      setFileMode('docker')
+      setFileTarget({ kind: 'docker', jumpTabId: focusedTab.tabId, container })
+    } else {
+      // Regular host shell → host session file panel.
+      setFileMode('ssh')
+      setFileTarget(null)
+    }
+  }, [focusedLeafTabId, tabs])
 
   // Split the currently focused pane inside the active workspace and open the
   // chosen connection in the new pane as an EMBEDDED session. The new session is
@@ -381,6 +402,9 @@ export default function App() {
   // Remote file editor state
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
+  // Which view occupies the shell pane area: 'terminal' or the key of the
+  // active editor tab (editor replaces the terminal area).
+  const [shellView, setShellView] = useState<'terminal' | string>('terminal')
   const [syncEnabled, setSyncEnabled] = useState(() => {
     try {
       return localStorage.getItem('wrolp-sync-enabled') === '1'
@@ -1152,6 +1176,7 @@ export default function App() {
       ]
     })
     setActiveEditorKey(key)
+    setShellView(key)
     try {
       const fc = await fsReadFileContent(target, path)
       setEditorTabs((prev) =>
@@ -1197,6 +1222,9 @@ export default function App() {
               ? next[Math.min(idx, next.length - 1)].key
               : null,
           )
+        }
+        if (next.length === 0) {
+          setShellView('terminal')
         }
         return next
       })
@@ -1771,37 +1799,6 @@ export default function App() {
   }, [])
 
   // Editor <-> Shell vertical divider drag-to-resize (only when a file editor is open)
-  const handleEditorShellDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const win = getCurrentWindow()
-    const areaEl = (e.target as HTMLElement).closest('.terminal-area')
-    const startY = e.clientY
-    const startHeight = shellHeight
-    const areaH = areaEl?.clientHeight || 600
-    const maxHeight = Math.max(80, areaH - 160 - 28 - 6)
-    win.setResizable(false).catch(() => {})
-
-    const handleMouseMove = (ev: MouseEvent) => {
-      const delta = startY - ev.clientY
-      const newHeight = Math.max(60, Math.min(maxHeight, startHeight + delta))
-      setShellHeight(newHeight)
-    }
-
-    const handleMouseUp = () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.classList.remove('resize-v')
-      document.body.style.userSelect = ''
-      win.setResizable(true).catch(() => {})
-    }
-
-    document.body.classList.add('resize-v')
-    document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }, [shellHeight])
-
   // Terminals block (reused standalone or inside the editor + shell split)
   // ---- Split-tree render helpers ----
   // Map every session to the leaf that shows it, across ALL workspaces (leaf
@@ -2603,6 +2600,47 @@ export default function App() {
               🤖 AI
             </button>
           )}
+          {/* Open files live on the same pane-header panel as the AI button
+              (only on the focused pane so splits don't duplicate them). */}
+          {(isFocused || focusedLeafIdForRoot == null) && editorTabs.length > 0 && (
+            <div className="term-pane-file-tabs">
+              <div
+                className={`term-pane-file-tab${shellView === 'terminal' ? ' active' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShellView('terminal')
+                }}
+                title={t('shellTerminal')}
+              >
+                <Icon name="terminal" size={11} />
+                <span>{t('shellTerminal')}</span>
+              </div>
+              {editorTabs.map((t) => (
+                <div
+                  key={t.key}
+                  className={`term-pane-file-tab${shellView === t.key ? ' active' : ''}${t.isDirty ? ' dirty' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setActiveEditorKey(t.key)
+                    setShellView(t.key)
+                  }}
+                  title={t.path}
+                >
+                  <span className="term-pane-file-tab-name">{t.name}</span>
+                  {t.isDirty && <span className="term-pane-file-tab-dirty">●</span>}
+                  <span
+                    className="term-pane-file-tab-close"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      closeEditorTab(t.key)
+                    }}
+                  >
+                    ×
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
           <span
             className="term-pane-close"
             onMouseDown={(e) => e.stopPropagation()}
@@ -2627,10 +2665,19 @@ export default function App() {
                 : 'row',
           }}
         >
+          {/* Terminal surface — stays mounted even while the file editor is
+              shown on the focused pane, so switching tabs never reconnects. */}
           <div
             className="term-pane-term"
             ref={getPaneBodyRef(leaf.id)}
-            style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              minHeight: 0,
+              overflow: 'hidden',
+              display: isFocused && shellView !== 'terminal' && editorTabs.length > 0 ? 'none' : 'flex',
+              flexDirection: 'column',
+            }}
           >
             {leaf.tabId == null && (
               <div className="terminal-placeholder">
@@ -2824,6 +2871,28 @@ export default function App() {
                 )
               })()
             )}
+          {/* File editor replaces the terminal surface of the focused pane
+              (the pane header with the AI button and file tabs stays). */}
+          {isFocused && shellView !== 'terminal' && editorTabs.length > 0 && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <FileEditor
+                key="file-editor"
+                tabs={editorTabs}
+                activeKey={activeEditorKey}
+                onSelect={(key) => {
+                  setActiveEditorKey(key)
+                  setShellView(key)
+                }}
+                onClose={closeEditorTab}
+                onContentChange={handleEditorContentChange}
+                onSave={handleSaveEditorTab}
+                onChangeLanguage={changeEditorTabLanguage}
+                onChangeEncoding={changeEditorTabEncoding}
+                onChangeLineEnding={changeEditorTabLineEnding}
+                hideTabs
+              />
+            </div>
+          )}
         </div>
         <div className="term-pane-statusbar">
           <div className="tsb-left">
@@ -3290,73 +3359,42 @@ export default function App() {
             </div>
           )}
 
-          {/* Remote file editor (inline editing) + Shell pane.
-              NOTE (B2 fix): `terminalContent` is ALWAYS rendered inside the same
-              `.shell-pane > .shell-pane-body` DOM position (keyed), so opening or
-              closing the file editor no longer remounts the TerminalComponent
-              (which previously triggered a fresh connect() and lost focus). */}
-          {[
-            editorTabs.length > 0 && (
-              <FileEditor
-                key="file-editor"
-                tabs={editorTabs}
-                activeKey={activeEditorKey}
-                onSelect={setActiveEditorKey}
-                onClose={closeEditorTab}
-                onContentChange={handleEditorContentChange}
-                onSave={handleSaveEditorTab}
-                onChangeLanguage={changeEditorTabLanguage}
-                onChangeEncoding={changeEditorTabEncoding}
-                onChangeLineEnding={changeEditorTabLineEnding}
-              />
-            ),
-            <div
-              key="editor-shell-divider"
-              className="editor-shell-divider"
-              style={{ display: editorTabs.length > 0 ? 'block' : 'none' }}
-              onMouseDown={handleEditorShellDividerMouseDown}
-              title="Drag to resize · use ▲/▼ in the Shell header to collapse"
-            />,
-            <div
-              key="shell-pane"
-              className="shell-pane"
-              style={{ flex: editorTabs.length === 0 ? 1 : '0 0 auto', minHeight: 0 }}
-            >
-              <div
-                className="shell-pane-body"
-                style={{ height: editorTabs.length === 0 ? undefined : (shellCollapsed ? 0 : shellHeight) }}
-              >
-                <div style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'row' }}>
-                  <div style={{ display: showDockerLog || aiChatActive ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-                    {terminalContent}
-                  </div>
-                  {dockerLogContent}
-                  {/* Standalone AI Chat tab (full screen) */}
-                  {activeProfile && aiChatActive && activeTerminalTab && (
-                    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                      <AiChatPanel
-                        tabId={activeTerminalTab.tabId}
-                        config={activeProfile}
-                        profiles={aiConfig?.profiles ?? []}
-                        onSelectProfile={handleSelectAiProfile}
-                        onSelectModel={handleSelectAiModel}
-                        conv={getAiConv(activeTerminalTab.tabId)}
-                        setConv={(u) => setAiConv(activeTerminalTab.tabId, u)}
-                        floating={false}
-                        onToggleFloat={() => setAiFloatingTabId(activeTerminalTab.tabId)}
-                        onClose={() => closeTab(activeTerminalTab.tabId)}
-                        initialContext={aiContextText}
-                        onContextConsumed={() => setAiContextText(null)}
-                        inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
-                        onInputHeightChange={handleAiInputHeightChange}
-                        onOpenSettings={handleOpenAiSettings}
-                      />
-                    </div>
-                  )}
-                </div>
+          {/* Shell pane. The view tab bar (Terminal + open files) sits at the
+              top; the content area below it shows EITHER the terminal split
+              tree OR the file editor. `terminalContent` stays mounted in the
+              same DOM position regardless of the active view so opening a file
+              never remounts the TerminalComponent (which would trigger a fresh
+              connect() and lose focus). */}
+          <div className="shell-pane" style={{ flex: 1, minHeight: 0 }}>
+            <div className="shell-pane-body" style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'row' }}>
+              <div style={{ display: showDockerLog || aiChatActive ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+                {terminalContent}
               </div>
-            </div>,
-          ]}
+              {dockerLogContent}
+              {/* Standalone AI Chat tab (full screen) */}
+              {activeProfile && aiChatActive && activeTerminalTab && (
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                  <AiChatPanel
+                    tabId={activeTerminalTab.tabId}
+                    config={activeProfile}
+                    profiles={aiConfig?.profiles ?? []}
+                    onSelectProfile={handleSelectAiProfile}
+                    onSelectModel={handleSelectAiModel}
+                    conv={getAiConv(activeTerminalTab.tabId)}
+                    setConv={(u) => setAiConv(activeTerminalTab.tabId, u)}
+                    floating={false}
+                    onToggleFloat={() => setAiFloatingTabId(activeTerminalTab.tabId)}
+                    onClose={() => closeTab(activeTerminalTab.tabId)}
+                    initialContext={aiContextText}
+                    onContextConsumed={() => setAiContextText(null)}
+                    inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
+                    onInputHeightChange={handleAiInputHeightChange}
+                    onOpenSettings={handleOpenAiSettings}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
 
           </div>
 

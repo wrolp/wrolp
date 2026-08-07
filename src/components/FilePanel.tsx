@@ -273,7 +273,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }, [sessionTabId])
 
   /* ---- tree load ---- */
-  const loadRootDir = useCallback(async (path: string, sendCd = false) => {
+  const loadRootDir = useCallback(async (path: string, sendCd = false): Promise<boolean> => {
     setLoading(true)
     setError('')
     setTransferProgress(null)
@@ -282,8 +282,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       setTree(result.map(toNode))
       setCurrentPath(path)
       if (sendCd) cdToTerminal(path)
+      return true
     } catch (e) {
       setError(String(e))
+      return false
     } finally {
       setLoading(false)
     }
@@ -331,9 +333,28 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       // than a stale path carried over from the previous connection.
       setCurrentPath(defaultPath)
       setRootPath(defaultPath)
-      loadRootDir(defaultPath)
+      // Non-session targets (jump/docker) can be addressed through a freshly
+      // opened SSH session whose handle is not ready yet; retry the first list
+      // until it succeeds so the panel fills in instead of showing an error.
+      let cancelled = false
+      let attempt = 0
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const attemptLoad = async () => {
+        if (cancelled) return
+        const ok = await loadRootDir(defaultPath)
+        if (cancelled) return
+        if (!ok && attempt < 30) {
+          attempt++
+          timer = setTimeout(attemptLoad, 250)
+        }
+      }
+      attemptLoad()
       if (sessionTabId != null) {
         getSftpUser(sessionTabId).then(setSftpUser).catch(() => {})
+      }
+      return () => {
+        cancelled = true
+        if (timer) clearTimeout(timer)
       }
     }
   }, [isConnected, sessionTabId, targetKey, defaultPath])

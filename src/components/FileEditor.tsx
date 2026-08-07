@@ -35,6 +35,9 @@ interface FileEditorProps {
   onChangeLanguage: (key: string, lang: string) => void
   onChangeEncoding: (key: string, enc: string) => void
   onChangeLineEnding: (key: string, eol: 'LF' | 'CRLF') => void
+  /** When true, the editor's own tab bar is hidden (tabs live in the shell
+   *  pane header instead). */
+  hideTabs?: boolean
 }
 
 const EOF_SEQ: Record<string, monaco.editor.EndOfLineSequence> = {
@@ -52,6 +55,7 @@ export function FileEditor({
   onChangeLanguage,
   onChangeEncoding,
   onChangeLineEnding,
+  hideTabs = false,
 }: FileEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -173,29 +177,31 @@ export function FileEditor({
 
   return (
     <div className="file-editor">
-      {/* Tab bar */}
-      <div className="editor-tabs">
-        {tabs.map((t) => (
-          <div
-            key={t.key}
-            className={`editor-tab ${t.key === activeKey ? 'active' : ''} ${t.isDirty ? 'dirty' : ''}`}
-            onClick={() => onSelect(t.key)}
-            title={t.path}
-          >
-            <span className="editor-tab-name">{t.name}</span>
-            {t.isDirty && <span className="editor-tab-dirty">●</span>}
-            <span
-              className="editor-tab-close"
-              onClick={(e) => {
-                e.stopPropagation()
-                onClose(t.key)
-              }}
+      {/* Tab bar (hidden when tabs live in the shell pane header) */}
+      {!hideTabs && (
+        <div className="editor-tabs">
+          {tabs.map((t) => (
+            <div
+              key={t.key}
+              className={`editor-tab ${t.key === activeKey ? 'active' : ''} ${t.isDirty ? 'dirty' : ''}`}
+              onClick={() => onSelect(t.key)}
+              title={t.path}
             >
-              ×
-            </span>
-          </div>
-        ))}
-      </div>
+              <span className="editor-tab-name">{t.name}</span>
+              {t.isDirty && <span className="editor-tab-dirty">●</span>}
+              <span
+                className="editor-tab-close"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onClose(t.key)
+                }}
+              >
+                ×
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Editor body */}
       <div className="editor-body">

@@ -746,38 +746,7 @@ body.resize-v * {
   }
 }
 
-// ===== Editor <-> Shell divider & collapsible shell pane =====
-.editor-shell-divider {
-  flex-shrink: 0;
-  height: 6px;
-  // Custom up/down-arrow cursor (no horizontal lines, unlike the OS row-resize cursor)
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cg fill='white' stroke='%23111' stroke-width='1.2' stroke-linejoin='round'%3E%3Cpath d='M12 3.5 L6.5 10 L17.5 10 Z'/%3E%3Cpath d='M12 20.5 L6.5 14 L17.5 14 Z'/%3E%3C/g%3E%3C/svg%3E") 12 12, ns-resize;
-  background: $bg-secondary;
-  border-top: 1px solid $border;
-  border-bottom: 1px solid $border;
-  position: relative;
-
-  &:hover {
-    background: #007acc;
-  }
-
-  &::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 36px;
-    height: 3px;
-    border-radius: 2px;
-    background: $text-dim;
-  }
-
-  &:hover::after {
-    background: #fff;
-  }
-}
-
+// ===== Shell pane (terminal + file-editor view tabs) =====
 .shell-pane {
   flex-shrink: 0;
   display: flex;
@@ -1201,6 +1170,71 @@ body.resize-v * {
     &:hover {
       color: #fff;
       background: rgba(255, 255, 255, 0.1);
+    }
+  }
+
+}
+
+// File editor tabs sharing the pane header with the AI button.
+.term-pane-file-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+
+  &::-webkit-scrollbar {
+    height: 3px;
+  }
+}
+
+.term-pane-file-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: $text-dim;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  border: 1px solid transparent;
+
+  &:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  &.active {
+    color: $text-primary;
+    background: rgba(255, 255, 255, 0.12);
+    border-color: $border;
+  }
+
+  &.dirty .term-pane-file-tab-dirty {
+    color: $accent;
+  }
+
+  .term-pane-file-tab-name {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .term-pane-file-tab-close {
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0.55;
+    margin-left: 2px;
+
+    &:hover {
+      opacity: 1;
+      color: #ff6b6b;
     }
   }
 }

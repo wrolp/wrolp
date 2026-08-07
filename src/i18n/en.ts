@@ -317,6 +317,7 @@ const en = {
   paste: 'Paste',
   splitTerminal: 'Split Terminal',
   closeTerminal: 'Close Terminal',
+  shellTerminal: 'Terminal',
   noActiveConnection: 'No active connection',
   updateAvailable: 'available',
 
