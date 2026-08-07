@@ -1982,7 +1982,6 @@ export default function App() {
                         <div className="app-version-row">
                           <span className="app-version-label">Version</span>
                           <span className="app-version-value">{appVersion.version}</span>
-                          {appVersion.gitDirty && <span className="app-version-dirty">(dirty)</span>}
                         </div>
                         <div className="app-version-row">
                           <span className="app-version-label">Git Commit</span>
