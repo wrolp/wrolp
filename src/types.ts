@@ -111,6 +111,8 @@ export interface FileContent {
   needsEncoding: boolean
   /** For binary files only: raw bytes as Base64 for hex viewing. */
   hexBase64?: string
+  /** For image files only: MIME type (e.g. "image/png") for direct preview. */
+  imageMime?: string
 }
 
 // ===== P6: Jump host / Docker targets =====

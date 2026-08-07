@@ -1262,11 +1262,44 @@ pub struct FileContent {
   /// For binary files only: the raw file bytes as Base64, so the frontend can
   /// render a hex dump. `None` for text files.
   pub hex_base64: Option<String>,
+  /// For image files only: the MIME type (e.g. "image/png"), so the frontend
+  /// can preview the file directly. `None` otherwise.
+  pub image_mime: Option<String>,
 }
 
 /// Decode raw bytes into a String using the requested encoding, or auto-detect
 /// (UTF-8 first, then GBK) when `encoding_name` is `None`.
 /// Returns (content, encoding_name, needs_encoding).
+/// Detect common image formats from the leading magic bytes. Returns the MIME
+/// type (e.g. "image/png") or `None` for non-image data.
+fn detect_image_mime(data: &[u8]) -> Option<String> {
+  let sig = &data[..data.len().min(16)];
+  let mime = match sig {
+    [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, ..] => "image/png",
+    [0xff, 0xd8, 0xff, ..] => "image/jpeg",
+    [b'G', b'I', b'F', b'8', ..] => "image/gif",
+    [b'B', b'M', ..] => "image/bmp",
+    [b'R', b'I', b'F', b'F', ..] => "image/webp", // RIFF....WEBP
+    [0x00, 0x00, 0x01, 0x00, ..] => "image/x-icon",
+    _ => return None,
+  };
+  Some(mime.to_string())
+}
+
+/// Sniff the image MIME from magic bytes, but only when the file is actually
+/// binary (text files are never images in this app).
+fn image_mime_of(data: &[u8], path: &str) -> Option<String> {
+  let lower = path.to_ascii_lowercase();
+  let mime = detect_image_mime(data);
+  if mime.is_some() {
+    return mime;
+  }
+  if lower.ends_with(".svg") || lower.ends_with(".svgz") {
+    return Some("image/svg+xml".to_string());
+  }
+  None
+}
+
 fn decode_file_content(data: &[u8], encoding_name: Option<&str>) -> (String, String, bool) {
   if let Some(name) = encoding_name {
     let encoding: &Encoding = Encoding::for_label(name.as_bytes()).unwrap_or(UTF_8);
@@ -1322,6 +1355,7 @@ pub async fn read_file_content(
       encoding: encoding.unwrap_or_else(|| "utf-8".to_string()),
       needs_encoding: false,
       hex_base64: None,
+      image_mime: None,
     });
   }
 
@@ -1352,6 +1386,11 @@ pub async fn read_file_content(
   } else {
     None
   };
+  let image_mime = if is_binary {
+    image_mime_of(&all_data, &path)
+  } else {
+    None
+  };
 
   Ok(FileContent {
     path,
@@ -1363,6 +1402,7 @@ pub async fn read_file_content(
     encoding: used_encoding,
     needs_encoding,
     hex_base64,
+    image_mime,
   })
 }
 
@@ -1884,6 +1924,7 @@ pub async fn target_read_file(
       encoding: encoding.unwrap_or_else(|| "utf-8".to_string()),
       needs_encoding: false,
       hex_base64: None,
+      image_mime: None,
     });
   }
 
@@ -1904,6 +1945,11 @@ pub async fn target_read_file(
   } else {
     None
   };
+  let image_mime = if is_binary {
+    image_mime_of(&data, &path)
+  } else {
+    None
+  };
 
   Ok(FileContent {
     path,
@@ -1915,6 +1961,7 @@ pub async fn target_read_file(
     encoding: used_encoding,
     needs_encoding,
     hex_base64,
+    image_mime,
   })
 }
 

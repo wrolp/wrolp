@@ -22,6 +22,8 @@ export interface EditorTab {
   error?: string
   /** Raw bytes as Base64 for binary files (hex view). */
   hexBase64?: string
+  /** MIME type for image files — when set the file renders as a preview. */
+  imageMime?: string
   language: string
   encoding: string
   needsEncoding: boolean
@@ -218,10 +220,27 @@ export function FileEditor({
           <div className="editor-error">Failed to open: {active.error}</div>
         )}
 
+        {active && !active.loading && !active.error && active.imageMime && active.hexBase64 && (
+          <div className="image-viewer">
+            <div className="image-toolbar">
+              <span className="image-filename" title={active.path}>
+                {active.name}
+              </span>
+              <span className="image-meta">
+                {(active.size / 1024).toFixed(1)} KB · {active.imageMime}
+              </span>
+            </div>
+            <div className="image-body">
+              <img src={`data:${active.imageMime};base64,${active.hexBase64}`} alt={active.name} />
+            </div>
+          </div>
+        )}
+
         {active &&
           !active.loading &&
           !active.error &&
           active.isBinary &&
+          !active.imageMime &&
           active.hexBase64 && (
             <HexViewer base64={active.hexBase64} name={active.name} size={active.size} />
           )}

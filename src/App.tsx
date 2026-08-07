@@ -1256,6 +1256,7 @@ export default function App() {
                   encoding: fc.encoding,
                   needsEncoding: fc.needsEncoding,
                   hexBase64: fc.hexBase64,
+                  imageMime: fc.imageMime,
                   lineEnding: (
                     typeof fc.content === 'string' && /\r\n/.test(fc.content)
                       ? 'CRLF'
