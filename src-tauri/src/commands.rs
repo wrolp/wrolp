@@ -2350,6 +2350,32 @@ pub async fn delete_ai_prompt_template(
   db::delete_ai_prompt_template(&conn, &id)
 }
 
+#[tauri::command]
+pub async fn list_hidden_builtin_templates(
+  state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::list_hidden_builtin_templates(&conn)
+}
+
+#[tauri::command]
+pub async fn hide_builtin_template(
+  state: tauri::State<'_, AppState>,
+  key: String,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::hide_builtin_template(&conn, &key)
+}
+
+#[tauri::command]
+pub async fn restore_builtin_template(
+  state: tauri::State<'_, AppState>,
+  key: String,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::restore_builtin_template(&conn, &key)
+}
+
 // ==================== Host Analysis ====================
 
 #[tauri::command]

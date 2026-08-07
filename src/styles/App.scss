@@ -4652,6 +4652,30 @@ input[type='password']::-ms-clear {
     padding: 16px 0;
   }
 
+  .ai-tmpl-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: $text-dim;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding-top: 4px;
+  }
+
+  .ai-tmpl-item-hidden {
+    opacity: 0.6;
+  }
+
+  .ai-tmpl-item-cat {
+    display: inline-block;
+    font-size: 10px;
+    color: $text-dim;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-top: 4px;
+  }
+
   .ai-tmpl-item {
     display: flex;
     align-items: center;

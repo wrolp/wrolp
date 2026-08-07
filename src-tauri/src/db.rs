@@ -64,6 +64,21 @@ pub fn init_db(data_dir: &std::path::Path) -> Result<DbConn, String> {
   conn
     .execute_batch(SCHEMA)
     .map_err(|e| format!("Schema init failed: {}", e))?;
+  // Migration: older DBs lack the `category` column on ai_prompt_templates.
+  let has_category: bool = conn
+    .prepare("PRAGMA table_info(ai_prompt_templates)")
+    .map_err(|e| e.to_string())?
+    .query_map([], |row| row.get::<_, String>(1))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?
+    .iter()
+    .any(|name| name == "category");
+  if !has_category {
+    conn
+      .execute_batch("ALTER TABLE ai_prompt_templates ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+      .map_err(|e| format!("Migration failed (category column): {}", e))?;
+  }
   Ok(Arc::new(StdMutex::new(conn)))
 }
 
@@ -321,13 +336,14 @@ pub struct AiPromptTemplate {
   pub id: String,
   pub name: String,
   pub prompt: String,
+  pub category: String,
   pub created_at: String,
   pub updated_at: String,
 }
 
 pub fn list_ai_prompt_templates(conn: &Connection) -> Result<Vec<AiPromptTemplate>, String> {
   let mut stmt = conn
-    .prepare("SELECT id, name, prompt, created_at, updated_at FROM ai_prompt_templates ORDER BY updated_at DESC")
+    .prepare("SELECT id, name, prompt, category, created_at, updated_at FROM ai_prompt_templates ORDER BY updated_at DESC")
     .map_err(|e| e.to_string())?;
   let rows = stmt
     .query_map([], |row| {
@@ -335,8 +351,9 @@ pub fn list_ai_prompt_templates(conn: &Connection) -> Result<Vec<AiPromptTemplat
         id: row.get(0)?,
         name: row.get(1)?,
         prompt: row.get(2)?,
-        created_at: row.get(3)?,
-        updated_at: row.get(4)?,
+        category: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
       })
     })
     .map_err(|e| e.to_string())?
@@ -348,19 +365,51 @@ pub fn list_ai_prompt_templates(conn: &Connection) -> Result<Vec<AiPromptTemplat
 pub fn save_ai_prompt_template(conn: &Connection, tpl: &AiPromptTemplate) -> Result<String, String> {
   let updated = conn
     .execute(
-      "UPDATE ai_prompt_templates SET name = ?1, prompt = ?2, updated_at = ?3 WHERE id = ?4",
-      params![tpl.name, tpl.prompt, tpl.updated_at, tpl.id],
+      "UPDATE ai_prompt_templates SET name = ?1, prompt = ?2, category = ?3, updated_at = ?4 WHERE id = ?5",
+      params![tpl.name, tpl.prompt, tpl.category, tpl.updated_at, tpl.id],
     )
     .map_err(|e| e.to_string())?;
   if updated == 0 {
     conn
       .execute(
-        "INSERT INTO ai_prompt_templates (id, name, prompt, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![tpl.id, tpl.name, tpl.prompt, tpl.created_at, tpl.updated_at],
+        "INSERT INTO ai_prompt_templates (id, name, prompt, category, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![tpl.id, tpl.name, tpl.prompt, tpl.category, tpl.created_at, tpl.updated_at],
       )
       .map_err(|e| e.to_string())?;
   }
   Ok(tpl.id.clone())
+}
+
+pub fn list_hidden_builtin_templates(conn: &Connection) -> Result<Vec<String>, String> {
+  let mut stmt = conn
+    .prepare("SELECT key FROM ai_hidden_builtin_templates")
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map([], |row| row.get::<_, String>(0))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+pub fn hide_builtin_template(conn: &Connection, key: &str) -> Result<(), String> {
+  conn
+    .execute(
+      "INSERT OR REPLACE INTO ai_hidden_builtin_templates (key) VALUES (?1)",
+      params![key],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+pub fn restore_builtin_template(conn: &Connection, key: &str) -> Result<(), String> {
+  conn
+    .execute(
+      "DELETE FROM ai_hidden_builtin_templates WHERE key = ?1",
+      params![key],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
 }
 
 pub fn delete_ai_prompt_template(conn: &Connection, id: &str) -> Result<(), String> {

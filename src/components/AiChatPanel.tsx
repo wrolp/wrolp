@@ -11,6 +11,9 @@ import {
   listAiPromptTemplates,
   saveAiPromptTemplate,
   deleteAiPromptTemplate,
+  listHiddenBuiltinTemplates,
+  hideBuiltinTemplate,
+  restoreBuiltinTemplate,
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -171,28 +174,34 @@ const TOOL_LABELS: Record<string, { label: string; icon: 'terminal' | 'desktop' 
 }
 
 // Built-in server-ops prompt templates, grouped and localized. Each item is an
-// i18n key whose value doubles as the prompt text sent to the AI. Plan B (user
-// templates) appends a "custom" group rendered from loaded `userTemplates`.
-type SuggestionGroup = { titleKey: TranslationKey; keys: TranslationKey[] }
+// i18n key whose value doubles as the prompt text sent to the AI. `id` is the
+// stable category identifier used by custom templates to join a built-in group.
+type SuggestionGroup = { id: string; titleKey: TranslationKey; keys: TranslationKey[] }
 
-const SUGGESTION_GROUPS: SuggestionGroup[] = [
+export const SUGGESTION_GROUPS: SuggestionGroup[] = [
   {
+    id: 'troubleshoot',
     titleKey: 'aiChatSugTroubleshoot',
     keys: ['sugExplainError', 'sugTopProcesses', 'sugDiskUsage', 'sugLogErrors'],
   },
   {
+    id: 'security',
     titleKey: 'aiChatSugSecurity',
     keys: ['sugSecurityAudit', 'sugSshHarden', 'sugFirewall'],
   },
   {
+    id: 'backup',
     titleKey: 'aiChatSugBackup',
     keys: ['sugBackupScript', 'sugCronPlan'],
   },
   {
+    id: 'perf',
     titleKey: 'aiChatSugPerf',
     keys: ['sugPerfTune', 'sugNetworkIssues'],
   },
 ]
+
+const BUILTIN_GROUP_IDS = new Set(SUGGESTION_GROUPS.map((g) => g.id))
 
 export default function AiChatPanel({
   config,
@@ -220,6 +229,8 @@ export default function AiChatPanel({
 
   // User-defined prompt templates (Plan B) loaded from the backend.
   const [userTemplates, setUserTemplates] = useState<AiPromptTemplate[]>([])
+  // Built-in template i18n keys the user has hidden (deleted).
+  const [hiddenBuiltins, setHiddenBuiltins] = useState<string[]>([])
   const [showTemplateManager, setShowTemplateManager] = useState(false)
 
   const loadUserTemplates = useCallback(async () => {
@@ -230,21 +241,42 @@ export default function AiChatPanel({
     }
   }, [])
 
+  const loadHiddenBuiltins = useCallback(async () => {
+    try {
+      setHiddenBuiltins(await listHiddenBuiltinTemplates())
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   useEffect(() => {
     loadUserTemplates()
-  }, [loadUserTemplates])
+    loadHiddenBuiltins()
+  }, [loadUserTemplates, loadHiddenBuiltins])
 
   // Template manager state (Plan B)
   const [editingTemplate, setEditingTemplate] = useState<AiPromptTemplate | null>(null)
   const [tmplName, setTmplName] = useState('')
   const [tmplPrompt, setTmplPrompt] = useState('')
+  const [tmplCategory, setTmplCategory] = useState('')
+  const [tmplCategoryCustom, setTmplCategoryCustom] = useState('')
   const [tmplSaving, setTmplSaving] = useState(false)
   const [tmplFormOpen, setTmplFormOpen] = useState(false)
+
+  // Category <select> value: '' = none, '__custom__' = free-text custom name,
+  // otherwise a built-in group id.
+  const tmplCatSelectValue = BUILTIN_GROUP_IDS.has(tmplCategory)
+    ? tmplCategory
+    : tmplCategory.trim().length > 0
+      ? '__custom__'
+      : ''
 
   const openNewTemplate = useCallback(() => {
     setEditingTemplate(null)
     setTmplName('')
     setTmplPrompt('')
+    setTmplCategory('')
+    setTmplCategoryCustom('')
     setTmplFormOpen(true)
     setShowTemplateManager(true)
   }, [])
@@ -253,6 +285,8 @@ export default function AiChatPanel({
     setEditingTemplate(tpl)
     setTmplName(tpl.name)
     setTmplPrompt(tpl.prompt)
+    setTmplCategory(tpl.category ?? '')
+    setTmplCategoryCustom(BUILTIN_GROUP_IDS.has((tpl.category ?? '').trim()) ? '' : (tpl.category ?? '').trim())
     setTmplFormOpen(true)
     setShowTemplateManager(true)
   }, [])
@@ -262,12 +296,30 @@ export default function AiChatPanel({
     setEditingTemplate(null)
     setTmplName('')
     setTmplPrompt('')
+    setTmplCategory('')
+    setTmplCategoryCustom('')
   }, [])
+
+  // Open the manager in list mode (close any open form).
+  const openTemplateManager = useCallback(() => {
+    closeTemplateForm()
+    setShowTemplateManager(true)
+  }, [closeTemplateForm])
+
+  const handleTmplCategorySelect = useCallback((value: string) => {
+    if (value === '__custom__') {
+      setTmplCategory(tmplCategoryCustom.trim() || value)
+    } else {
+      setTmplCategory(value)
+    }
+  }, [tmplCategoryCustom])
 
   const handleSaveTemplate = useCallback(async () => {
     const name = tmplName.trim()
     const prompt = tmplPrompt.trim()
     if (name.length === 0 || prompt.length === 0) return
+    // Resolve the final category: custom select → the free-text custom name.
+    const category = tmplCatSelectValue === '__custom__' ? tmplCategoryCustom.trim() : tmplCatSelectValue
     setTmplSaving(true)
     try {
       const id = editingTemplate?.id ?? crypto.randomUUID()
@@ -276,6 +328,7 @@ export default function AiChatPanel({
         id,
         name,
         prompt,
+        category,
         createdAt: editingTemplate?.createdAt ?? now,
         updatedAt: now,
       })
@@ -284,12 +337,14 @@ export default function AiChatPanel({
       setEditingTemplate(null)
       setTmplName('')
       setTmplPrompt('')
+      setTmplCategory('')
+      setTmplCategoryCustom('')
     } catch {
       // ignore
     } finally {
       setTmplSaving(false)
     }
-  }, [tmplName, tmplPrompt, editingTemplate, loadUserTemplates])
+  }, [tmplName, tmplPrompt, tmplCatSelectValue, tmplCategoryCustom, editingTemplate, loadUserTemplates])
 
   const handleDeleteTemplate = useCallback(
     async (id: string) => {
@@ -300,11 +355,37 @@ export default function AiChatPanel({
         setEditingTemplate(null)
         setTmplName('')
         setTmplPrompt('')
+        setTmplCategory('')
       } catch {
         // ignore
       }
     },
     [loadUserTemplates],
+  )
+
+  // Hide/restore built-in templates (soft delete: persists the i18n key).
+  const handleHideBuiltin = useCallback(
+    async (key: string) => {
+      try {
+        await hideBuiltinTemplate(key)
+        await loadHiddenBuiltins()
+      } catch {
+        // ignore
+      }
+    },
+    [loadHiddenBuiltins],
+  )
+
+  const handleRestoreBuiltin = useCallback(
+    async (key: string) => {
+      try {
+        await restoreBuiltinTemplate(key)
+        await loadHiddenBuiltins()
+      } catch {
+        // ignore
+      }
+    },
+    [loadHiddenBuiltins],
   )
 
   // Insert command text into the active shell at the cursor position WITHOUT
@@ -696,6 +777,31 @@ export default function AiChatPanel({
 
   const hasContent = messages.length > 0 || streaming || toolCalls.length > 0
 
+  // Split user templates by category:
+  //  - `category` matching a built-in group id → join that built-in group.
+  //  - empty category → the generic "custom" group.
+  //  - any other category → its own group titled with the category name.
+  const customByBuiltin = useMemo(() => {
+    const map = new Map<string, AiPromptTemplate[]>()
+    const generic: AiPromptTemplate[] = []
+    const otherGroups = new Map<string, AiPromptTemplate[]>()
+    for (const tpl of userTemplates) {
+      const cat = (tpl.category ?? '').trim()
+      if (BUILTIN_GROUP_IDS.has(cat)) {
+        const list = map.get(cat) ?? []
+        list.push(tpl)
+        map.set(cat, list)
+      } else if (cat.length === 0) {
+        generic.push(tpl)
+      } else {
+        const list = otherGroups.get(cat) ?? []
+        list.push(tpl)
+        otherGroups.set(cat, list)
+      }
+    }
+    return { map, generic, otherGroups }
+  }, [userTemplates])
+
   return (
     <div className="ai-chat-panel">
       {/* Header */}
@@ -808,31 +914,66 @@ export default function AiChatPanel({
 
             {showSuggestions && (
               <div className="ai-chat-suggestions">
-                {SUGGESTION_GROUPS.map((group) => (
-                  <div className="ai-chat-suggestion-group" key={group.titleKey}>
-                    <div className="ai-chat-suggestion-group-title">{t(group.titleKey)}</div>
+                {SUGGESTION_GROUPS.map((group) => {
+                  const visibleKeys = group.keys.filter((key) => !hiddenBuiltins.includes(key))
+                  const customInGroup = customByBuiltin.map.get(group.id) ?? []
+                  if (visibleKeys.length === 0 && customInGroup.length === 0) return null
+                  return (
+                    <div className="ai-chat-suggestion-group" key={group.id}>
+                      <div className="ai-chat-suggestion-group-title">{t(group.titleKey)}</div>
+                      <div className="ai-chat-suggestion-chips">
+                        {visibleKeys.map((key) => (
+                          <button
+                            key={key}
+                            className="ai-chat-suggestion"
+                            onClick={() => fillInput(t(key))}
+                            disabled={streaming}
+                          >
+                            {t(key)}
+                          </button>
+                        ))}
+                        {customInGroup.map((tpl) => (
+                          <button
+                            key={tpl.id}
+                            className="ai-chat-suggestion ai-chat-suggestion-custom"
+                            onClick={() => fillInput(tpl.prompt)}
+                            disabled={streaming}
+                            title={tpl.prompt}
+                          >
+                            {tpl.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {Array.from(customByBuiltin.otherGroups.entries()).map(([cat, tpls]) => (
+                  <div className="ai-chat-suggestion-group" key={cat}>
+                    <div className="ai-chat-suggestion-group-title">{cat}</div>
                     <div className="ai-chat-suggestion-chips">
-                      {group.keys.map((key) => (
+                      {tpls.map((tpl) => (
                         <button
-                          key={key}
-                          className="ai-chat-suggestion"
-                          onClick={() => fillInput(t(key))}
+                          key={tpl.id}
+                          className="ai-chat-suggestion ai-chat-suggestion-custom"
+                          onClick={() => fillInput(tpl.prompt)}
                           disabled={streaming}
+                          title={tpl.prompt}
                         >
-                          {t(key)}
+                          {tpl.name}
                         </button>
                       ))}
                     </div>
                   </div>
                 ))}
 
-                {userTemplates.length > 0 && (
+                {customByBuiltin.generic.length > 0 && (
                   <div className="ai-chat-suggestion-group">
                     <div className="ai-chat-suggestion-group-title">
                       {t('aiChatSugCustom')}
                     </div>
                     <div className="ai-chat-suggestion-chips">
-                      {userTemplates.map((tpl) => (
+                      {customByBuiltin.generic.map((tpl) => (
                         <button
                           key={tpl.id}
                           className="ai-chat-suggestion ai-chat-suggestion-custom"
@@ -857,11 +998,11 @@ export default function AiChatPanel({
                     <Icon name="plus" size={12} />
                     {t('aiChatSugAdd')}
                   </button>
-                  {userTemplates.length > 0 && (
+                  {(userTemplates.length > 0 || hiddenBuiltins.length > 0) && (
                     <button
                       type="button"
                       className="ai-chat-suggestion-manage"
-                      onClick={() => setShowTemplateManager(true)}
+                      onClick={() => openTemplateManager()}
                       disabled={streaming}
                     >
                       <Icon name="edit" size={12} />
@@ -1100,6 +1241,36 @@ export default function AiChatPanel({
                   />
                 </label>
                 <label className="ai-tmpl-field">
+                  <span className="ai-tmpl-label">{t('aiChatSugCategory')}</span>
+                  <select
+                    className="ai-tmpl-input"
+                    value={tmplCatSelectValue}
+                    onChange={(e) => handleTmplCategorySelect(e.target.value)}
+                  >
+                    <option value="">{t('aiChatSugCategoryNone')}</option>
+                    {SUGGESTION_GROUPS.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {t(g.titleKey)}
+                      </option>
+                    ))}
+                    <option value="__custom__">{t('aiChatSugCategoryCustom')}</option>
+                  </select>
+                </label>
+                {tmplCatSelectValue === '__custom__' && (
+                  <label className="ai-tmpl-field">
+                    <span className="ai-tmpl-label">{t('aiChatSugCategoryCustomPlaceholder')}</span>
+                    <input
+                      className="ai-tmpl-input"
+                      value={tmplCategoryCustom}
+                      onChange={(e) => {
+                        setTmplCategoryCustom(e.target.value)
+                        setTmplCategory(e.target.value.trim() || '__custom__')
+                      }}
+                      placeholder={t('aiChatSugCategoryCustomPlaceholder')}
+                    />
+                  </label>
+                )}
+                <label className="ai-tmpl-field">
                   <span className="ai-tmpl-label">{t('aiChatSugPromptPlaceholder')}</span>
                   <textarea
                     className="ai-tmpl-textarea"
@@ -1131,35 +1302,106 @@ export default function AiChatPanel({
               </div>
             ) : (
               <div className="ai-tmpl-list">
+                {/* Built-in templates: soft-delete (hide) / restore. */}
+                <div className="ai-tmpl-section-title">{t('aiChatSugBuiltin')}</div>
+                {SUGGESTION_GROUPS.flatMap((group) =>
+                  group.keys
+                    .filter((key) => !hiddenBuiltins.includes(key))
+                    .map((key) => ({ key, title: t(key), groupId: group.id })),
+                ).length === 0 ? (
+                  <div className="ai-tmpl-empty">{t('aiChatSugBuiltinEmpty')}</div>
+                ) : (
+                  SUGGESTION_GROUPS.flatMap((group) =>
+                    group.keys
+                      .filter((key) => !hiddenBuiltins.includes(key))
+                      .map((key) => (
+                        <div className="ai-tmpl-item" key={`builtin:${key}`}>
+                          <div className="ai-tmpl-item-body">
+                            <div className="ai-tmpl-item-name">{t(key)}</div>
+                            <div className="ai-tmpl-item-prompt">
+                              {t(group.titleKey)}
+                            </div>
+                          </div>
+                          <div className="ai-tmpl-item-actions">
+                            <button
+                              type="button"
+                              className="ai-tmpl-item-del"
+                              onClick={() => handleHideBuiltin(key)}
+                              title={t('aiChatSugHide')}
+                            >
+                              <Icon name="trash" size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )),
+                  )
+                )}
+
+                {hiddenBuiltins.length > 0 && (
+                  <>
+                    <div className="ai-tmpl-section-title">{t('aiChatSugHidden')}</div>
+                    {hiddenBuiltins.map((key) => (
+                      <div className="ai-tmpl-item ai-tmpl-item-hidden" key={`hidden:${key}`}>
+                        <div className="ai-tmpl-item-body">
+                          <div className="ai-tmpl-item-name">{t(key as TranslationKey)}</div>
+                        </div>
+                        <div className="ai-tmpl-item-actions">
+                          <button
+                            type="button"
+                            className="ai-tmpl-item-edit"
+                            onClick={() => handleRestoreBuiltin(key)}
+                            title={t('aiChatSugRestore')}
+                          >
+                            <Icon name="undo" size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                <div className="ai-tmpl-section-title">{t('aiChatSugCustom')}</div>
                 {userTemplates.length === 0 ? (
                   <div className="ai-tmpl-empty">{t('aiChatSugCustomEmpty')}</div>
                 ) : (
-                  userTemplates.map((tpl) => (
-                    <div className="ai-tmpl-item" key={tpl.id}>
-                      <div className="ai-tmpl-item-body">
-                        <div className="ai-tmpl-item-name">{tpl.name}</div>
-                        <div className="ai-tmpl-item-prompt">{tpl.prompt}</div>
+                  userTemplates.map((tpl) => {
+                    const cat = (tpl.category ?? '').trim()
+                    const builtinTitle = SUGGESTION_GROUPS.find((g) => g.id === cat)?.titleKey
+                    const catLabel = builtinTitle
+                      ? t(builtinTitle)
+                      : cat.length > 0
+                        ? cat
+                        : t('aiChatSugCategoryNone')
+                    return (
+                      <div className="ai-tmpl-item" key={tpl.id}>
+                        <div className="ai-tmpl-item-body">
+                          <div className="ai-tmpl-item-name">{tpl.name}</div>
+                          <div className="ai-tmpl-item-prompt">{tpl.prompt}</div>
+                          {cat.length > 0 && (
+                            <div className="ai-tmpl-item-cat">{catLabel}</div>
+                          )}
+                        </div>
+                        <div className="ai-tmpl-item-actions">
+                          <button
+                            type="button"
+                            className="ai-tmpl-item-edit"
+                            onClick={() => openEditTemplate(tpl)}
+                            title={t('aiChatSugManage')}
+                          >
+                            <Icon name="edit" size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            className="ai-tmpl-item-del"
+                            onClick={() => handleDeleteTemplate(tpl.id)}
+                            title={t('aiChatSugDelete')}
+                          >
+                            <Icon name="trash" size={12} />
+                          </button>
+                        </div>
                       </div>
-                      <div className="ai-tmpl-item-actions">
-                        <button
-                          type="button"
-                          className="ai-tmpl-item-edit"
-                          onClick={() => openEditTemplate(tpl)}
-                          title={t('aiChatSugManage')}
-                        >
-                          <Icon name="edit" size={12} />
-                        </button>
-                        <button
-                          type="button"
-                          className="ai-tmpl-item-del"
-                          onClick={() => handleDeleteTemplate(tpl.id)}
-                          title={t('aiChatSugDelete')}
-                        >
-                          <Icon name="trash" size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  ))
+                    )
+                  })
                 )}
                 <button
                   type="button"
@@ -1168,6 +1410,8 @@ export default function AiChatPanel({
                     setEditingTemplate(null)
                     setTmplName('')
                     setTmplPrompt('')
+                    setTmplCategory('')
+                    setTmplCategoryCustom('')
                     setTmplFormOpen(true)
                   }}
                 >

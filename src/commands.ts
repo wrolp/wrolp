@@ -284,6 +284,18 @@ export async function deleteAiPromptTemplate(id: string): Promise<void> {
   await invoke<void>('delete_ai_prompt_template', { id })
 }
 
+export async function listHiddenBuiltinTemplates(): Promise<string[]> {
+  return await invoke<string[]>('list_hidden_builtin_templates')
+}
+
+export async function hideBuiltinTemplate(key: string): Promise<void> {
+  await invoke<void>('hide_builtin_template', { key })
+}
+
+export async function restoreBuiltinTemplate(key: string): Promise<void> {
+  await invoke<void>('restore_builtin_template', { key })
+}
+
 // ===== P6: Target-based file operations (jump host / Docker) =====
 
 export async function listDockerContainers(jumpTabId: number): Promise<ContainerInfo[]> {

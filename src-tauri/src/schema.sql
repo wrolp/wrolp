@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS ai_prompt_templates (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
   prompt     TEXT NOT NULL,
+  category   TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+-- Built-in template keys the user has hidden (deleted); restore = remove row.
+CREATE TABLE IF NOT EXISTS ai_hidden_builtin_templates (
+  key TEXT PRIMARY KEY
 );

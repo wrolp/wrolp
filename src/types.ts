@@ -42,6 +42,7 @@ export interface AiPromptTemplate {
   id: string
   name: string
   prompt: string
+  category: string
   createdAt: string
   updatedAt: string
 }
