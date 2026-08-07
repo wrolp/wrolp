@@ -1053,8 +1053,10 @@ body.resize-v * {
 }
 
 // ===== Floating (pop-out) panes =====
+// `position: fixed` so the overlay can be dragged anywhere across the whole
+// application window (viewport), not just inside the terminal split area.
 .floating-window {
-  position: absolute;
+  position: fixed;
   min-width: 320px;
   min-height: 200px;
   display: flex;
@@ -1377,6 +1379,18 @@ body.resize-v * {
     &:hover {
       opacity: 1;
       color: #ff6b6b;
+    }
+  }
+
+  .term-pane-file-tab-float {
+    font-size: 12px;
+    line-height: 1;
+    opacity: 0.55;
+    margin-left: 2px;
+
+    &:hover {
+      opacity: 1;
+      color: #fff;
     }
   }
 }
