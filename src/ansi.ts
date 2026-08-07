@@ -253,16 +253,19 @@ function esc(s: string): string {
     .replace(/>/g, '&gt;')
 }
 
-// RFC3339 / ISO-8601-ish timestamp, optionally with trailing Z / timezone offset.
+// RFC3339 / ISO-8601-ish timestamp at the start of a line, optionally wrapped
+// in brackets (Log4j/Java style `[2026-08-07 19:48:06,008]`) and with an
+// optional trailing Z / timezone offset. The fractional seconds separator may
+// be a dot or a comma (the latter is common in Java logging frameworks).
 const TS_RE =
-  /^(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?) /
+  /^(?:\[)?(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)(?:\])? /
 
 const LEVEL_RE =
   /\b(TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRIT(?:ICAL)?)\b/g
 
 const LEVEL_FG: Record<string, string> = {
   TRACE: '#7daeec',
-  DEBUG: '#9aa4b2',
+  DEBUG: '#2dd4bf',
   INFO: '#98c379',
   NOTICE: '#56b6c2',
   WARN: '#e5c07b',
