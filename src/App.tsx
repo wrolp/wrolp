@@ -401,7 +401,7 @@ export default function App() {
       }
       setTabs((prev) => [...prev, newTab])
       // Show the log view on the focused pane (like opening a file).
-      setShellView(`dockerlog:${tabId}`)
+      if (activeTabId != null) setShellViewFor(activeTabId, `dockerlog:${tabId}`)
     },
     [activeTabId],
   )
@@ -410,12 +410,22 @@ export default function App() {
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const editorTabsRef = useRef(editorTabs)
   editorTabsRef.current = editorTabs
-  const [activeEditorKey, setActiveEditorKey] = useState<string | null>(null)
-  // Which view occupies the shell pane area: 'terminal' or the key of the
-  // active editor tab (editor replaces the terminal area).
-  const [shellView, setShellView] = useState<'terminal' | string>('terminal')
-  const shellViewRef = useRef(shellView)
-  shellViewRef.current = shellView
+  const [activeEditorKey, setActiveEditorKey] = useState<Record<number, string>>({})
+  // Which view occupies the shell pane area, per SSH session (tabId):
+  // 'terminal' or the key of the active editor tab (editor replaces the
+  // terminal area). Isolated per session so files opened in one tab don't
+  // show up in another.
+  const [shellView, setShellView] = useState<Record<number, string>>({})
+  const getShellView = (tabId: number) => shellView[tabId] ?? 'terminal'
+  const setShellViewFor = useCallback((tabId: number, view: string) => {
+    setShellView((prev) => {
+      if (prev[tabId] === view) return prev
+      return { ...prev, [tabId]: view }
+    })
+  }, [])
+  const setActiveEditorKeyFor = useCallback((tabId: number, key: string) => {
+    setActiveEditorKey((prev) => ({ ...prev, [tabId]: key }))
+  }, [])
   const [syncEnabled, setSyncEnabled] = useState(() => {
     try {
       return localStorage.getItem('wrolp-sync-enabled') === '1'
@@ -1167,6 +1177,18 @@ export default function App() {
       delete n[tabId]
       return n
     })
+    // Clean up per-session view/editor state belonging to the closed sessions.
+    setShellView((prev) => {
+      const n = { ...prev }
+      for (const sid of sessionIds) delete n[sid]
+      return n
+    })
+    setActiveEditorKey((prev) => {
+      const n = { ...prev }
+      for (const sid of sessionIds) delete n[sid]
+      return n
+    })
+    setEditorTabs((prev) => prev.filter((et) => !sessionIds.includes(et.sshTabId)))
     setActiveTabId((prev) => {
       if (prev !== tabId) return prev
       const remaining = tabsRef.current.filter(
@@ -1216,8 +1238,8 @@ export default function App() {
         },
       ]
     })
-    setActiveEditorKey(key)
-    setShellView(key)
+    setActiveEditorKeyFor(legacyTabId, key)
+    setShellViewFor(legacyTabId, key)
     try {
       const fc = await fsReadFileContent(target, path)
       setEditorTabs((prev) =>
@@ -1251,33 +1273,48 @@ export default function App() {
     }
   }, [])
 
-  const closeEditorTab = useCallback(
-    (key: string) => {
-      setEditorTabs((prev) => {
-        const idx = prev.findIndex((t) => t.key === key)
-        if (idx < 0) return prev
-        const next = prev.filter((t) => t.key !== key)
-        if (activeEditorKey === key) {
-          setActiveEditorKey(
-            next.length > 0
-              ? next[Math.min(idx, next.length - 1)].key
-              : null,
-          )
+  const closeEditorTab = useCallback((key: string) => {
+    setEditorTabs((prev) => {
+      const idx = prev.findIndex((t) => t.key === key)
+      if (idx < 0) return prev
+      const sshTabId = prev[idx].sshTabId
+      const next = prev.filter((t) => t.key !== key)
+      // If the closed file was the active one for its session, pick the next
+      // file of that same session (if any).
+      const sessionFiles = next.filter((t) => t.sshTabId === sshTabId)
+      setActiveEditorKey((aek) => {
+        if (aek[sshTabId] === key) {
+          return {
+            ...aek,
+            [sshTabId]: sessionFiles.length > 0 ? sessionFiles[Math.min(idx, sessionFiles.length - 1)].key : '',
+          }
         }
-        if (next.length === 0) {
-          setShellView('terminal')
-        }
-        return next
+        return aek
       })
-    },
-    [activeEditorKey],
-  )
+      if (sessionFiles.length === 0) {
+        setShellView((prev) => {
+          const nextView = { ...prev }
+          delete nextView[sshTabId]
+          return nextView
+        })
+      }
+      return next
+    })
+  }, [])
 
   // Close a docker log view tab (it lives on the pane header like a file).
   // The DockerLogViewer unmount effect stops its own stream.
   const closeDockerLogTab = useCallback((tabId: number) => {
+    const dl = tabsRef.current.find((t) => t.tabId === tabId)
     setTabs((prev) => prev.filter((t) => t.tabId !== tabId))
-    setShellView((prev) => (prev === `dockerlog:${tabId}` ? 'terminal' : prev))
+    if (dl?.jumpTabId != null) {
+      setShellView((prev) => {
+        if (prev[dl.jumpTabId!] !== `dockerlog:${tabId}`) return prev
+        const next = { ...prev }
+        delete next[dl.jumpTabId!]
+        return next
+      })
+    }
   }, [])
 
   const fileTreeRef = useRef<FileTreeHandle>(null)
@@ -1559,16 +1596,16 @@ export default function App() {
       // leaf's tabId is the *connection* tabId, not the dockerLog/editor tabId.
       // An explicit `force` (from a docker-log / editor tab's own float button)
       // takes precedence over the inferred view.
-      const sv = shellViewRef.current
+      const sv = getShellView(tabId)
       let kind: FloatingKind = force?.kind ?? 'terminal'
       let editorKey: string | undefined = force?.editorKey
       let dockerLogTabId: number | undefined = force?.dockerLogTabId
       let title = getTabLabel(tab)
       // Docker log / file editor overlays only ever render on the FOCUSED pane
       // (renderPane gates them behind `isFocused`). A non-focused pane always
-      // shows its plain terminal, even though `shellView` is global — so only
-      // treat this leaf as the overlay when it is the focused one (or when no
-      // focus is recorded yet, i.e. a single-pane workspace).
+      // shows its plain terminal, even though `shellView` is per-session — so
+      // only treat this leaf as the overlay when it is the focused one (or when
+      // no focus is recorded yet, i.e. a single-pane workspace).
       if (force?.kind) {
         if (force.kind === 'dockerLog' && force.dockerLogTabId != null) {
           const dl = dockerLogTabsRef.current.find((d) => d.tabId === force.dockerLogTabId)
@@ -1591,10 +1628,13 @@ export default function App() {
             dockerLogTabId = dl.tabId
             title = `${t('dockerLogs')}: ${dl.containerName ?? dlId}`
           }
-        } else if (showsOverlay && editorTabsRef.current.some((e) => e.key === sv)) {
+        } else if (
+          showsOverlay &&
+          editorTabsRef.current.some((e) => e.key === sv && e.sshTabId === tabId)
+        ) {
           kind = 'editor'
           editorKey = sv
-          const et = editorTabsRef.current.find((e) => e.key === sv)
+          const et = editorTabsRef.current.find((e) => e.key === sv && e.sshTabId === tabId)
           if (et) title = et.name
         }
       }
@@ -1620,7 +1660,7 @@ export default function App() {
       // restored to the overlay when the float closes.
       if (kind === 'dockerLog' || kind === 'editor') {
         floatRestoreRef.current[floatId] = { rootId, tree: null, shellView: restoreShellView }
-        setShellView('terminal')
+        setShellViewFor(tabId, 'terminal')
       } else {
         // Terminal float: snapshot the tree, prune the leaf (session is NOT
         // torn down), and clear the pane's focus.
@@ -1681,7 +1721,10 @@ export default function App() {
       }
       // Restore the overlay (docker log / file editor) that the floated pane
       // was showing before it was popped out.
-      if (shellView !== undefined) setShellView(shellView)
+      if (shellView !== undefined) {
+        const item = floatingItemsRef.current.find((i) => i.floatId === floatId)
+        if (item && item.tabId != null) setShellViewFor(item.tabId, shellView)
+      }
       delete floatRestoreRef.current[floatId]
     }
     setFloatingItems((prev) => prev.filter((i) => i.floatId !== floatId))
@@ -2050,8 +2093,10 @@ export default function App() {
           tabs={editorTabs}
           activeKey={item.editorKey}
           onSelect={(key) => {
-            setActiveEditorKey(key)
-            setShellView(key)
+            if (item.tabId != null) {
+              setActiveEditorKeyFor(item.tabId, key)
+              setShellViewFor(item.tabId, key)
+            }
           }}
           onClose={closeEditorTab}
           onContentChange={handleEditorContentChange}
@@ -2800,7 +2845,6 @@ export default function App() {
   const dockerLogTabs = tabs.filter((t) => t.tabType === 'dockerLog' && t.embedded)
   const dockerLogTabsRef = useRef(dockerLogTabs)
   dockerLogTabsRef.current = dockerLogTabs
-  const activeDockerLogTab = dockerLogTabs.find((t) => shellView === `dockerlog:${t.tabId}`) ?? null
 
   // True when the given file-editor tab / docker-log tab has been popped out to
   // a floating window. While floated, the overlay is rendered ONLY in the
@@ -2821,6 +2865,11 @@ export default function App() {
     const tab = leaf.tabId != null ? tabs.find((t) => t.tabId === leaf.tabId) : undefined
     const isFocused = leaf.id === focusedLeafIdForRoot
     const isDragSource = paneDrag.source === leaf.id
+    // Per-session view state: which overlay (if any) this session's pane shows.
+    const sv = leaf.tabId != null ? getShellView(leaf.tabId) : 'terminal'
+    const sessionEditorTabs = editorTabs.filter((et) => et.sshTabId === leaf.tabId)
+    const sessionDockerLogTabs = dockerLogTabs.filter((dt) => dt.jumpTabId === leaf.tabId)
+    const sessionActiveEditorKey = leaf.tabId != null ? activeEditorKey[leaf.tabId] ?? null : null
     const dropPos = paneDrag.target === leaf.id ? paneDrag.position : null
     // Decide where a drop would land from the cursor position within the pane.
     const computePos = (e: React.DragEvent): DropPosition => {
@@ -2930,30 +2979,36 @@ export default function App() {
             </button>
           )}
           {/* Open files and docker logs live on the same pane-header panel as
-              the AI button (only on the focused pane so splits don't duplicate). */}
-          {(isFocused || focusedLeafIdForRoot == null) && (editorTabs.length > 0 || dockerLogTabs.length > 0) && (
+              the AI button (only on the focused pane so splits don't duplicate).
+              Each pane shows only the files/logs that belong to ITS OWN SSH
+              session (leaf.tabId) — files opened in one workspace tab never
+              appear in another. */}
+          {(isFocused || focusedLeafIdForRoot == null) &&
+            (sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) && (
             <div className="term-pane-file-tabs">
               <div
-                className={`term-pane-file-tab${shellView === 'terminal' ? ' active' : ''}`}
+                className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
                 onClick={(e) => {
                   e.stopPropagation()
-                  setShellView('terminal')
+                  if (leaf.tabId != null) setShellViewFor(leaf.tabId, 'terminal')
                 }}
                 title={t('shellTerminal')}
               >
                 <Icon name="terminal" size={11} />
                 <span>{t('shellTerminal')}</span>
               </div>
-              {editorTabs
+              {sessionEditorTabs
                 .filter((et) => !isOverlayFloated(et.key))
                 .map((et) => (
                 <div
                   key={et.key}
-                  className={`term-pane-file-tab${shellView === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
+                  className={`term-pane-file-tab${sv === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
                   onClick={(e) => {
                     e.stopPropagation()
-                    setActiveEditorKey(et.key)
-                    setShellView(et.key)
+                    if (leaf.tabId != null) {
+                      setActiveEditorKeyFor(leaf.tabId, et.key)
+                      setShellViewFor(leaf.tabId, et.key)
+                    }
                   }}
                   title={et.path}
                 >
@@ -2982,15 +3037,15 @@ export default function App() {
                   </span>
                 </div>
               ))}
-              {dockerLogTabs
+              {sessionDockerLogTabs
                 .filter((dt) => !isOverlayFloated(dt.tabId))
                 .map((dt) => (
                 <div
                   key={dt.tabId}
-                  className={`term-pane-file-tab${shellView === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
+                  className={`term-pane-file-tab${sv === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
                   onClick={(e) => {
                     e.stopPropagation()
-                    setShellView(`dockerlog:${dt.tabId}`)
+                    if (leaf.tabId != null) setShellViewFor(leaf.tabId, `dockerlog:${dt.tabId}`)
                   }}
                   title={`${t('dockerLogs')}: ${dt.containerName}`}
                 >
@@ -3070,9 +3125,9 @@ export default function App() {
               // so the shell stays visible here.
               display:
                 isFocused &&
-                shellView !== 'terminal' &&
-                (editorTabs.length > 0 || activeDockerLogTab != null) &&
-                !isOverlayFloated(shellView)
+                sv !== 'terminal' &&
+                (sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) &&
+                !isOverlayFloated(sv)
                   ? 'none'
                   : 'flex',
               flexDirection: 'column',
@@ -3271,18 +3326,24 @@ export default function App() {
               })()
             )}
           {/* File editor replaces the terminal surface of the focused pane
-              (the pane header with the AI button and file tabs stays). Skipped
-              when the overlay is popped out to a floating window — it renders
-              only there. */}
-          {isFocused && shellView !== 'terminal' && editorTabs.length > 0 && !isOverlayFloated(shellView) && (
+              (the pane header with the AI button and file tabs stays). Only the
+              current session's files are shown. Skipped when the overlay is
+              popped out to a floating window — it renders only there. */}
+          {isFocused &&
+            sv !== 'terminal' &&
+            sessionEditorTabs.length > 0 &&
+            sessionEditorTabs.some((et) => et.key === sv) &&
+            !isOverlayFloated(sv) && (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <FileEditor
                 key="file-editor"
-                tabs={editorTabs}
-                activeKey={activeEditorKey}
+                tabs={sessionEditorTabs}
+                activeKey={sessionActiveEditorKey && sessionEditorTabs.some((et) => et.key === sessionActiveEditorKey) ? sessionActiveEditorKey : sv}
                 onSelect={(key) => {
-                  setActiveEditorKey(key)
-                  setShellView(key)
+                  if (leaf.tabId != null) {
+                    setActiveEditorKeyFor(leaf.tabId, key)
+                    setShellViewFor(leaf.tabId, key)
+                  }
                 }}
                 onClose={closeEditorTab}
                 onContentChange={handleEditorContentChange}
@@ -3297,20 +3358,24 @@ export default function App() {
           {/* Docker log view replaces the terminal surface of the focused pane
               (like an open file). Skipped when floated — renders only in the
               floating window. */}
-          {isFocused && activeDockerLogTab != null && !isOverlayFloated(activeDockerLogTab.tabId) && (
+          {isFocused && sessionDockerLogTabs.some((dt) => sv === `dockerlog:${dt.tabId}`) && (() => {
+            const dl = sessionDockerLogTabs.find((dt) => sv === `dockerlog:${dt.tabId}`)
+            if (!dl || isOverlayFloated(dl.tabId)) return null
+            return (
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <DockerLogViewer
-                tabId={activeDockerLogTab.tabId}
-                jumpTabId={activeDockerLogTab.jumpTabId!}
-                containerName={activeDockerLogTab.containerName!}
-                containerImage={activeDockerLogTab.containerImage}
+                tabId={dl.tabId}
+                jumpTabId={dl.jumpTabId!}
+                containerName={dl.containerName!}
+                containerImage={dl.containerImage}
                 defaultWordWrap={dockerWordWrap}
                 defaultFollow={dockerFollow}
                 maxLines={dockerMaxLines}
                 onAskAi={(text) => handleOpenAiChat(text)}
               />
             </div>
-          )}
+            )
+          })()}
         </div>
         <div className="term-pane-statusbar">
           <div className="tsb-left">
