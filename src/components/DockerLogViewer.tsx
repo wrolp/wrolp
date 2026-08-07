@@ -148,10 +148,26 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
       if (el) {
         el.addEventListener('scroll', handleScroll, { passive: true })
         handleScroll()
+        // The <pre> mounts only once logs become non-empty. At that moment the
+        // buffer is already tall and scrollTop is 0 (top), so handleScroll above
+        // would mark us as "not at bottom". Force a snap-to-bottom on this first
+        // mount so the user lands on the latest log when entering the view.
+        el.scrollTop = el.scrollHeight
+        userAtBottomRef.current = true
+        setShowJumpToBottom(false)
       }
     },
     [handleScroll],
   )
+
+  // ---- force the view to the latest log line ----
+  const scrollToBottom = useCallback(() => {
+    const el = logsRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    userAtBottomRef.current = true
+    setShowJumpToBottom(false)
+  }, [])
 
   // ---- one-shot fetch (non-follow mode) ----
   const fetchLogs = useCallback(async () => {
@@ -160,13 +176,15 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     try {
       const output = await dockerContainerLogs(jumpTabId, containerName, tail)
       setLogs(trimToMaxLines(trimHead(output), maxLines))
+      // Snap to the bottom once the initial content is in.
+      requestAnimationFrame(scrollToBottom)
     } catch (e) {
       setError(String(e))
       setLogs('')
     } finally {
       setLoading(false)
     }
-  }, [jumpTabId, containerName, tail])
+  }, [jumpTabId, containerName, tail, scrollToBottom])
 
   // ---- start / stop streaming ----
   const startStream = useCallback(async () => {
@@ -208,13 +226,15 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
           // ignore poll errors — stream may have ended
         }
       }, 500)
+      // Snap to the bottom once the stream's initial tail is loaded.
+      requestAnimationFrame(scrollToBottom)
     } catch (e) {
       setError(String(e))
       setFollow(false)
     } finally {
       setLoading(false)
     }
-  }, [jumpTabId, containerName, tail])
+  }, [jumpTabId, containerName, tail, scrollToBottom])
 
   const stopStream = useCallback(async () => {
     if (streamIdRef.current) {
@@ -283,9 +303,14 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     el.scrollTop = Math.max(0, upd.scrollTop - removedH)
   }, [logsHtml])
 
-  // Fetch on mount (non-follow)
+  // Initial load on mount. When follow mode is on we start the live stream
+  // (which already tails the latest logs); otherwise do a one-shot fetch.
   useEffect(() => {
-    fetchLogs()
+    if (follow) {
+      startStream()
+    } else {
+      fetchLogs()
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup stream on unmount
