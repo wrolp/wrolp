@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import monaco from '../editor/monacoSetup'
 import { LANGUAGE_OPTIONS, ENCODING_OPTIONS } from '../editor/languages'
 import type { TargetRef } from '../types'
+import HexViewer from './HexViewer'
 
 export interface EditorTab {
   key: string
@@ -19,6 +20,8 @@ export interface EditorTab {
   size: number
   saving?: boolean
   error?: string
+  /** Raw bytes as Base64 for binary files (hex view). */
+  hexBase64?: string
   language: string
   encoding: string
   needsEncoding: boolean
@@ -218,12 +221,33 @@ export function FileEditor({
         {active &&
           !active.loading &&
           !active.error &&
-          (active.isBinary || active.isTooLarge) && (
+          active.isBinary &&
+          active.hexBase64 && (
+            <HexViewer base64={active.hexBase64} name={active.name} size={active.size} />
+          )}
+
+        {active &&
+          !active.loading &&
+          !active.error &&
+          active.isBinary &&
+          !active.hexBase64 && (
             <div className="editor-readonly">
               <div className="editor-readonly-msg">
-                {active.isBinary
-                  ? 'This file appears to be binary and cannot be edited as text.'
-                  : `This file is too large (${(active.size / 1024 / 1024).toFixed(1)} MB) to edit inline.`}
+                This file appears to be binary and cannot be edited as text.
+              </div>
+              <div className="editor-readonly-hint">
+                Use the file panel's download feature to fetch it instead.
+              </div>
+            </div>
+          )}
+
+        {active &&
+          !active.loading &&
+          !active.error &&
+          active.isTooLarge && (
+            <div className="editor-readonly">
+              <div className="editor-readonly-msg">
+                {`This file is too large (${(active.size / 1024 / 1024).toFixed(1)} MB) to edit inline.`}
               </div>
               <div className="editor-readonly-hint">
                 Use the file panel's download feature to fetch it instead.

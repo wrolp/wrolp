@@ -1259,6 +1259,9 @@ pub struct FileContent {
   /// True when the file was not valid UTF-8 (e.g. GBK) and must be
   /// re-saved with `encoding` to avoid corrupting it.
   pub needs_encoding: bool,
+  /// For binary files only: the raw file bytes as Base64, so the frontend can
+  /// render a hex dump. `None` for text files.
+  pub hex_base64: Option<String>,
 }
 
 /// Decode raw bytes into a String using the requested encoding, or auto-detect
@@ -1318,6 +1321,7 @@ pub async fn read_file_content(
       is_too_large: true,
       encoding: encoding.unwrap_or_else(|| "utf-8".to_string()),
       needs_encoding: false,
+      hex_base64: None,
     });
   }
 
@@ -1342,6 +1346,12 @@ pub async fn read_file_content(
   } else {
     decode_file_content(&all_data, encoding.as_deref())
   };
+  let hex_base64 = if is_binary {
+    use base64::Engine;
+    Some(base64::engine::general_purpose::STANDARD.encode(&all_data))
+  } else {
+    None
+  };
 
   Ok(FileContent {
     path,
@@ -1352,6 +1362,7 @@ pub async fn read_file_content(
     is_too_large: false,
     encoding: used_encoding,
     needs_encoding,
+    hex_base64,
   })
 }
 
@@ -1872,6 +1883,7 @@ pub async fn target_read_file(
       is_too_large: true,
       encoding: encoding.unwrap_or_else(|| "utf-8".to_string()),
       needs_encoding: false,
+      hex_base64: None,
     });
   }
 
@@ -1886,6 +1898,12 @@ pub async fn target_read_file(
   } else {
     decode_file_content(&data, encoding.as_deref())
   };
+  let hex_base64 = if is_binary {
+    use base64::Engine;
+    Some(base64::engine::general_purpose::STANDARD.encode(&data))
+  } else {
+    None
+  };
 
   Ok(FileContent {
     path,
@@ -1896,6 +1914,7 @@ pub async fn target_read_file(
     is_too_large: false,
     encoding: used_encoding,
     needs_encoding,
+    hex_base64,
   })
 }
 

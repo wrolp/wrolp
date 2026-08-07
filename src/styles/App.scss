@@ -1001,6 +1001,100 @@ body.resize-v * {
     color: $text-dim;
   }
 
+  .hex-viewer {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: $bg-primary;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: $text-primary;
+
+    .hex-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 10px;
+      background: $bg-secondary;
+      border-bottom: 1px solid $border;
+      flex-shrink: 0;
+
+      .hex-filename {
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hex-meta {
+        color: $text-dim;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .hex-spacer {
+        flex: 1;
+      }
+      .hex-hint {
+        color: $text-dim;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+    }
+
+    .hex-head,
+    .hex-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 10px;
+      white-space: nowrap;
+    }
+
+    .hex-head {
+      color: $text-dim;
+      border-bottom: 1px solid $border;
+      padding-top: 4px;
+      padding-bottom: 4px;
+      flex-shrink: 0;
+    }
+
+    .hex-offset {
+      color: #7daeec;
+      min-width: 64px;
+      user-select: none;
+    }
+
+    .hex-bytes {
+      color: $text-primary;
+    }
+
+    .hex-ascii {
+      color: $text-dim;
+    }
+
+    .hex-body {
+      flex: 1;
+      overflow: auto;
+      padding: 4px 0;
+    }
+
+    .hex-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .hex-empty {
+      padding: 16px;
+      color: $text-dim;
+    }
+
+    .hex-more {
+      padding: 8px 10px;
+      border-top: 1px solid $border;
+      flex-shrink: 0;
+    }
+  }
+
   .editor-error {
     color: #ff6b6b;
   }

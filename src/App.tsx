@@ -1255,6 +1255,7 @@ export default function App() {
                   size: fc.size,
                   encoding: fc.encoding,
                   needsEncoding: fc.needsEncoding,
+                  hexBase64: fc.hexBase64,
                   lineEnding: (
                     typeof fc.content === 'string' && /\r\n/.test(fc.content)
                       ? 'CRLF'

@@ -109,6 +109,8 @@ export interface FileContent {
   encoding: string
   /** True when the file was not valid UTF-8 and must be re-saved with `encoding`. */
   needsEncoding: boolean
+  /** For binary files only: raw bytes as Base64 for hex viewing. */
+  hexBase64?: string
 }
 
 // ===== P6: Jump host / Docker targets =====
