@@ -1,11 +1,12 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { ConnectionConfig } from '../types'
-import { saveConnection as saveConn, deleteConnection, reorderConnections, renameGroup, deleteGroup } from '../commands'
+import type { ConnectionConfig, LocalTerminalEntry } from '../types'
+import { saveConnection as saveConn, deleteConnection, reorderConnections, renameGroup, deleteGroup, getLocalTerminals, saveLocalTerminals } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
+import type { TranslationKey } from '../i18n/en'
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[]
@@ -19,7 +20,20 @@ interface ConnectionManagerProps {
   sidebarWidth: number
   expanded?: boolean
   onToggleExpanded?: () => void
+  localTerminals?: LocalTerminalEntry[]
+  onOpenLocalTerminal?: (entry: LocalTerminalEntry) => void
+  onLocalTerminalsChanged?: () => void
 }
+
+// Built-in shell presets selectable for a local terminal entry.
+const SHELL_PRESETS: { value: string; labelKey: TranslationKey }[] = [
+  { value: 'cmd', labelKey: 'shellCmd' },
+  { value: 'pwsh', labelKey: 'shellPwsh' },
+  { value: 'powershell', labelKey: 'shellPowerShell' },
+  { value: 'bash', labelKey: 'shellBash' },
+  { value: 'wsl', labelKey: 'shellWsl' },
+  { value: 'gitbash', labelKey: 'shellGitBash' },
+]
 
 const UNGROUPED = '__ungrouped__'
 
@@ -35,10 +49,16 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   sidebarWidth,
   expanded = true,
   onToggleExpanded,
+  localTerminals = [],
+  onOpenLocalTerminal,
+  onLocalTerminalsChanged,
 }) => {
   const { t } = useI18n()
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
+  const [localModalOpen, setLocalModalOpen] = useState(false)
+  const [localEditing, setLocalEditing] = useState<LocalTerminalEntry | null>(null)
+  const [localCollapsed, setLocalCollapsed] = useState(false)
   const [defaultGroup, setDefaultGroup] = useState<string>('')
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -270,6 +290,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             onMouseLeave={onMouseLeave}
           >
             <div className="sidebar-list" ref={listRef} onScroll={onScroll}>
+              <LocalTerminalsSection
+                entries={localTerminals}
+                onOpen={onOpenLocalTerminal}
+                onChanged={onLocalTerminalsChanged}
+              />
               {connections.length === 0 ? (
                 <div className="empty-state">
                   <div><Icon name="desktop" /></div>
@@ -499,6 +524,238 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         />
       )}
     </>
+  )
+}
+
+// ===== Local Terminals Section =====
+
+interface LocalTerminalsSectionProps {
+  entries: LocalTerminalEntry[]
+  onOpen?: (entry: LocalTerminalEntry) => void
+  onChanged?: () => void
+}
+
+const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
+  entries,
+  onOpen,
+  onChanged,
+}) => {
+  const { t } = useI18n()
+  const [collapsed, setCollapsed] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<LocalTerminalEntry | null>(null)
+  const [name, setName] = useState('')
+  const [cwd, setCwd] = useState('')
+  const [shell, setShell] = useState('cmd')
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const openModal = (entry?: LocalTerminalEntry) => {
+    setSaveError(null)
+    if (entry) {
+      setEditing(entry)
+      setName(entry.name)
+      setCwd(entry.cwd)
+      setShell(entry.shell)
+    } else {
+      setEditing(null)
+      setName('')
+      setCwd('')
+      setShell('cmd')
+    }
+    setModalOpen(true)
+  }
+
+  const pickDir = async () => {
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        title: t('browseDir'),
+      })
+      if (typeof picked === 'string') setCwd(picked)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const persist = async (next: LocalTerminalEntry[]) => {
+    try {
+      await saveLocalTerminals(next)
+      onChanged?.()
+    } catch (err) {
+      console.error(err)
+      setSaveError(String(err))
+    }
+  }
+
+  const handleSave = async () => {
+    if (!cwd.trim()) {
+      setSaveError(t('localTermFieldsRequired'))
+      return
+    }
+    // Name is optional; fall back to the last path segment of the directory.
+    const fallbackName = cwd.trim().replace(/[\\/]+$/, '').split(/[\\/]/).pop() || cwd.trim()
+    const finalName = name.trim() || fallbackName
+    const current = await getLocalTerminals().catch(() => entries)
+    let next: LocalTerminalEntry[]
+    if (editing) {
+      next = current.map((e) =>
+        e.id === editing.id ? { ...e, name: finalName, cwd: cwd.trim(), shell } : e,
+      )
+    } else {
+      next = [
+        ...current,
+        { id: `lt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, name: finalName, cwd: cwd.trim(), shell },
+      ]
+    }
+    await persist(next)
+    setModalOpen(false)
+  }
+
+  const handleDelete = async (entry: LocalTerminalEntry) => {
+    const current = await getLocalTerminals().catch(() => entries)
+    await persist(current.filter((e) => e.id !== entry.id))
+  }
+
+  const shellLabel = (s: string) => {
+    const preset = SHELL_PRESETS.find((p) => p.value === s)
+    return preset ? t(preset.labelKey) : s
+  }
+
+  return (
+    <div className="conn-group local-terminals-group">
+      <div className="conn-group-header" onClick={() => setCollapsed((c) => !c)}>
+        <span className={`collapse-chevron${collapsed ? '' : ' expanded'}`} />
+        <span className="conn-group-name">{t('localTerminals')}</span>
+        <span className="conn-group-count">{entries.length}</span>
+        <button
+          className="conn-group-add"
+          title={t('addLocalTerminal')}
+          onClick={(e) => {
+            e.stopPropagation()
+            openModal()
+          }}
+        >
+          +
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="conn-group-items">
+          {/* Default entry: opens a local terminal in the default directory/shell. */}
+          <div
+            className="conn-item local-term-item local-term-default"
+            onClick={() => onOpen?.({ id: '__default__', name: t('openLocalShell'), cwd: '', shell: '' })}
+            title={t('openLocalShell')}
+          >
+            <span className="conn-item-icon">
+              <Icon name="terminal" size={14} />
+            </span>
+            <span className="conn-item-label">
+              <span className="conn-item-name">{t('openLocalShell')}</span>
+              <span className="conn-item-sub">{t('openLocalShellHint')}</span>
+            </span>
+          </div>
+          {entries.length === 0 ? (
+            <div className="empty-state local-empty">
+              <div>{t('noLocalTerminalsYet')}</div>
+            </div>
+          ) : (
+            entries.map((entry) => (
+              <div
+                key={entry.id}
+                className="conn-item local-term-item"
+                onClick={() => onOpen?.(entry)}
+                title={`${entry.cwd}  [${shellLabel(entry.shell)}]`}
+              >
+                <span className="conn-item-icon">
+                  <Icon name="terminal" size={14} />
+                </span>
+                <span className="conn-item-label">
+                  <span className="conn-item-name">{entry.name}</span>
+                  <span className="conn-item-sub">{shellLabel(entry.shell)}</span>
+                </span>
+                <span
+                  className="conn-item-edit"
+                  title={t('editLocalTerminal')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openModal(entry)
+                  }}
+                >
+                  <Icon name="edit" size={12} />
+                </span>
+                <span
+                  className="conn-item-del"
+                  title={t('deleteLocalTerminal')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleDelete(entry)
+                  }}
+                >
+                  ×
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {modalOpen && (
+        <div className="modal-overlay" onClick={() => setModalOpen(false)}>
+          <div className="modal local-term-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">
+              {editing ? t('editLocalTerminal') : t('addLocalTerminal')}
+            </div>
+            <div className="modal-body">
+              <label className="modal-field">
+                <span>{t('localTerminalName')}</span>
+                <input
+                  type="text"
+                  value={name}
+                  autoFocus
+                  placeholder={t('localTerminalNamePlaceholder')}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </label>
+              <label className="modal-field">
+                <span>{t('localTerminalDir')}</span>
+                <div className="dir-row">
+                  <input
+                    type="text"
+                    value={cwd}
+                    placeholder={t('localTerminalDirPlaceholder')}
+                    onChange={(e) => setCwd(e.target.value)}
+                  />
+                  <button type="button" onClick={pickDir}>
+                    {t('browseDir')}
+                  </button>
+                </div>
+              </label>
+              <label className="modal-field">
+                <span>{t('localTerminalShell')}</span>
+                <select value={shell} onChange={(e) => setShell(e.target.value)}>
+                  {SHELL_PRESETS.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {t(p.labelKey)}
+                    </option>
+                  ))}
+                  {shell && !SHELL_PRESETS.some((p) => p.value === shell) && (
+                    <option value={shell}>{shell}</option>
+                  )}
+                </select>
+              </label>
+              {saveError && <div className="modal-error">{saveError}</div>}
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setModalOpen(false)}>{t('cancel')}</button>
+              <button className="primary" onClick={handleSave}>
+                {t('save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

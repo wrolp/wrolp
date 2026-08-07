@@ -156,6 +156,8 @@ pub fn run() {
       commands::delete_connection,
       commands::reorder_connections,
       commands::rename_group,
+      commands::get_local_terminals,
+      commands::save_local_terminals,
       commands::delete_group,
       commands::connect,
       commands::disconnect,

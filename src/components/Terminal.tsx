@@ -41,6 +41,8 @@ interface TerminalComponentProps {
   isLocal?: boolean
   /** Working directory to start the local shell in (local mode only). */
   localCwd?: string
+  /** Shell command to use for the local shell (local mode only). */
+  localShellType?: string
   autoConnect: boolean
   /** Maximum scrollback lines to retain (default 5000). */
   maxScrollback?: number
@@ -65,6 +67,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onAskAi,
   isLocal,
   localCwd,
+  localShellType,
 }) => {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -78,6 +81,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const hasRun = useRef(false)
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
+  const localShellTypeRef = useRef(localShellType)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement | null>(null)
@@ -111,6 +115,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }, [tabId])
   useEffect(() => {
     connectConfigRef.current = connectConfig
+  })
+  useEffect(() => {
+    localShellTypeRef.current = localShellType
   })
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange
@@ -154,7 +161,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     const cfg = connectConfigRef.current
     console.log('[Terminal] connectConfig=', cfg)
-    if (!cfg) {
+    // Local shells have no SSH connectConfig — only SSH sessions need it. Without
+    // this guard, opening a local terminal would bail here and never start.
+    if (!cfg && !isLocal) {
       console.log('[Terminal] no cfg, return')
       return
     }
@@ -298,7 +307,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onSizeChangeRef.current?.(cols, rows)
       onStatusChangeRef.current('connecting')
       if (isLocal) {
-        openLocalShell(currentTabId, undefined, localCwd)
+        openLocalShell(currentTabId, localShellTypeRef.current, localCwd)
           .then(() => {
             onStatusChangeRef.current('connected')
             startPolling()
@@ -313,15 +322,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             console.error('open_local_shell error:', err)
           })
       } else {
+        const sshCfg = cfg!
         connect(
           {
-            id: cfg.id,
-            name: cfg.name || `${cfg.username}@${cfg.host}`,
-            host: cfg.host,
-            port: cfg.port,
-            username: cfg.username,
-            password: cfg.password,
-            keyPath: cfg.keyPath,
+            id: sshCfg.id,
+            name: sshCfg.name || `${sshCfg.username}@${sshCfg.host}`,
+            host: sshCfg.host,
+            port: sshCfg.port,
+            username: sshCfg.username,
+            password: sshCfg.password,
+            keyPath: sshCfg.keyPath,
           },
           currentTabId,
           cols,
@@ -404,7 +414,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     const cfg = connectConfigRef.current
     const currentTabId = tabIdRef.current
-    if (!cfg) return
+    // Local shells have no SSH connectConfig; only SSH sessions need it.
+    if (!cfg && !isLocal) return
 
     // Write separator to terminal to mark new session
     term.write('\r\n\x1b[33m══════ Reconnecting ══════\x1b[0m\r\n')
@@ -416,15 +427,41 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onSizeChangeRef.current?.(cols, rows)
       onStatusChangeRef.current('connecting')
 
+      if (isLocal) {
+        openLocalShell(currentTabId, localShellTypeRef.current, localCwd)
+          .then(() => {
+            onStatusChangeRef.current('connected')
+            if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+            pollTimerRef.current = setInterval(async () => {
+              try {
+                const chunks = await pollOutput(currentTabId)
+                if (chunks.length > 0) {
+                  for (const chunk of chunks) term.write(chunk)
+                }
+              } catch {}
+            }, 100)
+          })
+          .catch((err) => {
+            const errMsg =
+              typeof err === 'string'
+                ? err
+                : (err as any)?.message || String(err)
+            onStatusChangeRef.current('error', errMsg)
+            console.error('local reconnect error:', err)
+          })
+        return
+      }
+
+      const sshCfg = cfg!
       connect(
         {
-          id: cfg.id,
-          name: cfg.name || `${cfg.username}@${cfg.host}`,
-          host: cfg.host,
-          port: cfg.port,
-          username: cfg.username,
-          password: cfg.password,
-          keyPath: cfg.keyPath,
+          id: sshCfg.id,
+          name: sshCfg.name || `${sshCfg.username}@${sshCfg.host}`,
+          host: sshCfg.host,
+          port: sshCfg.port,
+          username: sshCfg.username,
+          password: sshCfg.password,
+          keyPath: sshCfg.keyPath,
         },
         currentTabId,
         cols,

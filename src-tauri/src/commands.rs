@@ -1,6 +1,6 @@
 use super::ssh_session::{
   AppState, ConnectionConfig, ConnectResult, ContainerInfo, FileEntry, LocalShell, LocalShellDir, SshError,
-  SshHandler, SshSession, SwitchedUser, TargetRef, TransferControl, ActiveRecording,
+  SshHandler, SshSession, SwitchedUser, TargetRef, TransferControl, ActiveRecording, LocalTerminalEntry,
 };
 use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
 use crate::remote_fs::build_fs;
@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
 use std::path::PathBuf;
+use std::process::Command as StdCommand;
 use tauri::Manager;
 use tauri::Emitter;
 use tokio::io::AsyncReadExt;
@@ -231,6 +232,35 @@ pub async fn reorder_connections(
   // Persist
   persist_connections(&state).await?;
 
+  Ok(true)
+}
+
+/// Get the list of saved local terminal entries.
+#[tauri::command]
+pub async fn get_local_terminals(
+  state: tauri::State<'_, AppState>,
+) -> Result<Vec<LocalTerminalEntry>, String> {
+  let entries = state.local_terminals.lock().map_err(|e| e.to_string())?;
+  Ok(entries.clone())
+}
+
+/// Replace the saved local terminal entries with the given list.
+#[tauri::command]
+pub async fn save_local_terminals(
+  state: tauri::State<'_, AppState>,
+  entries: Vec<LocalTerminalEntry>,
+) -> Result<bool, String> {
+  {
+    let mut store = state.local_terminals.lock().map_err(|e| e.to_string())?;
+    *store = entries.clone();
+  }
+  if let Some(ref path) = crate::ssh_session::get_local_terminals_path() {
+    if let Some(parent) = path.parent() {
+      let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+  }
   Ok(true)
 }
 
@@ -764,10 +794,7 @@ pub async fn poll_output(
 /// Pick the default local shell command for the current platform.
 fn default_local_shell() -> (String, Vec<String>) {
   if cfg!(windows) {
-    // Prefer PowerShell, fall back to cmd
-    if let Ok(pwsh) = which_powershell() {
-      return (pwsh, vec![]);
-    }
+    // Default to cmd.exe on Windows
     ("cmd.exe".to_string(), vec![])
   } else {
     let s = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
@@ -775,24 +802,29 @@ fn default_local_shell() -> (String, Vec<String>) {
   }
 }
 
-#[cfg(windows)]
-fn which_powershell() -> Result<String, ()> {
-  for name in ["pwsh.exe", "powershell.exe"] {
-    if let Ok(out) = std::process::Command::new("where").arg(name).output() {
-      if out.status.success() {
-        let found = String::from_utf8_lossy(&out.stdout);
-        if let Some(first) = found.lines().next() {
-          return Ok(first.trim().to_string());
+/// Resolve a shell specifier (preset name or arbitrary command/path) into a
+/// (command, args) pair suitable for portable_pty's CommandBuilder.
+fn resolve_local_shell(spec: &str) -> (String, Vec<String>) {
+  match spec {
+    // Git Bash: locate the executable on the common install paths.
+    "gitbash" => {
+      let candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+      ];
+      for c in candidates {
+        if std::path::Path::new(c).exists() {
+          return (c.to_string(), vec!["--login".to_string()]);
         }
       }
+      ("bash".to_string(), vec![])
     }
+    // WSL: launch an interactive login shell.
+    "wsl" => ("wsl.exe".to_string(), vec!["--login".to_string()]),
+    // Anything else (cmd, pwsh, powershell, bash, or an explicit path) is used as-is.
+    other => (other.to_string(), vec![]),
   }
-  Err(())
-}
-
-#[cfg(not(windows))]
-fn which_powershell() -> Result<String, ()> {
-  Err(())
 }
 
 /// Open a local shell (PTY-backed local process) for the given tab.
@@ -819,8 +851,9 @@ pub async fn open_local_shell(
 
   let shell_for_history = shell.clone();
   let (shell_cmd, shell_args) = match shell {
-    Some(s) => (s, vec![] as Vec<String>),
-    None => default_local_shell(),
+    // An empty spec means "use the default shell" (e.g. the default Local-Terminal entry).
+    Some(s) if !s.trim().is_empty() => resolve_local_shell(&s),
+    _ => default_local_shell(),
   };
 
   // Per-tab output queue owned by this LocalShell. The reader thread holds an
@@ -847,7 +880,10 @@ pub async fn open_local_shell(
     cmd.args(&shell_args);
   }
   if let Some(ref dir) = cwd {
-    cmd.cwd(dir);
+    // An empty cwd means "use the default working directory", so don't set one.
+    if !dir.trim().is_empty() {
+      cmd.cwd(dir);
+    }
   }
   // Windows: let cmd/pwsh use its default console behavior
   cmd.env("TERM", "xterm-256color");
@@ -893,7 +929,9 @@ pub async fn open_local_shell(
   // Remember cwd in history (start of list, de-duplicated)
   {
     if let Some(ref dir) = cwd {
-      record_local_shell_dir(&state, dir, shell_for_history.as_deref());
+      if !dir.trim().is_empty() {
+        record_local_shell_dir(&state, dir, shell_for_history.as_deref());
+      }
     }
   }
 
@@ -3037,6 +3075,22 @@ async fn execute_ai_tools(
 /// server (or note that it is not connected). Used to enrich the system prompt.
 fn build_current_server_context(app: &tauri::AppHandle, tab_id: u32) -> Option<String> {
     let state = app.state::<AppState>();
+    // Local shell tab: describe it as a local machine shell (no SSH server).
+    if let Ok(shells) = state.local_shells.lock() {
+        if let Some(sh) = shells.get(&tab_id) {
+            let cwd = sh.cwd.clone().unwrap_or_else(|| ".".to_string());
+            let block = format!(
+                "[Current Shell Context]\n\
+                 This conversation is bound to LOCAL shell tab {tab_id} (a local terminal on this machine).\n\
+                 Working directory: {cwd}\n\
+                 Shell type: local (cmd/powershell/bash/wsl/git-bash)\n\
+                 Note: commands you run here execute on the user's local machine, not a remote server.",
+                tab_id = tab_id,
+                cwd = cwd,
+            );
+            return Some(block);
+        }
+    }
     let sessions = state.sessions.lock().ok()?;
     let sess = sessions.get(&tab_id)?;
     let cfg = &sess.config;
@@ -3057,6 +3111,56 @@ fn build_current_server_context(app: &tauri::AppHandle, tab_id: u32) -> Option<S
         cid = cfg.id,
     );
     Some(block)
+}
+
+/// Run a shell command on the LOCAL machine (for local-shell AI tabs).
+/// Spawns the OS shell, captures combined stdout+stderr, and returns it as a
+/// JSON string the AI agent can read. `cwd` is the local shell's working dir.
+async fn run_local_command(command: String, cwd: Option<String>) -> Result<String, String> {
+    let output = tokio::task::spawn_blocking(move || {
+        #[cfg(windows)]
+        let mut child = {
+            let mut cmd = StdCommand::new("cmd.exe");
+            cmd.args(["/c", &command]);
+            cmd
+        };
+        #[cfg(not(windows))]
+        let mut child = {
+            let mut cmd = StdCommand::new("/bin/sh");
+            cmd.args(["-c", &command]);
+            cmd
+        };
+        if let Some(dir) = cwd.as_deref() {
+            child.current_dir(dir);
+        }
+        child.stdout(std::process::Stdio::piped());
+        child.stderr(std::process::Stdio::piped());
+        child.output()
+    })
+    .await
+    .map_err(|e| format!("Failed to spawn local command: {}", e))?
+    .map_err(|e| format!("Failed to run local command: {}", e))?;
+
+    let mut combined = String::new();
+    combined.push_str(&String::from_utf8_lossy(&output.stdout));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.trim().is_empty() {
+        if !combined.is_empty() && !combined.ends_with('\n') {
+            combined.push('\n');
+        }
+        combined.push_str(&stderr);
+    }
+    // Truncate very large outputs to avoid blowing up the AI context.
+    if combined.len() > 64 * 1024 {
+        combined.truncate(64 * 1024);
+        combined.push_str("\n... (output truncated to 64KB)");
+    }
+    let exit = output.status.code().unwrap_or(-1);
+    Ok(serde_json::json!({
+        "exitCode": exit,
+        "output": combined,
+    })
+    .to_string())
 }
 
 async fn execute_one_tool(
@@ -3088,6 +3192,17 @@ async fn execute_one_tool(
                     serde_json::json!({ "needsConfirmation": true, "command": command })
                         .to_string(),
                 );
+            }
+            // Local shell tab: run the command on the local machine.
+            let local_cwd = {
+                match state.local_shells.lock() {
+                    Ok(g) => g.get(&tab_id).map(|sh| sh.cwd.clone()).unwrap_or(None),
+                    Err(_) => None,
+                }
+            };
+            if local_cwd.is_some() {
+                let output = run_local_command(command, local_cwd).await?;
+                return Ok(output);
             }
             let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
             let output = crate::host_analysis::exec_on_handle(&*handle, &command).await?;
@@ -3176,6 +3291,19 @@ async fn execute_one_tool(
             let tab_id = current_tab_id.ok_or(
                 "No shell tab is bound to this AI conversation. Open the AI chat from a shell tab first.",
             )?;
+            // Local shell tab: report it as a local machine shell.
+            {
+                let shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+                if let Some(sh) = shells.get(&tab_id) {
+                    let info = serde_json::json!({
+                        "tabId": tab_id,
+                        "type": "local",
+                        "workingDirectory": sh.cwd.clone().unwrap_or_else(|| ".".to_string()),
+                        "status": "connected",
+                    });
+                    return Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?);
+                }
+            }
             let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
             let sess = sessions.get(&tab_id).ok_or("This tab is not connected to any server.")?;
             let cfg = &sess.config;

@@ -441,6 +441,20 @@ pub struct AppState {
   pub local_shells: StdMutex<HashMap<u32, LocalShell>>,
   /// Working directory history for local shells (most-recently-used first)
   pub local_shell_dirs: StdMutex<Vec<LocalShellDir>>,
+  /// Saved local terminal entries (user-defined local shells with a cwd + shell)
+  pub local_terminals: StdMutex<Vec<LocalTerminalEntry>>,
+}
+
+/// A user-defined local terminal: opens a local shell in `cwd` using `shell`.
+/// `shell` is the command invoked by portable_pty (e.g. "cmd", "pwsh",
+/// "powershell", "bash", "wsl", or an absolute path to git-bash.exe).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalTerminalEntry {
+  pub id: String,
+  pub name: String,
+  pub cwd: String,
+  pub shell: String,
 }
 
 /// A recorded local-shell working directory (for the "recent directories" list).
@@ -472,8 +486,29 @@ impl AppState {
       ai_pending: StdMutex::new(None),
       local_shells: StdMutex::new(HashMap::new()),
       local_shell_dirs: StdMutex::new(Vec::new()),
+      local_terminals: StdMutex::new(get_initial_local_terminals()),
     }
   }
+}
+
+/// Load saved local terminal entries from `local_terminals.json`.
+fn get_initial_local_terminals() -> Vec<LocalTerminalEntry> {
+  let path = get_local_terminals_path();
+  if let Some(ref path) = path {
+    if path.exists() {
+      if let Ok(content) = std::fs::read_to_string(path) {
+        if let Ok(entries) = serde_json::from_str::<Vec<LocalTerminalEntry>>(&content) {
+          return entries;
+        }
+      }
+    }
+  }
+  Vec::new()
+}
+
+/// Path to the local terminals config file.
+pub fn get_local_terminals_path() -> Option<std::path::PathBuf> {
+  dirs::config_dir().map(|p| p.join("wrolp-terminal").join("local_terminals.json"))
 }
 
 /// Load initial connection list from config file.

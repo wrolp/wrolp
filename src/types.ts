@@ -67,6 +67,7 @@ export interface TabInfo {
   containerImage?: string
   // localShell tab fields
   localShellCwd?: string
+  localShellType?: string
 }
 
 export interface TerminalOutput {
@@ -136,6 +137,13 @@ export interface LocalShellDir {
   path: string
   shell?: string
   lastUsed: number
+}
+
+export interface LocalTerminalEntry {
+  id: string
+  name: string
+  cwd: string
+  shell: string
 }
 
 /**

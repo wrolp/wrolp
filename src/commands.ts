@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, AiPromptTemplate, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile, LocalShellDir } from './types'
+import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, AiPromptTemplate, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile, LocalShellDir, LocalTerminalEntry } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -65,6 +65,16 @@ export async function openLocalShell(
   cwd?: string,
 ): Promise<void> {
   return await invoke('open_local_shell', { tabId, shell: shell ?? null, cwd: cwd ?? null })
+}
+
+/// Get saved local terminal entries.
+export async function getLocalTerminals(): Promise<LocalTerminalEntry[]> {
+  return await invoke<LocalTerminalEntry[]>('get_local_terminals')
+}
+
+/// Replace the saved local terminal entries.
+export async function saveLocalTerminals(entries: LocalTerminalEntry[]): Promise<void> {
+  await invoke('save_local_terminals', { entries })
 }
 
 /// Send input to a local shell.

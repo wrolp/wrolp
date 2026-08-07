@@ -16,7 +16,7 @@ import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
 import { Icon } from './components/Icon'
 import type { FileTreeHandle } from './components/FilePanel'
-import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout, FileTargetMode } from './types'
+import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout, FileTargetMode, LocalTerminalEntry } from './types'
 import { defaultLayout, mergeLayout } from './types'
 import {
   SplitNode,
@@ -34,8 +34,8 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalShellDirs, clearLocalShellDirs } from './commands'
-import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent, LocalShellDir } from './types'
+import { loadWindowConfig, saveWindowConfig, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalTerminals } from './commands'
+import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
 import { detectLanguage } from './editor/languages'
@@ -53,6 +53,7 @@ export default function App() {
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
+  const [localTerminals, setLocalTerminals] = useState<LocalTerminalEntry[]>([])
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
   const tabContextMenuRef = useRef<HTMLDivElement | null>(null)
   const [tabDragIndex, setTabDragIndex] = useState<number | null>(null)
@@ -551,6 +552,7 @@ export default function App() {
   // Load connection list
   useEffect(() => {
     loadConnections()
+    reloadLocalTerminals()
   }, [])
 
   // Close tab context menu on click anywhere
@@ -559,7 +561,6 @@ export default function App() {
       const target = e.target as HTMLElement
       if (target.closest('.tab-context-menu')) return
       setTabContextMenu(null)
-      if (!target.closest('.local-term-wrap')) setLocalDirMenuOpen(false)
     }
     document.addEventListener('click', closeMenu)
     return () => document.removeEventListener('click', closeMenu)
@@ -859,7 +860,7 @@ export default function App() {
 
   // Open a local shell as a NEW top-level tab (workspace).
   const openLocalShellTab = useCallback(
-    (cwd?: string): number => {
+    (cwd?: string, shell?: string): number => {
       const tabId = nextTabId++
       const newTab: TabInfo = {
         tabId,
@@ -869,6 +870,7 @@ export default function App() {
         status: 'connected',
         tabType: 'localShell',
         localShellCwd: cwd,
+        localShellType: shell,
       }
       setTabs((prev) => [...prev, newTab])
       const leafId = newLeafId()
@@ -880,27 +882,12 @@ export default function App() {
     [newLeafId, t],
   )
 
-  // Local shell working-directory history (for the "recent directories" menu)
-  const [localShellDirs, setLocalShellDirs] = useState<LocalShellDir[]>([])
-  const [localDirMenuOpen, setLocalDirMenuOpen] = useState(false)
-
-  const refreshLocalShellDirs = useCallback(() => {
-    getLocalShellDirs()
-      .then(setLocalShellDirs)
-      .catch((e: unknown) => console.error('getLocalShellDirs error:', e))
-  }, [])
-
-  useEffect(() => {
-    refreshLocalShellDirs()
-  }, [refreshLocalShellDirs])
-
+  // Open a local shell as a NEW top-level tab (workspace).
   const handleOpenLocalTerminal = useCallback(
-    (cwd?: string) => {
-      openLocalShellTab(cwd)
-      setLocalDirMenuOpen(false)
-      refreshLocalShellDirs()
+    (cwd?: string, shell?: string) => {
+      return openLocalShellTab(cwd, shell)
     },
-    [openLocalShellTab, refreshLocalShellDirs],
+    [openLocalShellTab],
   )
 
   // Split the currently focused pane inside the active workspace and open the
@@ -1504,6 +1491,13 @@ export default function App() {
     loadConnections()
   }, [])
 
+  // Load saved local terminal entries
+  const reloadLocalTerminals = useCallback(() => {
+    getLocalTerminals()
+      .then(setLocalTerminals)
+      .catch((err: unknown) => console.error('getLocalTerminals', err))
+  }, [])
+
   // Sidebar drag-to-resize
   const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -1783,6 +1777,7 @@ export default function App() {
               autoConnect={!!tab.connectionId || isLocalShell}
               isLocal={isLocalShell}
               localCwd={tab.localShellCwd}
+              localShellType={tab.localShellType}
               maxScrollback={maxScrollback}
               onStatusChange={(status, errorMessage) =>
                 setTabs((prev) =>
@@ -2514,7 +2509,7 @@ export default function App() {
               <Icon name="refresh" size={12} />
             </button>
           )}
-          {tab?.tabType === 'terminal' && leaf.tabId != null && (
+          {(tab?.tabType === 'terminal' || tab?.tabType === 'localShell') && leaf.tabId != null && (
             <button
               className={'term-pane-ai-toggle' + (showAiByTab[leaf.tabId] ? ' active' : '')}
               onMouseDown={(e) => e.stopPropagation()}
@@ -2564,7 +2559,7 @@ export default function App() {
             )}
           </div>
           {/* Docked AI chat attached to this pane's shell tab */}
-          {tab?.tabType === 'terminal' &&
+          {(tab?.tabType === 'terminal' || tab?.tabType === 'localShell') &&
             leaf.tabId != null &&
             activeProfile &&
             showAiByTab[leaf.tabId] &&
@@ -2984,6 +2979,9 @@ export default function App() {
               onSplitRight={(conn) => handleOpenSplit(conn, 'row')}
               onSplitDown={(conn) => handleOpenSplit(conn, 'column')}
               sidebarWidth={sidebarWidth}
+              localTerminals={localTerminals}
+              onOpenLocalTerminal={(entry) => handleOpenLocalTerminal(entry.cwd, entry.shell)}
+              onLocalTerminalsChanged={reloadLocalTerminals}
               expanded={connectionsExpanded}
               onToggleExpanded={() =>
                 updateLayout((l) => ({
@@ -3190,63 +3188,6 @@ export default function App() {
             >
               ⊞
             </button>
-            <div className="local-term-wrap">
-              <button
-                className="tab-split-btn"
-                onClick={() => setLocalDirMenuOpen((v) => !v)}
-                title={t('openLocalShell')}
-              >
-                &gt;_
-              </button>
-              {localDirMenuOpen && (
-                <div className="local-term-menu">
-                  <div
-                    className="local-term-menu-item"
-                    onClick={() => handleOpenLocalTerminal()}
-                  >
-                    {t('localTerminal')}
-                  </div>
-                  {localShellDirs.length > 0 && (
-                    <>
-                      <div className="local-term-menu-sep" />
-                      {localShellDirs.map((d) => (
-                        <div
-                          key={d.path}
-                          className="local-term-menu-item dir"
-                          title={d.path}
-                          onClick={() => handleOpenLocalTerminal(d.path)}
-                        >
-                          <span className="local-term-dir-path">{d.path}</span>
-                          <span
-                            className="local-term-dir-del"
-                            title={t('removeFromHistory')}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              clearLocalShellDirs(d.path)
-                                .then(refreshLocalShellDirs)
-                                .catch((err: unknown) => console.error(err))
-                            }}
-                          >
-                            ×
-                          </span>
-                        </div>
-                      ))}
-                      <div className="local-term-menu-sep" />
-                      <div
-                        className="local-term-menu-item clear"
-                        onClick={() => {
-                          clearLocalShellDirs()
-                            .then(refreshLocalShellDirs)
-                            .catch((err: unknown) => console.error(err))
-                        }}
-                      >
-                        {t('clearDirHistory')}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
 
           {/* Tab right-click context menu */}
