@@ -1,7 +1,7 @@
 # Wrolp Terminal
 
 <p align="center">
-  <img src="public/icon.png" alt="Wrolp Terminal" width="128" />
+  <img src="src-tauri/icons/512x512.png" alt="Wrolp Terminal" width="128" />
 </p>
 
 <p align="center">
