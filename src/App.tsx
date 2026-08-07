@@ -355,6 +355,7 @@ export default function App() {
   })
   const [opacity, setOpacity] = useState(1)
   const [aiInputHeight, setAiInputHeight] = useState(0)
+  const [collapsedGroups, setCollapsedGroups] = useState<string[]>([])
   const [appVersion, setAppVersion] = useState<AppVersion | null>(null)
 
   // Fetch app version info on mount
@@ -421,6 +422,29 @@ export default function App() {
         .catch(() => {})
     }, 400)
   }, [])
+  // Persist collapsed connection-group state (debounced).
+  const collapsedGroupsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleCollapsedGroupsChange = useCallback((value: string[]) => {
+    setCollapsedGroups(value)
+    if (collapsedGroupsSaveTimer.current) clearTimeout(collapsedGroupsSaveTimer.current)
+    collapsedGroupsSaveTimer.current = setTimeout(() => {
+      const win = getCurrentWindow()
+      Promise.all([win.outerPosition(), win.outerSize(), win.isMaximized()])
+        .then(([pos, size, maximized]) =>
+          saveWindowConfig({
+            x: pos.x,
+            y: pos.y,
+            width: size.width,
+            height: size.height,
+            maximized,
+            opacity: opacityRef.current,
+            aiInputHeight: aiInputHeightRef.current,
+            collapsedGroups: value,
+          }),
+        )
+        .catch(() => {})
+    }, 400)
+  }, [])
   // Which tab's AI is currently floating as a separate draggable panel (null = none).
   const [aiFloatingTabId, setAiFloatingTabId] = useState<number | null>(null)
   // Position of the floating AI panel (top-left in px).
@@ -481,6 +505,13 @@ export default function App() {
   // The profile currently being edited / used (falls back to first profile).
   const activeProfile =
     aiConfig?.profiles.find((p) => p.id === aiConfig.activeId) ?? aiConfig?.profiles[0] ?? null
+
+  // Whether a usable AI endpoint is configured (endpoint + model + saved key).
+  const aiConfigured =
+    !!activeProfile &&
+    !!activeProfile.endpoint.trim() &&
+    !!activeProfile.model.trim() &&
+    !!activeProfile.apiKeyEnc
 
   // Switch the active AI endpoint from within an AI chat panel (persisted).
   const handleSelectAiProfile = useCallback((id: string) => {
@@ -725,6 +756,8 @@ export default function App() {
 
   const aiInputHeightRef = useRef(aiInputHeight)
   aiInputHeightRef.current = aiInputHeight
+  const collapsedGroupsRef = useRef(collapsedGroups)
+  collapsedGroupsRef.current = collapsedGroups
 
   // Load opacity from saved window config on startup
   useEffect(() => {
@@ -736,6 +769,9 @@ export default function App() {
         setAiInputHeight(config.aiInputHeight)
       } else {
         setAiInputHeight(0)
+      }
+      if (config.collapsedGroups !== undefined && Array.isArray(config.collapsedGroups)) {
+        setCollapsedGroups(config.collapsedGroups)
       }
     }).catch(() => {})
   }, [])
@@ -763,6 +799,7 @@ export default function App() {
             maximized,
             opacity: opacityRef.current,
             aiInputHeight: aiInputHeightRef.current,
+            collapsedGroups: collapsedGroupsRef.current,
           })
         } catch (e) {
           console.error('Failed to save window config:', e)
@@ -798,6 +835,7 @@ export default function App() {
           maximized,
           opacity,
           aiInputHeight,
+          collapsedGroups,
         })
       })
       .catch(() => {})
@@ -982,6 +1020,12 @@ export default function App() {
   }, [tabs])
 
   const [aiContextText, setAiContextText] = useState<string | null>(null)
+
+  // Open the Settings tab on the AI section (used when AI is not configured).
+  const handleOpenAiSettings = useCallback(() => {
+    setSettingsActiveTab('ai')
+    handleOpenSettings()
+  }, [handleOpenSettings])
 
   // Open AI chat. If `tabId` is given, attach to that shell tab (open its
   // docked AI pane); otherwise open/activate the standalone AI Chat tab.
@@ -2767,6 +2811,7 @@ export default function App() {
                         onContextConsumed={() => setAiContextText(null)}
                         inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                         onInputHeightChange={handleAiInputHeightChange}
+                        onOpenSettings={handleOpenAiSettings}
                       />
                     </div>
                     <div className="ai-dock-resize" onMouseDown={startDockResize} style={resizeHandleStyle} />
@@ -3032,6 +3077,8 @@ export default function App() {
                   },
                 }))
               }
+              collapsedGroups={collapsedGroups}
+              onCollapsedGroupsChange={handleCollapsedGroupsChange}
             />
           </div>
         )}
@@ -3297,6 +3344,7 @@ export default function App() {
                         onContextConsumed={() => setAiContextText(null)}
                         inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                         onInputHeightChange={handleAiInputHeightChange}
+                        onOpenSettings={handleOpenAiSettings}
                       />
                     </div>
                   )}
@@ -3435,6 +3483,7 @@ export default function App() {
                       onContextConsumed={() => setAiContextText(null)}
                       inputHeight={aiInputHeight}
                       onInputHeightChange={handleAiInputHeightChange}
+                      onOpenSettings={handleOpenAiSettings}
                     />
                   </div>
                   {resizeHandles.map((h) => (

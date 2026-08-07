@@ -129,7 +129,7 @@ interface AiConv {
 }
 
 interface AiChatPanelProps {
-  config: AiEndpointProfile
+  config: AiEndpointProfile | null
   /** All available endpoint profiles, for the in-panel endpoint switcher. */
   profiles: AiEndpointProfile[]
   /** Switch the active endpoint (persisted by the parent). */
@@ -151,6 +151,8 @@ interface AiChatPanelProps {
   inputHeight?: number
   /** Called when the user drags the input area resize handle. */
   onInputHeightChange?: (height: number) => void
+  /** Open the Settings tab (AI section) — used when no endpoint is configured. */
+  onOpenSettings?: () => void
 }
 
 /** Simple unique-id generator (no external dependency). */
@@ -207,9 +209,14 @@ export default function AiChatPanel({
   onContextConsumed,
   inputHeight,
   onInputHeightChange,
+  onOpenSettings,
 }: AiChatPanelProps) {
   const { t } = useI18n()
   const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
+
+  // Whether a usable AI endpoint is configured (endpoint + model + saved key).
+  const configured =
+    !!config?.endpoint.trim() && !!config?.model.trim() && !!config?.apiKeyEnc
 
   // User-defined prompt templates (Plan B) loaded from the backend.
   const [userTemplates, setUserTemplates] = useState<AiPromptTemplate[]>([])
@@ -232,11 +239,13 @@ export default function AiChatPanel({
   const [tmplName, setTmplName] = useState('')
   const [tmplPrompt, setTmplPrompt] = useState('')
   const [tmplSaving, setTmplSaving] = useState(false)
+  const [tmplFormOpen, setTmplFormOpen] = useState(false)
 
   const openNewTemplate = useCallback(() => {
     setEditingTemplate(null)
     setTmplName('')
     setTmplPrompt('')
+    setTmplFormOpen(true)
     setShowTemplateManager(true)
   }, [])
 
@@ -244,7 +253,15 @@ export default function AiChatPanel({
     setEditingTemplate(tpl)
     setTmplName(tpl.name)
     setTmplPrompt(tpl.prompt)
+    setTmplFormOpen(true)
     setShowTemplateManager(true)
+  }, [])
+
+  const closeTemplateForm = useCallback(() => {
+    setTmplFormOpen(false)
+    setEditingTemplate(null)
+    setTmplName('')
+    setTmplPrompt('')
   }, [])
 
   const handleSaveTemplate = useCallback(async () => {
@@ -263,7 +280,10 @@ export default function AiChatPanel({
         updatedAt: now,
       })
       await loadUserTemplates()
-      setShowTemplateManager(false)
+      setTmplFormOpen(false)
+      setEditingTemplate(null)
+      setTmplName('')
+      setTmplPrompt('')
     } catch {
       // ignore
     } finally {
@@ -276,6 +296,10 @@ export default function AiChatPanel({
       try {
         await deleteAiPromptTemplate(id)
         await loadUserTemplates()
+        setTmplFormOpen(false)
+        setEditingTemplate(null)
+        setTmplName('')
+        setTmplPrompt('')
       } catch {
         // ignore
       }
@@ -520,7 +544,7 @@ export default function AiChatPanel({
         setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: userDisplay }])
       }
 
-      startAiAgent(apiMessages, tabId, config)
+      startAiAgent(apiMessages, tabId, config ?? undefined)
         .then((id: string) => {
           setChatId(id)
           startPolling(id)
@@ -577,6 +601,12 @@ export default function AiChatPanel({
 
   const handleSend = useCallback(
     (textOverride?: string) => {
+      // Block sending when no usable AI endpoint is configured; prompt the user
+      // to configure it in Settings instead.
+      if (!configured) {
+        onOpenSettings?.()
+        return
+      }
       const text = (textOverride ?? input).trim()
       if (!text || streaming) return
       const images = pendingImages.length ? pendingImages : undefined
@@ -590,7 +620,7 @@ export default function AiChatPanel({
       ]
       runAgent(apiMessages, text)
     },
-    [input, streaming, messages, pendingImages, config, runAgent],
+    [input, streaming, messages, pendingImages, config, configured, onOpenSettings, runAgent],
   )
 
   // Fill the input box with the initial context text (e.g. terminal selection)
@@ -691,7 +721,7 @@ export default function AiChatPanel({
             {modelManual ? (
               <input
                 className="ai-chat-select ai-chat-model-input"
-                value={config.model || ''}
+                value={config?.model || ''}
                 onChange={(e) => onSelectModel(e.target.value)}
                 placeholder={t('modelName')}
                 title={t('enterModelNameManually')}
@@ -699,19 +729,19 @@ export default function AiChatPanel({
             ) : (
               <select
                 className="ai-chat-select"
-                value={config.model || ''}
+                value={config?.model || ''}
                 onChange={(e) => onSelectModel(e.target.value)}
                 title={t('selectModel')}
                 disabled={fetchingModels}
               >
-                {fetchingModels && <option value={config.model || ''}>{t('loadingModels')}</option>}
+                {fetchingModels && <option value={config?.model || ''}>{t('loadingModels')}</option>}
                 {models.map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
                 ))}
                 {!fetchingModels && models.length === 0 && (
-                  <option value={config.model || ''}>{t('noModelsAvailable')}</option>
+                  <option value={config?.model || ''}>{t('noModelsAvailable')}</option>
                 )}
               </select>
             )}
@@ -959,6 +989,14 @@ export default function AiChatPanel({
       </div>
 
       {/* Input */}
+      {!configured && (
+        <div className="ai-chat-config-warning">
+          <span>{t('aiConfigRequired')}</span>
+          <button type="button" className="ai-chat-config-warning-btn" onClick={() => onOpenSettings?.()}>
+            {t('aiOpenSettings')}
+          </button>
+        </div>
+      )}
       <div
         className="ai-chat-input-area"
         ref={inputAreaRef}
@@ -1022,7 +1060,7 @@ export default function AiChatPanel({
             <button
               className="ai-chat-send-btn"
               onClick={() => handleSend()}
-              disabled={streaming || !input.trim()}
+              disabled={streaming || !input.trim() || !configured}
               title={t('aiChatSend')}
             >
               {streaming ? <Icon name="pause" size={15} /> : <Icon name="send" size={15} />}
@@ -1038,7 +1076,7 @@ export default function AiChatPanel({
           <div className="ai-tmpl-modal" onClick={(e) => e.stopPropagation()}>
             <div className="ai-tmpl-modal-head">
               <span className="ai-tmpl-modal-title">
-                {editingTemplate ? t('aiChatSugManage') : t('aiChatSugAdd')}
+                {tmplFormOpen ? (editingTemplate ? t('aiChatSugManage') : t('aiChatSugAdd')) : t('aiChatSugList')}
               </span>
               <button
                 type="button"
@@ -1050,7 +1088,7 @@ export default function AiChatPanel({
               </button>
             </div>
 
-            {editingTemplate || tmplName || tmplPrompt ? (
+            {tmplFormOpen ? (
               <div className="ai-tmpl-form">
                 <label className="ai-tmpl-field">
                   <span className="ai-tmpl-label">{t('aiChatSugNamePlaceholder')}</span>
@@ -1130,6 +1168,7 @@ export default function AiChatPanel({
                     setEditingTemplate(null)
                     setTmplName('')
                     setTmplPrompt('')
+                    setTmplFormOpen(true)
                   }}
                 >
                   <Icon name="plus" size={12} />

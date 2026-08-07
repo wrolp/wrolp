@@ -23,6 +23,8 @@ interface ConnectionManagerProps {
   localTerminals?: LocalTerminalEntry[]
   onOpenLocalTerminal?: (entry: LocalTerminalEntry) => void
   onLocalTerminalsChanged?: () => void
+  collapsedGroups?: string[]
+  onCollapsedGroupsChange?: (value: string[]) => void
 }
 
 // Built-in shell presets selectable for a local terminal entry.
@@ -52,6 +54,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   localTerminals = [],
   onOpenLocalTerminal,
   onLocalTerminalsChanged,
+  collapsedGroups = [],
+  onCollapsedGroupsChange,
 }) => {
   const { t } = useI18n()
   const [showModal, setShowModal] = useState(false)
@@ -65,7 +69,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     y: number
     conn: ConnectionConfig
   } | null>(null)
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [groupContextMenu, setGroupContextMenu] = useState<{
     x: number
     y: number
@@ -202,12 +205,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   }, [connections])
 
   const toggleGroup = (key: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
+    const next = collapsedGroups.includes(key)
+      ? collapsedGroups.filter((g) => g !== key)
+      : [...collapsedGroups, key]
+    onCollapsedGroupsChange?.(next)
   }
 
   const handleEdit = (conn: ConnectionConfig) => {
@@ -230,13 +231,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     if (trimmed === oldName) return
     await renameGroup(oldName, trimmed)
     // Keep collapsed state in sync with the renamed group
-    setCollapsedGroups((prev) => {
-      if (!prev.has(oldName)) return prev
-      const next = new Set(prev)
-      next.delete(oldName)
-      if (trimmed) next.add(trimmed)
-      return next
-    })
+    if (collapsedGroups.includes(oldName)) {
+      onCollapsedGroupsChange?.(collapsedGroups.filter((g) => g !== oldName).concat(trimmed))
+    }
     onConnectionChange()
     setGroupContextMenu(null)
   }
@@ -244,12 +241,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const handleDeleteGroup = async (groupName: string) => {
     if (confirm(t('deleteGroupConfirm', { group: groupName }))) {
       await deleteGroup(groupName)
-      setCollapsedGroups((prev) => {
-        if (!prev.has(groupName)) return prev
-        const next = new Set(prev)
-        next.delete(groupName)
-        return next
-      })
+      if (collapsedGroups.includes(groupName)) {
+        onCollapsedGroupsChange?.(collapsedGroups.filter((g) => g !== groupName))
+      }
       onConnectionChange()
     }
     setGroupContextMenu(null)
@@ -344,7 +338,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 // Grouped rendering
                 grouped.map(([key, conns]) => {
                   const isUngrouped = key === UNGROUPED
-                  const collapsed = collapsedGroups.has(key)
+                  const collapsed = collapsedGroups.includes(key)
                   const isGroupDragOver = dragOverTarget?.key === `group:${key}`
                   return (
                     <div key={key} className="conn-group">

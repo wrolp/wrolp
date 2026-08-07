@@ -2043,6 +2043,7 @@ pub async fn resume_transfer(
 // ==================== Window Config Persistence ====================
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct WindowConfig {
   pub x: i32,
   pub y: i32,
@@ -2051,6 +2052,8 @@ pub struct WindowConfig {
   pub maximized: bool,
   pub opacity: f64,
   pub ai_input_height: f64,
+  #[serde(default)]
+  pub collapsed_groups: Vec<String>,
 }
 
 impl Default for WindowConfig {
@@ -2063,6 +2066,7 @@ impl Default for WindowConfig {
       maximized: false,
       opacity: 1.0,
       ai_input_height: 120.0,
+      collapsed_groups: Vec::new(),
     }
   }
 }

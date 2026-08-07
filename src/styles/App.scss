@@ -251,6 +251,11 @@ body.resize-v * {
   align-items: center;
   gap: 4px;
   padding: 4px 8px 2px;
+
+  .collapse-chevron {
+    margin-right: 10px;
+  }
+
   cursor: pointer;
   user-select: none;
   font-size: 11px;
@@ -2415,7 +2420,7 @@ input[type='password']::-ms-clear {
     .collapse-chevron {
       cursor: pointer;
       color: $text-muted;
-      margin: 0 2px;
+      margin: 0 10px 0 2px;
       user-select: none;
       &:hover { color: $text-primary; }
     }
@@ -2943,7 +2948,7 @@ input[type='password']::-ms-clear {
   .collapse-chevron {
     cursor: pointer;
     color: $text-muted;
-    margin-right: 4px;
+    margin-right: 10px;
     &:hover { color: $text-primary; }
   }
 
@@ -5302,6 +5307,37 @@ input[type='password']::-ms-clear {
     &:hover {
       border-color: #f56c6c;
       color: #f56c6c;
+    }
+  }
+
+  // ---- Config-required warning ----
+  .ai-chat-config-warning {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 16px;
+    padding: 10px 12px;
+    border: 1px solid rgba($accent, 0.4);
+    background: rgba($accent, 0.1);
+    border-radius: 8px;
+    color: $text-secondary;
+    font-size: 12.5px;
+    line-height: 1.4;
+
+    .ai-chat-config-warning-btn {
+      flex-shrink: 0;
+      padding: 5px 12px;
+      border: 1px solid $accent;
+      border-radius: 6px;
+      background: $accent;
+      color: #fff;
+      font-size: 12px;
+      cursor: pointer;
+
+      &:hover {
+        filter: brightness(1.08);
+      }
     }
   }
 
