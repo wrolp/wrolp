@@ -40,6 +40,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   minimize: '最小化',
   maximize: '最大化',
   restore: '还原',
+  alwaysOnTop: '置顶',
+  alwaysOnTopOn: '置顶（开）',
+  alwaysOnTopOff: '置顶（关）',
 
   // Tabs
   tabSettings: '设置',

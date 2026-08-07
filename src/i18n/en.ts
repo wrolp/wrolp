@@ -38,6 +38,9 @@ const en = {
   minimize: 'Minimize',
   maximize: 'Maximize',
   restore: 'Restore',
+  alwaysOnTop: 'Always on top',
+  alwaysOnTopOn: 'Always on top (on)',
+  alwaysOnTopOff: 'Always on top (off)',
 
   // Tabs
   tabSettings: 'Settings',

@@ -10,6 +10,8 @@
     "core:window:allow-start-dragging",
     "core:window:allow-is-maximized",
     "core:window:allow-set-resizable",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-is-always-on-top",
     "core:event:allow-listen",
     "dialog:default",
     "updater:default",

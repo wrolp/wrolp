@@ -97,7 +97,8 @@ body.resize-v * {
 }
 
 .settings-btn,
-.ai-chat-btn {
+.ai-chat-btn,
+.pin-btn {
   width: 20px;
   height: 20px;
 
@@ -112,6 +113,15 @@ body.resize-v * {
 
   &:hover {
     color: #a5d8ff;
+  }
+}
+
+.pin-btn.active {
+  color: #ffd76a;
+
+  &:hover {
+    color: #ffd76a;
+    background: rgba(255, 215, 106, 0.12);
   }
 }
 
