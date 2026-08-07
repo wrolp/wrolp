@@ -108,6 +108,8 @@ pub struct AiMessage {
     pub tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<String>>,
 }
 
 // ---- Per-chat streaming state (stored in AppState) ----
@@ -858,6 +860,7 @@ pub async fn run_agent_stream(
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: None,
         };
 
         if !saw_tool_call {
@@ -920,6 +923,7 @@ pub async fn run_agent_stream(
                 tool_calls: None,
                 tool_call_id: Some(call.id.clone()),
                 name: Some(call.name.clone()),
+                images: None,
             });
             on_tool(ToolCallEvent {
                 id: call.id.clone(),

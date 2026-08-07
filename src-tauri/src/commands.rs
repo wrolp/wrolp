@@ -2050,11 +2050,20 @@ pub struct WindowConfig {
   pub height: u32,
   pub maximized: bool,
   pub opacity: f64,
+  pub ai_input_height: f64,
 }
 
 impl Default for WindowConfig {
   fn default() -> Self {
-    Self { x: i32::MAX, y: i32::MAX, width: 1100, height: 700, maximized: false, opacity: 1.0 }
+    Self {
+      x: i32::MAX,
+      y: i32::MAX,
+      width: 1100,
+      height: 700,
+      maximized: false,
+      opacity: 1.0,
+      ai_input_height: 120.0,
+    }
   }
 }
 
@@ -3006,6 +3015,7 @@ pub async fn confirm_ai_tool(
             tool_calls: None,
             tool_call_id: Some(call.id.clone()),
             name: Some(call.name.clone()),
+            images: None,
         });
     }
 

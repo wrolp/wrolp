@@ -309,6 +309,7 @@ export interface AiMessage {
   toolCalls?: AiToolCall[]
   toolCallId?: string
   name?: string
+  images?: string[]
 }
 
 export interface AiToolCall {

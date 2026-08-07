@@ -237,6 +237,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatToolsUsed: '使用过的工具',
   aiChatAskAi: '询问 AI',
   aiChatInputHint: 'AI 可在已连接的服务器上使用工具。破坏性命令会被阻止。',
+  aiChatResizeInput: '拖动以调整输入区高度',
+  aiChatAddImage: '添加图片',
+  aiChatRemoveImage: '移除图片',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: '问题排查',

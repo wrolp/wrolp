@@ -354,6 +354,7 @@ export default function App() {
     }
   })
   const [opacity, setOpacity] = useState(1)
+  const [aiInputHeight, setAiInputHeight] = useState(0)
   const [appVersion, setAppVersion] = useState<AppVersion | null>(null)
 
   // Fetch app version info on mount
@@ -398,6 +399,28 @@ export default function App() {
   const aiDockResizeRef = useRef<{ dir: string; sx: number; sy: number; sSize: number } | null>(null)
   const MIN_DOCK = 140
   const MAX_DOCK = 900
+  // Persist AI input-area height (debounced) so it survives reloads.
+  const aiInputHeightSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleAiInputHeightChange = useCallback((height: number) => {
+    setAiInputHeight(height)
+    if (aiInputHeightSaveTimer.current) clearTimeout(aiInputHeightSaveTimer.current)
+    aiInputHeightSaveTimer.current = setTimeout(() => {
+      const win = getCurrentWindow()
+      Promise.all([win.outerPosition(), win.outerSize(), win.isMaximized()])
+        .then(([pos, size, maximized]) =>
+          saveWindowConfig({
+            x: pos.x,
+            y: pos.y,
+            width: size.width,
+            height: size.height,
+            maximized,
+            opacity: opacityRef.current,
+            aiInputHeight: height,
+          }),
+        )
+        .catch(() => {})
+    }, 400)
+  }, [])
   // Which tab's AI is currently floating as a separate draggable panel (null = none).
   const [aiFloatingTabId, setAiFloatingTabId] = useState<number | null>(null)
   // Position of the floating AI panel (top-left in px).
@@ -700,11 +723,19 @@ export default function App() {
   const opacityRef = useRef(opacity)
   opacityRef.current = opacity
 
+  const aiInputHeightRef = useRef(aiInputHeight)
+  aiInputHeightRef.current = aiInputHeight
+
   // Load opacity from saved window config on startup
   useEffect(() => {
     loadWindowConfig().then(config => {
       if (config.opacity !== undefined) {
         setOpacity(config.opacity)
+      }
+      if (config.aiInputHeight !== undefined && config.aiInputHeight > 0) {
+        setAiInputHeight(config.aiInputHeight)
+      } else {
+        setAiInputHeight(0)
       }
     }).catch(() => {})
   }, [])
@@ -731,6 +762,7 @@ export default function App() {
             height: size.height,
             maximized,
             opacity: opacityRef.current,
+            aiInputHeight: aiInputHeightRef.current,
           })
         } catch (e) {
           console.error('Failed to save window config:', e)
@@ -765,6 +797,7 @@ export default function App() {
           height: size.height,
           maximized,
           opacity,
+          aiInputHeight,
         })
       })
       .catch(() => {})
@@ -2732,6 +2765,8 @@ export default function App() {
                         onClose={() => setShowAiByTab((prev) => ({ ...prev, [tid]: false }))}
                         initialContext={aiContextText}
                         onContextConsumed={() => setAiContextText(null)}
+                        inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
+                        onInputHeightChange={handleAiInputHeightChange}
                       />
                     </div>
                     <div className="ai-dock-resize" onMouseDown={startDockResize} style={resizeHandleStyle} />
@@ -3260,6 +3295,8 @@ export default function App() {
                         onClose={() => closeTab(activeTerminalTab.tabId)}
                         initialContext={aiContextText}
                         onContextConsumed={() => setAiContextText(null)}
+                        inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
+                        onInputHeightChange={handleAiInputHeightChange}
                       />
                     </div>
                   )}
@@ -3396,6 +3433,8 @@ export default function App() {
                       }}
                       initialContext={aiContextText}
                       onContextConsumed={() => setAiContextText(null)}
+                      inputHeight={aiInputHeight}
+                      onInputHeightChange={handleAiInputHeightChange}
                     />
                   </div>
                   {resizeHandles.map((h) => (

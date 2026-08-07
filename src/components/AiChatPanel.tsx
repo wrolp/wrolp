@@ -147,6 +147,10 @@ interface AiChatPanelProps {
   initialContext?: string | null
   /** Called when initialContext has been consumed. */
   onContextConsumed?: () => void
+  /** Height (px) of the input area; controlled by the parent for persistence. */
+  inputHeight?: number
+  /** Called when the user drags the input area resize handle. */
+  onInputHeightChange?: (height: number) => void
 }
 
 /** Simple unique-id generator (no external dependency). */
@@ -201,6 +205,8 @@ export default function AiChatPanel({
   onClose,
   initialContext,
   onContextConsumed,
+  inputHeight,
+  onInputHeightChange,
 }: AiChatPanelProps) {
   const { t } = useI18n()
   const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
@@ -385,7 +391,11 @@ export default function AiChatPanel({
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const pollRef = useRef<number>(0)
+
+  // Pending images selected via the "add image" button (data URLs).
+  const [pendingImages, setPendingImages] = useState<string[]>([])
 
   // Per-endpoint model list + manual fallback, fetched from /v1/models.
   const [models, setModels] = useState<string[]>([])
@@ -524,33 +534,52 @@ export default function AiChatPanel({
     [mergeToolEvents, finalizeAssistant, tabId, config],
   )
 
+  const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length) {
+      const readers = Array.from(files).map(
+        (f) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = reject
+            reader.readAsDataURL(f)
+          }),
+      )
+      Promise.all(readers)
+        .then((urls) => setPendingImages((prev) => [...prev, ...urls]))
+        .catch(() => {})
+    }
+    e.target.value = ''
+  }, [])
+
   const handleSend = useCallback(
     (textOverride?: string) => {
       const text = (textOverride ?? input).trim()
       if (!text || streaming) return
+      const images = pendingImages.length ? pendingImages : undefined
       setInput('')
+      setPendingImages([])
 
       const apiMessages: AiMessage[] = [
         { role: 'system' as const, content: config.systemPrompt },
         ...messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-        { role: 'user' as const, content: text },
+        { role: 'user' as const, content: text, images },
       ]
       runAgent(apiMessages, text)
     },
-    [input, streaming, messages, config, runAgent],
+    [input, streaming, messages, pendingImages, config, runAgent],
   )
 
-  // Auto-send initial context text when provided
+  // Fill the input box with the initial context text (e.g. terminal selection)
+  // instead of auto-sending, so the user can review/edit before asking.
   const initialSentRef = useRef(false)
   useEffect(() => {
     if (initialContext && !initialSentRef.current) {
       initialSentRef.current = true
-      const askMsg = `Help me with this terminal output:\n\n\`\`\`\n${initialContext}\n\`\`\``
-      const apiMessages: AiMessage[] = [
-        { role: 'system' as const, content: config.systemPrompt },
-        { role: 'user' as const, content: askMsg },
-      ]
-      runAgent(apiMessages, askMsg)
+      setInput(`Help me with this terminal output:\n\n\`\`\`\n${initialContext}\n\`\`\``)
+      // Defer focus until after the controlled value has rendered.
+      requestAnimationFrame(() => inputRef.current?.focus())
       if (onContextConsumed) onContextConsumed()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -569,6 +598,33 @@ export default function AiChatPanel({
       handleSend()
     }
   }
+
+  // Drag-to-resize the input area (controlled by the parent for persistence).
+  // When the user has dragged (inputHeight set), it becomes a hard fixed height
+  // so the handle can size the input freely; otherwise the area flexes with the panel.
+  const inputAreaRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null)
+  const onResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const startH = inputAreaRef.current?.offsetHeight ?? inputHeight ?? 120
+      dragRef.current = { startY: e.clientY, startH }
+      const onMove = (ev: MouseEvent) => {
+        if (!dragRef.current) return
+        const delta = dragRef.current.startY - ev.clientY
+        const next = Math.max(40, Math.min(2000, dragRef.current.startH + delta))
+        onInputHeightChange?.(next)
+      }
+      const onUp = () => {
+        dragRef.current = null
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [inputHeight, onInputHeightChange],
+  )
 
   const handleClear = () => {
     if (streaming) return
@@ -873,8 +929,38 @@ export default function AiChatPanel({
       </div>
 
       {/* Input */}
-      <div className="ai-chat-input-area">
+      <div
+        className="ai-chat-input-area"
+        ref={inputAreaRef}
+        style={
+          inputHeight !== undefined
+            ? { height: inputHeight, flex: '0 0 auto' }
+            : { flex: '1 1 0' }
+        }
+      >
+        <div
+          className="ai-chat-input-resizer"
+          onMouseDown={onResizeStart}
+          title={t('aiChatResizeInput')}
+        />
         <div className="ai-chat-input-wrap">
+          {pendingImages.length > 0 && (
+            <div className="ai-chat-image-previews">
+              {pendingImages.map((url, i) => (
+                <div className="ai-chat-image-chip" key={i}>
+                  <img src={url} alt="" />
+                  <button
+                    type="button"
+                    className="ai-chat-image-remove"
+                    onClick={() => setPendingImages((prev) => prev.filter((_, idx) => idx !== i))}
+                    title={t('aiChatRemoveImage')}
+                  >
+                    <Icon name="x" size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             className="ai-chat-input"
@@ -885,14 +971,33 @@ export default function AiChatPanel({
             rows={1}
             disabled={streaming}
           />
-          <button
-            className="ai-chat-send-btn"
-            onClick={() => handleSend()}
-            disabled={streaming || !input.trim()}
-            title={t('aiChatSend')}
-          >
-            {streaming ? <Icon name="pause" size={15} /> : <Icon name="send" size={15} />}
-          </button>
+          <div className="ai-chat-input-actions">
+            <button
+              type="button"
+              className="ai-chat-action-btn"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming}
+              title={t('aiChatAddImage')}
+            >
+              <Icon name="image" size={16} />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: 'none' }}
+              onChange={handleImageSelect}
+            />
+            <button
+              className="ai-chat-send-btn"
+              onClick={() => handleSend()}
+              disabled={streaming || !input.trim()}
+              title={t('aiChatSend')}
+            >
+              {streaming ? <Icon name="pause" size={15} /> : <Icon name="send" size={15} />}
+            </button>
+          </div>
         </div>
         <div className="ai-chat-input-hint">{t('aiChatInputHint')}</div>
       </div>

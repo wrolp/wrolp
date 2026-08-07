@@ -146,6 +146,7 @@ export interface WindowConfig {
   height: number
   maximized: boolean
   opacity: number
+  aiInputHeight: number
 }
 
 export async function saveWindowConfig(config: WindowConfig): Promise<void> {

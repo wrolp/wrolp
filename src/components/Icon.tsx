@@ -46,6 +46,7 @@ export type IconName =
   | 'panelBottom'
   | 'panelLeft'
   | 'panelRight'
+  | 'image'
 
 const PATHS: Record<IconName, ReactNode> = {
   refresh: (
@@ -277,6 +278,14 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <rect x="14" y="5" width="5" height="14" rx="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // Image / picture: a framed rectangle with a circle (sun) and a mountain.
+  image: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="M21 15l-5-5L5 21" />
     </>
   ),
 }

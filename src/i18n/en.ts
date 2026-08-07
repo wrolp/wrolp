@@ -236,6 +236,9 @@ const en = {
   aiChatToolsUsed: 'Tools used',
   aiChatAskAi: 'Ask AI',
   aiChatInputHint: 'AI can use tools on connected servers. Destructive commands are blocked.',
+  aiChatResizeInput: 'Drag to resize input area',
+  aiChatAddImage: 'Add image',
+  aiChatRemoveImage: 'Remove image',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: 'Troubleshooting',
