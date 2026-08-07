@@ -96,7 +96,8 @@ body.resize-v * {
   }
 }
 
-.settings-btn {
+.settings-btn,
+.ai-chat-btn {
   width: 20px;
   height: 20px;
 
@@ -107,12 +108,10 @@ body.resize-v * {
 }
 
 .ai-chat-btn {
-  width: 20px;
-  height: 20px;
+  color: #7cc7ff;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
+    color: #a5d8ff;
   }
 }
 

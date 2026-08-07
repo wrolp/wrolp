@@ -67,21 +67,19 @@ export const Titlebar: React.FC<TitlebarProps> = ({ onSettings, onAiChat }) => {
       <div className="titlebar-actions" ref={controlsRef}>
         {onAiChat && (
           <button className="titlebar-btn ai-chat-btn" onClick={onAiChat} title={t('titlebarAi')}>
-            <svg width="14" height="14" viewBox="0 0 16 16">
-              <path
-                d="M8 0l1.3 4.7L14 3.3l-2.7 3 2.7 3-4.7-1.4L8 16l-1.3-4.7L2 12.7l2.7-3-2.7-3 4.7 1.4L8 0z"
-                fill="currentColor"
-              />
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {/* sparkle — AI */}
+              <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" fill="currentColor" stroke="none" />
+              <path d="M19 15l.9 2.4L22 18.3l-2.1.9L19 21.6l-.9-2.4-2.1-.9 2.1-.9L19 15z" fill="currentColor" stroke="none" />
+              <path d="M5.5 14l.6 1.6L7.7 16.2l-1.6.6L5.5 18.4l-.6-1.6-1.6-.6 1.6-.6L5.5 14z" fill="currentColor" stroke="none" />
             </svg>
           </button>
         )}
         {onSettings && (
           <button className="titlebar-btn settings-btn" onClick={onSettings} title={t('titlebarSettings')}>
-            <svg width="14" height="14" viewBox="0 0 16 16">
-              <path
-                d="M7.5 0a1 1 0 011 1v1.2c.4.2.8.4 1.2.7l.8-.8a1 1 0 011.4 1.4l-.8.8c.3.4.5.8.7 1.2H13a1 1 0 010 2h-1.2c-.2.4-.4.8-.7 1.2l.8.8a1 1 0 01-1.4 1.4l-.8-.8c-.4.3-.8.5-1.2.7V13a1 1 0 01-2 0v-1.2c-.4-.2-.8-.4-1.2-.7l-.8.8a1 1 0 01-1.4-1.4l.8-.8c-.3-.4-.5-.8-.7-1.2H2a1 1 0 010-2h1.2c.2-.4.4-.8.7-1.2l-.8-.8a1 1 0 111.4-1.4l.8.8c.4-.3.8-.5 1.2-.7V1a1 1 0 011-1zm0 5a2.5 2.5 0 100 5 2.5 2.5 0 000-5z"
-                fill="currentColor"
-              />
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
           </button>
         )}
