@@ -4071,16 +4071,6 @@ input[type='password']::-ms-clear {
 }
 
 // ===== Docker Log Viewer (tab) =====
-.docker-log-tabs-wrapper {
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.docker-log-tab-content {
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .docker-log-viewer {
   display: flex;
   flex-direction: column;

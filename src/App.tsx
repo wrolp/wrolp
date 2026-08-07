@@ -392,9 +392,11 @@ export default function App() {
         containerName: container.name,
         containerId: container.id,
         containerImage: container.image,
+        embedded: true, // lives on the pane header, like an open file
       }
       setTabs((prev) => [...prev, newTab])
-      setActiveTabId(tabId)
+      // Show the log view on the focused pane (like opening a file).
+      setShellView(`dockerlog:${tabId}`)
     },
     [activeTabId],
   )
@@ -1263,6 +1265,13 @@ export default function App() {
     },
     [activeEditorKey],
   )
+
+  // Close a docker log view tab (it lives on the pane header like a file).
+  // The DockerLogViewer unmount effect stops its own stream.
+  const closeDockerLogTab = useCallback((tabId: number) => {
+    setTabs((prev) => prev.filter((t) => t.tabId !== tabId))
+    setShellView((prev) => (prev === `dockerlog:${tabId}` ? 'terminal' : prev))
+  }, [])
 
   const fileTreeRef = useRef<FileTreeHandle>(null)
 
@@ -2544,6 +2553,12 @@ export default function App() {
     height: number
   }
 
+  // Docker log viewer tabs — each is a view on a pane's header (like a file).
+  // Defined BEFORE renderPane/terminalContent so the pane header (which renders
+  // the log tabs) can reference them without hitting a temporal-dead-zone error.
+  const dockerLogTabs = tabs.filter((t) => t.tabType === 'dockerLog' && t.embedded)
+  const activeDockerLogTab = dockerLogTabs.find((t) => shellView === `dockerlog:${t.tabId}`) ?? null
+
   const renderPane = (
     leaf: SplitLeaf,
     focusedLeafIdForRoot: string | null,
@@ -2660,9 +2675,9 @@ export default function App() {
               🤖 AI
             </button>
           )}
-          {/* Open files live on the same pane-header panel as the AI button
-              (only on the focused pane so splits don't duplicate them). */}
-          {(isFocused || focusedLeafIdForRoot == null) && editorTabs.length > 0 && (
+          {/* Open files and docker logs live on the same pane-header panel as
+              the AI button (only on the focused pane so splits don't duplicate). */}
+          {(isFocused || focusedLeafIdForRoot == null) && (editorTabs.length > 0 || dockerLogTabs.length > 0) && (
             <div className="term-pane-file-tabs">
               <div
                 className={`term-pane-file-tab${shellView === 'terminal' ? ' active' : ''}`}
@@ -2693,6 +2708,28 @@ export default function App() {
                     onClick={(e) => {
                       e.stopPropagation()
                       closeEditorTab(t.key)
+                    }}
+                  >
+                    ×
+                  </span>
+                </div>
+              ))}
+              {dockerLogTabs.map((dt) => (
+                <div
+                  key={dt.tabId}
+                  className={`term-pane-file-tab${shellView === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShellView(`dockerlog:${dt.tabId}`)
+                  }}
+                  title={`${t('dockerLogs')}: ${dt.containerName}`}
+                >
+                  <span className="term-pane-file-tab-name">📋 {dt.containerName}</span>
+                  <span
+                    className="term-pane-file-tab-close"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      closeDockerLogTab(dt.tabId)
                     }}
                   >
                     ×
@@ -2735,7 +2772,7 @@ export default function App() {
               minWidth: 0,
               minHeight: 0,
               overflow: 'hidden',
-              display: isFocused && shellView !== 'terminal' && editorTabs.length > 0 ? 'none' : 'flex',
+              display: isFocused && shellView !== 'terminal' && (editorTabs.length > 0 || activeDockerLogTab != null) ? 'none' : 'flex',
               flexDirection: 'column',
             }}
           >
@@ -2953,6 +2990,22 @@ export default function App() {
               />
             </div>
           )}
+          {/* Docker log view replaces the terminal surface of the focused pane
+              (like an open file). */}
+          {isFocused && activeDockerLogTab != null && (
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <DockerLogViewer
+                tabId={activeDockerLogTab.tabId}
+                jumpTabId={activeDockerLogTab.jumpTabId!}
+                containerName={activeDockerLogTab.containerName!}
+                containerImage={activeDockerLogTab.containerImage}
+                defaultWordWrap={dockerWordWrap}
+                defaultFollow={dockerFollow}
+                maxLines={dockerMaxLines}
+                onAskAi={(text) => handleOpenAiChat(text)}
+              />
+            </div>
+          )}
         </div>
         <div className="term-pane-statusbar">
           <div className="tsb-left">
@@ -3133,32 +3186,6 @@ export default function App() {
       <div ref={terminalPoolRefCb} className="terminal-pool" />
     </div>
   )
-
-  // Docker log viewer tabs — always mounted, visibility toggled.
-  const dockerLogTabs = tabs.filter((t) => t.tabType === 'dockerLog' && !t.embedded)
-  const showDockerLog = dockerLogTabs.some((t) => t.tabId === activeTabId)
-  const dockerLogContent = dockerLogTabs.length > 0 ? (
-    <div className="docker-log-tabs-wrapper" style={{ display: showDockerLog ? 'flex' : 'none', flex: 1, minHeight: 0 }}>
-      {dockerLogTabs.map((tab) => (
-        <div
-          key={tab.tabId}
-          className="docker-log-tab-content"
-          style={{ display: tab.tabId === activeTabId ? 'flex' : 'none', flex: 1, minHeight: 0 }}
-        >
-          <DockerLogViewer
-            tabId={tab.tabId}
-            jumpTabId={tab.jumpTabId!}
-            containerName={tab.containerName!}
-            containerImage={tab.containerImage}
-            defaultWordWrap={dockerWordWrap}
-            defaultFollow={dockerFollow}
-            maxLines={dockerMaxLines}
-            onAskAi={(text) => handleOpenAiChat(text)}
-          />
-        </div>
-      ))}
-    </div>
-  ) : null
 
   // Sidebar body (connections / files / docker), reused for left or right placement.
   const sidebarBody = (() => {
@@ -3427,10 +3454,9 @@ export default function App() {
               connect() and lose focus). */}
           <div className="shell-pane" style={{ flex: 1, minHeight: 0 }}>
             <div className="shell-pane-body" style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'row' }}>
-              <div style={{ display: showDockerLog || aiChatActive ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+              <div style={{ display: aiChatActive ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
                 {terminalContent}
               </div>
-              {dockerLogContent}
               {/* Standalone AI Chat tab (full screen) */}
               {activeProfile && aiChatActive && activeTerminalTab && (
                 <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
