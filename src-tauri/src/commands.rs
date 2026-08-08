@@ -3433,9 +3433,25 @@ async fn execute_one_tool(
                 let output = run_local_command(command, local_cwd).await?;
                 return Ok(output);
             }
-            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
-            let output = crate::host_analysis::exec_on_handle(&*handle, &command).await?;
-            Ok(output)
+            // Remote shell: execute via the SSH jump handle.
+            match crate::remote_fs::get_jump_handle(state, tab_id) {
+                Ok(handle) => {
+                    let output = crate::host_analysis::exec_on_handle(&*handle, &command).await?;
+                    Ok(output)
+                }
+                // The tab isn't bound to any shell (e.g. a standalone AI tab):
+                // fall back to running the command on the LOCAL machine so the
+                // agent is still useful without an SSH connection.
+                Err(e) => {
+                    eprintln!("[run_command] no remote handle for tab {tab_id} ({}); falling back to LOCAL execution", e);
+                    let mut output = run_local_command(command, None).await?;
+                    // Wrap so the model knows the result came from the local machine.
+                    let v: serde_json::Value = serde_json::from_str(&output).unwrap_or(serde_json::json!({ "output": output }));
+                    let note = "NOTE: this command ran on the USER'S LOCAL MACHINE (no remote shell was attached to this tab).";
+                    output = serde_json::json!({ "ranOnLocal": true, "note": note, "exitCode": v["exitCode"].as_i64().unwrap_or(-1), "output": v["output"].as_str().unwrap_or("") }).to_string();
+                    Ok(output)
+                }
+            }
         }
         "analyze_server" => {
             let tab_id = args
@@ -3534,18 +3550,34 @@ async fn execute_one_tool(
                 }
             }
             let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-            let sess = sessions.get(&tab_id).ok_or("This tab is not connected to any server.")?;
-            let cfg = &sess.config;
-            let info = serde_json::json!({
-                "tabId": tab_id,
-                "connectionId": cfg.id,
-                "connectionName": cfg.name,
-                "host": cfg.host,
-                "port": cfg.port,
-                "username": cfg.username,
-                "status": if sess.data_tx.is_some() { "connected" } else { "disconnected" },
-            });
-            Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
+            match sessions.get(&tab_id) {
+                Some(sess) => {
+                    let cfg = &sess.config;
+                    let info = serde_json::json!({
+                        "tabId": tab_id,
+                        "connectionId": cfg.id,
+                        "connectionName": cfg.name,
+                        "host": cfg.host,
+                        "port": cfg.port,
+                        "username": cfg.username,
+                        "status": if sess.data_tx.is_some() { "connected" } else { "disconnected" },
+                    });
+                    Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
+                }
+                // No shell is bound to this tab (standalone AI tab, or the SSH
+                // session is gone). Report a LOCAL context instead of erroring
+                // so the agent knows it should run commands on the local machine.
+                None => {
+                    let info = serde_json::json!({
+                        "tabId": tab_id,
+                        "type": "local",
+                        "host": "localhost",
+                        "status": "connected",
+                        "note": "This tab is not bound to any remote server; commands will run on the USER'S LOCAL MACHINE.",
+                    });
+                    Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
+                }
+            }
         }
         other => Err(format!("Unknown tool: {}", other)),
     };

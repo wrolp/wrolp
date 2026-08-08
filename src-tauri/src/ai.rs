@@ -352,14 +352,16 @@ pub fn tool_definitions() -> Vec<OpenAiTool> {
             function: OpenAiFunction {
                 name: "run_command".into(),
                 description:
-                    "Execute a shell command on a connected remote server and return its output. \
+                    "Execute a shell command and return its output. Prefers the shell attached to \
+                     the given tabId (remote SSH server or local shell); when tabId is 0 / invalid \
+                     / not attached to any shell, the command runs on the user's LOCAL machine. \
                      Use for read-only or non-destructive operations (status, logs, inspections). \
                      Avoid destructive commands."
                         .into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "tabId": { "type": "integer", "description": "Tab id of the connected server" },
+                        "tabId": { "type": "integer", "description": "Tab id of the connected server; use 0 to run on the local machine" },
                         "command": { "type": "string", "description": "Shell command to execute" }
                     },
                     "required": ["tabId", "command"]
