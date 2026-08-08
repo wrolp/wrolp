@@ -3160,10 +3160,13 @@ export default function App() {
               </div>
             )}
           </div>
-          {/* Docked AI chat attached to this pane's shell tab */}
+          {/* Docked AI chat attached to this pane's shell tab. Hidden while the
+              pane is showing a file editor / docker log overlay so the AI panel
+              doesn't follow along next to the editor. */}
           {(tab?.tabType === 'terminal' || tab?.tabType === 'localShell') &&
             leaf.tabId != null &&
             activeProfile &&
+            sv === 'terminal' &&
             showAiByTab[leaf.tabId] &&
             aiFloatingTabId !== leaf.tabId && (
               (() => {
