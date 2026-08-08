@@ -127,6 +127,10 @@ pub struct AiChatState {
     /// Tool-call events emitted during the agent loop (for UI display).
     #[serde(default)]
     pub tool_events: Vec<ToolCallEvent>,
+    /// Set when the user pauses/stops the stream; the frontend stops polling and
+    /// the background task aborts early.
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 // ---- Path helpers ----

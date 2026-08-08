@@ -2914,6 +2914,7 @@ pub async fn start_ai_chat_stream(
                 done: false,
                 error: None,
                 tool_events: Vec::new(),
+                cancelled: false,
             },
         );
         cid
@@ -2975,12 +2976,18 @@ pub async fn poll_ai_chunks(
     let mut guard = state.ai_chat_buffers.lock().unwrap();
     match guard.get_mut(&chat_id) {
         Some(cs) => {
+            if cs.cancelled && cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
+                // User paused the stream — end polling with whatever text already
+                // arrived (there is none left to drain here).
+                guard.remove(&chat_id);
+                return Ok(Some((String::new(), true, None, Vec::new())));
+            }
             if cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
                 return Ok(Some((String::new(), false, None, Vec::new())));
             }
             let new_text: String = cs.chunks.drain(..).collect();
-            let done = cs.done;
-            let error = cs.error.clone();
+            let done = cs.done || cs.cancelled;
+            let error = if cs.cancelled && !cs.done { None } else { cs.error.clone() };
             let tool_events = std::mem::take(&mut cs.tool_events);
             if done {
                 guard.remove(&chat_id);
@@ -2989,6 +2996,18 @@ pub async fn poll_ai_chunks(
         }
         None => Ok(None),
     }
+}
+
+/// Pause/stop an in-flight AI chat. The stream is marked cancelled; the next
+/// `poll_ai_chunks` returns whatever text accumulated so far as done, so the
+/// frontend stops polling. The background task aborts on its next chunk.
+#[tauri::command]
+pub fn cancel_ai_chat(state: tauri::State<'_, AppState>, chat_id: String) -> Result<(), String> {
+    let mut guard = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
+    if let Some(cs) = guard.get_mut(&chat_id) {
+        cs.cancelled = true;
+    }
+    Ok(())
 }
 
 /// Start an AI chat that may call tools (agent loop). Streams assistant text
@@ -3016,6 +3035,7 @@ pub async fn start_ai_agent(
                 done: false,
                 error: None,
                 tool_events: Vec::new(),
+                cancelled: false,
             },
         );
         cid

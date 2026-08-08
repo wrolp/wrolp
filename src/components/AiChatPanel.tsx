@@ -5,6 +5,7 @@ import type { AiEndpointProfile, AiMessage, ToolCallEvent, AiPromptTemplate } fr
 import {
   startAiAgent,
   pollAiChunks,
+  cancelAiChat,
   listAiModels,
   confirmAiTool,
   sendInput,
@@ -1380,9 +1381,15 @@ export default function AiChatPanel({
             </div>
             <button
               className="ai-chat-send-btn"
-              onClick={() => handleSend()}
-              disabled={streaming || !input.trim() || !configured}
-              title={t('aiChatSend')}
+              onClick={() => {
+                if (streaming) {
+                  if (chatId) void cancelAiChat(chatId).catch(() => {})
+                } else {
+                  handleSend()
+                }
+              }}
+              disabled={!streaming && (!input.trim() || !configured)}
+              title={streaming ? t('aiChatStop') : t('aiChatSend')}
             >
               {streaming ? <Icon name="pause" size={15} /> : <Icon name="send" size={15} />}
             </button>

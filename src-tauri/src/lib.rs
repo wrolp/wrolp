@@ -239,6 +239,7 @@ pub fn run() {
       commands::ai_chat,
       commands::start_ai_chat_stream,
       commands::poll_ai_chunks,
+      commands::cancel_ai_chat,
       commands::start_ai_agent,
       commands::confirm_ai_tool,
     ])
