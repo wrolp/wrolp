@@ -5242,18 +5242,16 @@ input[type='password']::-ms-clear {
   .ai-chat-msg-copy {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
     align-self: flex-start;
-    margin-top: 8px;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    margin-top: 4px;
     color: $text-dim;
     background: transparent;
-    border: 1px solid $border;
+    border: 1px solid transparent;
     border-radius: 4px;
-    padding: 1px 6px;
+    padding: 0;
     cursor: pointer;
     transition: color 0.15s, border-color 0.15s, background 0.15s;
 

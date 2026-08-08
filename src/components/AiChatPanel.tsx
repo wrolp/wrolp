@@ -1076,7 +1076,7 @@ export default function AiChatPanel({
                   ))}
                 </div>
               )}
-              {msg.role === 'assistant' && !streaming && (
+              {!streaming && (
                 <button
                   className="ai-chat-msg-copy"
                   type="button"
@@ -1084,7 +1084,6 @@ export default function AiChatPanel({
                   onClick={() => copyMessage(msg.id, msg.content)}
                 >
                   <Icon name={msgCopied === msg.id ? 'clipboard' : 'copy'} size={12} />
-                  {msgCopied === msg.id ? t('copied') : t('copyMessage')}
                 </button>
               )}
             </div>
