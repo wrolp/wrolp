@@ -3731,14 +3731,29 @@ export default function App() {
               <div className="panel-divider-h" onMouseDown={handleDockerDividerMouseDown} />
             )}
 
-            {/* Docker containers on the connected host */}
-            {layout.sidebar.sections.docker.visible && activeTabId != null && (
+            {/* Docker containers on the focused host — follows the focused
+                shell so splitting / switching panes swaps the container list. */}
+            {layout.sidebar.sections.docker.visible && (focusedLeafTabId ?? activeTabId) != null && (
               <div
                 className="collapsible-section"
                 style={dockerExpanded ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' } : { flexShrink: 0 }}
               >
                 <DockerPanel
-                  jumpTabId={activeTabId}
+                  jumpTabId={focusedLeafTabId ?? activeTabId ?? 0}
+                  serverLabel={
+                    (() => {
+                      const dtId = focusedLeafTabId ?? activeTabId ?? 0
+                      const dt = tabs.find((t) => t.tabId === dtId)
+                      const dc = dt?.connectionId
+                        ? connections.find((c) => c.id === dt.connectionId)
+                        : undefined
+                      return dc
+                        ? dc.name === dc.host
+                          ? `${dc.host}:${dc.port}`
+                          : `${dc.name} (${dc.host}:${dc.port})`
+                        : dt?.connectionName
+                    })()
+                  }
                   expanded={dockerExpanded}
                   onToggleExpanded={() =>
                     updateLayout((l) => ({

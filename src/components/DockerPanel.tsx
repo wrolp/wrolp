@@ -20,6 +20,8 @@ interface DockerPanelProps {
   onViewLogs?: (container: ContainerInfo) => void
   /** Restart a running container. */
   onRestartContainer?: (container: ContainerInfo) => void
+  /** Label of the host machine whose containers are listed (shown in header). */
+  serverLabel?: string
 }
 
 /**
@@ -37,6 +39,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onAnalyzeContainer,
   onViewLogs,
   onRestartContainer,
+  serverLabel,
 }) => {
   const { t } = useI18n()
   const [containers, setContainers] = useState<ContainerInfo[]>([])
@@ -135,7 +138,15 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
           onClick={onToggleExpanded}
           title={expanded ? t('collapse') : t('expand')}
         />
-        <span style={{ flex: 1 }}>{t('docker')}</span>
+        <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {t('docker')}
+          {serverLabel && (
+            <span className="file-server-banner" style={{ margin: 0 }} title={serverLabel}>
+              <Icon name="terminal" size={11} />
+              <span className="file-server-label">{serverLabel}</span>
+            </span>
+          )}
+        </span>
         {expanded && (
           <button className="docker-refresh" title="Refresh containers" onClick={load} disabled={loading}>
             <Icon name="refresh" />
