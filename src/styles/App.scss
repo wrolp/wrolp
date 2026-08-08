@@ -5505,6 +5505,26 @@ input[type='password']::-ms-clear {
     padding-left: 2px;
   }
 
+  .ai-chat-msg-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 8px 0 2px;
+    max-width: 100%;
+
+    .ai-chat-tools-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: $text-dim;
+      padding-left: 2px;
+    }
+  }
+
   .ai-tool-card {
     border: 1px solid $border;
     border-radius: 8px;

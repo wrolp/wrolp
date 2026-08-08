@@ -122,6 +122,9 @@ export interface ChatMessage {
   content: string
   /** Images attached to a user message (Base64 data URLs), shown in the chat. */
   images?: string[]
+  /** Tool calls used by the assistant to produce this reply (shown inside the
+      assistant message bubble, grouped with its answer). */
+  toolCalls?: ToolCallEvent[]
 }
 
 interface AiConv {
@@ -582,12 +585,34 @@ export default function AiChatPanel({
     })
   }, [])
 
+  // Commit the assistant reply as a message, attaching the tool calls that
+  // were used during this turn. The tool calls are moved out of the global
+  // list (which is only used for the live/in-progress display) into the
+  // message itself, so each answer renders together with its tools.
   const finalizeAssistant = useCallback((text: string, err?: string | null) => {
-    if (text) {
-      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: text }])
-    } else if (err) {
-      setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Error: ' + err }])
-    }
+    setToolCalls((prev) => {
+      if (prev.length === 0) {
+        if (text) {
+          setMessages((ms) => [...ms, { id: nextId(), role: 'assistant', content: text }])
+        } else if (err) {
+          setMessages((ms) => [...ms, { id: nextId(), role: 'assistant', content: 'Error: ' + err }])
+        }
+        return prev
+      }
+      const tools = prev.slice()
+      // Always attach the tools to a message — even when there was no text
+      // reply (a tool-only turn still shows its tool calls).
+      setMessages((ms) => [
+        ...ms,
+        {
+          id: nextId(),
+          role: 'assistant',
+          content: text || (err ? 'Error: ' + err : ''),
+          toolCalls: tools,
+        },
+      ])
+      return []
+    })
   }, [])
 
   // Poll the backend for streamed chunks until the agent run finishes.
@@ -598,6 +623,14 @@ export default function AiChatPanel({
         if (result === null) {
           setStreaming(false)
           finalizeAssistant(accumulated)
+          requestAnimationFrame(() => {
+            const el = inputRef.current
+            if (el) {
+              el.focus()
+              const pos = el.value.length
+              el.setSelectionRange(pos, pos)
+            }
+          })
           return
         }
         const [newText, done, err, events] = result
@@ -611,6 +644,16 @@ export default function AiChatPanel({
           finalizeAssistant(accumulated.trim(), err)
           setStreamingText('')
           if (err) setError(err)
+          // Return focus to the input box so the user can continue the
+          // conversation without clicking.
+          requestAnimationFrame(() => {
+            const el = inputRef.current
+            if (el) {
+              el.focus()
+              const pos = el.value.length
+              el.setSelectionRange(pos, pos)
+            }
+          })
           return
         }
         pollRef.current = window.setTimeout(poll, 100)
@@ -649,7 +692,10 @@ export default function AiChatPanel({
       setShowSuggestions(false)
       setStreaming(true)
       setStreamingText('')
-      setToolCalls([])
+      // NOTE: tool calls from previous turns are intentionally NOT cleared here
+      // — they belong to their own conversation turns and are kept alongside
+      // the messages. Clearing only happens on "clear conversation" or when
+      // editing a message (startEditMessage).
       setError(null)
       if (userDisplay) {
         setMessages((prev) => [
@@ -726,6 +772,13 @@ export default function AiChatPanel({
       const images = pendingImages.length ? pendingImages : undefined
       setInput('')
       setPendingImages([])
+
+      // Keep the keyboard focus on the input box after submitting so the user
+      // can keep typing without clicking.
+      requestAnimationFrame(() => {
+        const el = inputRef.current
+        if (el) el.focus()
+      })
 
       const apiMessages: AiMessage[] = [
         { role: 'system' as const, content: config.systemPrompt },
@@ -1133,6 +1186,16 @@ export default function AiChatPanel({
                   {msg.content}
                 </ReactMarkdown>
               </div>
+              {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
+                <div className="ai-chat-msg-tools">
+                  <div className="ai-chat-tools-label">
+                    <Icon name="settings" size={11} /> {t('aiChatToolsUsed')}
+                  </div>
+                  {msg.toolCalls.map((tc) => (
+                    <ToolCallCard key={tc.id} tool={tc} onConfirm={confirmAndResume} />
+                  ))}
+                </div>
+              )}
               {msg.images && msg.images.length > 0 && (
                 <div className="ai-chat-msg-images">
                   {msg.images.map((url, i) => (
@@ -1204,12 +1267,13 @@ export default function AiChatPanel({
           </div>
         )}
 
-        {/* Tool-call cards (during agent loop) */}
-        {toolCalls.length > 0 && (
+        {/* Tool-call cards in-flight (the current streaming turn). Finished
+            turns are attached to their assistant message instead. */}
+        {streaming && toolCalls.length > 0 && (
           <div className="ai-tool-calls">
-              <div className="ai-tool-calls-label">
-                <Icon name="settings" size={12} /> {t('aiChatToolsUsed')}
-              </div>
+            <div className="ai-tool-calls-label">
+              <Icon name="settings" size={12} /> {t('aiChatToolsUsed')}
+            </div>
             {toolCalls.map((tc) => (
               <ToolCallCard key={tc.id} tool={tc} onConfirm={confirmAndResume} />
             ))}
