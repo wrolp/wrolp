@@ -368,6 +368,9 @@ pub enum TargetRef {
     port: u16,
     auth: TargetAuth,
   },
+  /// The user's local machine (used when the focused tab is a local shell).
+  #[serde(rename = "local")]
+  Local { #[serde(rename = "tabId")] tab_id: u32 },
 }
 
 /// A Docker container discovered via `docker ps` on the jump host.

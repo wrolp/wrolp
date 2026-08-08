@@ -193,7 +193,11 @@ export default function App() {
     const focusedTab = focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
     if (!focusedTab) return
     const container = focusedTab.dockerContainer
-    if (container) {
+    if (focusedTab.tabType === 'localShell') {
+      // Local shell → browse the user's own machine.
+      setFileMode('local')
+      setFileTarget({ kind: 'local', tabId: focusedTab.tabId })
+    } else if (container) {
       // Focused shell is inside a Docker container → show its file panel.
       // The docker exec runs on the same SSH session the shell uses, so that
       // session's tabId is the jump host for the container file ops.
@@ -286,10 +290,9 @@ export default function App() {
   const tabToLeafRef = useRef<Map<number, string>>(new Map())
 
   // Reset the Files panel target when switching tabs (targets are tab-scoped).
-  useEffect(() => {
-    setFileTarget(null)
-    setFileMode('ssh')
-  }, [activeTabId])
+  // NOTE: do NOT reset the file panel mode here on workspace switch — the
+  // focused-leaf effect above decides the correct mode (ssh/jump/docker/local)
+  // for the newly focused tab, so a blanket reset would override local/docker.
 
   // Send any post-connect command (e.g. docker exec) when a tab finishes
   // connecting. The command is persisted on the tab (`postConnectCmd`) so it is
@@ -1213,7 +1216,7 @@ export default function App() {
   // `target` identifies which remote filesystem the file lives on.
   const openInEditor = useCallback(async (target: TargetRef, path: string) => {
     const key = `${JSON.stringify(target)}:${path}`
-    const legacyTabId = target.kind === 'session' ? target.tabId : target.jumpTabId
+    const legacyTabId = target.kind === 'session' || target.kind === 'local' ? target.tabId : target.jumpTabId
     setEditorTabs((prev) => {
       if (prev.some((t) => t.key === key)) return prev
       return [
@@ -3691,7 +3694,13 @@ export default function App() {
                   tabId={ftabId}
                   isConnected={true}
                   serverLabel={serverLabel}
-                  defaultPath={fileTarget?.kind === 'docker' ? '/' : '.'}
+                  defaultPath={
+                    fileTarget?.kind === 'docker'
+                      ? '/'
+                      : fileTarget?.kind === 'local'
+                        ? tabs.find((t) => t.tabId === fileTarget.tabId)?.localShellCwd ?? '/'
+                        : '.'
+                  }
                   targetRef={fileTarget ?? undefined}
                   fileMode={fileMode}
                   onFileModeChange={setFileMode}

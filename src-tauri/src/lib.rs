@@ -5,6 +5,7 @@ mod db;
 mod docker_analysis;
 mod docker_fs;
 mod host_analysis;
+mod local_fs;
 mod remote_fs;
 mod ssh_session;
 mod vault;

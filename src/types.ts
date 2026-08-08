@@ -134,6 +134,7 @@ export type TargetRef =
   | { kind: 'jumpRemote'; jumpTabId: number; host: string; port: number; auth: TargetAuth }
   | { kind: 'docker'; jumpTabId: number; container: string; user?: string }
   | { kind: 'dockerSsh'; jumpTabId: number; host: string; port: number; auth: TargetAuth }
+  | { kind: 'local'; tabId: number }
 
 /** A Docker container discovered via `docker ps` on a connected (jump) host. */
 export interface ContainerInfo {
@@ -162,7 +163,7 @@ export interface LocalTerminalEntry {
  * Which filesystem the Files panel is currently browsing. Drives the mode
  * switcher (SSH local session / ProxyJump remote / Docker container).
  */
-export type FileTargetMode = 'ssh' | 'jump' | 'docker'
+export type FileTargetMode = 'ssh' | 'jump' | 'docker' | 'local'
 
 /** Human-readable label for a target (used in chips / headers). */
 // ===== Host Analysis =====
@@ -275,6 +276,8 @@ export function targetLabel(target: TargetRef): string {
       return `docker:${target.container}`
     case 'dockerSsh':
       return `docker-ssh:${target.host}:${target.port}`
+    case 'local':
+      return 'Local machine'
   }
 }
 

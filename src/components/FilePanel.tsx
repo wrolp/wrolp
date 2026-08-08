@@ -726,23 +726,25 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           Files
           {/* Mode switcher: browse the local SSH session, a ProxyJump remote, or a
               Docker container's filesystem. */}
-          <span className="file-mode-switch" role="tablist">
-            <button
-              className={fileMode === 'ssh' ? 'active' : ''}
-              title={t('localSshSession')}
-              onClick={() => handleModeClick('ssh')}
-            >{t('modeSsh')}</button>
-            <button
-              className={fileMode === 'jump' ? 'active' : ''}
-              title={t('proxyJumpRemote')}
-              onClick={() => handleModeClick('jump')}
-            >{t('modeJump')}</button>
-            <button
-              className={fileMode === 'docker' ? 'active' : ''}
-              title={t('dockerContainer')}
-              onClick={() => handleModeClick('docker')}
-            >{t('modeDocker')}</button>
-          </span>
+          {fileMode !== 'local' && (
+            <span className="file-mode-switch" role="tablist">
+              <button
+                className={fileMode === 'ssh' ? 'active' : ''}
+                title={t('localSshSession')}
+                onClick={() => handleModeClick('ssh')}
+              >{t('modeSsh')}</button>
+              <button
+                className={fileMode === 'jump' ? 'active' : ''}
+                title={t('proxyJumpRemote')}
+                onClick={() => handleModeClick('jump')}
+              >{t('modeJump')}</button>
+              <button
+                className={fileMode === 'docker' ? 'active' : ''}
+                title={t('dockerContainer')}
+                onClick={() => handleModeClick('docker')}
+              >{t('modeDocker')}</button>
+            </span>
+          )}
         </span>
         {expanded && (
           <div className="file-toolbar">

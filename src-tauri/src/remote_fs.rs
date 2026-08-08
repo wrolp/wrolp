@@ -210,6 +210,7 @@ pub async fn build_fs(
       let jump = get_jump_handle(state, *jump_tab_id)?;
       Ok(Box::new(DockerExecFs::new(jump, container.clone(), user.clone())))
     }
+    TargetRef::Local { .. } => Ok(Box::new(crate::local_fs::LocalFs::new())),
   }
 }
 
