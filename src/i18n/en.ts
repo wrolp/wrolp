@@ -247,6 +247,7 @@ const en = {
   aiChatResizeInput: 'Drag to resize input area',
   aiChatAddImage: 'Add image',
   aiChatRemoveImage: 'Remove image',
+  aiChatPickTemplate: 'Pick template',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: 'Troubleshooting',

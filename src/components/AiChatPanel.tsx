@@ -498,9 +498,24 @@ export default function AiChatPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pollRef = useRef<number>(0)
+  const templatePickerRef = useRef<HTMLDivElement>(null)
 
   // Pending images selected via the "add image" button (data URLs).
   const [pendingImages, setPendingImages] = useState<string[]>([])
+  // Whether the template picker dropdown (next to the image previews) is open.
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
+
+  // Close the template picker when clicking outside of it.
+  useEffect(() => {
+    if (!templatePickerOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (!templatePickerRef.current?.contains(e.target as Node)) {
+        setTemplatePickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [templatePickerOpen])
 
   // Per-endpoint model list + manual fallback, fetched from /v1/models.
   const [models, setModels] = useState<string[]>([])
@@ -1181,23 +1196,96 @@ export default function AiChatPanel({
             disabled={streaming}
           />
           <div className="ai-chat-input-actions">
-            <button
-              type="button"
-              className="ai-chat-action-btn"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={streaming}
-              title={t('aiChatAddImage')}
-            >
-              <Icon name="image" size={16} />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              style={{ display: 'none' }}
-              onChange={handleImageSelect}
-            />
+            <div className="ai-chat-input-actions-left">
+              <button
+                type="button"
+                className="ai-chat-action-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={streaming}
+                title={t('aiChatAddImage')}
+              >
+                <Icon name="image" size={16} />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleImageSelect}
+              />
+              <div className="ai-chat-template-wrap" ref={templatePickerRef}>
+              <button
+                type="button"
+                className="ai-chat-action-btn"
+                onClick={() => setTemplatePickerOpen((v) => !v)}
+                disabled={streaming}
+                title={t('aiChatPickTemplate')}
+              >
+                <Icon name="sparkles" size={16} />
+              </button>
+              {templatePickerOpen && (
+                <div className="ai-chat-template-dropdown">
+                  {SUGGESTION_GROUPS.map((group) => {
+                    const visibleKeys = group.keys.filter((key) => !hiddenBuiltins.includes(key))
+                    const customInGroup = customByBuiltin.map.get(group.id) ?? []
+                    if (visibleKeys.length === 0 && customInGroup.length === 0) return null
+                    return (
+                      <div className="ai-chat-template-group" key={group.id}>
+                        <div className="ai-chat-template-group-title">{t(group.titleKey)}</div>
+                        {visibleKeys.map((key) => (
+                          <button
+                            key={key}
+                            type="button"
+                            className="ai-chat-template-item"
+                            onClick={() => {
+                              fillInput(t(key))
+                              setTemplatePickerOpen(false)
+                            }}
+                          >
+                            {t(key)}
+                          </button>
+                        ))}
+                        {customInGroup.map((tpl) => (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            className="ai-chat-template-item"
+                            title={tpl.prompt}
+                            onClick={() => {
+                              fillInput(tpl.prompt)
+                              setTemplatePickerOpen(false)
+                            }}
+                          >
+                            {tpl.name}
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  })}
+                  {customByBuiltin.generic.length > 0 && (
+                    <div className="ai-chat-template-group">
+                      <div className="ai-chat-template-group-title">{t('aiChatSugCustom')}</div>
+                      {customByBuiltin.generic.map((tpl) => (
+                        <button
+                          key={tpl.id}
+                          type="button"
+                          className="ai-chat-template-item"
+                          title={tpl.prompt}
+                          onClick={() => {
+                            fillInput(tpl.prompt)
+                            setTemplatePickerOpen(false)
+                          }}
+                        >
+                          {tpl.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            </div>
             <button
               className="ai-chat-send-btn"
               onClick={() => handleSend()}

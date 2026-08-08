@@ -248,6 +248,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatResizeInput: '拖动以调整输入区高度',
   aiChatAddImage: '添加图片',
   aiChatRemoveImage: '移除图片',
+  aiChatPickTemplate: '选择模板',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: '问题排查',
