@@ -119,6 +119,8 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  /** Images attached to a user message (Base64 data URLs), shown in the chat. */
+  images?: string[]
 }
 
 interface AiConv {
@@ -504,6 +506,8 @@ export default function AiChatPanel({
   const [pendingImages, setPendingImages] = useState<string[]>([])
   // Whether the template picker dropdown (next to the image previews) is open.
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
+  // URL of an image currently shown in the fullscreen lightbox (null = closed).
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
 
   // Close the template picker when clicking outside of it.
   useEffect(() => {
@@ -516,6 +520,16 @@ export default function AiChatPanel({
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [templatePickerOpen])
+
+  // Close the image lightbox with Escape.
+  useEffect(() => {
+    if (!previewImage) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPreviewImage(null)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [previewImage])
 
   // Per-endpoint model list + manual fallback, fetched from /v1/models.
   const [models, setModels] = useState<string[]>([])
@@ -630,14 +644,17 @@ export default function AiChatPanel({
   )
 
   const runAgent = useCallback(
-    (apiMessages: AiMessage[], userDisplay: string) => {
+    (apiMessages: AiMessage[], userDisplay: string, userImages?: string[]) => {
       setShowSuggestions(false)
       setStreaming(true)
       setStreamingText('')
       setToolCalls([])
       setError(null)
       if (userDisplay) {
-        setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: userDisplay }])
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: 'user', content: userDisplay, images: userImages },
+        ])
       }
 
       startAiAgent(apiMessages, tabId, config ?? undefined)
@@ -714,7 +731,7 @@ export default function AiChatPanel({
         ...messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
         { role: 'user' as const, content: text, images },
       ]
-      runAgent(apiMessages, text)
+      runAgent(apiMessages, text, images)
     },
     [input, streaming, messages, pendingImages, config, configured, onOpenSettings, runAgent],
   )
@@ -1044,6 +1061,21 @@ export default function AiChatPanel({
                   {msg.content}
                 </ReactMarkdown>
               </div>
+              {msg.images && msg.images.length > 0 && (
+                <div className="ai-chat-msg-images">
+                  {msg.images.map((url, i) => (
+                    <button
+                      type="button"
+                      className="ai-chat-msg-image-chip"
+                      key={i}
+                      onClick={() => setPreviewImage(url)}
+                      title={t('aiChatViewImage')}
+                    >
+                      <img src={url} alt="" />
+                    </button>
+                  ))}
+                </div>
+              )}
               {msg.role === 'assistant' && !streaming && (
                 <button
                   className="ai-chat-msg-copy"
@@ -1509,6 +1541,29 @@ export default function AiChatPanel({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Fullscreen image lightbox */}
+      {previewImage && (
+        <div className="ai-chat-lightbox" onClick={() => setPreviewImage(null)}>
+          <button
+            type="button"
+            className="ai-chat-lightbox-close"
+            onClick={(e) => {
+              e.stopPropagation()
+              setPreviewImage(null)
+            }}
+            title={t('close')}
+          >
+            <Icon name="x" size={20} />
+          </button>
+          <img
+            src={previewImage}
+            alt=""
+            className="ai-chat-lightbox-img"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>

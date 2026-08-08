@@ -248,6 +248,7 @@ const en = {
   aiChatAddImage: 'Add image',
   aiChatRemoveImage: 'Remove image',
   aiChatPickTemplate: 'Pick template',
+  aiChatViewImage: 'View image',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: 'Troubleshooting',

@@ -221,8 +221,10 @@ struct OpenAiMessage {
     role: String,
     // NOTE: must NOT skip when None. Models like gpt-oss reject a missing
     // `content` field and require it to be an explicit string or `null`
-    // (an assistant message carrying tool_calls uses `null`).
-    content: Option<String>,
+    // (an assistant message carrying tool_calls uses `null`). When the message
+    // carries images the content is a multimodal array:
+    //   [{"type":"text","text":"..."},{"type":"image_url","image_url":{"url":"data:..."}}]
+    content: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OpenAiToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -561,7 +563,7 @@ pub async fn ai_chat_sync(config: &AiEndpointProfile, messages: &[AiMessage]) ->
             .iter()
             .map(|m| OpenAiMessage {
                 role: m.role.clone(),
-                content: m.content.clone(),
+                content: openai_content(m),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
@@ -628,7 +630,7 @@ pub async fn execute_streaming_chat(
             .iter()
             .map(|m| OpenAiMessage {
                 role: m.role.clone(),
-                content: m.content.clone(),
+                content: openai_content(m),
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
@@ -703,6 +705,34 @@ pub type ToolResult = (String, String);
 
 /// Convert a public `AiMessage` into the OpenAI wire format, preserving
 /// assistant tool-calls and tool-result messages.
+/// Build the OpenAI `content` value for a message. Plain text messages use a
+/// string; messages carrying images use a multimodal content array
+/// (`text` + `image_url` parts). Messages that only carry tool calls use `null`
+/// (as before).
+fn openai_content(m: &AiMessage) -> Option<serde_json::Value> {
+    let has_images = m.images.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+    if !has_images {
+        return m.content.clone().map(serde_json::Value::String);
+    }
+    let mut parts: Vec<serde_json::Value> = Vec::new();
+    if let Some(text) = m.content.as_ref() {
+        if !text.is_empty() {
+            parts.push(serde_json::json!({ "type": "text", "text": text }));
+        }
+    }
+    for img in m.images.iter().flatten() {
+        parts.push(serde_json::json!({
+            "type": "image_url",
+            "image_url": { "url": img }
+        }));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Array(parts))
+    }
+}
+
 fn to_openai_messages(messages: &[AiMessage]) -> Vec<OpenAiMessage> {
     messages
         .iter()
@@ -723,8 +753,8 @@ fn to_openai_messages(messages: &[AiMessage]) -> Vec<OpenAiMessage> {
                 // When an assistant message carries tool_calls, `content` is None
                 // and will be serialized as the explicit `null` that OpenAI-style
                 // models (incl. gpt-oss) require. Regular text messages keep their
-                // content string.
-                content: m.content.clone(),
+                // content string; messages with images get a multimodal array.
+                content: if has_tool_calls { None } else { openai_content(m) },
                 tool_calls: if has_tool_calls { tool_calls } else { None },
                 tool_call_id: m.tool_call_id.clone(),
                 // `role: "tool"` messages must not carry `name` (that field is only
