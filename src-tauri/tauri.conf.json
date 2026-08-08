@@ -28,6 +28,9 @@
     }
   },
   "plugins": {
+    "shell": {
+      "open": true
+    },
     "updater": {
       "endpoints": [
         "https://github.com/wrolp/wrolp/releases/latest/download/latest.json"

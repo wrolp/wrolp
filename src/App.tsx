@@ -35,7 +35,7 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, setAutoRecord, setRecordingEnabled, getRecordingEnabled, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalTerminals } from './commands'
+import { loadWindowConfig, saveWindowConfig, setAutoRecord, setRecordingEnabled, getRecordingEnabled, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, openConfigDir, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalTerminals } from './commands'
 import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
@@ -2423,7 +2423,22 @@ export default function App() {
                               : 'unknown'}
                           </span>
                         </div>
-                        <div style={{ marginTop: 10 }}>
+                        <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <button
+                            className="app-version-link"
+                            onClick={async () => {
+                              try {
+                                await openConfigDir()
+                              } catch (e) {
+                                console.error('open config dir failed', e)
+                              }
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: 4 }}>
+                              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                            </svg>
+                            {t('openConfigDir')}
+                          </button>
                           <button
                             className="app-version-link"
                             onClick={() => open(appVersion.repoUrl)}

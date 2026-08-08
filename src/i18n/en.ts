@@ -176,6 +176,7 @@ const en = {
   olderLinesDropped: 'Older lines are dropped so the buffer isn’t flooded.',
   about: 'About',
   aboutDesc: 'Wrolp Terminal — an SSH terminal and server-ops tool. Build and repository information:',
+  openConfigDir: 'Open config folder',
   language: 'Language',
 
   // Settings: AI

@@ -2783,6 +2783,41 @@ pub fn get_app_version() -> AppVersion {
   }
 }
 
+/// Open the application config directory in the system file manager
+/// (e.g. Explorer on Windows). Avoids the frontend shell-plugin `open` scope
+/// which only allows URLs by default.
+#[tauri::command]
+pub fn open_config_dir() -> Result<(), String> {
+  let dir = get_data_dir().ok_or_else(|| "Config directory not found".to_string())?;
+  if !dir.exists() {
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create config dir: {}", e))?;
+  }
+  let path = dir.to_string_lossy().to_string();
+  eprintln!("[open_config_dir] opening {}", path);
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("explorer")
+      .arg(&path)
+      .spawn()
+      .map_err(|e| format!("Failed to open config dir: {}", e))?;
+  }
+  #[cfg(target_os = "macos")]
+  {
+    std::process::Command::new("open")
+      .arg(&path)
+      .spawn()
+      .map_err(|e| format!("Failed to open config dir: {}", e))?;
+  }
+  #[cfg(all(unix, not(target_os = "macos")))]
+  {
+    std::process::Command::new("xdg-open")
+      .arg(&path)
+      .spawn()
+      .map_err(|e| format!("Failed to open config dir: {}", e))?;
+  }
+  Ok(())
+}
+
 // ==================== AI Chat ====================
 
 use crate::ai::{self, AiConfig, AiMessage, AiChatState};

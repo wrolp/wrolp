@@ -376,6 +376,13 @@ export async function getAppVersion(): Promise<import('./types').AppVersion> {
   return await invoke<import('./types').AppVersion>('get_app_version')
 }
 
+// ===== Config Directory =====
+
+/** Opens the app config directory in the system file manager. */
+export async function openConfigDir(): Promise<void> {
+  return await invoke<void>('open_config_dir')
+}
+
 // ===== Host Analysis =====
 
 export async function analyzeHost(tabId: number): Promise<import('./types').HostAnalysis> {

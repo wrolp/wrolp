@@ -230,6 +230,7 @@ pub fn run() {
       commands::stop_docker_logs_stream,
       commands::command_help,
       commands::get_app_version,
+      commands::open_config_dir,
       commands::load_ai_config,
       commands::save_ai_config,
       commands::encrypt_api_key,

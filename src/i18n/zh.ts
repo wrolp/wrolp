@@ -178,6 +178,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   olderLinesDropped: '较旧的行会被丢弃，以免缓冲区被刷满。',
   about: '关于',
   aboutDesc: 'Wrolp Terminal — 面向运维的 SSH 终端与服务器管理工具。构建与仓库信息：',
+  openConfigDir: '打开配置目录',
   language: '语言',
 
   // Settings: AI
