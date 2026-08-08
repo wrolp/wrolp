@@ -736,6 +736,55 @@ export default function AiChatPanel({
     [input, streaming, messages, pendingImages, config, configured, onOpenSettings, runAgent],
   )
 
+  // Re-edit the last user message: remove that message and everything after it
+  // (its AI reply etc.), put its text/images back into the input box, and mark
+  // the session so the re-sent message replaces the old pair (it is not
+  // duplicated, because the old messages are already removed from the list).
+  const startEditMessage = useCallback((msgId: string) => {
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === msgId)
+      if (idx < 0) return prev
+      const target = prev[idx]
+      if (target.role !== 'user') return prev
+      // Only the LAST user message can be edited (truncation would drop
+      // messages in between otherwise).
+      let lastUserIdx = -1
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].role === 'user') {
+          lastUserIdx = i
+          break
+        }
+      }
+      if (idx !== lastUserIdx) return prev
+      setInput(target.content)
+      if (target.images && target.images.length > 0) {
+        const imgs = target.images.slice()
+        setPendingImages((p) => [...p, ...imgs])
+      }
+      // Drop this message and everything after it (the old user input + the
+      // AI reply it produced).
+      return prev.slice(0, idx)
+    })
+  }, [])
+
+  // True when the given user message is the last user message in the
+  // conversation (only that one can be re-edited).
+  const isLastUserMessage = useCallback(
+    (msgId: string) => {
+      const idx = messages.findIndex((m) => m.id === msgId)
+      if (idx < 0) return false
+      let lastUserIdx = -1
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          lastUserIdx = i
+          break
+        }
+      }
+      return idx === lastUserIdx
+    },
+    [messages],
+  )
+
   // Fill the input box with the initial context text (e.g. terminal selection)
   // instead of auto-sending, so the user can review/edit before asking.
   const initialSentRef = useRef(false)
@@ -1077,14 +1126,26 @@ export default function AiChatPanel({
                 </div>
               )}
               {!streaming && (
-                <button
-                  className="ai-chat-msg-copy"
-                  type="button"
-                  title={msgCopied === msg.id ? t('copied') : t('copyMessage')}
-                  onClick={() => copyMessage(msg.id, msg.content)}
-                >
-                  <Icon name={msgCopied === msg.id ? 'clipboard' : 'copy'} size={12} />
-                </button>
+                <div className="ai-chat-msg-actions">
+                  <button
+                    className="ai-chat-msg-copy"
+                    type="button"
+                    title={msgCopied === msg.id ? t('copied') : t('copyMessage')}
+                    onClick={() => copyMessage(msg.id, msg.content)}
+                  >
+                    <Icon name={msgCopied === msg.id ? 'clipboard' : 'copy'} size={12} />
+                  </button>
+                  {msg.role === 'user' && isLastUserMessage(msg.id) && (
+                    <button
+                      className="ai-chat-msg-copy"
+                      type="button"
+                      title={t('aiChatEditMessage')}
+                      onClick={() => startEditMessage(msg.id)}
+                    >
+                      <Icon name="edit" size={12} />
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>

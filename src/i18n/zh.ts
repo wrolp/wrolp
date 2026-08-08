@@ -250,6 +250,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatRemoveImage: '移除图片',
   aiChatPickTemplate: '选择模板',
   aiChatViewImage: '查看图片',
+  aiChatEditMessage: '编辑消息',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: '问题排查',

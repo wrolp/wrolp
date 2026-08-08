@@ -5239,14 +5239,20 @@ input[type='password']::-ms-clear {
     }
   }
 
+  .ai-chat-msg-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    margin-top: 4px;
+  }
+
   .ai-chat-msg-copy {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 22px;
     height: 22px;
-    align-self: flex-start;
-    margin-top: 4px;
     color: $text-dim;
     background: transparent;
     border: 1px solid transparent;

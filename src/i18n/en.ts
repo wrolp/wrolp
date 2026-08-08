@@ -249,6 +249,7 @@ const en = {
   aiChatRemoveImage: 'Remove image',
   aiChatPickTemplate: 'Pick template',
   aiChatViewImage: 'View image',
+  aiChatEditMessage: 'Edit message',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: 'Troubleshooting',
