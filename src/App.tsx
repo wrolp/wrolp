@@ -3170,14 +3170,18 @@ export default function App() {
                 const tid = leaf.tabId as number
                 const side = aiDockSideByTab[tid] ?? 'right'
                 const isVertical = side === 'top' || side === 'bottom'
+                // Default size is half of the pane; once the user drags the
+                // divider the explicit px size takes over (persisted per tab).
+                const hasExplicitSize = aiDockSizeByTab[tid] != null
                 const size = aiDockSizeByTab[tid] ?? (isVertical ? 220 : 340)
+                const dockFlex = hasExplicitSize ? `0 0 ${size}px` : '0 0 50%'
                 // Switch dock side (top/bottom = stacked above/below; left/right = beside).
                 const setDockSide = (s: 'left' | 'top' | 'right' | 'bottom') =>
                   setAiDockSideByTab((prev) => ({ ...prev, [tid]: s }))
                 const dockStyle: React.CSSProperties = isVertical
                   ? {
-                      height: size,
-                      flex: `0 0 ${size}px`,
+                      height: hasExplicitSize ? size : undefined,
+                      flex: dockFlex,
                       minWidth: 0,
                       minHeight: 0,
                       display: 'flex',
@@ -3188,8 +3192,8 @@ export default function App() {
                       width: '100%',
                     }
                   : {
-                      width: size,
-                      flex: `0 0 ${size}px`,
+                      width: hasExplicitSize ? size : undefined,
+                      flex: dockFlex,
                       minWidth: 0,
                       minHeight: 0,
                       display: 'flex',
@@ -3205,11 +3209,21 @@ export default function App() {
                   // Capture the workspace element now — `e.currentTarget` is only
                   // valid during dispatch, so it would be null inside onUp.
                   const ws = (e.currentTarget as HTMLElement).closest('.term-workspace') as HTMLElement | null
+                  // Without an explicit size the dock renders at 50% — seed the
+                  // drag baseline with the actual 50% of the workspace so the
+                  // first drag starts from the on-screen size, not the px fallback.
+                  const seedSize = hasExplicitSize
+                    ? size
+                    : ws
+                      ? isVertical
+                        ? Math.round(ws.clientHeight / 2)
+                        : Math.round(ws.clientWidth / 2)
+                      : size
                   aiDockResizeRef.current = {
                     dir: side,
                     sx: e.clientX,
                     sy: e.clientY,
-                    sSize: size,
+                    sSize: seedSize,
                   }
                   const onMove = (ev: MouseEvent) => {
                     const r = aiDockResizeRef.current
