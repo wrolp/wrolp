@@ -741,32 +741,54 @@ export default function AiChatPanel({
   // (its AI reply etc.), put its text/images back into the input box, and mark
   // the session so the re-sent message replaces the old pair (it is not
   // duplicated, because the old messages are already removed from the list).
-  const startEditMessage = useCallback((msgId: string) => {
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === msgId)
-      if (idx < 0) return prev
-      const target = prev[idx]
-      if (target.role !== 'user') return prev
+  const startEditMessage = useCallback(
+    (msgId: string) => {
+      // Resolve the target message from the CURRENT conversation (not inside a
+      // state updater — calling setInput inside an updater is unreliable).
+      const idx = messages.findIndex((m) => m.id === msgId)
+      if (idx < 0) return
+      const target = messages[idx]
+      if (target.role !== 'user') return
       // Only the LAST user message can be edited (truncation would drop
       // messages in between otherwise).
       let lastUserIdx = -1
-      for (let i = prev.length - 1; i >= 0; i--) {
-        if (prev[i].role === 'user') {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
           lastUserIdx = i
           break
         }
       }
-      if (idx !== lastUserIdx) return prev
+      if (idx !== lastUserIdx) return
+
+      // Copy the message text back into the input box (replacing whatever was
+      // there) and restore its images.
       setInput(target.content)
       if (target.images && target.images.length > 0) {
         const imgs = target.images.slice()
         setPendingImages((p) => [...p, ...imgs])
       }
       // Drop this message and everything after it (the old user input + the
-      // AI reply it produced).
-      return prev.slice(0, idx)
-    })
-  }, [])
+      // AI reply it produced), and clear the tool-call history of that turn so
+      // the re-sent message starts fresh.
+      setMessages((prev) => {
+        const i = prev.findIndex((m) => m.id === msgId)
+        if (i < 0) return prev
+        return prev.slice(0, i)
+      })
+      setToolCalls([])
+      // Focus the textarea with the caret at the end so the user can review
+      // and re-send it.
+      requestAnimationFrame(() => {
+        const el = inputRef.current
+        if (!el) return
+        el.focus()
+        const pos = el.value.length
+        el.setSelectionRange(pos, pos)
+        el.scrollTop = el.scrollHeight
+      })
+    },
+    [messages, setInput, setPendingImages, setToolCalls],
+  )
 
   // True when the given user message is the last user message in the
   // conversation (only that one can be re-edited).
