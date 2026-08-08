@@ -5407,7 +5407,7 @@ input[type='password']::-ms-clear {
 
   .ai-chat-code-block {
     margin: 8px 0;
-    padding: 10px 14px;
+    padding: 18px 14px 10px;
     background: #1a1f2b;
     border: 1px solid #2d3748;
     border-radius: 6px;
@@ -5425,7 +5425,7 @@ input[type='password']::-ms-clear {
     .ai-chat-code-lang {
       position: absolute;
       top: 4px;
-      right: 48px;
+      left: 8px;
       font-size: 10px;
       color: $text-dim;
       background: rgba(0, 0, 0, 0.3);
@@ -5441,6 +5441,14 @@ input[type='password']::-ms-clear {
       display: flex;
       align-items: center;
       gap: 4px;
+      opacity: 0;
+      transition: opacity 0.12s ease;
+      pointer-events: none;
+
+      &.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
     }
 
     .ai-chat-code-copy,

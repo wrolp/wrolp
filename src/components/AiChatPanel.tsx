@@ -60,6 +60,7 @@ function CodeBlock({
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
   const [sent, setSent] = useState(false)
+  const [hovered, setHovered] = useState(false)
   const handleCopy = useCallback(() => {
     const write = async () => {
       try {
@@ -89,9 +90,13 @@ function CodeBlock({
   }, [code, onSendToShell])
 
   return (
-    <pre className="ai-chat-code-block">
+    <pre
+      className="ai-chat-code-block"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {lang && <span className="ai-chat-code-lang">{lang}</span>}
-      <div className="ai-chat-code-actions">
+      <div className={`ai-chat-code-actions${hovered ? ' visible' : ''}`}>
         {onSendToShell && (
           <button
             className="ai-chat-code-send"
