@@ -3659,11 +3659,38 @@ export default function App() {
               className="collapsible-section"
               style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
             >
-                <FilePanel
+                {(() => {
+                  // Server label shown in the file panel header: the SSH
+                  // connection of the focused tab (host:port), or a docker
+                  // target's container.
+                  const ftabId = focusedLeafTabId ?? activeTabId ?? 0
+                  const ftab = tabs.find((t) => t.tabId === ftabId)
+                  const fconn = ftab?.connectionId
+                    ? connections.find((c) => c.id === ftab.connectionId)
+                    : undefined
+                  // When the connection name equals the host (a common case),
+                  // drop the redundant name and show only host:port.
+                  const hostLabel = fconn
+                    ? fconn.name === fconn.host
+                      ? `${fconn.host}:${fconn.port}`
+                      : `${fconn.name} (${fconn.host}:${fconn.port})`
+                    : ftab?.connectionName ?? undefined
+                  // Docker targets: show BOTH the host machine and the container
+                  // name (e.g. "prod (10.0.0.5:22) → docker:nginx"). Other
+                  // non-session targets (jump) use their own targetLabel.
+                  const serverLabel = fileTarget
+                    ? fileTarget.kind === 'docker'
+                      ? hostLabel
+                        ? `${hostLabel} → docker:${fileTarget.container}`
+                        : `docker:${fileTarget.container}`
+                      : undefined
+                    : hostLabel
+                  return <FilePanel
                   key={fileTarget ? JSON.stringify(fileTarget) : 'session'}
                   ref={fileTreeRef}
-                  tabId={focusedLeafTabId ?? activeTabId ?? 0}
+                  tabId={ftabId}
                   isConnected={true}
+                  serverLabel={serverLabel}
                   defaultPath={fileTarget?.kind === 'docker' ? '/' : '.'}
                   targetRef={fileTarget ?? undefined}
                   fileMode={fileMode}
@@ -3697,6 +3724,7 @@ export default function App() {
                 }}
                 onEditFile={openInEditor}
               />
+                })()}
             </div>
 
             {dockerExpanded && layout.sidebar.sections.docker.visible && (

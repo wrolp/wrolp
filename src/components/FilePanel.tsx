@@ -41,6 +41,8 @@ interface FilePanelProps {
   syncEnabled?: boolean
   onToggleSync?: () => void
   onEditFile?: (target: TargetRef, path: string) => void
+  /** Label of the currently connected server (host:port), shown in the header. */
+  serverLabel?: string
   /**
    * Which remote filesystem this panel operates on. Defaults to the tab's main
    * session (`{ kind: 'session', tabId }`). Non-session targets disable
@@ -145,6 +147,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   fileMode = 'ssh',
   onFileModeChange,
   onSelectTarget,
+  serverLabel,
 }, ref) {
   const { t } = useI18n()
   // The remote filesystem this panel operates on (defaults to the tab session).
@@ -721,12 +724,6 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         />
         <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           Files
-          {sessionTabId == null && (
-            <span
-              className={`file-target-chip ${target.kind === 'docker' ? 'docker' : ''}${target.kind === 'dockerSsh' ? 'docker-ssh' : ''}`}
-              title={targetLabel(target)}
-            >{targetLabel(target)}</span>
-          )}
           {/* Mode switcher: browse the local SSH session, a ProxyJump remote, or a
               Docker container's filesystem. */}
           <span className="file-mode-switch" role="tablist">
@@ -777,6 +774,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {expanded && showTree && (
         <>
+          {/* Connected server banner shown INSIDE the panel (above the path bar). */}
+          <div className="file-server-banner">
+            <Icon name="terminal" size={12} />
+            <span className="file-server-label" title={serverLabel ?? targetLabel(target)}>
+              {serverLabel ?? targetLabel(target)}
+            </span>
+          </div>
           <div className="file-path-bar">
             <span
               className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
