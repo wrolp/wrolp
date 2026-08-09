@@ -900,8 +900,9 @@ fn resolve_local_shell(spec: &str) -> (String, Vec<String>) {
       }
       ("bash".to_string(), vec![])
     }
-    // WSL: launch an interactive login shell.
-    "wsl" => ("wsl.exe".to_string(), vec!["--login".to_string()]),
+    // WSL: `wsl.exe` has no `--login` flag (that's a bash option). Run bash as
+    // a login+interactive shell inside the distro instead.
+    "wsl" => ("wsl.exe".to_string(), vec!["bash".to_string(), "-li".to_string()]),
     // Anything else (cmd, pwsh, powershell, bash, or an explicit path) is used as-is.
     other => (other.to_string(), vec![]),
   }
