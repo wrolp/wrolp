@@ -56,7 +56,7 @@
 - Switching the SFTP user (`switch_sftp_user` / `revert_sftp_user`) to operate as a different account.
 
 ### Remote file editor
-- Monaco-based inline editor for remote files (split pane above the shell).
+- Monaco-based inline editor for remote files, shown as a split-tree pane or a floating window.
 - Encoding auto-detect: UTF-8 → GBK (`encoding_rs`); non-UTF-8 files are flagged and must be re-saved in the same charset.
 
 ### Local terminal & local files
