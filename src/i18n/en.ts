@@ -255,6 +255,10 @@ const en = {
   aiRunInTerminalDesc:
     "When enabled, AI commands are typed into the active terminal just like you would type them: visible on screen, saved in the session recording, and sharing that shell's working directory, environment and sudo state. When disabled, commands run silently in the background (exit code available, but invisible and not recorded). Tabs without a live shell fall back to silent execution automatically.",
   aiRunInTerminalOn: 'Run in terminal',
+  aiMaxRounds: 'Max rounds per AI run',
+  aiMaxRoundsDesc:
+    'Caps the number of "assistant reply + tool calls" rounds in a single AI conversation (one agent loop), preventing the model from looping forever. Range 1–100, default 12.',
+  aiMaxRoundsUnit: 'rounds',
   aiReadOnlyHint: 'Read-only mode: only inspection commands run',
   aiFullModeHint: 'Full access: modifying commands allowed',
   aiChatResizeInput: 'Drag to resize input area',

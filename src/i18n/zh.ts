@@ -256,6 +256,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiRunInTerminalDesc:
     '启用后，AI 的命令会像你手动输入一样打进当前终端：屏幕上可见、计入会话录制，并共享该终端的工作目录、环境变量与 sudo 状态。关闭后命令改为后台静默执行（有退出码，但不可见、不录制）。当前标签页没有活动终端时会自动回退到静默执行。',
   aiRunInTerminalOn: '在终端中执行',
+  aiMaxRounds: '单次 AI 运行的最大轮数',
+  aiMaxRoundsDesc:
+    '限制一次 AI 对话（一个 agent 循环）内"助手回复 + 工具调用"的最大轮数，防止模型陷入死循环。范围 1–100，默认 12。',
+  aiMaxRoundsUnit: '轮',
   aiReadOnlyHint: '只读模式：仅执行查看类命令',
   aiFullModeHint: '可写模式：允许执行修改类命令',
   aiChatResizeInput: '拖动以调整输入区高度',

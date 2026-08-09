@@ -3228,6 +3228,7 @@ pub async fn start_ai_agent(
   tab_id: Option<u32>,
   profile: Option<crate::ai::AiEndpointProfile>,
   read_only: bool,
+  max_agent_rounds: u32,
 ) -> Result<String, String> {
   let chat_id = {
     let state = app.state::<AppState>();
@@ -3330,6 +3331,7 @@ pub async fn start_ai_agent(
     current_tab_id,
     read_only,
     on_confirm,
+    max_agent_rounds as usize,
   );
 
   Ok(chat_id)
@@ -3384,6 +3386,7 @@ fn spawn_agent(
   current_tab_id: Option<u32>,
   read_only: bool,
   on_confirm: impl Fn(Vec<crate::ai::AiMessage>, Vec<crate::ai::OpenAiToolCall>) + Send + 'static,
+  max_rounds: usize,
 ) {
   tauri::async_runtime::spawn(async move {
     let result = crate::ai::run_agent_stream(
@@ -3409,6 +3412,7 @@ fn spawn_agent(
         Box::pin(async move { execute_ai_tools(&app, calls, tab, read_only).await })
       },
       on_confirm,
+      max_rounds,
     )
     .await;
 
@@ -3436,6 +3440,7 @@ pub async fn confirm_ai_tool(
   chat_id: String,
   approved: bool,
   read_only: bool,
+  max_agent_rounds: u32,
 ) -> Result<(), String> {
   let state = app.state::<AppState>();
   let pending = {
@@ -3506,6 +3511,7 @@ pub async fn confirm_ai_tool(
     None,
     read_only,
     on_confirm,
+    max_agent_rounds as usize,
   );
   Ok(())
 }

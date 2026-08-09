@@ -2511,11 +2511,11 @@ export default function App() {
                     <label className="settings-checkbox-label">
                       <input
                         type="checkbox"
-                        checked={aiConfig?.aiReadOnly ?? true}
+                        checked={aiConfig?.readOnly ?? true}
                         onChange={(e) => {
                           setAiConfig((prev) => {
                             if (!prev) return prev
-                            const next = { ...prev, aiReadOnly: e.target.checked }
+                            const next = { ...prev, readOnly: e.target.checked }
                             saveAiConfig(next).catch(() => {})
                             return next
                           })
@@ -2549,6 +2549,36 @@ export default function App() {
                         }}
                       />
                       <span>{t('aiRunInTerminalOn')}</span>
+                    </label>
+                  </div>
+
+                  <div className="settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-icon">
+                        <Icon name="refresh" size={16} />
+                      </div>
+                      <div>
+                        <h3 className="settings-card-title">{t('aiMaxRounds')}</h3>
+                        <p className="settings-card-sub">{t('aiMaxRoundsDesc')}</p>
+                      </div>
+                    </div>
+                    <label className="settings-number-label">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={aiConfig?.maxAgentRounds ?? 12}
+                        onChange={(e) => {
+                          setAiConfig((prev) => {
+                            if (!prev) return prev
+                            const n = Math.max(1, Math.min(100, parseInt(e.target.value || '12', 10) || 12))
+                            const next = { ...prev, maxAgentRounds: n }
+                            saveAiConfig(next).catch(() => {})
+                            return next
+                          })
+                        }}
+                      />
+                      <span>{t('aiMaxRoundsUnit')}</span>
                     </label>
                   </div>
 
@@ -3442,7 +3472,8 @@ export default function App() {
                         inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                         onInputHeightChange={handleAiInputHeightChange}
                         onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.aiReadOnly ?? true}
+                        defaultReadOnly={aiConfig?.readOnly ?? true}
+                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
                       />
                     </div>
                     <div className="ai-dock-resize" onMouseDown={startDockResize} style={resizeHandleStyle} />
@@ -4060,7 +4091,8 @@ export default function App() {
                     inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                     onInputHeightChange={handleAiInputHeightChange}
                     onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.aiReadOnly ?? true}
+                        defaultReadOnly={aiConfig?.readOnly ?? true}
+                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
                   />
                 </div>
               )}
@@ -4198,7 +4230,8 @@ export default function App() {
                       inputHeight={aiInputHeight}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.aiReadOnly ?? true}
+                        defaultReadOnly={aiConfig?.readOnly ?? true}
+                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
                     />
                   </div>
                   {resizeHandles.map((h) => (

@@ -65,7 +65,7 @@ pub struct AiConfig {
   /// read-only mode and may only run inspection commands (configurable in the
   /// global AI settings; the per-chat panel can toggle it). Defaults to true
   /// so a fresh install starts in the safer read-only mode.
-  #[serde(default = "default_true")]
+  #[serde(default = "default_true", alias = "aiReadOnly")]
   pub read_only: bool,
   /// When true, `run_command` types the command into the tab's live terminal
   /// (visible on screen + captured in the session recording) instead of running
@@ -73,11 +73,20 @@ pub struct AiConfig {
   /// automatically when the tab has no live shell.
   #[serde(default = "default_true")]
   pub run_in_terminal: bool,
+  /// Maximum number of agent-loop rounds (one assistant turn plus its tool
+  /// calls) for a single AI run. Guards against runaway loops. Defaults to 12.
+  #[serde(default = "default_max_agent_rounds")]
+  pub max_agent_rounds: u32,
 }
 
 /// Serde default for boolean `AiConfig` flags that are on by default.
 fn default_true() -> bool {
   true
+}
+
+/// Serde default for `max_agent_rounds`.
+fn default_max_agent_rounds() -> u32 {
+  12
 }
 
 impl AiConfig {
@@ -110,6 +119,7 @@ impl AiConfig {
       active_id,
       read_only: true,
       run_in_terminal: true,
+      max_agent_rounds: default_max_agent_rounds(),
     }
   }
 }
@@ -194,6 +204,7 @@ pub fn load_ai_config() -> Result<AiConfig, String> {
             active_id,
             read_only: true,
             run_in_terminal: true,
+            max_agent_rounds: default_max_agent_rounds(),
           })
         }
         Err(e) => Err(format!("Failed to parse AI config: {}", e)),
@@ -489,9 +500,6 @@ pub fn tool_definitions() -> Vec<OpenAiTool> {
     },
   ]
 }
-
-/// Maximum number of agent (tool-call) rounds before bailing out to avoid loops.
-const MAX_AGENT_ROUNDS: usize = 10;
 
 // Non-streaming response
 #[derive(Deserialize)]
@@ -819,6 +827,10 @@ fn to_openai_messages(messages: &[AiMessage]) -> Vec<OpenAiMessage> {
 ///
 /// Returns the final assistant message (with any tool_calls cleared) so the
 /// caller can persist it to history.
+///
+/// `max_rounds` caps the number of agent-loop iterations (one assistant turn
+/// plus its tool calls) for a single run, guarding against runaway loops. It is
+/// sourced from `AiConfig::max_agent_rounds`.
 pub async fn run_agent_stream(
   config: &AiEndpointProfile,
   initial_messages: Vec<AiMessage>,
@@ -828,6 +840,7 @@ pub async fn run_agent_stream(
     Vec<OpenAiToolCall>,
   ) -> futures_util::future::BoxFuture<'static, Vec<ToolResult>>,
   mut on_confirm_required: impl FnMut(Vec<AiMessage>, Vec<OpenAiToolCall>),
+  max_rounds: usize,
 ) -> Result<AiMessage, String> {
   let api_key = crate::vault::open_secret(&config.api_key_enc)
     .map_err(|e| format!("Failed to decrypt API key: {}", e))?;
@@ -842,7 +855,7 @@ pub async fn run_agent_stream(
   // Working message list carries the full conversation (incl. tool calls).
   let mut messages: Vec<AiMessage> = initial_messages;
 
-  for _round in 0..MAX_AGENT_ROUNDS {
+  for _round in 0..max_rounds {
     let wire = to_openai_messages(&messages);
     let request_body = OpenAiRequest {
       model: config.model.clone(),
@@ -1019,6 +1032,6 @@ pub async fn run_agent_stream(
   }
 
   Err(format!(
-    "Reached maximum tool-call rounds ({MAX_AGENT_ROUNDS}); aborting agent loop."
+    "Reached maximum tool-call rounds ({max_rounds}); aborting agent loop."
   ))
 }

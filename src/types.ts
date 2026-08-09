@@ -347,12 +347,16 @@ export interface AiConfig {
   /** Default AI mode when a chat is opened: start in read-only mode (only
    *  inspection commands allowed). Configurable in the global AI settings;
    *  the per-chat panel can toggle it. */
-  aiReadOnly: boolean
+  readOnly: boolean
   /** When true, `run_command` types the command into the tab's live terminal
    *  (visible on screen + saved in the session recording) instead of running it
    *  silently on a separate channel. Automatically falls back to the silent
    *  path when the tab has no live shell. */
   runInTerminal: boolean
+  /** Maximum number of agent-loop rounds (one assistant turn + its tool calls)
+   *  for a single AI run. Guards against runaway loops. Optional — defaults to
+   *  12 on the backend when absent. */
+  maxAgentRounds?: number
 }
 
 export interface AiMessage {

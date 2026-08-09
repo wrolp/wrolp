@@ -170,6 +170,8 @@ interface AiChatPanelProps {
   /** Default AI read-only mode, taken from the global AI setting. The panel can
    *  toggle away from it at runtime. */
   defaultReadOnly?: boolean
+  /** Default maximum agent-loop rounds, taken from the global AI setting. */
+  defaultMaxAgentRounds?: number
 }
 
 /** Simple unique-id generator (no external dependency). */
@@ -234,6 +236,7 @@ export default function AiChatPanel({
   onInputHeightChange,
   onOpenSettings,
   defaultReadOnly,
+  defaultMaxAgentRounds,
 }: AiChatPanelProps) {
   const { t } = useI18n()
   const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
@@ -241,6 +244,9 @@ export default function AiChatPanel({
   // AI mode: read-only (inspection commands only) vs full (modifying commands
   // allowed). Starts from the global default and can be toggled at runtime.
   const [readOnly, setReadOnly] = useState<boolean>(defaultReadOnly ?? false)
+
+  // Maximum agent-loop rounds for a single run. Starts from the global default.
+  const [maxAgentRounds] = useState<number>(defaultMaxAgentRounds ?? 12)
 
   // Whether a usable AI endpoint is configured (endpoint + model + saved key).
   const configured =
@@ -693,7 +699,7 @@ export default function AiChatPanel({
             : tc,
         ),
       )
-      confirmAiTool(id, approved, readOnly)
+      confirmAiTool(id, approved, readOnly, maxAgentRounds)
         .then(() => startPolling(id))
         .catch((e) => setError(String(e)))
     },
@@ -717,7 +723,7 @@ export default function AiChatPanel({
         ])
       }
 
-      startAiAgent(apiMessages, tabId, config ?? undefined, readOnly)
+      startAiAgent(apiMessages, tabId, config ?? undefined, readOnly, maxAgentRounds)
         .then((id: string) => {
           setChatId(id)
           startPolling(id)
