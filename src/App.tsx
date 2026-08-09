@@ -2498,6 +2498,33 @@ export default function App() {
                     <p>OpenAI-compatible chat with built-in tools. Configure multiple endpoints and pick one to use.</p>
                   </div>
 
+                  <div className="settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-icon">
+                        <Icon name="lock" size={16} />
+                      </div>
+                      <div>
+                        <h3 className="settings-card-title">{t('aiReadOnly')}</h3>
+                        <p className="settings-card-sub">{t('aiReadOnlyDesc')}</p>
+                      </div>
+                    </div>
+                    <label className="settings-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={aiConfig?.aiReadOnly ?? true}
+                        onChange={(e) => {
+                          setAiConfig((prev) => {
+                            if (!prev) return prev
+                            const next = { ...prev, aiReadOnly: e.target.checked }
+                            saveAiConfig(next).catch(() => {})
+                            return next
+                          })
+                        }}
+                      />
+                      <span>{t('aiReadOnlyOn')}</span>
+                    </label>
+                  </div>
+
                   {aiConfig && aiConfig.profiles.length > 0 && (
                     <div className="settings-card">
                       <div className="settings-card-header">
@@ -3388,6 +3415,7 @@ export default function App() {
                         inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                         onInputHeightChange={handleAiInputHeightChange}
                         onOpenSettings={handleOpenAiSettings}
+                        defaultReadOnly={aiConfig?.aiReadOnly ?? true}
                       />
                     </div>
                     <div className="ai-dock-resize" onMouseDown={startDockResize} style={resizeHandleStyle} />
@@ -4005,6 +4033,7 @@ export default function App() {
                     inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                     onInputHeightChange={handleAiInputHeightChange}
                     onOpenSettings={handleOpenAiSettings}
+                        defaultReadOnly={aiConfig?.aiReadOnly ?? true}
                   />
                 </div>
               )}
@@ -4142,6 +4171,7 @@ export default function App() {
                       inputHeight={aiInputHeight}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
+                        defaultReadOnly={aiConfig?.aiReadOnly ?? true}
                     />
                   </div>
                   {resizeHandles.map((h) => (

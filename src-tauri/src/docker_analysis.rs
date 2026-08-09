@@ -23,9 +23,9 @@ use crate::ssh_session::SshHandler;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortMapping {
-  pub container_port: String,       // "8080/tcp"
-  pub host_ip: Option<String>,      // "0.0.0.0" (null if not published)
-  pub host_port: Option<String>,    // "8080"    (null if not published)
+  pub container_port: String,    // "8080/tcp"
+  pub host_ip: Option<String>,   // "0.0.0.0" (null if not published)
+  pub host_port: Option<String>, // "8080"    (null if not published)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -214,9 +214,15 @@ fn parse_inspect_section<'a>(lines: &[&'a str], delim: &str) -> Vec<&'a str> {
     }
     // Stop at the next delimiter
     for d in &[
-      INSPECT_DELIM_ID, INSPECT_DELIM_CREATED, INSPECT_DELIM_IMAGE,
-      INSPECT_DELIM_STATE, INSPECT_DELIM_ENV, INSPECT_DELIM_PORTS,
-      INSPECT_DELIM_MOUNTS, INSPECT_DELIM_LABELS, INSPECT_DELIM_START_CMD,
+      INSPECT_DELIM_ID,
+      INSPECT_DELIM_CREATED,
+      INSPECT_DELIM_IMAGE,
+      INSPECT_DELIM_STATE,
+      INSPECT_DELIM_ENV,
+      INSPECT_DELIM_PORTS,
+      INSPECT_DELIM_MOUNTS,
+      INSPECT_DELIM_LABELS,
+      INSPECT_DELIM_START_CMD,
     ] {
       if line.trim() == *d {
         collecting = false;
@@ -231,7 +237,10 @@ fn parse_inspect_section<'a>(lines: &[&'a str], delim: &str) -> Vec<&'a str> {
 }
 
 fn parse_single_value(lines: &[&str]) -> String {
-  lines.first().map(|s| s.to_string()).unwrap_or_else(|| "unknown".into())
+  lines
+    .first()
+    .map(|s| s.to_string())
+    .unwrap_or_else(|| "unknown".into())
 }
 
 /// Infer compose file from docker labels only (no filesystem access).
@@ -272,18 +281,29 @@ async fn probe_compose_file_from_mounts(
   // Only filter truly irrelevant system paths – data/log/config directories
   // mounted by Compose are valuable clues (they point to the project root).
   let system_prefixes = [
-    "/proc/", "/sys/", "/dev/", "/run/",
-    "/var/lib/docker/", "/var/lib/containerd/",
-    "/etc/ssl/", "/etc/pki/", "/etc/alternatives/",
-    "/tmp/.X11", "/var/run/",
+    "/proc/",
+    "/sys/",
+    "/dev/",
+    "/run/",
+    "/var/lib/docker/",
+    "/var/lib/containerd/",
+    "/etc/ssl/",
+    "/etc/pki/",
+    "/etc/alternatives/",
+    "/tmp/.X11",
+    "/var/run/",
   ];
 
   // Collect candidate directories from every bind-mount source.
   let mut dirs: Vec<String> = Vec::new();
   for m in mounts {
     // Bind mount → source is a host path starting with '/'
-    if !m.source.starts_with('/') { continue; }
-    if system_prefixes.iter().any(|p| m.source.starts_with(p)) { continue; }
+    if !m.source.starts_with('/') {
+      continue;
+    }
+    if system_prefixes.iter().any(|p| m.source.starts_with(p)) {
+      continue;
+    }
 
     // If source is a single file (has extension) use its parent directory.
     // Compose files themselves are kept as-is so they match on the first check.
@@ -302,9 +322,15 @@ async fn probe_compose_file_from_mounts(
     // Stops at root or system prefixes — no fixed depth limit.
     let mut d = dir;
     loop {
-      if d.is_empty() || d == "/" { break; }
-      if system_prefixes.iter().any(|p| d.starts_with(p)) { break; }
-      if !dirs.contains(&d) { dirs.push(d.clone()); }
+      if d.is_empty() || d == "/" {
+        break;
+      }
+      if system_prefixes.iter().any(|p| d.starts_with(p)) {
+        break;
+      }
+      if !dirs.contains(&d) {
+        dirs.push(d.clone());
+      }
       if let Some(slash) = d.rfind('/') {
         d = d[..slash].to_string();
       } else {
@@ -313,13 +339,16 @@ async fn probe_compose_file_from_mounts(
     }
   }
 
-  if dirs.is_empty() { return None; }
+  if dirs.is_empty() {
+    return None;
+  }
 
   // Sort deepest-first → check the most specific directory first.
   dirs.sort_by(|a, b| b.len().cmp(&a.len()));
 
   // Single SSH round‑trip: one shell script checks all candidate dirs.
-  let dir_list = dirs.iter()
+  let dir_list = dirs
+    .iter()
     .map(|d| format!("\"{}\"", d))
     .collect::<Vec<_>>()
     .join(" ");
@@ -330,12 +359,10 @@ async fn probe_compose_file_from_mounts(
 
   let argv = vec!["sh".into(), "-c".into(), script];
   match crate::docker_fs::exec_on_jump(jump, &argv, None).await {
-    Ok((out, _, 0)) => {
-      String::from_utf8_lossy(&out)
-        .lines()
-        .find(|l| l.starts_with("FOUND:"))
-        .map(|l| l[6..].trim().to_string())
-    }
+    Ok((out, _, 0)) => String::from_utf8_lossy(&out)
+      .lines()
+      .find(|l| l.starts_with("FOUND:"))
+      .map(|l| l[6..].trim().to_string()),
     _ => None, // probe failed or not found — non‑critical
   }
 }
@@ -383,8 +410,16 @@ fn parse_docker_inspect(output: &str, container_name: &str) -> InspectMeta {
 
   // Sensitive key patterns — filter these out
   let sensitive: HashSet<&str> = [
-    "PASSWORD", "PASSWD", "SECRET", "TOKEN", "KEY", "PRIVATE_KEY",
-    "API_KEY", "AUTH", "CREDENTIAL", "CERT",
+    "PASSWORD",
+    "PASSWD",
+    "SECRET",
+    "TOKEN",
+    "KEY",
+    "PRIVATE_KEY",
+    "API_KEY",
+    "AUTH",
+    "CREDENTIAL",
+    "CERT",
   ]
   .iter()
   .copied()
@@ -414,8 +449,14 @@ fn parse_docker_inspect(output: &str, container_name: &str) -> InspectMeta {
       }
       Some(PortMapping {
         container_port: parts[0].to_string(),
-        host_ip: parts.get(1).filter(|s| !s.is_empty()).map(|s| s.to_string()),
-        host_port: parts.get(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+        host_ip: parts
+          .get(1)
+          .filter(|s| !s.is_empty())
+          .map(|s| s.to_string()),
+        host_port: parts
+          .get(2)
+          .filter(|s| !s.is_empty())
+          .map(|s| s.to_string()),
       })
     })
     .collect();
@@ -444,7 +485,11 @@ fn parse_docker_inspect(output: &str, container_name: &str) -> InspectMeta {
       let mut parts = line.splitn(2, '=');
       let key = parts.next()?.trim().to_string();
       let value = parts.next().unwrap_or("").trim().to_string();
-      if key.is_empty() { None } else { Some((key, value)) }
+      if key.is_empty() {
+        None
+      } else {
+        Some((key, value))
+      }
     })
     .collect();
 
@@ -453,8 +498,12 @@ fn parse_docker_inspect(output: &str, container_name: &str) -> InspectMeta {
 
   let compose_project = labels.get("com.docker.compose.project").cloned();
   let compose_service = labels.get("com.docker.compose.service").cloned();
-  let compose_config = labels.get("com.docker.compose.project.config_files").cloned();
-  let compose_workdir = labels.get("com.docker.compose.project.working_dir").cloned();
+  let compose_config = labels
+    .get("com.docker.compose.project.config_files")
+    .cloned();
+  let compose_workdir = labels
+    .get("com.docker.compose.project.working_dir")
+    .cloned();
 
   // Infer compose file from labels (filesystem probe happens later, async)
   let inferred_compose_file = infer_compose_file_from_labels(&compose_config, &compose_workdir);
@@ -505,19 +554,20 @@ const PROBE_DELIM_PROCS: &str = "__WROLP_CPROCS__";
 const PROBE_DELIM_PORTS: &str = "__WROLP_CPORTS__";
 
 const CONTAINER_TOOL_LIST: &[&str] = &[
-  "curl", "wget", "python3", "python", "node", "perl", "ruby", "php",
-  "java", "git", "vim", "nano", "htop", "less", "jq", "awk", "sed",
-  "grep", "find", "nc", "ping", "dig", "nslookup", "netstat", "ss",
-  "lsof", "tcpdump", "strace", "gdb", "make", "gcc", "g++",
+  "curl", "wget", "python3", "python", "node", "perl", "ruby", "php", "java", "git", "vim", "nano",
+  "htop", "less", "jq", "awk", "sed", "grep", "find", "nc", "ping", "dig", "nslookup", "netstat",
+  "ss", "lsof", "tcpdump", "strace", "gdb", "make", "gcc", "g++",
 ];
 
 fn build_container_probe_script() -> String {
   let tool_cmds: String = CONTAINER_TOOL_LIST
     .iter()
-    .map(|t| format!(
-      "  command -v '{}' 1>/dev/null 2>&1 && echo '{}:OK' || echo '{}:NO'",
-      t, t, t
-    ))
+    .map(|t| {
+      format!(
+        "  command -v '{}' 1>/dev/null 2>&1 && echo '{}:OK' || echo '{}:NO'",
+        t, t, t
+      )
+    })
     .collect::<Vec<_>>()
     .join("\n");
 
@@ -595,7 +645,11 @@ fn find_sec<'a>(sections: &[(&'a str, Vec<&'a str>)], name: &str) -> Vec<&'a str
 }
 
 fn parse_os(lines: &[&str]) -> String {
-  lines.iter().find(|l| !l.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| "unknown".into())
+  lines
+    .iter()
+    .find(|l| !l.is_empty())
+    .map(|s| s.to_string())
+    .unwrap_or_else(|| "unknown".into())
 }
 
 fn parse_kernel(lines: &[&str]) -> (String, String, String) {
@@ -618,7 +672,10 @@ fn parse_packages(lines: &[&str]) -> (String, Vec<PackageInfo>) {
     "dpkg"
   } else if lines.iter().any(|l| l.contains('/') && l.contains('-')) {
     "pacman"
-  } else if lines.iter().any(|l| l.contains('-') && l.split('-').count() > 2) {
+  } else if lines
+    .iter()
+    .any(|l| l.contains('-') && l.split('-').count() > 2)
+  {
     "apk"
   } else {
     "rpm"
@@ -630,12 +687,10 @@ fn parse_packages(lines: &[&str]) -> (String, Vec<PackageInfo>) {
     .filter_map(|l| {
       let parts: Vec<&str> = l.split_whitespace().collect();
       match manager {
-        "dpkg" if parts.len() >= 2 && (parts[0] == "ii" || parts[0] == "rc") => {
-          Some(PackageInfo {
-            name: parts[1].to_string(),
-            version: parts.get(2).unwrap_or(&"?").to_string(),
-          })
-        }
+        "dpkg" if parts.len() >= 2 && (parts[0] == "ii" || parts[0] == "rc") => Some(PackageInfo {
+          name: parts[1].to_string(),
+          version: parts.get(2).unwrap_or(&"?").to_string(),
+        }),
         "rpm" if parts.len() >= 1 => {
           let pkg = parts[0];
           let dash = pkg.rfind('-').unwrap_or(0);
@@ -645,21 +700,20 @@ fn parse_packages(lines: &[&str]) -> (String, Vec<PackageInfo>) {
               version: pkg[dash + 1..].to_string(),
             })
           } else {
-            Some(PackageInfo { name: pkg.to_string(), version: "?".into() })
+            Some(PackageInfo {
+              name: pkg.to_string(),
+              version: "?".into(),
+            })
           }
         }
-        "apk" if parts.len() >= 2 => {
-          Some(PackageInfo {
-            name: parts[0].to_string(),
-            version: parts[1].to_string(),
-          })
-        }
-        "pacman" if parts.len() >= 2 => {
-          Some(PackageInfo {
-            name: parts[0].to_string(),
-            version: parts[1].to_string(),
-          })
-        }
+        "apk" if parts.len() >= 2 => Some(PackageInfo {
+          name: parts[0].to_string(),
+          version: parts[1].to_string(),
+        }),
+        "pacman" if parts.len() >= 2 => Some(PackageInfo {
+          name: parts[0].to_string(),
+          version: parts[1].to_string(),
+        }),
         _ => None,
       }
     })
@@ -680,7 +734,10 @@ fn parse_tools(lines: &[&str]) -> Vec<ToolInfo> {
       let name = &line[..colon];
       let status = &line[colon + 1..];
       if status == "OK" {
-        Some(ToolInfo { name: name.to_string(), path: None })
+        Some(ToolInfo {
+          name: name.to_string(),
+          path: None,
+        })
       } else {
         None
       }
@@ -734,7 +791,11 @@ fn parse_listening_ports(lines: &[&str]) -> HashSet<String> {
         let port_str = &word[colon + 1..];
         if port_str.parse::<u16>().is_ok() {
           // Guess protocol from context
-          let proto = if line.to_lowercase().contains("tcp") { "tcp" } else { "tcp" };
+          let proto = if line.to_lowercase().contains("tcp") {
+            "tcp"
+          } else {
+            "tcp"
+          };
           ports.insert(format!("{}/{}", port_str, proto));
         }
       }
@@ -747,16 +808,15 @@ fn parse_listening_ports(lines: &[&str]) -> HashSet<String> {
 // Layer 3 – docker stats
 // ---------------------------------------------------------------------------
 
-async fn get_docker_stats(
-  jump: &Handle<SshHandler>,
-  container: &str,
-) -> Option<ResourceUsage> {
+async fn get_docker_stats(jump: &Handle<SshHandler>, container: &str) -> Option<ResourceUsage> {
   let cmd = format!(
     "docker stats {} --no-stream --format '{{{{.CPUPerc}}}}|{{{{.MemUsage}}}}|{{{{.NetIO}}}}|{{{{.BlockIO}}}}|{{{{.PIDs}}}}' 2>/dev/null",
     crate::docker_fs::shell_quote(container)
   );
   let argv = vec!["sh".into(), "-c".into(), cmd];
-  let result = crate::docker_fs::exec_on_jump(jump, &argv, None).await.ok()?;
+  let result = crate::docker_fs::exec_on_jump(jump, &argv, None)
+    .await
+    .ok()?;
   let output = String::from_utf8_lossy(&result.0).trim().to_string();
   if output.is_empty() {
     return None;
@@ -799,18 +859,16 @@ pub async fn analyze_docker_container(
   // Layer 1 – docker inspect
   let inspect_script = build_inspect_script(container_name);
   let inspect_argv = vec!["sh".into(), "-c".into(), inspect_script];
-  let (inspect_out, _, _) =
-    crate::docker_fs::exec_on_jump(jump, &inspect_argv, None).await
-      .map_err(|e| format!("docker inspect failed: {}", e))?;
+  let (inspect_out, _, _) = crate::docker_fs::exec_on_jump(jump, &inspect_argv, None)
+    .await
+    .map_err(|e| format!("docker inspect failed: {}", e))?;
   let inspect_text = String::from_utf8_lossy(&inspect_out);
   let mut inspect = parse_docker_inspect(&inspect_text, container_name);
 
   // If labels gave us a compose file, skip the filesystem probe.
   // Otherwise, probe the mount-source directories for compose.yml etc.
   if inspect.orchestration.inferred_compose_file.is_none() {
-    if let Some(path) =
-      probe_compose_file_from_mounts(jump, &inspect.mounts).await
-    {
+    if let Some(path) = probe_compose_file_from_mounts(jump, &inspect.mounts).await {
       inspect.orchestration.inferred_compose_file = Some(path);
       inspect.orchestration.is_compose = true;
     }
@@ -824,8 +882,12 @@ pub async fn analyze_docker_container(
   let _ = (probe_err, probe_status);
 
   let delimiters = &[
-    PROBE_DELIM_OS, PROBE_DELIM_KERNEL, PROBE_DELIM_PKG,
-    PROBE_DELIM_TOOLS, PROBE_DELIM_PROCS, PROBE_DELIM_PORTS,
+    PROBE_DELIM_OS,
+    PROBE_DELIM_KERNEL,
+    PROBE_DELIM_PKG,
+    PROBE_DELIM_TOOLS,
+    PROBE_DELIM_PROCS,
+    PROBE_DELIM_PORTS,
   ];
   let sections = split_sections(&probe_text, delimiters);
 

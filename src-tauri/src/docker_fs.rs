@@ -109,7 +109,11 @@ pub struct DockerExecFs {
 
 impl DockerExecFs {
   pub fn new(jump: Arc<Handle<SshHandler>>, container: String, user: Option<String>) -> Self {
-    Self { jump, container, user }
+    Self {
+      jump,
+      container,
+      user,
+    }
   }
 
   /// Build `docker exec` argv: `docker exec [-i] [-u user] <cid> <inner...>`.
@@ -164,7 +168,10 @@ impl RemoteFs for DockerExecFs {
       .run(false, &["sh", "-c", LIST_SCRIPT, "_", path], None)
       .await?;
     if status != 0 {
-      return Err(format!("Failed to list directory: {}", String::from_utf8_lossy(&err).trim()));
+      return Err(format!(
+        "Failed to list directory: {}",
+        String::from_utf8_lossy(&err).trim()
+      ));
     }
     let text = String::from_utf8_lossy(&out);
     let mut files = Vec::new();
@@ -209,7 +216,10 @@ impl RemoteFs for DockerExecFs {
       .run(false, &["stat", "-c", "%s %Y %A %F", "--", path], None)
       .await?;
     if status != 0 {
-      return Err(format!("stat failed: {}", String::from_utf8_lossy(&err).trim()));
+      return Err(format!(
+        "stat failed: {}",
+        String::from_utf8_lossy(&err).trim()
+      ));
     }
     let text = String::from_utf8_lossy(&out);
     let text = text.trim();
@@ -230,7 +240,10 @@ impl RemoteFs for DockerExecFs {
   async fn read_file(&self, path: &str) -> Result<Vec<u8>, String> {
     let (out, err, status) = self.run(false, &["cat", "--", path], None).await?;
     if status != 0 {
-      return Err(format!("Failed to read file: {}", String::from_utf8_lossy(&err).trim()));
+      return Err(format!(
+        "Failed to read file: {}",
+        String::from_utf8_lossy(&err).trim()
+      ));
     }
     Ok(out)
   }
@@ -239,12 +252,21 @@ impl RemoteFs for DockerExecFs {
     let (_out, err, status) = self
       .run(
         true,
-        &["sh", "-c", "mkdir -p -- \"$(dirname -- \"$1\")\" && cat > \"$1\"", "_", path],
+        &[
+          "sh",
+          "-c",
+          "mkdir -p -- \"$(dirname -- \"$1\")\" && cat > \"$1\"",
+          "_",
+          path,
+        ],
         Some(data),
       )
       .await?;
     if status != 0 {
-      return Err(format!("Failed to write file: {}", String::from_utf8_lossy(&err).trim()));
+      return Err(format!(
+        "Failed to write file: {}",
+        String::from_utf8_lossy(&err).trim()
+      ));
     }
     Ok(())
   }
@@ -252,7 +274,10 @@ impl RemoteFs for DockerExecFs {
   async fn create_dir(&self, path: &str) -> Result<(), String> {
     let (_o, err, status) = self.run(false, &["mkdir", "-p", "--", path], None).await?;
     if status != 0 {
-      return Err(format!("Failed to create directory: {}", String::from_utf8_lossy(&err).trim()));
+      return Err(format!(
+        "Failed to create directory: {}",
+        String::from_utf8_lossy(&err).trim()
+      ));
     }
     Ok(())
   }
@@ -260,7 +285,10 @@ impl RemoteFs for DockerExecFs {
   async fn rename(&self, from: &str, to: &str) -> Result<(), String> {
     let (_o, err, status) = self.run(false, &["mv", "-T", "--", from, to], None).await?;
     if status != 0 {
-      return Err(format!("Failed to rename: {}", String::from_utf8_lossy(&err).trim()));
+      return Err(format!(
+        "Failed to rename: {}",
+        String::from_utf8_lossy(&err).trim()
+      ));
     }
     Ok(())
   }
@@ -268,7 +296,10 @@ impl RemoteFs for DockerExecFs {
   async fn remove_file(&self, path: &str) -> Result<(), String> {
     let (_o, err, status) = self.run(false, &["rm", "-f", "--", path], None).await?;
     if status != 0 {
-      return Err(format!("Failed to delete file: {}", String::from_utf8_lossy(&err).trim()));
+      return Err(format!(
+        "Failed to delete file: {}",
+        String::from_utf8_lossy(&err).trim()
+      ));
     }
     Ok(())
   }
@@ -276,7 +307,10 @@ impl RemoteFs for DockerExecFs {
   async fn remove_dir(&self, path: &str) -> Result<(), String> {
     let (_o, err, status) = self.run(false, &["rm", "-rf", "--", path], None).await?;
     if status != 0 {
-      return Err(format!("Failed to delete directory: {}", String::from_utf8_lossy(&err).trim()));
+      return Err(format!(
+        "Failed to delete directory: {}",
+        String::from_utf8_lossy(&err).trim()
+      ));
     }
     Ok(())
   }
@@ -327,7 +361,11 @@ pub async fn list_docker_containers(
 /// Map a docker `Status` string to a normalized, lowercase state word
 /// (`running` / `exited` / `paused` / `dead` / `created` / `restarting`).
 fn normalize_state(status: &str) -> String {
-  let word = status.split_whitespace().next().unwrap_or("").to_lowercase();
+  let word = status
+    .split_whitespace()
+    .next()
+    .unwrap_or("")
+    .to_lowercase();
   match word.as_str() {
     "up" => "running".into(),
     "exited" => "exited".into(),

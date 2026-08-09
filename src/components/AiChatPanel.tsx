@@ -167,6 +167,9 @@ interface AiChatPanelProps {
   onInputHeightChange?: (height: number) => void
   /** Open the Settings tab (AI section) — used when no endpoint is configured. */
   onOpenSettings?: () => void
+  /** Default AI read-only mode, taken from the global AI setting. The panel can
+   *  toggle away from it at runtime. */
+  defaultReadOnly?: boolean
 }
 
 /** Simple unique-id generator (no external dependency). */
@@ -230,9 +233,14 @@ export default function AiChatPanel({
   inputHeight,
   onInputHeightChange,
   onOpenSettings,
+  defaultReadOnly,
 }: AiChatPanelProps) {
   const { t } = useI18n()
   const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
+
+  // AI mode: read-only (inspection commands only) vs full (modifying commands
+  // allowed). Starts from the global default and can be toggled at runtime.
+  const [readOnly, setReadOnly] = useState<boolean>(defaultReadOnly ?? false)
 
   // Whether a usable AI endpoint is configured (endpoint + model + saved key).
   const configured =
@@ -685,7 +693,7 @@ export default function AiChatPanel({
             : tc,
         ),
       )
-      confirmAiTool(id, approved)
+      confirmAiTool(id, approved, readOnly)
         .then(() => startPolling(id))
         .catch((e) => setError(String(e)))
     },
@@ -709,7 +717,7 @@ export default function AiChatPanel({
         ])
       }
 
-      startAiAgent(apiMessages, tabId, config ?? undefined)
+      startAiAgent(apiMessages, tabId, config ?? undefined, readOnly)
         .then((id: string) => {
           setChatId(id)
           startPolling(id)
@@ -1015,6 +1023,14 @@ export default function AiChatPanel({
             )}
           </div>
         </div>
+        <button
+          className={'ai-readonly-toggle' + (readOnly ? ' active' : '')}
+          onClick={() => setReadOnly((v) => !v)}
+          title={readOnly ? t('aiReadOnlyHint') : t('aiFullModeHint')}
+        >
+          <span className="ai-readonly-dot" />
+          {readOnly ? t('aiReadOnlyOn') : t('aiReadOnlyOff')}
+        </button>
         {!floating && onToggleFloat && (
           <button
             className="ai-chat-clear-btn"

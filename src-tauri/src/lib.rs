@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai;
 mod commands;
 mod db;
 mod docker_analysis;
@@ -9,7 +10,6 @@ mod local_fs;
 mod remote_fs;
 mod ssh_session;
 mod vault;
-mod ai;
 
 use ssh_session::AppState;
 use tauri::generate_handler;
@@ -32,8 +32,7 @@ pub fn run() {
       let db_conn = db::init_db(&data_dir).unwrap_or_else(|e| {
         eprintln!("[db] init failed: {}, using in-memory fallback", e);
         // Fallback: try in-memory database so app still runs
-        let conn = rusqlite::Connection::open_in_memory()
-          .expect("Failed to open in-memory SQLite");
+        let conn = rusqlite::Connection::open_in_memory().expect("Failed to open in-memory SQLite");
         conn.execute_batch(include_str!("schema.sql")).ok();
         std::sync::Arc::new(std::sync::Mutex::new(conn))
       });
@@ -117,8 +116,16 @@ pub fn run() {
               if config.maximized {
                 let _ = window.maximize();
               } else if config.x != i32::MAX {
-                let w = if config.width > 0 { config.width } else { 1200u32 };
-                let h = if config.height > 0 { config.height } else { 800u32 };
+                let w = if config.width > 0 {
+                  config.width
+                } else {
+                  1200u32
+                };
+                let h = if config.height > 0 {
+                  config.height
+                } else {
+                  800u32
+                };
                 let _ = window.set_size(tauri::PhysicalSize::new(w, h));
                 let on_screen = window
                   .available_monitors()

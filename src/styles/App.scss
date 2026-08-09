@@ -4815,6 +4815,45 @@ input[type='password']::-ms-clear {
     margin-top: 2px;
   }
 
+  .ai-readonly-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: $text-secondary;
+    background: $bg-input;
+    border: 1px solid $border;
+    padding: 3px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+
+    .ai-readonly-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: $text-secondary;
+      transition: background 0.15s ease;
+    }
+
+    &:hover {
+      border-color: $accent;
+      color: $text-primary;
+    }
+
+    &.active {
+      color: $accent;
+      border-color: rgba($accent, 0.4);
+      background: rgba($accent, 0.12);
+
+      .ai-readonly-dot {
+        background: $accent;
+      }
+    }
+  }
+
   .ai-chat-select {
     appearance: none;
     max-width: 150px;

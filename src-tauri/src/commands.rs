@@ -1,22 +1,23 @@
 use super::ssh_session::{
-  AppState, ConnectionConfig, ConnectResult, ContainerInfo, FileEntry, LocalShell, LocalShellDir, SshError,
-  SshHandler, SshSession, SwitchedUser, TargetRef, TransferControl, ActiveRecording, LocalTerminalEntry,
+  ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, FileEntry, LocalShell,
+  LocalShellDir, LocalTerminalEntry, SshError, SshHandler, SshSession, SwitchedUser, TargetRef,
+  TransferControl,
 };
 use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
 use crate::remote_fs::build_fs;
+use encoding_rs::{Encoding, UTF_8};
 use russh::client::{self, Handler};
 use russh::ChannelId;
 use russh_keys::load_secret_key;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex as StdMutex;
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
-use tauri::Manager;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tauri::Emitter;
+use tauri::Manager;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
-use encoding_rs::{Encoding, UTF_8};
 
 /// Wait if the transfer for this tab is paused. Returns immediately if not paused.
 async fn check_pause(control: &TransferControl) {
@@ -61,7 +62,6 @@ pub(crate) fn expand_tilde(path: &str) -> PathBuf {
   }
 }
 
-
 #[async_trait::async_trait]
 impl Handler for SshHandler {
   type Error = SshError;
@@ -86,7 +86,10 @@ impl Handler for SshHandler {
     if self.shell_channel_id.is_none() {
       self.shell_channel_id = Some(channel);
     }
-    eprintln!("[russh] channel_open_confirmation max_packet={} window_size={}", max_packet_size, window_size);
+    eprintln!(
+      "[russh] channel_open_confirmation max_packet={} window_size={}",
+      max_packet_size, window_size
+    );
     Ok(())
   }
 
@@ -215,7 +218,11 @@ pub async fn reorder_connections(
     if let Some(ref updates) = group_updates {
       for conn in connections.iter_mut() {
         if let Some(new_group) = updates.get(&conn.id) {
-          conn.group = if new_group.is_empty() { None } else { Some(new_group.clone()) };
+          conn.group = if new_group.is_empty() {
+            None
+          } else {
+            Some(new_group.clone())
+          };
         }
       }
     }
@@ -277,7 +284,11 @@ pub async fn rename_group(
     let mut any = false;
     for conn in connections.iter_mut() {
       if conn.group.as_deref() == Some(old_name.as_str()) {
-        conn.group = if new.is_empty() { None } else { Some(new.clone()) };
+        conn.group = if new.is_empty() {
+          None
+        } else {
+          Some(new.clone())
+        };
         any = true;
       }
     }
@@ -362,7 +373,10 @@ pub async fn connect(
   let port = config.port;
   let username = config.username.clone();
 
-  eprintln!("[connect] tab={} host={}:{} user={}", tab_id, host, port, username);
+  eprintln!(
+    "[connect] tab={} host={}:{} user={}",
+    tab_id, host, port, username
+  );
 
   // Reuse path: if this tab already has a live SSH session (e.g. the terminal
   // was floated/popped out and is now remounting), keep it instead of tearing
@@ -377,7 +391,10 @@ pub async fn connect(
         .map_or(false, |s| s.shutdown_tx.is_some())
     };
     if live {
-      eprintln!("[connect] reusing live session for tab={} (no reconnect)", tab_id);
+      eprintln!(
+        "[connect] reusing live session for tab={} (no reconnect)",
+        tab_id
+      );
       return Ok(ConnectResult {
         status: "connected".into(),
         tab_id,
@@ -427,10 +444,15 @@ pub async fn connect(
       // Push "connecting" message — only if this session is still current
       if let Some(s) = app_handle.try_state::<AppState>() {
         if let Ok(sessions) = s.sessions.lock() {
-          if sessions.get(&tid).map_or(false, |s| s.session_id == session_id) {
+          if sessions
+            .get(&tid)
+            .map_or(false, |s| s.session_id == session_id)
+          {
             if let Ok(mut buf) = s.output_buffers.lock() {
-              buf.entry(tid).or_default()
-                .push(format!("Connecting to {}:{} as {} ...\r\n", cfg.host, cfg.port, cfg.username));
+              buf.entry(tid).or_default().push(format!(
+                "Connecting to {}:{} as {} ...\r\n",
+                cfg.host, cfg.port, cfg.username
+              ));
             }
           }
         }
@@ -456,14 +478,15 @@ pub async fn connect(
       };
       let ssh_config = Arc::new(client::Config::default());
 
-      let mut handle = match client::connect(ssh_config, (cfg.host.as_str(), cfg.port), handler).await {
-        Ok(h) => h,
-        Err(e) => {
-          eprintln!("[russh] handshake error: {:?}", e);
-          emit_error(&app_handle, tid, &format!("SSH handshake failed: {}", e));
-          return;
-        }
-      };
+      let mut handle =
+        match client::connect(ssh_config, (cfg.host.as_str(), cfg.port), handler).await {
+          Ok(h) => h,
+          Err(e) => {
+            eprintln!("[russh] handshake error: {:?}", e);
+            emit_error(&app_handle, tid, &format!("SSH handshake failed: {}", e));
+            return;
+          }
+        };
 
       // 2. Authenticate
       if let Some(ref pw) = cfg.password {
@@ -481,15 +504,25 @@ pub async fn connect(
         }
       } else if let Some(ref key_path) = cfg.key_path {
         let resolved_path = expand_tilde(key_path);
-        eprintln!("[russh] loading key: {} (resolved: {:?})", key_path, resolved_path);
+        eprintln!(
+          "[russh] loading key: {} (resolved: {:?})",
+          key_path, resolved_path
+        );
         let key = match load_secret_key(&resolved_path, cfg.passphrase.as_deref()) {
           Ok(k) => k,
           Err(e) => {
-            emit_error(&app_handle, tid, &format!("Failed to load key '{}': {}", key_path, e));
+            emit_error(
+              &app_handle,
+              tid,
+              &format!("Failed to load key '{}': {}", key_path, e),
+            );
             return;
           }
         };
-        match handle.authenticate_publickey(&cfg.username, Arc::new(key)).await {
+        match handle
+          .authenticate_publickey(&cfg.username, Arc::new(key))
+          .await
+        {
           Ok(true) => {}
           Ok(false) => {
             emit_error(&app_handle, tid, "Authentication failed: invalid key");
@@ -497,7 +530,11 @@ pub async fn connect(
           }
           Err(e) => {
             eprintln!("[russh] key auth error: {:?}", e);
-            emit_error(&app_handle, tid, &format!("Key authentication error: {}", e));
+            emit_error(
+              &app_handle,
+              tid,
+              &format!("Key authentication error: {}", e),
+            );
             return;
           }
         }
@@ -525,7 +562,10 @@ pub async fn connect(
       eprintln!("[russh] requesting PTY...");
       {
         let ch = channel.lock().await;
-        if let Err(e) = ch.request_pty(true, "xterm-256color", cols, rows, 0, 0, &[]).await {
+        if let Err(e) = ch
+          .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
+          .await
+        {
           emit_error(&app_handle, tid, &format!("PTY request failed: {}", e));
           return;
         }
@@ -559,7 +599,10 @@ pub async fn connect(
       // Push ready message to output buffer — only if this session is still current
       if let Some(state) = app_handle.try_state::<AppState>() {
         if let Ok(sessions) = state.sessions.lock() {
-          if sessions.get(&tid).map_or(false, |s| s.session_id == session_id) {
+          if sessions
+            .get(&tid)
+            .map_or(false, |s| s.session_id == session_id)
+          {
             if let Ok(mut buffers) = state.output_buffers.lock() {
               buffers
                 .entry(tid)
@@ -608,11 +651,17 @@ pub async fn connect(
         if let Ok(sessions) = app_state.sessions.lock() {
           if let Some(s) = sessions.get(&tid) {
             if s.session_id == session_id {
-              let _ = app_handle.emit("connection-closed", serde_json::json!({
-                "tabId": tid,
-              }));
+              let _ = app_handle.emit(
+                "connection-closed",
+                serde_json::json!({
+                  "tabId": tid,
+                }),
+              );
             } else {
-              eprintln!("[russh] session_id changed for tab={}, skipping stale event", tid);
+              eprintln!(
+                "[russh] session_id changed for tab={}, skipping stale event",
+                tid
+              );
             }
           }
         }
@@ -666,13 +715,7 @@ pub async fn connect(
         let ended_at = chrono::Utc::now().to_rfc3339();
         let duration = old_rec.started_at.elapsed().as_secs() as i64;
         let db_count = db::count_session_events(&conn, &old_rec.session_id).unwrap_or(0);
-        let _ = db::finalize_session(
-          &conn,
-          &old_rec.session_id,
-          &ended_at,
-          duration,
-          db_count,
-        );
+        let _ = db::finalize_session(&conn, &old_rec.session_id, &ended_at, duration, db_count);
       }
     }
 
@@ -724,10 +767,7 @@ pub async fn connect(
 }
 
 #[tauri::command]
-pub async fn disconnect(
-  state: tauri::State<'_, AppState>,
-  tab_id: u32,
-) -> Result<bool, String> {
+pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<bool, String> {
   let shutdown_tx = {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     if let Some(session) = sessions.get_mut(&tab_id) {
@@ -949,14 +989,17 @@ pub async fn open_local_shell(
   // Windows: let cmd/pwsh use its default console behavior
   cmd.env("TERM", "xterm-256color");
 
-  let child = pair
-    .slave
-    .spawn_command(cmd)
-    .map_err(|e| {
-      eprintln!("[open_local_shell] spawn_command failed for '{}': {}", shell_cmd, e);
-      format!("Failed to spawn shell '{}': {}", shell_cmd, e)
-    })?;
-  eprintln!("[open_local_shell] spawned '{}' ok (tab={})", shell_cmd, tab_id);
+  let child = pair.slave.spawn_command(cmd).map_err(|e| {
+    eprintln!(
+      "[open_local_shell] spawn_command failed for '{}': {}",
+      shell_cmd, e
+    );
+    format!("Failed to spawn shell '{}': {}", shell_cmd, e)
+  })?;
+  eprintln!(
+    "[open_local_shell] spawned '{}' ok (tab={})",
+    shell_cmd, tab_id
+  );
 
   let mut reader = pair
     .master
@@ -1024,7 +1067,10 @@ pub async fn open_local_shell(
         shells.remove(&reader_tab);
       }
     }
-    let _ = app.emit("connection-closed", serde_json::json!({ "tabId": reader_tab }));
+    let _ = app.emit(
+      "connection-closed",
+      serde_json::json!({ "tabId": reader_tab }),
+    );
   });
 
   Ok(())
@@ -1362,7 +1408,11 @@ fn decode_file_content(data: &[u8], encoding_name: Option<&str>) -> (String, Str
     let encoding: &Encoding = Encoding::for_label(name.as_bytes()).unwrap_or(UTF_8);
     let (cow, _, _had_errors) = encoding.decode(data);
     let needs = encoding.name() != "UTF-8";
-    return (cow.into_owned(), encoding.name().to_ascii_lowercase(), needs);
+    return (
+      cow.into_owned(),
+      encoding.name().to_ascii_lowercase(),
+      needs,
+    );
   }
 
   // Auto-detect: prefer UTF-8, fall back to GBK.
@@ -1396,7 +1446,9 @@ pub async fn read_file_content(
   let max_size = max_size.unwrap_or(DEFAULT_MAX_EDIT_SIZE);
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
-  let metadata = sftp.metadata(&path).await
+  let metadata = sftp
+    .metadata(&path)
+    .await
     .map_err(|e| format!("Failed to stat remote file: {}", e))?;
   let size = metadata.size.unwrap_or(0);
   let mode = format!("{:04o}", metadata.permissions.unwrap_or(0) & 0o7777);
@@ -1416,12 +1468,16 @@ pub async fn read_file_content(
     });
   }
 
-  let mut handle = sftp.open(&path).await
+  let mut handle = sftp
+    .open(&path)
+    .await
     .map_err(|e| format!("Failed to open remote file: {}", e))?;
   let mut all_data = Vec::with_capacity(size as usize);
   let mut buf = vec![0u8; 65536];
   loop {
-    let n = handle.read(&mut buf).await
+    let n = handle
+      .read(&mut buf)
+      .await
       .map_err(|e| format!("Failed to read: {}", e))?;
     if n == 0 {
       break;
@@ -1433,7 +1489,11 @@ pub async fn read_file_content(
   // Invalid UTF-8 alone is no longer binary (it may be GBK and decodable).
   let is_binary = all_data.contains(&0);
   let (content, used_encoding, needs_encoding) = if is_binary {
-    (String::new(), encoding.clone().unwrap_or_else(|| "utf-8".to_string()), false)
+    (
+      String::new(),
+      encoding.clone().unwrap_or_else(|| "utf-8".to_string()),
+      false,
+    )
   } else {
     decode_file_content(&all_data, encoding.as_deref())
   };
@@ -1478,11 +1538,14 @@ pub async fn write_file_content(
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
   // Serialize text using the requested charset (default UTF-8).
-  let encoding_ref: &Encoding = Encoding::for_label(encoding.as_deref().unwrap_or("utf-8").as_bytes())
-    .unwrap_or(UTF_8);
+  let encoding_ref: &Encoding =
+    Encoding::for_label(encoding.as_deref().unwrap_or("utf-8").as_bytes()).unwrap_or(UTF_8);
   let (bytes, _used_encoding, had_errors) = encoding_ref.encode(&content);
   if had_errors {
-    return Err(format!("Content cannot be encoded as {}", encoding_ref.name()));
+    return Err(format!(
+      "Content cannot be encoded as {}",
+      encoding_ref.name()
+    ));
   }
   let bytes = bytes.into_owned();
   let resolved_path = resolve_sftp_path(&sftp, &path).await?;
@@ -1509,10 +1572,14 @@ pub async fn write_file_content(
     }
   }
 
-  let mut file = sftp.create(&resolved_path).await
+  let mut file = sftp
+    .create(&resolved_path)
+    .await
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
   use tokio::io::AsyncWriteExt;
-  file.write_all(&bytes).await
+  file
+    .write_all(&bytes)
+    .await
     .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
 
   Ok(true)
@@ -1549,12 +1616,16 @@ pub async fn download_file(
     .unwrap_or_else(|| remote_path.clone());
 
   // Get total file size
-  let metadata = sftp.metadata(&remote_path).await
+  let metadata = sftp
+    .metadata(&remote_path)
+    .await
     .map_err(|e| format!("Failed to stat remote file: {}", e))?;
   let total = metadata.size.unwrap_or(0);
 
   // Open file for chunked streaming read
-  let mut file = sftp.open(&remote_path).await
+  let mut file = sftp
+    .open(&remote_path)
+    .await
     .map_err(|e| format!("Failed to open remote file: {}", e))?;
 
   let mut all_data = Vec::with_capacity(total as usize);
@@ -1566,20 +1637,27 @@ pub async fn download_file(
     // Check for pause before each chunk
     check_pause(&control).await;
 
-    let n = file.read(&mut buf).await
+    let n = file
+      .read(&mut buf)
+      .await
       .map_err(|e| format!("Failed to read: {}", e))?;
-    if n == 0 { break; }
+    if n == 0 {
+      break;
+    }
     all_data.extend_from_slice(&buf[..n]);
     offset += n as u64;
 
-    let _ = app.emit("transfer-progress", serde_json::json!({
-      "tabId": tab_id,
-      "op": "download",
-      "filename": &filename,
-      "transferred": offset,
-      "total": total,
-      "elapsed": start.elapsed().as_millis()
-    }));
+    let _ = app.emit(
+      "transfer-progress",
+      serde_json::json!({
+        "tabId": tab_id,
+        "op": "download",
+        "filename": &filename,
+        "transferred": offset,
+        "total": total,
+        "elapsed": start.elapsed().as_millis()
+      }),
+    );
   }
 
   // Write to local file
@@ -1634,20 +1712,26 @@ pub async fn upload_file(
   // Ensure parent directory exists on remote (using mkdir -p via SFTP)
   if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
     let parent_str = parent.to_string_lossy().to_string();
-    
+
     if !parent_str.is_empty() && parent_str != "/" {
       // Try to create directory (ignore error if already exists)
       match sftp.metadata(&parent_str).await {
         Err(_) => {
           // Directory doesn't exist, try creating it
           let _ = sftp.create_dir(&parent_str).await;
-          
+
           // Also try the individual path components
           let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
           let mut build = String::new();
           for part in &parts {
-            if part.is_empty() { continue; }
-            if build.is_empty() { build.push('/'); } else { build.push('/'); }
+            if part.is_empty() {
+              continue;
+            }
+            if build.is_empty() {
+              build.push('/');
+            } else {
+              build.push('/');
+            }
             build.push_str(part);
             let _ = sftp.create_dir(&build).await;
           }
@@ -1670,19 +1754,24 @@ pub async fn upload_file(
 
   for chunk in data.chunks(chunk_size) {
     check_pause(&control).await;
-    file.write_all(chunk).await
+    file
+      .write_all(chunk)
+      .await
       .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
     written += chunk.len() as u64;
 
     let elapsed = start.elapsed().as_millis();
-    let _ = app.emit("transfer-progress", serde_json::json!({
-      "tabId": tab_id,
-      "op": "upload",
-      "filename": &filename,
-      "transferred": written,
-      "total": total,
-      "elapsed": elapsed
-    }));
+    let _ = app.emit(
+      "transfer-progress",
+      serde_json::json!({
+        "tabId": tab_id,
+        "op": "upload",
+        "filename": &filename,
+        "transferred": written,
+        "total": total,
+        "elapsed": elapsed
+      }),
+    );
   }
 
   // File is closed on drop
@@ -1701,7 +1790,10 @@ async fn resolve_sftp_path(
   }
 
   // Try to get real path of . (current working directory)
-  let cwd = sftp.canonicalize(".").await.unwrap_or_else(|_| "/".to_string());
+  let cwd = sftp
+    .canonicalize(".")
+    .await
+    .unwrap_or_else(|_| "/".to_string());
 
   // Handle . or empty
   if path == "." || path.is_empty() {
@@ -1712,10 +1804,10 @@ async fn resolve_sftp_path(
   if clean_path.is_empty() {
     return Ok(cwd);
   }
-  
+
   let result = format!("{}/{}", cwd.trim_end_matches('/'), clean_path);
   println!("[resolve_sftp_path] '{}' -> '{}'", path, result);
-  
+
   Ok(result)
 }
 
@@ -1764,7 +1856,9 @@ pub async fn upload_file_bytes(
           let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
           let mut build = String::new();
           for part in &parts {
-            if part.is_empty() { continue; }
+            if part.is_empty() {
+              continue;
+            }
             build.push('/');
             build.push_str(part);
             let _ = sftp.create_dir(&build).await;
@@ -1788,19 +1882,24 @@ pub async fn upload_file_bytes(
 
   for chunk in file_data.chunks(chunk_size) {
     check_pause(&control).await;
-    file.write_all(chunk).await
+    file
+      .write_all(chunk)
+      .await
       .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
     written += chunk.len() as u64;
 
     let elapsed = start.elapsed().as_millis();
-    let _ = app.emit("transfer-progress", serde_json::json!({
-      "tabId": tab_id,
-      "op": "upload",
-      "filename": &filename,
-      "transferred": written,
-      "total": total,
-      "elapsed": elapsed
-    }));
+    let _ = app.emit(
+      "transfer-progress",
+      serde_json::json!({
+        "tabId": tab_id,
+        "op": "upload",
+        "filename": &filename,
+        "transferred": written,
+        "total": total,
+        "elapsed": elapsed
+      }),
+    );
   }
 
   Ok(true)
@@ -1992,7 +2091,11 @@ pub async fn target_read_file(
 
   let is_binary = data.contains(&0);
   let (content, used_encoding, needs_encoding) = if is_binary {
-    (String::new(), encoding.clone().unwrap_or_else(|| "utf-8".to_string()), false)
+    (
+      String::new(),
+      encoding.clone().unwrap_or_else(|| "utf-8".to_string()),
+      false,
+    )
   } else {
     decode_file_content(&data, encoding.as_deref())
   };
@@ -2033,11 +2136,14 @@ pub async fn target_write_file(
 ) -> Result<bool, String> {
   let fs = build_fs(&app, &state, &target).await?;
 
-  let encoding_ref: &Encoding = Encoding::for_label(encoding.as_deref().unwrap_or("utf-8").as_bytes())
-    .unwrap_or(UTF_8);
+  let encoding_ref: &Encoding =
+    Encoding::for_label(encoding.as_deref().unwrap_or("utf-8").as_bytes()).unwrap_or(UTF_8);
   let (bytes, _used, had_errors) = encoding_ref.encode(&content);
   if had_errors {
-    return Err(format!("Content cannot be encoded as {}", encoding_ref.name()));
+    return Err(format!(
+      "Content cannot be encoded as {}",
+      encoding_ref.name()
+    ));
   }
   fs.write_file(&path, &bytes).await?;
   Ok(true)
@@ -2137,16 +2243,18 @@ pub async fn get_sftp_user(
 ) -> Result<Option<String>, String> {
   let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
   let session = sessions.get(&tab_id).ok_or("Session not found")?;
-  Ok(session.switched_sftp_user.as_ref().map(|su| su.username.clone()))
+  Ok(
+    session
+      .switched_sftp_user
+      .as_ref()
+      .map(|su| su.username.clone()),
+  )
 }
 
 // ==================== Transfer Pause/Resume ====================
 
 #[tauri::command]
-pub async fn pause_transfer(
-  state: tauri::State<'_, AppState>,
-  tab_id: u32,
-) -> Result<(), String> {
+pub async fn pause_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<(), String> {
   let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
   if let Some(ctrl) = controls.get(&tab_id) {
     ctrl.paused.store(true, Ordering::SeqCst);
@@ -2155,10 +2263,7 @@ pub async fn pause_transfer(
 }
 
 #[tauri::command]
-pub async fn resume_transfer(
-  state: tauri::State<'_, AppState>,
-  tab_id: u32,
-) -> Result<(), String> {
+pub async fn resume_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<(), String> {
   let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
   if let Some(ctrl) = controls.get(&tab_id) {
     ctrl.paused.store(false, Ordering::SeqCst);
@@ -2236,13 +2341,11 @@ impl Default for WindowConfig {
 
 #[tauri::command]
 pub async fn save_window_config(config: WindowConfig) -> Result<(), String> {
-  let path = get_window_config_path()
-    .ok_or("Cannot determine config directory")?;
+  let path = get_window_config_path().ok_or("Cannot determine config directory")?;
   if let Some(parent) = path.parent() {
     let _ = tokio::fs::create_dir_all(parent).await;
   }
-  let content = serde_json::to_string_pretty(&config)
-    .map_err(|e| e.to_string())?;
+  let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
   tokio::fs::write(&path, content)
     .await
     .map_err(|e| e.to_string())
@@ -2250,8 +2353,7 @@ pub async fn save_window_config(config: WindowConfig) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn load_window_config() -> Result<WindowConfig, String> {
-  let path = get_window_config_path()
-    .ok_or("Cannot determine config directory")?;
+  let path = get_window_config_path().ok_or("Cannot determine config directory")?;
   if !path.exists() {
     return Ok(WindowConfig::default());
   }
@@ -2268,10 +2370,7 @@ pub async fn load_window_config() -> Result<WindowConfig, String> {
 /// Returns "{}" when no file exists so the frontend can apply its defaults.
 #[tauri::command]
 pub async fn load_layout(app: tauri::AppHandle) -> Result<String, String> {
-  let dir = app
-    .path()
-    .app_config_dir()
-    .map_err(|e| e.to_string())?;
+  let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
   let path = dir.join("layout.json");
   if !path.exists() {
     return Ok(String::from("{}"));
@@ -2284,10 +2383,7 @@ pub async fn load_layout(app: tauri::AppHandle) -> Result<String, String> {
 /// Persist the workspace layout as JSON to layout.json.
 #[tauri::command]
 pub async fn save_layout(app: tauri::AppHandle, layout: String) -> Result<(), String> {
-  let dir = app
-    .path()
-    .app_config_dir()
-    .map_err(|e| e.to_string())?;
+  let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
   tokio::fs::create_dir_all(&dir)
     .await
     .map_err(|e| e.to_string())?;
@@ -2353,9 +2449,7 @@ pub async fn delete_session(
 }
 
 #[tauri::command]
-pub async fn delete_all_sessions(
-  state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn delete_all_sessions(state: tauri::State<'_, AppState>) -> Result<(), String> {
   let conn = state.db.lock().map_err(|e| e.to_string())?;
   db::delete_all_sessions(&conn)
 }
@@ -2385,7 +2479,12 @@ pub async fn get_recording_enabled(
   tab_id: u32,
 ) -> Result<bool, String> {
   let recordings = state.recordings.lock().map_err(|e| e.to_string())?;
-  Ok(recordings.get(&tab_id).map(|r| r.recording_enabled).unwrap_or(false))
+  Ok(
+    recordings
+      .get(&tab_id)
+      .map(|r| r.recording_enabled)
+      .unwrap_or(false),
+  )
 }
 
 #[tauri::command]
@@ -2617,9 +2716,7 @@ pub async fn docker_container_logs(
     container_name.clone(),
   ];
   match crate::docker_fs::exec_on_jump(&*handle, &argv, None).await {
-    Ok((out, _err, _status)) => {
-      Ok(String::from_utf8_lossy(&out).to_string())
-    }
+    Ok((out, _err, _status)) => Ok(String::from_utf8_lossy(&out).to_string()),
     Err(e) => {
       // docker logs may write to stderr on success on some versions;
       // return the raw error as text rather than failing
@@ -2681,8 +2778,7 @@ pub async fn docker_logs_stream_start(
   ];
 
   // Open the streaming exec channel
-  let mut channel =
-    crate::docker_fs::exec_streaming_on_jump(&handle, &argv).await?;
+  let mut channel = crate::docker_fs::exec_streaming_on_jump(&handle, &argv).await?;
 
   // Create shutdown channel
   let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -2877,46 +2973,46 @@ pub fn open_config_dir() -> Result<(), String> {
 
 // ==================== AI Chat ====================
 
-use crate::ai::{self, AiConfig, AiMessage, AiChatState};
+use crate::ai::{self, AiChatState, AiConfig, AiMessage};
 
 /// Load the persistent AI configuration from disk.
 #[tauri::command]
 pub async fn load_ai_config(state: tauri::State<'_, AppState>) -> Result<AiConfig, String> {
-    let config = ai::load_ai_config()?;
-    let mut guard = state.ai_config.lock().unwrap();
-    *guard = Some(config.clone());
-    Ok(config)
+  let config = ai::load_ai_config()?;
+  let mut guard = state.ai_config.lock().unwrap();
+  *guard = Some(config.clone());
+  Ok(config)
 }
 
 /// Save the AI configuration to disk. The `api_key_enc` field should already
 /// be encrypted (the frontend encrypts the plaintext key before saving).
 #[tauri::command]
 pub async fn save_ai_config(
-    state: tauri::State<'_, AppState>,
-    config: AiConfig,
+  state: tauri::State<'_, AppState>,
+  config: AiConfig,
 ) -> Result<(), String> {
-    ai::save_ai_config(&config)?;
-    let mut guard = state.ai_config.lock().unwrap();
-    *guard = Some(config);
-    Ok(())
+  ai::save_ai_config(&config)?;
+  let mut guard = state.ai_config.lock().unwrap();
+  *guard = Some(config);
+  Ok(())
 }
 
 /// Encrypt a plain-text API key. Returns the encrypted blob (or empty for empty input).
 #[tauri::command]
 pub async fn encrypt_api_key(key: String) -> Result<String, String> {
-    if key.is_empty() {
-        return Ok(String::new());
-    }
-    crate::vault::seal_secret(&key)
+  if key.is_empty() {
+    return Ok(String::new());
+  }
+  crate::vault::seal_secret(&key)
 }
 
 /// Decrypt an encrypted API key blob (for masked display in settings).
 #[tauri::command]
 pub async fn decrypt_api_key(encrypted: String) -> Result<String, String> {
-    if encrypted.is_empty() {
-        return Ok(String::new());
-    }
-    crate::vault::open_secret(&encrypted)
+  if encrypted.is_empty() {
+    return Ok(String::new());
+  }
+  crate::vault::open_secret(&encrypted)
 }
 
 /// Fetch the list of model ids available from an AI provider's `/models`
@@ -2924,135 +3020,134 @@ pub async fn decrypt_api_key(encrypted: String) -> Result<String, String> {
 /// endpoints). Used by the settings UI to populate the model dropdown.
 #[tauri::command]
 pub async fn list_ai_models(api_key_enc: String, endpoint: String) -> Result<Vec<String>, String> {
-    ai::fetch_models(&api_key_enc, &endpoint).await
+  ai::fetch_models(&api_key_enc, &endpoint).await
 }
 
 /// Send a non-streaming AI chat request. Returns the full assistant response.
 #[tauri::command]
 pub async fn ai_chat(
-    state: tauri::State<'_, AppState>,
-    messages: Vec<AiMessage>,
-    profile: Option<crate::ai::AiEndpointProfile>,
+  state: tauri::State<'_, AppState>,
+  messages: Vec<AiMessage>,
+  profile: Option<crate::ai::AiEndpointProfile>,
 ) -> Result<String, String> {
-    let profile = match profile {
-        Some(p) => p,
-        None => {
-            let config = state
-                .ai_config
-                .lock()
-                .unwrap()
-                .clone()
-                .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
-            config
-                .active_profile()
-                .ok_or_else(|| "No AI endpoint configured.".to_string())?
-                .clone()
-        }
+  let profile =
+    match profile {
+      Some(p) => p,
+      None => {
+        let config =
+          state.ai_config.lock().unwrap().clone().ok_or_else(|| {
+            "AI config not loaded. Please configure AI settings first.".to_string()
+          })?;
+        config
+          .active_profile()
+          .ok_or_else(|| "No AI endpoint configured.".to_string())?
+          .clone()
+      }
     };
-    ai::ai_chat_sync(&profile, &messages).await
+  ai::ai_chat_sync(&profile, &messages).await
 }
 
 /// Start a streaming AI chat. Spawns a background task that reads the SSE
 /// stream and pushes chunks into AppState. Call `poll_ai_chunks` to retrieve.
 #[tauri::command]
 pub async fn start_ai_chat_stream(
-    app: tauri::AppHandle,
-    messages: Vec<AiMessage>,
-    profile: Option<crate::ai::AiEndpointProfile>,
+  app: tauri::AppHandle,
+  messages: Vec<AiMessage>,
+  profile: Option<crate::ai::AiEndpointProfile>,
 ) -> Result<String, String> {
-    let chat_id = {
+  let chat_id = {
+    let state = app.state::<AppState>();
+    let cid = Uuid::new_v4().to_string();
+    state.ai_chat_buffers.lock().unwrap().insert(
+      cid.clone(),
+      AiChatState {
+        chat_id: cid.clone(),
+        chunks: Vec::new(),
+        done: false,
+        error: None,
+        tool_events: Vec::new(),
+        cancelled: false,
+      },
+    );
+    cid
+  };
+
+  let profile =
+    match profile {
+      Some(p) => p,
+      None => {
         let state = app.state::<AppState>();
-        let cid = Uuid::new_v4().to_string();
-        state.ai_chat_buffers.lock().unwrap().insert(
-            cid.clone(),
-            AiChatState {
-                chat_id: cid.clone(),
-                chunks: Vec::new(),
-                done: false,
-                error: None,
-                tool_events: Vec::new(),
-                cancelled: false,
-            },
-        );
-        cid
+        let config =
+          state.ai_config.lock().unwrap().clone().ok_or_else(|| {
+            "AI config not loaded. Please configure AI settings first.".to_string()
+          })?;
+        config
+          .active_profile()
+          .ok_or_else(|| "No AI endpoint configured.".to_string())?
+          .clone()
+      }
     };
 
-    let profile = match profile {
-        Some(p) => p,
-        None => {
-            let state = app.state::<AppState>();
-            let config = state
-                .ai_config
-                .lock()
-                .unwrap()
-                .clone()
-                .ok_or_else(|| {
-                    "AI config not loaded. Please configure AI settings first.".to_string()
-                })?;
-            config
-                .active_profile()
-                .ok_or_else(|| "No AI endpoint configured.".to_string())?
-                .clone()
-        }
-    };
+  let app_clone = app.clone();
+  let cid = chat_id.clone();
 
-    let app_clone = app.clone();
-    let cid = chat_id.clone();
+  tauri::async_runtime::spawn(async move {
+    let result = ai::execute_streaming_chat(&profile, &messages, |chunk| {
+      let state = app_clone.state::<AppState>();
+      let mut guard = state.ai_chat_buffers.lock().unwrap();
+      if let Some(cs) = guard.get_mut(&cid) {
+        cs.chunks.push(chunk);
+      }
+    })
+    .await;
 
-    tauri::async_runtime::spawn(async move {
-        let result =
-            ai::execute_streaming_chat(&profile, &messages, |chunk| {
-                let state = app_clone.state::<AppState>();
-                let mut guard = state.ai_chat_buffers.lock().unwrap();
-                if let Some(cs) = guard.get_mut(&cid) {
-                    cs.chunks.push(chunk);
-                }
-            })
-            .await;
+    let state = app_clone.state::<AppState>();
+    let mut guard = state.ai_chat_buffers.lock().unwrap();
+    if let Some(cs) = guard.get_mut(&cid) {
+      cs.done = true;
+      if let Err(e) = result {
+        cs.error = Some(e);
+      }
+    }
+  });
 
-        let state = app_clone.state::<AppState>();
-        let mut guard = state.ai_chat_buffers.lock().unwrap();
-        if let Some(cs) = guard.get_mut(&cid) {
-            cs.done = true;
-            if let Err(e) = result {
-                cs.error = Some(e);
-            }
-        }
-    });
-
-    Ok(chat_id)
+  Ok(chat_id)
 }
 
 /// Poll for new streaming chunks from an active AI chat.
 /// Returns `(new_text, done, error)`. The entry is removed when done.
 #[tauri::command]
 pub async fn poll_ai_chunks(
-    state: tauri::State<'_, AppState>,
-    chat_id: String,
+  state: tauri::State<'_, AppState>,
+  chat_id: String,
 ) -> Result<Option<(String, bool, Option<String>, Vec<crate::ai::ToolCallEvent>)>, String> {
-    let mut guard = state.ai_chat_buffers.lock().unwrap();
-    match guard.get_mut(&chat_id) {
-        Some(cs) => {
-            if cs.cancelled && cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
-                // User paused the stream — end polling with whatever text already
-                // arrived (there is none left to drain here).
-                guard.remove(&chat_id);
-                return Ok(Some((String::new(), true, None, Vec::new())));
-            }
-            if cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
-                return Ok(Some((String::new(), false, None, Vec::new())));
-            }
-            let new_text: String = cs.chunks.drain(..).collect();
-            let done = cs.done || cs.cancelled;
-            let error = if cs.cancelled && !cs.done { None } else { cs.error.clone() };
-            let tool_events = std::mem::take(&mut cs.tool_events);
-            if done {
-                guard.remove(&chat_id);
-            }
-            Ok(Some((new_text, done, error, tool_events)))
-        }
-        None => Ok(None),
+  let mut guard = state.ai_chat_buffers.lock().unwrap();
+  match guard.get_mut(&chat_id) {
+    Some(cs) => {
+      if cs.cancelled && cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
+        // User paused the stream — end polling with whatever text already
+        // arrived (there is none left to drain here).
+        guard.remove(&chat_id);
+        return Ok(Some((String::new(), true, None, Vec::new())));
+      }
+      if cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
+        return Ok(Some((String::new(), false, None, Vec::new())));
+      }
+      let new_text: String = cs.chunks.drain(..).collect();
+      let done = cs.done || cs.cancelled;
+      let error = if cs.cancelled && !cs.done {
+        None
+      } else {
+        cs.error.clone()
+      };
+      let tool_events = std::mem::take(&mut cs.tool_events);
+      if done {
+        guard.remove(&chat_id);
+      }
+      Ok(Some((new_text, done, error, tool_events)))
     }
+    None => Ok(None),
+  }
 }
 
 /// Pause/stop an in-flight AI chat. The stream is marked cancelled; the next
@@ -3060,11 +3155,11 @@ pub async fn poll_ai_chunks(
 /// frontend stops polling. The background task aborts on its next chunk.
 #[tauri::command]
 pub fn cancel_ai_chat(state: tauri::State<'_, AppState>, chat_id: String) -> Result<(), String> {
-    let mut guard = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
-    if let Some(cs) = guard.get_mut(&chat_id) {
-        cs.cancelled = true;
-    }
-    Ok(())
+  let mut guard = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
+  if let Some(cs) = guard.get_mut(&chat_id) {
+    cs.cancelled = true;
+  }
+  Ok(())
 }
 
 /// Start an AI chat that may call tools (agent loop). Streams assistant text
@@ -3076,172 +3171,207 @@ pub fn cancel_ai_chat(state: tauri::State<'_, AppState>, chat_id: String) -> Res
 /// the `get_current_server` tool (so the model never has to guess a tab id).
 #[tauri::command]
 pub async fn start_ai_agent(
-    app: tauri::AppHandle,
-    messages: Vec<crate::ai::AiMessage>,
-    tab_id: Option<u32>,
-    profile: Option<crate::ai::AiEndpointProfile>,
+  app: tauri::AppHandle,
+  messages: Vec<crate::ai::AiMessage>,
+  tab_id: Option<u32>,
+  profile: Option<crate::ai::AiEndpointProfile>,
+  read_only: bool,
 ) -> Result<String, String> {
-    let chat_id = {
+  let chat_id = {
+    let state = app.state::<AppState>();
+    let cid = Uuid::new_v4().to_string();
+    state.ai_chat_buffers.lock().unwrap().insert(
+      cid.clone(),
+      crate::ai::AiChatState {
+        chat_id: cid.clone(),
+        chunks: Vec::new(),
+        done: false,
+        error: None,
+        tool_events: Vec::new(),
+        cancelled: false,
+      },
+    );
+    cid
+  };
+
+  // Prefer the profile selected in the UI (passed from the frontend); fall back
+  // to the persisted active profile only if none was provided.
+  let config =
+    match profile {
+      Some(p) => p,
+      None => {
         let state = app.state::<AppState>();
-        let cid = Uuid::new_v4().to_string();
-        state.ai_chat_buffers.lock().unwrap().insert(
-            cid.clone(),
-            crate::ai::AiChatState {
-                chat_id: cid.clone(),
-                chunks: Vec::new(),
-                done: false,
-                error: None,
-                tool_events: Vec::new(),
-                cancelled: false,
-            },
-        );
-        cid
+        let cfg =
+          state.ai_config.lock().unwrap().clone().ok_or_else(|| {
+            "AI config not loaded. Please configure AI settings first.".to_string()
+          })?;
+        cfg
+          .active_profile()
+          .cloned()
+          .ok_or_else(|| "No AI endpoint configured.".to_string())?
+      }
     };
 
-    // Prefer the profile selected in the UI (passed from the frontend); fall back
-    // to the persisted active profile only if none was provided.
-    let config = match profile {
-        Some(p) => p,
-        None => {
-            let state = app.state::<AppState>();
-            let cfg = state
-                .ai_config
-                .lock()
-                .unwrap()
-                .clone()
-                .ok_or_else(|| "AI config not loaded. Please configure AI settings first.".to_string())?;
-            cfg.active_profile()
-                .cloned()
-                .ok_or_else(|| "No AI endpoint configured.".to_string())?
-        }
-    };
+  let app_clone = app.clone();
+  let cid = chat_id.clone();
+  // Capture the current server context for the active shell tab (if any) so we
+  // can inject it into the system prompt and power the `get_current_server` tool.
+  let current_tab_id = tab_id;
+  let current_server_context =
+    current_tab_id.and_then(|tid| build_current_server_context(&app, tid));
 
-    let app_clone = app.clone();
-    let cid = chat_id.clone();
-    // Capture the current server context for the active shell tab (if any) so we
-    // can inject it into the system prompt and power the `get_current_server` tool.
-    let current_tab_id = tab_id;
-    let current_server_context = current_tab_id.and_then(|tid| build_current_server_context(&app, tid));
-
-    // Inject the current server context into the system message so the model
-    // always knows which server this conversation is bound to.
-    let messages_with_context: Vec<crate::ai::AiMessage> = if let Some(ctx) = &current_server_context {
-        messages
-            .iter()
-            .map(|m| {
-                if m.role == "system" {
-                    let mut m = m.clone();
-                    let base = m.content.clone().unwrap_or_default();
-                    m.content = Some(format!("{}\n\n{}", base, ctx));
-                    m
-                } else {
-                    m.clone()
-                }
-            })
-            .collect()
+  // Inject the current server context (and, in read-only mode, a mode note)
+  // into the system message so the model always knows which server this
+  // conversation is bound to and whether it may modify the system.
+  let mode_note = if read_only {
+    Some(
+      "MODE: Read-only mode is ENABLED. You may ONLY run read-only / inspection commands \
+             (status, logs, file reads, analysis). Do NOT attempt to modify the system: no writes, \
+             no installs, no service changes, no file edits, and no destructive commands."
+        .to_string(),
+    )
+  } else {
+    None
+  };
+  let messages_with_context: Vec<crate::ai::AiMessage> = {
+    let mut extra = String::new();
+    if let Some(ctx) = &current_server_context {
+      extra.push_str(ctx);
+      extra.push('\n');
+    }
+    if let Some(note) = &mode_note {
+      extra.push_str(note);
+      extra.push('\n');
+    }
+    if extra.is_empty() {
+      messages.clone()
     } else {
-        messages.clone()
-    };
+      messages
+        .iter()
+        .map(|m| {
+          if m.role == "system" {
+            let mut m = m.clone();
+            let base = m.content.clone().unwrap_or_default();
+            m.content = Some(format!("{}\n\n{}", base, extra));
+            m
+          } else {
+            m.clone()
+          }
+        })
+        .collect()
+    }
+  };
 
-    let on_confirm = {
-        let app2 = app_clone.clone();
-        let cid2 = cid.clone();
-        let conf2 = config.clone();
-        move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-            save_pending(&app2, &cid2, &conf2, msgs, calls);
-        }
-    };
-    spawn_agent(app_clone, cid.clone(), config, messages_with_context, current_tab_id, on_confirm);
+  let on_confirm = {
+    let app2 = app_clone.clone();
+    let cid2 = cid.clone();
+    let conf2 = config.clone();
+    move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
+      save_pending(&app2, &cid2, &conf2, msgs, calls, read_only);
+    }
+  };
+  spawn_agent(
+    app_clone,
+    cid.clone(),
+    config,
+    messages_with_context,
+    current_tab_id,
+    read_only,
+    on_confirm,
+  );
 
-    Ok(chat_id)
+  Ok(chat_id)
 }
 
 /// Persist an agent-loop pause awaiting user confirmation of a sensitive tool
 /// call, and flag the in-flight tool events as `needs-confirmation` so the
 /// frontend can render an approval prompt.
 fn save_pending(
-    app: &tauri::AppHandle,
-    chat_id: &str,
-    config: &crate::ai::AiEndpointProfile,
-    messages: Vec<crate::ai::AiMessage>,
-    calls: Vec<crate::ai::OpenAiToolCall>,
+  app: &tauri::AppHandle,
+  chat_id: &str,
+  config: &crate::ai::AiEndpointProfile,
+  messages: Vec<crate::ai::AiMessage>,
+  calls: Vec<crate::ai::OpenAiToolCall>,
+  read_only: bool,
 ) {
-    {
-        let st = app.state::<AppState>();
-        let guard = st.ai_pending.lock();
-        if let Ok(mut g) = guard {
-            *g = Some(crate::ssh_session::AiPendingConfirm {
-                chat_id: chat_id.to_string(),
-                config: config.clone(),
-                messages,
-                calls,
-            });
-        }
+  {
+    let st = app.state::<AppState>();
+    let guard = st.ai_pending.lock();
+    if let Ok(mut g) = guard {
+      *g = Some(crate::ssh_session::AiPendingConfirm {
+        chat_id: chat_id.to_string(),
+        config: config.clone(),
+        messages,
+        calls,
+        read_only,
+      });
     }
-    {
-        let st = app.state::<AppState>();
-        let guard = st.ai_chat_buffers.lock();
-        if let Ok(mut g) = guard {
-            if let Some(cs) = g.get_mut(chat_id) {
-                for ev in &mut cs.tool_events {
-                    if ev.status == "executing" {
-                        ev.status = "needs-confirmation".to_string();
-                    }
-                }
-            }
+  }
+  {
+    let st = app.state::<AppState>();
+    let guard = st.ai_chat_buffers.lock();
+    if let Ok(mut g) = guard {
+      if let Some(cs) = g.get_mut(chat_id) {
+        for ev in &mut cs.tool_events {
+          if ev.status == "executing" {
+            ev.status = "needs-confirmation".to_string();
+          }
         }
+      }
     }
+  }
 }
 
 /// Spawn the agent loop for a chat, wiring streaming chunks / tool events to the
 /// shared `AiChatState` buffer. Used by both `start_ai_agent` and `confirm_ai_tool`.
 fn spawn_agent(
-    app: tauri::AppHandle,
-    chat_id: String,
-    config: crate::ai::AiEndpointProfile,
-    messages: Vec<crate::ai::AiMessage>,
-    current_tab_id: Option<u32>,
-    on_confirm: impl Fn(Vec<crate::ai::AiMessage>, Vec<crate::ai::OpenAiToolCall>) + Send + 'static,
+  app: tauri::AppHandle,
+  chat_id: String,
+  config: crate::ai::AiEndpointProfile,
+  messages: Vec<crate::ai::AiMessage>,
+  current_tab_id: Option<u32>,
+  read_only: bool,
+  on_confirm: impl Fn(Vec<crate::ai::AiMessage>, Vec<crate::ai::OpenAiToolCall>) + Send + 'static,
 ) {
-    tauri::async_runtime::spawn(async move {
-        let result = crate::ai::run_agent_stream(
-            &config,
-            messages,
-            |chunk| {
-                let state = app.state::<AppState>();
-                let mut guard = state.ai_chat_buffers.lock().unwrap();
-                if let Some(cs) = guard.get_mut(&chat_id) {
-                    cs.chunks.push(chunk);
-                }
-            },
-            |event| {
-                let state = app.state::<AppState>();
-                let mut guard = state.ai_chat_buffers.lock().unwrap();
-                if let Some(cs) = guard.get_mut(&chat_id) {
-                    cs.tool_events.push(event);
-                }
-            },
-            |calls| -> futures_util::future::BoxFuture<'static, Vec<crate::ai::ToolResult>> {
-                let app = app.clone();
-                let tab = current_tab_id;
-                Box::pin(async move { execute_ai_tools(&app, calls, tab).await })
-            },
-            on_confirm,
-        )
-        .await;
-
+  tauri::async_runtime::spawn(async move {
+    let result = crate::ai::run_agent_stream(
+      &config,
+      messages,
+      |chunk| {
         let state = app.state::<AppState>();
         let mut guard = state.ai_chat_buffers.lock().unwrap();
         if let Some(cs) = guard.get_mut(&chat_id) {
-            cs.done = true;
-            if let Err(e) = result {
-                // A confirmation pause is expected — don't surface it as an error.
-                if e != "__confirmation__" {
-                    cs.error = Some(e);
-                }
-            }
+          cs.chunks.push(chunk);
         }
-    });
+      },
+      |event| {
+        let state = app.state::<AppState>();
+        let mut guard = state.ai_chat_buffers.lock().unwrap();
+        if let Some(cs) = guard.get_mut(&chat_id) {
+          cs.tool_events.push(event);
+        }
+      },
+      |calls| -> futures_util::future::BoxFuture<'static, Vec<crate::ai::ToolResult>> {
+        let app = app.clone();
+        let tab = current_tab_id;
+        Box::pin(async move { execute_ai_tools(&app, calls, tab, read_only).await })
+      },
+      on_confirm,
+    )
+    .await;
+
+    let state = app.state::<AppState>();
+    let mut guard = state.ai_chat_buffers.lock().unwrap();
+    if let Some(cs) = guard.get_mut(&chat_id) {
+      cs.done = true;
+      if let Err(e) = result {
+        // A confirmation pause is expected — don't surface it as an error.
+        if e != "__confirmation__" {
+          cs.error = Some(e);
+        }
+      }
+    }
+  });
 }
 
 /// Resolve a paused agent tool call. When `approved`, the pending tool calls
@@ -3250,89 +3380,407 @@ fn spawn_agent(
 /// saved message context.
 #[tauri::command]
 pub async fn confirm_ai_tool(
-    app: tauri::AppHandle,
-    chat_id: String,
-    approved: bool,
+  app: tauri::AppHandle,
+  chat_id: String,
+  approved: bool,
+  read_only: bool,
 ) -> Result<(), String> {
-    let state = app.state::<AppState>();
-    let pending = {
-        let mut guard = state.ai_pending.lock().map_err(|e| e.to_string())?;
-        guard.take().ok_or("No pending tool confirmation.")?
+  let state = app.state::<AppState>();
+  let pending = {
+    let mut guard = state.ai_pending.lock().map_err(|e| e.to_string())?;
+    guard.take().ok_or("No pending tool confirmation.")?
+  };
+  if pending.chat_id != chat_id {
+    return Err("Chat id mismatch for pending confirmation.".into());
+  }
+
+  // Resolve each pending call: execute if approved (force), else reject.
+  // Note: read-only mode still blocks modifying commands even when approved —
+  // the guard in `execute_one_tool` is independent of `force`.
+  let mut results: Vec<crate::ai::ToolResult> = Vec::new();
+  for call in &pending.calls {
+    let result = if approved {
+      execute_one_tool(&state, call, None, true, read_only)
+        .await
+        .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string())
+    } else {
+      serde_json::json!({ "error": "User declined to execute this command." }).to_string()
     };
-    if pending.chat_id != chat_id {
-        return Err("Chat id mismatch for pending confirmation.".into());
-    }
+    results.push((call.id.clone(), result));
+  }
 
-    // Resolve each pending call: execute if approved (force), else reject.
-    let mut results: Vec<crate::ai::ToolResult> = Vec::new();
-    for call in &pending.calls {
-        let result = if approved {
-            execute_one_tool(&state, call, None, true)
-                .await
-                .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string())
-        } else {
-            serde_json::json!({ "error": "User declined to execute this command." })
-                .to_string()
-        };
-        results.push((call.id.clone(), result));
-    }
+  // Append tool-result messages (mirrors run_agent_stream) and resume.
+  let mut messages = pending.messages;
+  for call in &pending.calls {
+    let result = results
+      .iter()
+      .find(|(id, _)| id == &call.id)
+      .map(|(_, r)| r.clone())
+      .unwrap_or_else(|| "{\"error\":\"no result\"}".into());
+    messages.push(crate::ai::AiMessage {
+      role: "tool".into(),
+      content: Some(result),
+      tool_calls: None,
+      tool_call_id: Some(call.id.clone()),
+      name: Some(call.name.clone()),
+      images: None,
+    });
+  }
 
-    // Append tool-result messages (mirrors run_agent_stream) and resume.
-    let mut messages = pending.messages;
-    for call in &pending.calls {
-        let result = results
-            .iter()
-            .find(|(id, _)| id == &call.id)
-            .map(|(_, r)| r.clone())
-            .unwrap_or_else(|| "{\"error\":\"no result\"}".into());
-        messages.push(crate::ai::AiMessage {
-            role: "tool".into(),
-            content: Some(result),
-            tool_calls: None,
-            tool_call_id: Some(call.id.clone()),
-            name: Some(call.name.clone()),
-            images: None,
-        });
+  // Reset the chat buffer so the resumed loop can append cleanly.
+  {
+    let mut guard = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
+    if let Some(cs) = guard.get_mut(&chat_id) {
+      cs.done = false;
+      cs.error = None;
     }
+  }
 
-    // Reset the chat buffer so the resumed loop can append cleanly.
-    {
-        let mut guard = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
-        if let Some(cs) = guard.get_mut(&chat_id) {
-            cs.done = false;
-            cs.error = None;
-        }
+  // Reuse the same pause handler so chained sensitive calls keep asking.
+  let on_confirm = {
+    let app2 = app.clone();
+    let cid2 = chat_id.clone();
+    let conf2 = pending.config.clone();
+    let ro = read_only;
+    move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
+      save_pending(&app2, &cid2, &conf2, msgs, calls, ro);
     }
-
-    // Reuse the same pause handler so chained sensitive calls keep asking.
-    let on_confirm = {
-        let app2 = app.clone();
-        let cid2 = chat_id.clone();
-        let conf2 = pending.config.clone();
-        move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-            save_pending(&app2, &cid2, &conf2, msgs, calls);
-        }
-    };
-    spawn_agent(app, chat_id, pending.config, messages, None, on_confirm);
-    Ok(())
+  };
+  spawn_agent(
+    app,
+    chat_id,
+    pending.config,
+    messages,
+    None,
+    read_only,
+    on_confirm,
+  );
+  Ok(())
 }
 
 /// Dangerous command substrings rejected outright when executed through tools.
 fn is_dangerous_command(cmd: &str) -> bool {
-    let lower = cmd.to_lowercase();
-    const DANGEROUS: &[&str] = &[
-        "rm -rf /",
-        "mkfs",
-        "dd if=",
-        ":(){",
-        "shutdown",
-        "reboot",
-        "init 0",
-        "init 6",
-        "> /dev/sda",
-        "chmod -r 000",
-    ];
-    DANGEROUS.iter().any(|d| lower.contains(d))
+  let lower = cmd.to_lowercase();
+  const DANGEROUS: &[&str] = &[
+    "rm -rf /",
+    "mkfs",
+    "dd if=",
+    ":(){",
+    "shutdown",
+    "reboot",
+    "init 0",
+    "init 6",
+    "> /dev/sda",
+    "chmod -r 000",
+  ];
+  DANGEROUS.iter().any(|d| lower.contains(d))
+}
+
+/// Returns true when the command is a read-only / inspection command that is
+/// safe to run in AI read-only mode. Used to hard-block modifying commands when
+/// the assistant is started in read-only mode (`read_only == true`).
+fn is_readonly_safe_command(cmd: &str) -> bool {
+  let c = cmd.trim();
+  // File-write redirections are never allowed in read-only mode.
+  if c.contains(">>") || c.contains(" > ") {
+    return false;
+  }
+  // Subcommands that may modify the system even though their base name is
+  // otherwise harmless.
+  const SVC_MODIFY: &[&str] = &[
+    "start",
+    "stop",
+    "restart",
+    "reload",
+    "try-restart",
+    "reload-or-restart",
+    "isolate",
+    "mask",
+    "unmask",
+    "enable",
+    "disable",
+    "reenable",
+    "daemon-reexec",
+    "daemon-reload",
+    "default",
+    "rescue",
+    "halt",
+    "poweroff",
+    "reboot",
+    "suspend",
+    "hibernate",
+  ];
+  const PKG_MODIFY: &[&str] = &[
+    "install",
+    "remove",
+    "purge",
+    "erase",
+    "upgrade",
+    "update",
+    "dist-upgrade",
+    "full-upgrade",
+    "autoremove",
+    "clean",
+    "autoclean",
+    "reinstall",
+    "downgrade",
+    "add",
+    "del",
+    "build-dep",
+    "mark",
+    "reconfigure",
+    "trigger",
+    "--reinstall",
+    "-f",
+    "--fix-broken",
+    "-y",
+    "--assume-yes",
+    "-R",
+    "--resolvconf",
+  ];
+  const GIT_MODIFY: &[&str] = &[
+    "commit",
+    "push",
+    "checkout",
+    "reset",
+    "rm",
+    "mv",
+    "add",
+    "clone",
+    "merge",
+    "rebase",
+    "cherry-pick",
+    "revert",
+    "clean",
+    "tag",
+    "branch",
+    "stash",
+    "am",
+    "apply",
+    "init",
+    "pull",
+  ];
+  const DL_WRITE: &[&str] = &[
+    "-o",
+    "--output",
+    "-O",
+    "--remote-name",
+    "-P",
+    "--directory-prefix",
+  ];
+
+  for part in c.split(|ch| ch == ';' || ch == '&' || ch == '|' || ch == '\n') {
+    let p = part
+      .trim()
+      .trim_start_matches(|ch| ch == '(' || ch == '{' || ch == '`' || ch == '\'' || ch == '"')
+      .trim();
+    if p.is_empty() || p.starts_with('#') {
+      continue;
+    }
+    let tokens: Vec<&str> = p.split_whitespace().collect();
+    if tokens.is_empty() {
+      continue;
+    }
+    // Strip common command-prefix wrappers (sudo, env, time, ...).
+    let mut idx = 0;
+    while idx < tokens.len()
+      && matches!(
+        tokens[idx],
+        "sudo" | "doas" | "env" | "time" | "nohup" | "nice" | "stdbuf" | "ionice" | "setsid"
+      )
+    {
+      idx += 1;
+    }
+    if idx >= tokens.len() {
+      return false;
+    }
+    let cmd_name = tokens[idx];
+
+    // Command-specific subcommand guards.
+    if cmd_name == "sed" && tokens[idx + 1..].iter().any(|t| t.starts_with("-i")) {
+      return false; // in-place edit
+    }
+    if cmd_name == "find"
+      && tokens[idx + 1..].iter().any(|t| {
+        *t == "-delete" || *t == "-exec" || *t == "-execdir" || *t == "-ok" || *t == "-okdir"
+      })
+    {
+      return false;
+    }
+    if matches!(cmd_name, "systemctl" | "service")
+      && tokens[idx + 1..].iter().any(|t| SVC_MODIFY.contains(t))
+    {
+      return false;
+    }
+    if matches!(
+      cmd_name,
+      "apt"
+        | "apt-get"
+        | "apt-cache"
+        | "dpkg"
+        | "dpkg-query"
+        | "rpm"
+        | "yum"
+        | "dnf"
+        | "dnf4"
+        | "pacman"
+        | "microdnf"
+        | "zypper"
+        | "apk"
+    ) && tokens[idx + 1..]
+      .iter()
+      .any(|t| PKG_MODIFY.contains(&t.trim_start_matches('-')))
+    {
+      return false;
+    }
+    if cmd_name == "git" && tokens[idx + 1..].iter().any(|t| GIT_MODIFY.contains(t)) {
+      return false;
+    }
+    if matches!(cmd_name, "curl" | "wget") && tokens[idx + 1..].iter().any(|t| DL_WRITE.contains(t))
+    {
+      return false; // downloading to a file writes to disk
+    }
+
+    if !is_readonly_command_name(cmd_name) {
+      return false;
+    }
+  }
+  true
+}
+
+/// Conservative allowlist of command names that are read-only / inspection only.
+fn is_readonly_command_name(name: &str) -> bool {
+  const READONLY: &[&str] = &[
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "grep",
+    "egrep",
+    "fgrep",
+    "pgrep",
+    "rg",
+    "ag",
+    "awk",
+    "sed",
+    "cut",
+    "sort",
+    "uniq",
+    "wc",
+    "tr",
+    "nl",
+    "od",
+    "xxd",
+    "hexdump",
+    "strings",
+    "base64",
+    "sha256sum",
+    "sha1sum",
+    "md5sum",
+    "sum",
+    "cksum",
+    "column",
+    "expand",
+    "unexpand",
+    "ls",
+    "ll",
+    "pwd",
+    "echo",
+    "printf",
+    "printenv",
+    "env",
+    "type",
+    "which",
+    "whereis",
+    "command",
+    "whoami",
+    "id",
+    "who",
+    "w",
+    "users",
+    "last",
+    "lastlog",
+    "uptime",
+    "date",
+    "cal",
+    "finger",
+    "logname",
+    "tty",
+    "groups",
+    "ps",
+    "top",
+    "htop",
+    "free",
+    "vmstat",
+    "iostat",
+    "mpstat",
+    "sar",
+    "df",
+    "du",
+    "find",
+    "locate",
+    "namei",
+    "lsattr",
+    "getfacl",
+    "getfattr",
+    "ifconfig",
+    "ip",
+    "ss",
+    "netstat",
+    "arp",
+    "route",
+    "ping",
+    "ping6",
+    "traceroute",
+    "mtr",
+    "dig",
+    "nslookup",
+    "host",
+    "curl",
+    "wget",
+    "uname",
+    "hostname",
+    "lscpu",
+    "lsblk",
+    "lsusb",
+    "lspci",
+    "lsmod",
+    "modinfo",
+    "lsof",
+    "fuser",
+    "git",
+    "systemctl",
+    "service",
+    "journalctl",
+    "timedatectl",
+    "localectl",
+    "loginctl",
+    "crontab",
+    "getent",
+    "sestatus",
+    "getenforce",
+    "apparmor_status",
+    "apropos",
+    "man",
+    "whatis",
+    "info",
+    "history",
+    "alias",
+    "dpkg-query",
+    "apt-cache",
+    "apt",
+    "apt-get",
+    "rpm",
+    "yum",
+    "dnf",
+    "dnf4",
+    "pacman",
+    "microdnf",
+    "zypper",
+    "apk",
+  ];
+  READONLY.contains(&name)
 }
 
 /// Dangerous command substrings rejected outright when executed through tools.
@@ -3341,31 +3789,32 @@ fn is_dangerous_command(cmd: &str) -> bool {
 /// Returns `(tool_call_id, result_json)` pairs. Each result is a JSON string
 /// so the model can parse it; errors are embedded as `{"error": "..."}`.
 async fn execute_ai_tools(
-    app: &tauri::AppHandle,
-    calls: Vec<crate::ai::OpenAiToolCall>,
-    current_tab_id: Option<u32>,
+  app: &tauri::AppHandle,
+  calls: Vec<crate::ai::OpenAiToolCall>,
+  current_tab_id: Option<u32>,
+  read_only: bool,
 ) -> Vec<crate::ai::ToolResult> {
-    let state = app.state::<AppState>();
-    let mut results: Vec<crate::ai::ToolResult> = Vec::new();
+  let state = app.state::<AppState>();
+  let mut results: Vec<crate::ai::ToolResult> = Vec::new();
 
-    for call in calls {
-        let result = execute_one_tool(&state, &call, current_tab_id, false)
-            .await
-            .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string());
-        results.push((call.id, result));
-    }
-    results
+  for call in calls {
+    let result = execute_one_tool(&state, &call, current_tab_id, false, read_only)
+      .await
+      .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string());
+    results.push((call.id, result));
+  }
+  results
 }
 
 /// Build a human-readable context block describing the shell tab's connected
 /// server (or note that it is not connected). Used to enrich the system prompt.
 fn build_current_server_context(app: &tauri::AppHandle, tab_id: u32) -> Option<String> {
-    let state = app.state::<AppState>();
-    // Local shell tab: describe it as a local machine shell (no SSH server).
-    if let Ok(shells) = state.local_shells.lock() {
-        if let Some(sh) = shells.get(&tab_id) {
-            let cwd = sh.cwd.clone().unwrap_or_else(|| ".".to_string());
-            let block = format!(
+  let state = app.state::<AppState>();
+  // Local shell tab: describe it as a local machine shell (no SSH server).
+  if let Ok(shells) = state.local_shells.lock() {
+    if let Some(sh) = shells.get(&tab_id) {
+      let cwd = sh.cwd.clone().unwrap_or_else(|| ".".to_string());
+      let block = format!(
                 "[Current Shell Context]\n\
                  This conversation is bound to LOCAL shell tab {tab_id} (a local terminal on this machine).\n\
                  Working directory: {cwd}\n\
@@ -3374,289 +3823,313 @@ fn build_current_server_context(app: &tauri::AppHandle, tab_id: u32) -> Option<S
                 tab_id = tab_id,
                 cwd = cwd,
             );
-            return Some(block);
-        }
+      return Some(block);
     }
-    let sessions = state.sessions.lock().ok()?;
-    let sess = sessions.get(&tab_id)?;
-    let cfg = &sess.config;
-    let status = if sess.data_tx.is_some() { "connected" } else { "disconnected" };
-    let block = format!(
-        "[Current Server Context]\n\
+  }
+  let sessions = state.sessions.lock().ok()?;
+  let sess = sessions.get(&tab_id)?;
+  let cfg = &sess.config;
+  let status = if sess.data_tx.is_some() {
+    "connected"
+  } else {
+    "disconnected"
+  };
+  let block = format!(
+    "[Current Server Context]\n\
          This conversation is bound to shell tab {tab_id} (connection \"{name}\").\n\
          Host: {host}:{port}\n\
          Username: {username}\n\
          Status: {status}\n\
          Connection id: {cid}",
-        tab_id = tab_id,
-        name = cfg.name,
-        host = cfg.host,
-        port = cfg.port,
-        username = cfg.username,
-        status = status,
-        cid = cfg.id,
-    );
-    Some(block)
+    tab_id = tab_id,
+    name = cfg.name,
+    host = cfg.host,
+    port = cfg.port,
+    username = cfg.username,
+    status = status,
+    cid = cfg.id,
+  );
+  Some(block)
 }
 
 /// Run a shell command on the LOCAL machine (for local-shell AI tabs).
 /// Spawns the OS shell, captures combined stdout+stderr, and returns it as a
 /// JSON string the AI agent can read. `cwd` is the local shell's working dir.
 async fn run_local_command(command: String, cwd: Option<String>) -> Result<String, String> {
-    let output = tokio::task::spawn_blocking(move || {
-        #[cfg(windows)]
-        let mut child = {
-            let mut cmd = StdCommand::new("cmd.exe");
-            cmd.args(["/c", &command]);
-            cmd
-        };
-        #[cfg(not(windows))]
-        let mut child = {
-            let mut cmd = StdCommand::new("/bin/sh");
-            cmd.args(["-c", &command]);
-            cmd
-        };
-        if let Some(dir) = cwd.as_deref() {
-            child.current_dir(dir);
-        }
-        child.stdout(std::process::Stdio::piped());
-        child.stderr(std::process::Stdio::piped());
-        child.output()
-    })
-    .await
-    .map_err(|e| format!("Failed to spawn local command: {}", e))?
-    .map_err(|e| format!("Failed to run local command: {}", e))?;
+  let output = tokio::task::spawn_blocking(move || {
+    #[cfg(windows)]
+    let mut child = {
+      let mut cmd = StdCommand::new("cmd.exe");
+      cmd.args(["/c", &command]);
+      cmd
+    };
+    #[cfg(not(windows))]
+    let mut child = {
+      let mut cmd = StdCommand::new("/bin/sh");
+      cmd.args(["-c", &command]);
+      cmd
+    };
+    if let Some(dir) = cwd.as_deref() {
+      child.current_dir(dir);
+    }
+    child.stdout(std::process::Stdio::piped());
+    child.stderr(std::process::Stdio::piped());
+    child.output()
+  })
+  .await
+  .map_err(|e| format!("Failed to spawn local command: {}", e))?
+  .map_err(|e| format!("Failed to run local command: {}", e))?;
 
-    let mut combined = String::new();
-    combined.push_str(&String::from_utf8_lossy(&output.stdout));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.trim().is_empty() {
-        if !combined.is_empty() && !combined.ends_with('\n') {
-            combined.push('\n');
-        }
-        combined.push_str(&stderr);
+  let mut combined = String::new();
+  combined.push_str(&String::from_utf8_lossy(&output.stdout));
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  if !stderr.trim().is_empty() {
+    if !combined.is_empty() && !combined.ends_with('\n') {
+      combined.push('\n');
     }
-    // Truncate very large outputs to avoid blowing up the AI context.
-    if combined.len() > 64 * 1024 {
-        combined.truncate(64 * 1024);
-        combined.push_str("\n... (output truncated to 64KB)");
-    }
-    let exit = output.status.code().unwrap_or(-1);
-    Ok(serde_json::json!({
+    combined.push_str(&stderr);
+  }
+  // Truncate very large outputs to avoid blowing up the AI context.
+  if combined.len() > 64 * 1024 {
+    combined.truncate(64 * 1024);
+    combined.push_str("\n... (output truncated to 64KB)");
+  }
+  let exit = output.status.code().unwrap_or(-1);
+  Ok(
+    serde_json::json!({
         "exitCode": exit,
         "output": combined,
     })
-    .to_string())
+    .to_string(),
+  )
 }
 
 async fn execute_one_tool(
-    state: &tauri::State<'_, AppState>,
-    call: &crate::ai::OpenAiToolCall,
-    current_tab_id: Option<u32>,
-    force: bool,
+  state: &tauri::State<'_, AppState>,
+  call: &crate::ai::OpenAiToolCall,
+  current_tab_id: Option<u32>,
+  force: bool,
+  read_only: bool,
 ) -> Result<String, String> {
-    let args: serde_json::Value = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
-    let tool = call.name.as_str();
+  let args: serde_json::Value =
+    serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+  let tool = call.name.as_str();
 
-    let outcome: Result<String, String> = match tool {
-        "run_command" => {
-            let tab_id = args
-                .get("tabId")
-                .and_then(|v| v.as_u64())
-                .ok_or("Missing 'tabId'")? as u32;
-            let command = args
-                .get("command")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing 'command'")?
-                .to_string();
-            // Sensitive / destructive commands are NOT silently blocked. Instead
-            // we return a needs-confirmation marker so the agent loop pauses and
-            // the frontend can ask the user whether to proceed. `force` is set by
-            // `confirm_ai_tool` once the user has approved execution.
-            if is_dangerous_command(&command) && !force {
-                return Ok(
-                    serde_json::json!({ "needsConfirmation": true, "command": command })
-                        .to_string(),
-                );
-            }
-            // Local shell tab: run the command on the local machine.
-            let local_cwd = {
-                match state.local_shells.lock() {
-                    Ok(g) => g.get(&tab_id).map(|sh| sh.cwd.clone()).unwrap_or(None),
-                    Err(_) => None,
-                }
-            };
-            if local_cwd.is_some() {
-                let output = run_local_command(command, local_cwd).await?;
-                return Ok(output);
-            }
-            // Remote shell: execute via the SSH jump handle.
-            match crate::remote_fs::get_jump_handle(state, tab_id) {
-                Ok(handle) => {
-                    let output = crate::host_analysis::exec_on_handle(&*handle, &command).await?;
-                    Ok(output)
-                }
-                // The tab isn't bound to any shell (e.g. a standalone AI tab):
-                // fall back to running the command on the LOCAL machine so the
-                // agent is still useful without an SSH connection.
-                Err(e) => {
-                    eprintln!("[run_command] no remote handle for tab {tab_id} ({}); falling back to LOCAL execution", e);
-                    let mut output = run_local_command(command, None).await?;
-                    // Wrap so the model knows the result came from the local machine.
-                    let v: serde_json::Value = serde_json::from_str(&output).unwrap_or(serde_json::json!({ "output": output }));
-                    let note = "NOTE: this command ran on the USER'S LOCAL MACHINE (no remote shell was attached to this tab).";
-                    output = serde_json::json!({ "ranOnLocal": true, "note": note, "exitCode": v["exitCode"].as_i64().unwrap_or(-1), "output": v["output"].as_str().unwrap_or("") }).to_string();
-                    Ok(output)
-                }
-            }
+  let outcome: Result<String, String> = match tool {
+    "run_command" => {
+      let tab_id = args
+        .get("tabId")
+        .and_then(|v| v.as_u64())
+        .ok_or("Missing 'tabId'")? as u32;
+      let command = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'command'")?
+        .to_string();
+      // Read-only mode: hard-block any command that is not a read-only /
+      // inspection command. This is independent of `force` (confirmation) —
+      // in read-only mode modifying commands may never run, even if the user
+      // would otherwise approve a sensitive one.
+      if read_only && !is_readonly_safe_command(&command) {
+        return Ok(
+          serde_json::json!({
+              "error": "Blocked: the AI assistant is in read-only mode and may only run \
+                        read-only / inspection commands. Disable read-only mode to run \
+                        modifying commands."
+          })
+          .to_string(),
+        );
+      }
+      // Sensitive / destructive commands are NOT silently blocked. Instead
+      // we return a needs-confirmation marker so the agent loop pauses and
+      // the frontend can ask the user whether to proceed. `force` is set by
+      // `confirm_ai_tool` once the user has approved execution.
+      if is_dangerous_command(&command) && !force {
+        return Ok(
+          serde_json::json!({ "needsConfirmation": true, "command": command }).to_string(),
+        );
+      }
+      // Local shell tab: run the command on the local machine.
+      let local_cwd = {
+        match state.local_shells.lock() {
+          Ok(g) => g.get(&tab_id).map(|sh| sh.cwd.clone()).unwrap_or(None),
+          Err(_) => None,
         }
-        "analyze_server" => {
-            let tab_id = args
-                .get("tabId")
-                .and_then(|v| v.as_u64())
-                .ok_or("Missing 'tabId'")? as u32;
-            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
-            let analysis = crate::host_analysis::analyze_host(&*handle, tab_id).await?;
-            Ok(serde_json::to_string(&analysis).map_err(|e| e.to_string())?)
+      };
+      if local_cwd.is_some() {
+        let output = run_local_command(command, local_cwd).await?;
+        return Ok(output);
+      }
+      // Remote shell: execute via the SSH jump handle.
+      match crate::remote_fs::get_jump_handle(state, tab_id) {
+        Ok(handle) => {
+          let output = crate::host_analysis::exec_on_handle(&*handle, &command).await?;
+          Ok(output)
         }
-        "list_directory" => {
-            let tab_id = args
-                .get("tabId")
-                .and_then(|v| v.as_u64())
-                .ok_or("Missing 'tabId'")? as u32;
-            let path = args
-                .get("path")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing 'path'")?
-                .to_string();
-            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
-            let output = crate::host_analysis::exec_on_handle(
-                &*handle,
-                &format!("ls -la --time-style=long-iso {}", shell_quote_arg(&path)),
-            )
-            .await?;
-            Ok(output)
+        // The tab isn't bound to any shell (e.g. a standalone AI tab):
+        // fall back to running the command on the LOCAL machine so the
+        // agent is still useful without an SSH connection.
+        Err(e) => {
+          eprintln!(
+            "[run_command] no remote handle for tab {tab_id} ({}); falling back to LOCAL execution",
+            e
+          );
+          let mut output = run_local_command(command, None).await?;
+          // Wrap so the model knows the result came from the local machine.
+          let v: serde_json::Value =
+            serde_json::from_str(&output).unwrap_or(serde_json::json!({ "output": output }));
+          let note = "NOTE: this command ran on the USER'S LOCAL MACHINE (no remote shell was attached to this tab).";
+          output = serde_json::json!({ "ranOnLocal": true, "note": note, "exitCode": v["exitCode"].as_i64().unwrap_or(-1), "output": v["output"].as_str().unwrap_or("") }).to_string();
+          Ok(output)
         }
-        "read_file" => {
-            let tab_id = args
-                .get("tabId")
-                .and_then(|v| v.as_u64())
-                .ok_or("Missing 'tabId'")? as u32;
-            let path = args
-                .get("path")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing 'path'")?
-                .to_string();
-            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
-            let output = crate::host_analysis::exec_on_handle(
-                &*handle,
-                // Truncate to 64KB to avoid huge payloads
-                &format!("head -c 65536 {}", shell_quote_arg(&path)),
-            )
-            .await?;
-            Ok(output)
-        }
-        "list_connections" => {
-            let connections = state.connections.lock().map_err(|e| e.to_string())?;
-            let slim: Vec<serde_json::Value> = connections
-                .iter()
-                .map(|c| {
-                    serde_json::json!({
-                        "id": c.id,
-                        "name": c.name,
-                        "host": c.host,
-                        "port": c.port,
-                        "username": c.username,
-                        "group": c.group,
-                    })
-                })
-                .collect();
-            Ok(serde_json::to_string(&slim).map_err(|e| e.to_string())?)
-        }
-        "search_help" => {
-            let tab_id = args
-                .get("tabId")
-                .and_then(|v| v.as_u64())
-                .ok_or("Missing 'tabId'")? as u32;
-            let command = args
-                .get("command")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing 'command'")?
-                .to_string();
-            let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
-            let help = crate::host_analysis::command_help(&*handle, &command).await?;
-            Ok(help)
-        }
-        "get_current_server" => {
-            // Returns info about the server this conversation is bound to, without
-            // needing the model to supply a tabId.
-            let tab_id = current_tab_id.ok_or(
-                "No shell tab is bound to this AI conversation. Open the AI chat from a shell tab first.",
-            )?;
-            // Local shell tab: report it as a local machine shell.
-            {
-                let shells = state.local_shells.lock().map_err(|e| e.to_string())?;
-                if let Some(sh) = shells.get(&tab_id) {
-                    let info = serde_json::json!({
-                        "tabId": tab_id,
-                        "type": "local",
-                        "workingDirectory": sh.cwd.clone().unwrap_or_else(|| ".".to_string()),
-                        "status": "connected",
-                    });
-                    return Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?);
-                }
-            }
-            let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-            match sessions.get(&tab_id) {
-                Some(sess) => {
-                    let cfg = &sess.config;
-                    let info = serde_json::json!({
-                        "tabId": tab_id,
-                        "connectionId": cfg.id,
-                        "connectionName": cfg.name,
-                        "host": cfg.host,
-                        "port": cfg.port,
-                        "username": cfg.username,
-                        "status": if sess.data_tx.is_some() { "connected" } else { "disconnected" },
-                    });
-                    Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
-                }
-                // No shell is bound to this tab (standalone AI tab, or the SSH
-                // session is gone). Report a LOCAL context instead of erroring
-                // so the agent knows it should run commands on the local machine.
-                None => {
-                    let info = serde_json::json!({
-                        "tabId": tab_id,
-                        "type": "local",
-                        "host": "localhost",
-                        "status": "connected",
-                        "note": "This tab is not bound to any remote server; commands will run on the USER'S LOCAL MACHINE.",
-                    });
-                    Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
-                }
-            }
-        }
-        other => Err(format!("Unknown tool: {}", other)),
-    };
-
-    match outcome {
-        Ok(text) => {
-            let truncated = if text.chars().count() > 16000 {
-                let mut s: String = text.chars().take(16000).collect();
-                s.push_str("\n... [truncated]");
-                s
-            } else {
-                text
-            };
-            Ok(serde_json::json!({ "output": truncated }).to_string())
-        }
-        Err(e) => Ok(serde_json::json!({ "error": e }).to_string()),
+      }
     }
+    "analyze_server" => {
+      let tab_id = args
+        .get("tabId")
+        .and_then(|v| v.as_u64())
+        .ok_or("Missing 'tabId'")? as u32;
+      let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+      let analysis = crate::host_analysis::analyze_host(&*handle, tab_id).await?;
+      Ok(serde_json::to_string(&analysis).map_err(|e| e.to_string())?)
+    }
+    "list_directory" => {
+      let tab_id = args
+        .get("tabId")
+        .and_then(|v| v.as_u64())
+        .ok_or("Missing 'tabId'")? as u32;
+      let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'path'")?
+        .to_string();
+      let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+      let output = crate::host_analysis::exec_on_handle(
+        &*handle,
+        &format!("ls -la --time-style=long-iso {}", shell_quote_arg(&path)),
+      )
+      .await?;
+      Ok(output)
+    }
+    "read_file" => {
+      let tab_id = args
+        .get("tabId")
+        .and_then(|v| v.as_u64())
+        .ok_or("Missing 'tabId'")? as u32;
+      let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'path'")?
+        .to_string();
+      let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+      let output = crate::host_analysis::exec_on_handle(
+        &*handle,
+        // Truncate to 64KB to avoid huge payloads
+        &format!("head -c 65536 {}", shell_quote_arg(&path)),
+      )
+      .await?;
+      Ok(output)
+    }
+    "list_connections" => {
+      let connections = state.connections.lock().map_err(|e| e.to_string())?;
+      let slim: Vec<serde_json::Value> = connections
+        .iter()
+        .map(|c| {
+          serde_json::json!({
+              "id": c.id,
+              "name": c.name,
+              "host": c.host,
+              "port": c.port,
+              "username": c.username,
+              "group": c.group,
+          })
+        })
+        .collect();
+      Ok(serde_json::to_string(&slim).map_err(|e| e.to_string())?)
+    }
+    "search_help" => {
+      let tab_id = args
+        .get("tabId")
+        .and_then(|v| v.as_u64())
+        .ok_or("Missing 'tabId'")? as u32;
+      let command = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'command'")?
+        .to_string();
+      let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+      let help = crate::host_analysis::command_help(&*handle, &command).await?;
+      Ok(help)
+    }
+    "get_current_server" => {
+      // Returns info about the server this conversation is bound to, without
+      // needing the model to supply a tabId.
+      let tab_id = current_tab_id.ok_or(
+        "No shell tab is bound to this AI conversation. Open the AI chat from a shell tab first.",
+      )?;
+      // Local shell tab: report it as a local machine shell.
+      {
+        let shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+        if let Some(sh) = shells.get(&tab_id) {
+          let info = serde_json::json!({
+              "tabId": tab_id,
+              "type": "local",
+              "workingDirectory": sh.cwd.clone().unwrap_or_else(|| ".".to_string()),
+              "status": "connected",
+          });
+          return Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?);
+        }
+      }
+      let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+      match sessions.get(&tab_id) {
+        Some(sess) => {
+          let cfg = &sess.config;
+          let info = serde_json::json!({
+              "tabId": tab_id,
+              "connectionId": cfg.id,
+              "connectionName": cfg.name,
+              "host": cfg.host,
+              "port": cfg.port,
+              "username": cfg.username,
+              "status": if sess.data_tx.is_some() { "connected" } else { "disconnected" },
+          });
+          Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
+        }
+        // No shell is bound to this tab (standalone AI tab, or the SSH
+        // session is gone). Report a LOCAL context instead of erroring
+        // so the agent knows it should run commands on the local machine.
+        None => {
+          let info = serde_json::json!({
+              "tabId": tab_id,
+              "type": "local",
+              "host": "localhost",
+              "status": "connected",
+              "note": "This tab is not bound to any remote server; commands will run on the USER'S LOCAL MACHINE.",
+          });
+          Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
+        }
+      }
+    }
+    other => Err(format!("Unknown tool: {}", other)),
+  };
+
+  match outcome {
+    Ok(text) => {
+      let truncated = if text.chars().count() > 16000 {
+        let mut s: String = text.chars().take(16000).collect();
+        s.push_str("\n... [truncated]");
+        s
+      } else {
+        text
+      };
+      Ok(serde_json::json!({ "output": truncated }).to_string())
+    }
+    Err(e) => Ok(serde_json::json!({ "error": e }).to_string()),
+  }
 }
 
 /// Minimal single-argument shell quoting for safe remote exec.
 fn shell_quote_arg(s: &str) -> String {
-    let escaped = s.replace('\'', "'\\''");
-    format!("'{}'", escaped)
+  let escaped = s.replace('\'', "'\\''");
+  format!("'{}'", escaped)
 }
-

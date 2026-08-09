@@ -344,6 +344,10 @@ export interface AiConfig {
   profiles: AiEndpointProfile[]
   /** Id of the active profile. Falls back to the first profile if invalid. */
   activeId: string
+  /** Default AI mode when a chat is opened: start in read-only mode (only
+   *  inspection commands allowed). Configurable in the global AI settings;
+   *  the per-chat panel can toggle it. */
+  aiReadOnly: boolean
 }
 
 export interface AiMessage {

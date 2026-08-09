@@ -246,6 +246,13 @@ const en = {
   aiChatInputHint: 'AI can use tools on connected servers. Destructive commands are blocked.',
   aiConfigRequired: 'No AI endpoint is configured. Please configure it in Settings first.',
   aiOpenSettings: 'Open Settings',
+  aiReadOnly: 'Read-only mode (default)',
+  aiReadOnlyDesc:
+    'When enabled, the AI starts in read-only mode and may only run inspection commands (status, logs, file reads). Modifying commands are blocked. The mode can be toggled per chat in the panel header.',
+  aiReadOnlyOn: 'Read-only',
+  aiReadOnlyOff: 'Full access',
+  aiReadOnlyHint: 'Read-only mode: only inspection commands run',
+  aiFullModeHint: 'Full access: modifying commands allowed',
   aiChatResizeInput: 'Drag to resize input area',
   aiChatAddImage: 'Add image',
   aiChatRemoveImage: 'Remove image',

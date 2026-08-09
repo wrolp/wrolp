@@ -128,14 +128,15 @@ pub fn insert_events(
       .prepare("INSERT INTO session_events (session_id, seq, timestamp_ms, direction, content) VALUES (?1, ?2, ?3, ?4, ?5)")
       .map_err(|e| e.to_string())?;
     for ev in events {
-      stmt.execute(params![
-        session_id,
-        ev.seq as i64,
-        ev.timestamp_ms as i64,
-        ev.direction,
-        ev.content
-      ])
-      .map_err(|e| e.to_string())?;
+      stmt
+        .execute(params![
+          session_id,
+          ev.seq as i64,
+          ev.timestamp_ms as i64,
+          ev.direction,
+          ev.content
+        ])
+        .map_err(|e| e.to_string())?;
     }
   }
   tx.commit().map_err(|e| e.to_string())?;
@@ -210,7 +211,10 @@ pub fn get_session_events(
 
 pub fn delete_session(conn: &Connection, session_id: &str) -> Result<(), String> {
   conn
-    .execute("DELETE FROM session_events WHERE session_id = ?1", params![session_id])
+    .execute(
+      "DELETE FROM session_events WHERE session_id = ?1",
+      params![session_id],
+    )
     .map_err(|e| e.to_string())?;
   conn
     .execute("DELETE FROM sessions WHERE id = ?1", params![session_id])
@@ -282,8 +286,7 @@ pub fn list_command_sets(
 
 fn map_cmd_set_row(row: &rusqlite::Row) -> rusqlite::Result<CommandSetDto> {
   let commands_json: String = row.get(3)?;
-  let commands: Vec<String> =
-    serde_json::from_str(&commands_json).unwrap_or_default();
+  let commands: Vec<String> = serde_json::from_str(&commands_json).unwrap_or_default();
   Ok(CommandSetDto {
     id: row.get(0)?,
     name: row.get(1)?,
@@ -362,7 +365,10 @@ pub fn list_ai_prompt_templates(conn: &Connection) -> Result<Vec<AiPromptTemplat
   Ok(rows)
 }
 
-pub fn save_ai_prompt_template(conn: &Connection, tpl: &AiPromptTemplate) -> Result<String, String> {
+pub fn save_ai_prompt_template(
+  conn: &Connection,
+  tpl: &AiPromptTemplate,
+) -> Result<String, String> {
   let updated = conn
     .execute(
       "UPDATE ai_prompt_templates SET name = ?1, prompt = ?2, category = ?3, updated_at = ?4 WHERE id = ?5",

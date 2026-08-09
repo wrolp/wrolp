@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as StdMutex};
 use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::{Arc, Mutex as StdMutex};
 use tauri::Manager;
 use tokio::sync::mpsc;
 
@@ -15,6 +15,10 @@ pub struct AiPendingConfirm {
   pub config: AiEndpointProfile,
   pub messages: Vec<AiMessage>,
   pub calls: Vec<OpenAiToolCall>,
+  /// Whether the agent is running in read-only mode (restricts `run_command` to
+  /// inspection commands). Preserved across the confirmation pause so a resumed
+  /// session keeps the same mode.
+  pub read_only: bool,
 }
 use crate::db::{DbConn, RecordedEvent};
 
@@ -260,9 +264,7 @@ impl SshHandler {
   /// connection are rejected so their output never reaches the terminal.
   /// Falls back to true when the shell channel id hasn't been recorded yet.
   pub fn is_shell_channel(&self, channel: russh::ChannelId) -> bool {
-    self
-      .shell_channel_id
-      .map_or(true, |id| id == channel)
+    self.shell_channel_id.map_or(true, |id| id == channel)
   }
 }
 
@@ -370,7 +372,10 @@ pub enum TargetRef {
   },
   /// The user's local machine (used when the focused tab is a local shell).
   #[serde(rename = "local")]
-  Local { #[serde(rename = "tabId")] tab_id: u32 },
+  Local {
+    #[serde(rename = "tabId")]
+    tab_id: u32,
+  },
 }
 
 /// A Docker container discovered via `docker ps` on the jump host.

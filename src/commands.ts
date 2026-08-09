@@ -485,10 +485,10 @@ export async function cancelAiChat(chatId: string): Promise<void> {
   return await invoke<void>('cancel_ai_chat', { chatId })
 }
 
-export async function startAiAgent(messages: AiMessage[], tabId?: number, profile?: AiEndpointProfile): Promise<string> {
-  return await invoke<string>('start_ai_agent', { messages, tabId: tabId ?? null, profile: profile ?? null })
+export async function startAiAgent(messages: AiMessage[], tabId?: number, profile?: AiEndpointProfile, readOnly?: boolean): Promise<string> {
+  return await invoke<string>('start_ai_agent', { messages, tabId: tabId ?? null, profile: profile ?? null, readOnly: readOnly ?? false })
 }
 
-export async function confirmAiTool(chatId: string, approved: boolean): Promise<void> {
-  return await invoke<void>('confirm_ai_tool', { chatId, approved })
+export async function confirmAiTool(chatId: string, approved: boolean, readOnly?: boolean): Promise<void> {
+  return await invoke<void>('confirm_ai_tool', { chatId, approved, readOnly: readOnly ?? false })
 }

@@ -31,7 +31,11 @@ impl LocalFs {
       if p.to_string_lossy() == "/" {
         let drive = std::env::current_dir()
           .ok()
-          .and_then(|c| c.components().next().map(|c| c.as_os_str().to_string_lossy().to_string()))
+          .and_then(|c| {
+            c.components()
+              .next()
+              .map(|c| c.as_os_str().to_string_lossy().to_string())
+          })
           .unwrap_or_else(|| "C:".to_string());
         return PathBuf::from(format!("{}\\", drive));
       }
@@ -70,7 +74,11 @@ fn fmt_mode(meta: &std::fs::Metadata) -> String {
   }
   #[cfg(not(unix))]
   {
-    if meta.is_dir() { "d---------".to_string() } else { "-rw-rw-rw-".to_string() }
+    if meta.is_dir() {
+      "d---------".to_string()
+    } else {
+      "-rw-rw-rw-".to_string()
+    }
   }
 }
 
@@ -105,7 +113,8 @@ fn normalize(p: &str) -> String {
 impl RemoteFs for LocalFs {
   async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, String> {
     let resolved = self.resolve(path);
-    let rd = std::fs::read_dir(&resolved).map_err(|e| format!("read_dir {}: {}", resolved.display(), e))?;
+    let rd = std::fs::read_dir(&resolved)
+      .map_err(|e| format!("read_dir {}: {}", resolved.display(), e))?;
     let mut out = Vec::new();
     for ent in rd.flatten() {
       let p = ent.path();
@@ -125,7 +134,8 @@ impl RemoteFs for LocalFs {
 
   async fn metadata(&self, path: &str) -> Result<FileMeta, String> {
     let resolved = self.resolve(path);
-    let meta = std::fs::metadata(&resolved).map_err(|e| format!("metadata {}: {}", resolved.display(), e))?;
+    let meta = std::fs::metadata(&resolved)
+      .map_err(|e| format!("metadata {}: {}", resolved.display(), e))?;
     Ok(FileMeta {
       path: normalize(resolved.to_string_lossy().as_ref()),
       is_dir: meta.is_dir(),
@@ -187,7 +197,10 @@ mod tests {
     let path = cwd.to_string_lossy().replace('\\', "/");
     let entries = fs.list_dir(&path).await.unwrap();
     assert!(!entries.is_empty(), "expected entries in {path}");
-    assert!(entries.iter().any(|e| e.is_dir), "expected at least one dir");
+    assert!(
+      entries.iter().any(|e| e.is_dir),
+      "expected at least one dir"
+    );
     eprintln!("local_fs list_dir OK: {} entries", entries.len());
   }
 

@@ -150,7 +150,12 @@ pub async fn open_jump_sftp(
   let channel = jump
     .channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0)
     .await
-    .map_err(|e| format!("Failed to open direct-tcpip channel to {}:{}: {}", host, port, e))?;
+    .map_err(|e| {
+      format!(
+        "Failed to open direct-tcpip channel to {}:{}: {}",
+        host, port, e
+      )
+    })?;
   let stream = channel.into_stream();
 
   let ssh_config = Arc::new(client::Config::default());
@@ -182,7 +187,9 @@ pub(crate) fn get_jump_handle(
   jump_tab_id: u32,
 ) -> Result<Arc<Handle<SshHandler>>, String> {
   let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-  let session = sessions.get(&jump_tab_id).ok_or("Jump host session not found")?;
+  let session = sessions
+    .get(&jump_tab_id)
+    .ok_or("Jump host session not found")?;
   session
     .session_handle
     .clone()
@@ -200,15 +207,33 @@ pub async fn build_fs(
       let sftp = open_session_sftp(state, app, *tab_id).await?;
       Ok(Box::new(SftpFs::new(sftp)))
     }
-    TargetRef::JumpRemote { jump_tab_id, host, port, auth }
-    | TargetRef::DockerSsh { jump_tab_id, host, port, auth } => {
+    TargetRef::JumpRemote {
+      jump_tab_id,
+      host,
+      port,
+      auth,
+    }
+    | TargetRef::DockerSsh {
+      jump_tab_id,
+      host,
+      port,
+      auth,
+    } => {
       let jump = get_jump_handle(state, *jump_tab_id)?;
       let sftp = open_jump_sftp(app, &jump, host, *port, auth, *jump_tab_id).await?;
       Ok(Box::new(SftpFs::new(sftp)))
     }
-    TargetRef::Docker { jump_tab_id, container, user } => {
+    TargetRef::Docker {
+      jump_tab_id,
+      container,
+      user,
+    } => {
       let jump = get_jump_handle(state, *jump_tab_id)?;
-      Ok(Box::new(DockerExecFs::new(jump, container.clone(), user.clone())))
+      Ok(Box::new(DockerExecFs::new(
+        jump,
+        container.clone(),
+        user.clone(),
+      )))
     }
     TargetRef::Local { .. } => Ok(Box::new(crate::local_fs::LocalFs::new())),
   }

@@ -51,10 +51,7 @@ pub struct HostAnalysis {
 // Exec helper – run a command on an existing session handle
 // ---------------------------------------------------------------------------
 
-pub async fn exec_on_handle(
-  handle: &Handle<SshHandler>,
-  command: &str,
-) -> Result<String, String> {
+pub async fn exec_on_handle(handle: &Handle<SshHandler>, command: &str) -> Result<String, String> {
   if handle.is_closed() {
     return Err("Session connection is closed".into());
   }
@@ -165,7 +162,12 @@ fn build_probe_script() -> String {
   // Build the tool-check loop body
   let tool_cmds: String = TOOL_LIST
     .iter()
-    .map(|t| format!("  command -v '{}' 2>/dev/null && echo '{}:OK:${{?}}' || echo '{}:NO'", t, t, t))
+    .map(|t| {
+      format!(
+        "  command -v '{}' 2>/dev/null && echo '{}:OK:${{?}}' || echo '{}:NO'",
+        t, t, t
+      )
+    })
     .collect::<Vec<_>>()
     .join("\n");
 
@@ -217,15 +219,25 @@ fn parse_kernel_section(lines: &[&str]) -> (String, String, String, String) {
   } else {
     "unknown".into()
   };
-  (kernel, hostname, parts.get(0).unwrap_or(&"unknown").to_string(), arch)
+  (
+    kernel,
+    hostname,
+    parts.get(0).unwrap_or(&"unknown").to_string(),
+    arch,
+  )
 }
 
 fn parse_package_manager(lines: &[&str]) -> (String, Vec<PackageInfo>) {
   // Detect package manager from the raw data format
   let sample = lines.iter().copied().take(5).collect::<Vec<_>>().join(" ");
   let is_dpkg = sample.contains("ii ") || sample.contains("rc ");
-  let is_rpm = sample.contains(".rpm") || lines.iter().any(|l| l.contains('-') && l.split_whitespace().count() >= 2);
-  let is_apk = lines.iter().any(|l| l.contains('-') && l.split('-').count() > 2);
+  let is_rpm = sample.contains(".rpm")
+    || lines
+      .iter()
+      .any(|l| l.contains('-') && l.split_whitespace().count() >= 2);
+  let is_apk = lines
+    .iter()
+    .any(|l| l.contains('-') && l.split('-').count() > 2);
   let is_pacman = lines.iter().any(|l| l.contains('/') && l.contains('-'));
 
   let manager = if is_dpkg {
@@ -246,13 +258,11 @@ fn parse_package_manager(lines: &[&str]) -> (String, Vec<PackageInfo>) {
     .filter_map(|l| {
       let parts: Vec<&str> = l.split_whitespace().collect();
       match manager {
-        "dpkg" if parts.len() >= 2 && (parts[0] == "ii" || parts[0] == "rc") => {
-          Some(PackageInfo {
-            name: parts[1].to_string(),
-            version: parts.get(2).unwrap_or(&"?").to_string(),
-            description: None,
-          })
-        }
+        "dpkg" if parts.len() >= 2 && (parts[0] == "ii" || parts[0] == "rc") => Some(PackageInfo {
+          name: parts[1].to_string(),
+          version: parts.get(2).unwrap_or(&"?").to_string(),
+          description: None,
+        }),
         "rpm" if parts.len() >= 1 => {
           let pkg = parts[0];
           let dash = pkg.rfind('-').map(|i| i).unwrap_or(0);
@@ -270,20 +280,16 @@ fn parse_package_manager(lines: &[&str]) -> (String, Vec<PackageInfo>) {
             })
           }
         }
-        "apk" if parts.len() >= 2 => {
-          Some(PackageInfo {
-            name: parts[0].to_string(),
-            version: parts[1].to_string(),
-            description: None,
-          })
-        }
-        "pacman" if parts.len() >= 2 => {
-          Some(PackageInfo {
-            name: parts[0].to_string(),
-            version: parts[1].to_string(),
-            description: None,
-          })
-        }
+        "apk" if parts.len() >= 2 => Some(PackageInfo {
+          name: parts[0].to_string(),
+          version: parts[1].to_string(),
+          description: None,
+        }),
+        "pacman" if parts.len() >= 2 => Some(PackageInfo {
+          name: parts[0].to_string(),
+          version: parts[1].to_string(),
+          description: None,
+        }),
         _ => None,
       }
     })
@@ -291,8 +297,6 @@ fn parse_package_manager(lines: &[&str]) -> (String, Vec<PackageInfo>) {
 
   (manager.into(), packages)
 }
-
-
 
 /// Parse the combined probe output into a `HostAnalysis`.
 fn parse_probe_output(tab_id: u32, output: &str) -> HostAnalysis {
@@ -405,10 +409,7 @@ pub async fn analyze_host(
 }
 
 /// Run `--help` (or `man`) for a single command and return the first ~50 lines.
-pub async fn command_help(
-  handle: &Handle<SshHandler>,
-  command: &str,
-) -> Result<String, String> {
+pub async fn command_help(handle: &Handle<SshHandler>, command: &str) -> Result<String, String> {
   // Basic safety: only allow alphanumeric, dash, underscore, slash, dot
   if !command
     .chars()
