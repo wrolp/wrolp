@@ -99,7 +99,7 @@
 - **Multiple API endpoints**: save several `AiEndpointProfile`s, each with its own encrypted API key, endpoint URL, model, and system prompt. Select/apply one active profile. Legacy single-endpoint configs are migrated automatically.
 - **Model fetching**: `list_ai_models` calls `{endpoint}/v1/models` to populate the model dropdown; manual entry is always available.
 - **Agent tools** (dispatched to the Rust backend, which has `AppState` access): `run_command`, `analyze_server`, `list_directory`, `read_file`, `list_connections`, `search_help`, and more. Tool calls are grouped under their assistant message and surfaced as tool cards with lifecycle events (`pending` → `executing` → `done`/`error`). Bash code blocks in assistant messages get a one-click **copy** button.
-- **Security**: API keys are encrypted at rest via an OS keyring-backed vault (`encrypt_api_key` / `decrypt_api_key`).
+- **Security**: API keys are encrypted at rest via an AES-256-GCM file vault (`encrypt_api_key` / `decrypt_api_key`). The encryption key is a machine-specific file (`vault.key`); no OS keyring is used.
 
 ### Window & shell integration
 - Custom titlebar (window `decorations: false`); window geometry/opacity persisted (`window.json`).
@@ -219,7 +219,7 @@ yarn tauri build
 │   │   ├── ssh_session.rs          # AppState, SshSession, SshHandler, ConnectionConfig, TransferControl
 │   │   ├── ai.rs                   # AI chat/agent, tool definitions, model fetching
 │   │   ├── db.rs                   # SQLite access (recordings + command sets)
-│   │   ├── vault.rs                # Encrypted API key storage (OS keyring)
+│   │   ├── vault.rs                # Encrypted API key storage (AES-256-GCM file vault)
 │   │   ├── remote_fs.rs            # SFTP helpers
 │   │   ├── local_fs.rs             # Local filesystem (LocalFs, implements RemoteFs trait)
 │   │   ├── docker_fs.rs            # Docker log/analysis helpers
@@ -245,7 +245,7 @@ yarn tauri build
 - **Backend**: Tauri 2 + Rust (tokio) + russh / russh-sftp
 - **SSH**: pure-Rust [`russh`](https://github.com/warp-tech/russh) async SSH client
 - **IPC**: Tauri `invoke` commands + frontend polling for terminal output (Windows background-task workaround). Only `connection-closed` and `transfer-progress` use Tauri events.
-- **Storage**: JSON (`connections.json`, `window.json`) + SQLite (`wrolp.db`, WAL) for recordings and command sets; encrypted secrets via OS keyring-backed vault.
+- **Storage**: JSON (`connections.json`, `window.json`) + SQLite (`wrolp.db`, WAL) for recordings and command sets; encrypted secrets via an AES-256-GCM file vault (no OS keyring).
 
 ## Conventions
 

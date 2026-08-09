@@ -5,10 +5,10 @@
 //! is encrypted with a fresh random 12-byte nonce; the nonce + ciphertext is
 //! base64-encoded and stored in `connections.json` instead of the plaintext.
 //!
-//! This is the cross-platform fallback described in `task/ENCRYPT-PLAN.md`. The
-//! OS keyring (Windows Credential Manager / macOS Keychain / libsecret) is the
-//! preferred store when available; this file vault is used whenever the keyring
-//! cannot be reached.
+//! Secrets are encrypted at rest with a machine-specific AES-256-GCM key stored
+//! in `vault.key`. No OS keyring (Windows Credential Manager / macOS Keychain /
+//! libsecret) is used; the encrypted blob is written next to the data it
+//! protects.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};

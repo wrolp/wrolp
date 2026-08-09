@@ -99,7 +99,7 @@
 - **多 API 端点**：可保存多个 `AiEndpointProfile`，各自拥有加密的 API Key、端点 URL、模型与系统提示词。可选择一个作为当前激活配置。旧版单端点配置会自动迁移。
 - **模型获取**：`list_ai_models` 调用 `{endpoint}/v1/models` 填充模型下拉框；始终支持手动输入。
 - **智能体工具**（分发到拥有 `AppState` 访问权限的 Rust 后端）：`run_command`、`analyze_server`、`list_directory`、`read_file`、`list_connections`、`search_help` 等。工具调用归组在其对应的助手消息下，以工具卡片形式展示，并带有生命周期事件（`pending` → `executing` → `done`/`error`）。助手消息中的 Bash 代码块提供一键**复制**按钮。
-- **安全性**：API Key 通过基于操作系统密钥环的保险库加密存储（`encrypt_api_key` / `decrypt_api_key`）。
+- **安全性**：API Key 通过 AES-256-GCM 文件保险库加密存储（`encrypt_api_key` / `decrypt_api_key`）。加密密钥为机器专属文件（`vault.key`），不使用操作系统密钥环。
 
 ### 窗口与系统集成
 - 自定义标题栏（窗口 `decorations: false`）；窗口位置 / 尺寸 / 透明度持久化（`window.json`）。
@@ -223,7 +223,7 @@ yarn tauri build
 │   │   ├── ssh_session.rs          # AppState、SshSession、SshHandler、ConnectionConfig、TransferControl
 │   │   ├── ai.rs                   # AI 聊天 / 智能体、工具定义、模型获取
 │   │   ├── db.rs                   # SQLite 访问（录制 + 命令集）
-│   │   ├── vault.rs                # 加密的 API Key 存储（OS 密钥环）
+│   │   ├── vault.rs                # 加密的 API Key 存储（AES-256-GCM 文件保险库）
 │   │   ├── remote_fs.rs            # SFTP 辅助函数
 │   │   ├── local_fs.rs             # 本地文件系统（LocalFs，实现 RemoteFs trait）
 │   │   ├── docker_fs.rs            # Docker 日志 / 分析辅助函数
@@ -249,7 +249,7 @@ yarn tauri build
 - **后端**：Tauri 2 + Rust (tokio) + russh / russh-sftp
 - **SSH**：纯 Rust 异步 SSH 客户端 [`russh`](https://github.com/warp-tech/russh)
 - **IPC**：Tauri `invoke` 命令 + 前端轮询终端输出（Windows 后台线程的权宜之计）。仅 `connection-closed` 与 `transfer-progress` 使用 Tauri 事件。
-- **存储**：JSON（`connections.json`、`window.json`）+ SQLite（`wrolp.db`，WAL）用于录制与命令集；机密通过基于 OS 密钥环的保险库加密。
+- **存储**：JSON（`connections.json`、`window.json`）+ SQLite（`wrolp.db`，WAL）用于录制与命令集；机密通过 AES-256-GCM 文件保险库加密（不使用 OS 密钥环）。
 
 ## 约定
 
