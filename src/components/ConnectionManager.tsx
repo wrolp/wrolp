@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { ConnectionConfig, LocalTerminalEntry } from '../types'
@@ -22,6 +22,7 @@ interface ConnectionManagerProps {
   onToggleExpanded?: () => void
   localTerminals?: LocalTerminalEntry[]
   onOpenLocalTerminal?: (entry: LocalTerminalEntry) => void
+  onOpenLocalSplit?: (entry: LocalTerminalEntry, direction: 'row' | 'column') => void
   onLocalTerminalsChanged?: () => void
   collapsedGroups?: string[]
   onCollapsedGroupsChange?: (value: string[]) => void
@@ -53,6 +54,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onToggleExpanded,
   localTerminals = [],
   onOpenLocalTerminal,
+  onOpenLocalSplit,
   onLocalTerminalsChanged,
   collapsedGroups = [],
   onCollapsedGroupsChange,
@@ -68,6 +70,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     x: number
     y: number
     conn: ConnectionConfig
+  } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{
+    title: string
+    message: string
+    onConfirm: () => void | Promise<void>
   } | null>(null)
   const [groupContextMenu, setGroupContextMenu] = useState<{
     x: number
@@ -217,10 +224,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   }
 
   const handleDelete = async (conn: ConnectionConfig) => {
-    if (confirm(t('deleteConnectionConfirm', { name: conn.name }))) {
-      await deleteConnection(conn.id)
-      onConnectionChange()
-    }
+    setConfirmDelete({ title: t('deleteConnection'), message: t('deleteConnectionConfirm', { name: conn.name }), onConfirm: () => deleteConnection(conn.id).then(onConnectionChange) })
     setContextMenu(null)
   }
 
@@ -287,6 +291,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               <LocalTerminalsSection
                 entries={localTerminals}
                 onOpen={onOpenLocalTerminal}
+                onOpenSplit={onOpenLocalSplit}
                 onChanged={onLocalTerminalsChanged}
               />
               {connections.length === 0 ? (
@@ -332,6 +337,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         ? dragOverTarget.position
                         : null
                     }
+                    onEdit={(c) => handleEdit(c)}
+                    onDelete={(c) => handleDelete(c)}
                   />
                 ))
               ) : (
@@ -440,6 +447,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                                 ? dragOverTarget.position
                                 : null
                             }
+                            onEdit={(c) => handleEdit(c)}
+                            onDelete={(c) => handleDelete(c)}
                           />
                         ))}
                     </div>
@@ -517,6 +526,30 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           onClose={() => setGroupContextMenu(null)}
         />
       )}
+
+      {confirmDelete && (
+        <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">{confirmDelete.title}</div>
+            <div className="modal-body" style={{ padding: '12px 20px' }}>
+              {confirmDelete.message}
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setConfirmDelete(null)}>{t('cancel')}</button>
+              <button
+                className="danger"
+                onClick={() => {
+                  const cb = confirmDelete.onConfirm
+                  setConfirmDelete(null)
+                  void cb()
+                }}
+              >
+                {t('delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
@@ -526,12 +559,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 interface LocalTerminalsSectionProps {
   entries: LocalTerminalEntry[]
   onOpen?: (entry: LocalTerminalEntry) => void
+  onOpenSplit?: (entry: LocalTerminalEntry, direction: 'row' | 'column') => void
   onChanged?: () => void
 }
 
 const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
   entries,
   onOpen,
+  onOpenSplit,
   onChanged,
 }) => {
   const { t } = useI18n()
@@ -542,6 +577,30 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
   const [cwd, setCwd] = useState('')
   const [shell, setShell] = useState('cmd')
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [localMenu, setLocalMenu] = useState<{
+    x: number
+    y: number
+    entry: LocalTerminalEntry
+  } | null>(null)
+
+  const localMenuRef = useRef<HTMLDivElement>(null)
+  // Close the local context menu on outside click / Escape.
+  useEffect(() => {
+    if (!localMenu) return
+    const onDoc = (e: MouseEvent) => {
+      const el = localMenuRef.current
+      if (el && !el.contains(e.target as Node)) setLocalMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLocalMenu(null)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [localMenu])
 
   const openModal = (entry?: LocalTerminalEntry) => {
     setSaveError(null)
@@ -606,9 +665,11 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
     setModalOpen(false)
   }
 
+  const [confirmLocalDelete, setConfirmLocalDelete] = useState<LocalTerminalEntry | null>(null)
   const handleDelete = async (entry: LocalTerminalEntry) => {
     const current = await getLocalTerminals().catch(() => entries)
     await persist(current.filter((e) => e.id !== entry.id))
+    setConfirmLocalDelete(null)
   }
 
   const shellLabel = (s: string) => {
@@ -649,48 +710,46 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
               <span className="conn-item-sub">{t('openLocalShellHint')}</span>
             </span>
           </div>
-          {entries.length === 0 ? (
-            <div className="empty-state local-empty">
-              <div>{t('noLocalTerminalsYet')}</div>
-            </div>
-          ) : (
-            entries.map((entry) => (
-              <div
-                key={entry.id}
-                className="conn-item local-term-item"
-                onClick={() => onOpen?.(entry)}
-                title={`${entry.cwd}  [${shellLabel(entry.shell)}]`}
+          {entries.map((entry) => (
+            <div
+              key={entry.id}
+              className="conn-item local-term-item"
+              onClick={() => onOpen?.(entry)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setLocalMenu({ x: e.clientX, y: e.clientY, entry })
+              }}
+              title={`${entry.cwd}  [${shellLabel(entry.shell)}]`}
+            >
+              <span className="conn-item-icon">
+                <Icon name="terminal" size={14} />
+              </span>
+              <span className="conn-item-label">
+                <span className="conn-item-name">{entry.name}</span>
+                <span className="conn-item-sub">{shellLabel(entry.shell)}</span>
+              </span>
+              <span
+                className="conn-item-edit"
+                title={t('editLocalTerminal')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openModal(entry)
+                }}
               >
-                <span className="conn-item-icon">
-                  <Icon name="terminal" size={14} />
-                </span>
-                <span className="conn-item-label">
-                  <span className="conn-item-name">{entry.name}</span>
-                  <span className="conn-item-sub">{shellLabel(entry.shell)}</span>
-                </span>
-                <span
-                  className="conn-item-edit"
-                  title={t('editLocalTerminal')}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    openModal(entry)
-                  }}
-                >
-                  <Icon name="edit" size={12} />
-                </span>
-                <span
-                  className="conn-item-del"
-                  title={t('deleteLocalTerminal')}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleDelete(entry)
-                  }}
-                >
-                  ×
-                </span>
-              </div>
-            ))
-          )}
+                <Icon name="edit" size={12} />
+              </span>
+              <span
+                className="conn-item-del"
+                title={t('deleteLocalTerminal')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setConfirmLocalDelete(entry)
+                }}
+              >
+                ×
+              </span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -749,6 +808,74 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
           </div>
         </div>
       )}
+
+      {localMenu && (
+        <div
+          className="context-menu"
+          style={{ left: localMenu.x, top: localMenu.y }}
+          ref={localMenuRef}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {onOpenSplit && (
+            <>
+              <div
+                className="context-menu-item"
+                onClick={() => {
+                  onOpenSplit(localMenu.entry, 'row')
+                  setLocalMenu(null)
+                }}
+              >
+                {t('splitRight')}
+              </div>
+              <div
+                className="context-menu-item"
+                onClick={() => {
+                  onOpenSplit(localMenu.entry, 'column')
+                  setLocalMenu(null)
+                }}
+              >
+                {t('splitDown')}
+              </div>
+            </>
+          )}
+          <div className="context-menu-divider" />
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              openModal(localMenu.entry)
+              setLocalMenu(null)
+            }}
+          >
+            <Icon name="edit" /> {t('edit')}
+          </div>
+          <div
+            className="context-menu-item danger"
+            onClick={() => {
+              setConfirmLocalDelete(localMenu.entry)
+              setLocalMenu(null)
+            }}
+          >
+            <Icon name="trash" /> {t('delete')}
+          </div>
+        </div>
+      )}
+
+      {confirmLocalDelete && (
+        <div className="modal-overlay" onClick={() => setConfirmLocalDelete(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">{t('deleteLocalTerminal')}</div>
+            <div className="modal-body" style={{ padding: '12px 20px' }}>
+              {t('deleteLocalTerminalConfirm', { name: confirmLocalDelete.name })}
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setConfirmLocalDelete(null)}>{t('cancel')}</button>
+              <button className="danger" onClick={() => handleDelete(confirmLocalDelete)}>
+                {t('delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -766,6 +893,8 @@ interface ConnectionItemProps {
   onDrop: (e: React.DragEvent, conn: ConnectionConfig) => void
   onDragEnd: () => void
   isDragOver: 'before' | 'after' | null
+  onEdit: (conn: ConnectionConfig) => void
+  onDelete: (conn: ConnectionConfig) => void
 }
 
 const ConnectionItem: React.FC<ConnectionItemProps> = ({
@@ -779,7 +908,10 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
   onDrop,
   onDragEnd,
   isDragOver,
+  onEdit,
+  onDelete,
 }) => {
+  const { t } = useI18n()
   return (
     <div
       className={`connection-item${indent ? ' indented' : ''}${
@@ -807,6 +939,28 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
             {conn.host}:{conn.port}
           </div>
         )}
+      </div>
+      <div className="conn-item-actions">
+        <span
+          className="conn-item-edit"
+          title={t('editConnection')}
+          onClick={(e) => {
+            e.stopPropagation()
+            onEdit(conn)
+          }}
+        >
+          <Icon name="edit" size={12} />
+        </span>
+        <span
+          className="conn-item-del"
+          title={t('deleteConnection')}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete(conn)
+          }}
+        >
+          ×
+        </span>
       </div>
     </div>
   )
@@ -1082,14 +1236,21 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onClose,
 }) => {
   const { t } = useI18n()
+  const menuRef = useRef<HTMLDivElement>(null)
   React.useEffect(() => {
-    const handler = () => onClose()
-    document.addEventListener('click', handler)
-    return () => document.removeEventListener('click', handler)
+    // Close on ANY outside mousedown (left or right click) — using 'click'
+    // alone would leave the menu open when another context menu opens via a
+    // right-click elsewhere.
+    const handler = (e: MouseEvent) => {
+      const el = menuRef.current
+      if (el && !el.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
 
   return (
-    <div className="context-menu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
+    <div className="context-menu" style={{ left: x, top: y }} ref={menuRef}>
       {onSplitRight && (
         <div className="context-menu-item" onClick={onSplitRight}>
           {t('splitRight')}
@@ -1129,14 +1290,18 @@ const GroupContextMenu: React.FC<GroupContextMenuProps> = ({
   onClose,
 }) => {
   const { t } = useI18n()
+  const menuRef = useRef<HTMLDivElement>(null)
   React.useEffect(() => {
-    const handler = () => onClose()
-    document.addEventListener('click', handler)
-    return () => document.removeEventListener('click', handler)
+    const handler = (e: MouseEvent) => {
+      const el = menuRef.current
+      if (el && !el.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
 
   return (
-    <div className="context-menu" style={{ left: x, top: y }} onClick={(e) => e.stopPropagation()}>
+    <div className="context-menu" style={{ left: x, top: y }} ref={menuRef}>
       <div className="context-menu-item" onClick={onRename}>
         <Icon name="edit" /> {t('renameGroup')}
       </div>

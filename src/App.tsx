@@ -1082,6 +1082,37 @@ export default function App() {
     [openInSplit],
   )
 
+  // Open a LOCAL shell as an embedded split pane inside the active workspace.
+  const handleOpenLocalSplit = useCallback(
+    (cwd: string | undefined, shell: string | undefined, direction: 'row' | 'column'): number | null => {
+      const rootId = activeTabIdRef.current
+      if (rootId == null) return null
+      const tree = splitTreeRef.current
+      const focus = focusedLeafIdRef.current
+      const focusLeaf = focus ? findLeaf(tree, focus) : null
+      const targetId = focusLeaf ? focus! : collectLeaves(tree)[0]?.id
+      if (!targetId) return null
+      const tabId = nextTabId++
+      const newTab: TabInfo = {
+        tabId,
+        connectionId: undefined,
+        connectionName: t('localTerminal'),
+        host: 'localhost',
+        status: 'connected',
+        tabType: 'localShell',
+        embedded: true,
+        localShellCwd: cwd,
+        localShellType: shell,
+      }
+      setTabs((prev) => [...prev, newTab])
+      const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
+      updateActiveTree(() => nt)
+      if (nl) setFocusedLeafId(nl)
+      return tabId
+    },
+    [t, newLeafId, updateActiveTree, setFocusedLeafId],
+  )
+
   // Open settings as a tab (reuse if already open)
   const handleOpenSettings = useCallback(() => {
     const existing = tabs.find(t => t.tabType === 'settings')
@@ -3645,6 +3676,7 @@ export default function App() {
               sidebarWidth={sidebarWidth}
               localTerminals={localTerminals}
               onOpenLocalTerminal={(entry) => handleOpenLocalTerminal(entry.cwd, entry.shell)}
+              onOpenLocalSplit={(entry, direction) => handleOpenLocalSplit(entry.cwd, entry.shell, direction)}
               onLocalTerminalsChanged={reloadLocalTerminals}
               expanded={connectionsExpanded}
               onToggleExpanded={() =>

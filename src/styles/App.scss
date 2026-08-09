@@ -349,6 +349,11 @@ body.resize-v * {
 
   &:hover {
     background: $bg-hover;
+
+    .conn-item-edit,
+    .conn-item-del {
+      opacity: 1;
+    }
   }
 
   &.active {
@@ -398,6 +403,32 @@ body.resize-v * {
     flex-shrink: 0;
   }
 
+  .conn-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .conn-item-edit,
+  .conn-item-del {
+    flex-shrink: 0;
+    opacity: 0;
+    cursor: pointer;
+    color: $text-dim;
+    transition: opacity 0.1s, color 0.1s;
+
+    &:hover {
+      color: $text-primary;
+    }
+  }
+
+  .conn-item-del {
+    font-size: 15px;
+    line-height: 1;
+  }
+
   // Drag-and-drop visual feedback
   &.drag-over-before {
     border-top: 2px solid #007acc;
@@ -414,7 +445,7 @@ body.resize-v * {
 .conn-item {
   display: flex;
   align-items: center;
-  padding: 4px 8px 4px 24px;
+  padding: 4px 12px 4px 24px;
   cursor: pointer;
   border-left: 3px solid transparent;
   transition: background 0.1s;
@@ -424,7 +455,8 @@ body.resize-v * {
     background: $bg-hover;
 
     .conn-item-edit,
-    .conn-item-del {
+    .conn-item-del,
+    .conn-item-btn {
       opacity: 1;
     }
   }
@@ -474,6 +506,14 @@ body.resize-v * {
   .conn-item-del {
     font-size: 15px;
     line-height: 1;
+  }
+
+  .conn-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    flex-shrink: 0;
   }
 }
 
@@ -1854,6 +1894,16 @@ body.resizing-v {
 
         &:hover {
           background: $accent-hover;
+        }
+      }
+
+      &.danger {
+        background: #b91c1c;
+        color: #fff;
+        border-color: #b91c1c;
+
+        &:hover {
+          background: #d11f1f;
         }
       }
     }
