@@ -4,6 +4,7 @@ src-tauri/gen
 dist
 task
 .tauri
+package-lock.json
 
 # Local app data (credentials, recordings, window state)
 *.db
