@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import '@xterm/xterm/css/xterm.css'
 import {
   connect,
@@ -22,6 +23,20 @@ import { useI18n } from '../i18n'
 // stale duplicate can never echo the same keystroke twice into the SSH session
 // (which produced bugs like typing "ls" reaching the shell as "lss").
 const activeTerminalByTab = new Map<number, Terminal>()
+
+// Preserves terminal scrollback across transient re-mounts (float pop-out / dock
+// back). React tears down the xterm instance when its portal container changes,
+// so we serialize the full buffer (ANSI colors included, via @xterm/addon-serialize)
+// here and replay it on the next mount.
+const scrollbackCache = new Map<number, string>()
+
+const replayScrollback = (term: Terminal, tabId: number): void => {
+  const cached = scrollbackCache.get(tabId)
+  if (!cached) return
+  scrollbackCache.delete(tabId)
+  term.write(cached)
+  term.scrollToBottom()
+}
 
 interface TerminalComponentProps {
   tabId: number
@@ -202,7 +217,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
+    // Serialize addon snapshots the full screen (colors + cursor) so a re-mounted
+    // instance (float pop-out / dock-back) can replay it exactly.
+    const serializeAddon = new SerializeAddon()
+    term.loadAddon(serializeAddon)
     term.open(containerRef.current)
+
+    // Replay any scrollback cached from a previous mount (float pop-out / dock-back)
+    // before fitting/connecting, so the user's prior output is restored. Done here
+    // (not in the fit step) so every re-mounted instance restores content rather than
+    // a transient instance overwriting the cache with empty output.
+    replayScrollback(term, currentTabId)
 
     termRef.current = term
     fitRef.current = fitAddon
@@ -307,7 +332,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onSizeChangeRef.current?.(cols, rows)
       onStatusChangeRef.current('connecting')
       if (isLocal) {
-        openLocalShell(currentTabId, localShellTypeRef.current, localCwd)
+        openLocalShell(currentTabId, localShellTypeRef.current, localCwd, true)
           .then(() => {
             onStatusChangeRef.current('connected')
             startPolling()
@@ -336,6 +361,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           currentTabId,
           cols,
           rows,
+          true,
         )
           .then(() => {
             onStatusChangeRef.current('connected')
@@ -390,6 +416,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (activeTerminalByTab.get(currentTabId) === term) {
         activeTerminalByTab.delete(currentTabId)
       }
+      // Snapshot the full screen (colors + cursor) before tearing down the xterm
+      // instance, so the next mount (e.g. float pop-out / dock-back) can replay it
+      // and the user keeps their prior output instead of a blank screen.
+      try {
+        scrollbackCache.set(currentTabId, serializeAddon.serialize())
+      } catch {
+        // failing to cache must never break teardown
+      }
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -428,7 +462,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onStatusChangeRef.current('connecting')
 
       if (isLocal) {
-        openLocalShell(currentTabId, localShellTypeRef.current, localCwd)
+        openLocalShell(currentTabId, localShellTypeRef.current, localCwd, false)
           .then(() => {
             onStatusChangeRef.current('connected')
             if (pollTimerRef.current) clearInterval(pollTimerRef.current)
@@ -466,6 +500,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         currentTabId,
         cols,
         rows,
+        false,
       )
         .then(() => {
           onStatusChangeRef.current('connected')

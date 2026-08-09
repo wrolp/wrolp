@@ -2160,8 +2160,10 @@ export default function App() {
         />
       )
     }
-    // terminal / docker shell — reuse the same renderer the panes use.
-    return renderTerminalForTab(tab, true, item.floatId)
+    // terminal / docker shell panes are handled by terminalPortals (the same
+    // mounted TerminalComponent is re-routed into the floating window's body),
+    // so they are intentionally not rendered here.
+    return null
   }
   // ---- Split-tree render helpers ----
   // Map every session to the leaf that shows it, across ALL workspaces (leaf
@@ -3533,6 +3535,16 @@ export default function App() {
   // Portals keep each terminal instance mounted (preserving its SSH session and
   // scrollback) while placing its DOM into the correct pane body, or into the
   // hidden pool when it isn't shown in any pane.
+  // A floated terminal pane is NOT torn down — its SAME TerminalComponent instance
+  // stays mounted and we simply re-route its DOM into the floating window's body
+  // (instead of unmounting it and mounting a fresh one, which would discard the
+  // scrollback/output). Map tabId -> floating-body pane id used as the portal dest.
+  const floatingTerminalDest = new Map<number, string>()
+  for (const fi of floatingItems) {
+    if (fi.kind === 'terminal' && fi.tabId != null) {
+      floatingTerminalDest.set(fi.tabId, `floatbody-${fi.floatId}`)
+    }
+  }
   const terminalPortals = tabs
     .filter(
       (t) =>
@@ -3546,14 +3558,17 @@ export default function App() {
           ? createPortal(renderTerminalForTab(tab, false), settingsOverlayRef.current, String(tab.tabId))
           : null
       }
-      // Route each terminal into the leaf that shows it within its own workspace.
-      // Every workspace container is always mounted (only visibility toggles),
-      // so the portal destination never changes on tab switch — sessions stay
-      // mounted and never reconnect.
-      const leafId = allTabToLeaf.get(tab.tabId)
+      // Route each terminal into the leaf that shows it within its own workspace,
+      // or into the floating window's body when the pane is popped out. Every
+      // workspace container is always mounted (only visibility toggles), so the
+      // portal destination never changes on tab switch — sessions stay mounted
+      // and never reconnect.
+      const floatLeaf = floatingTerminalDest.get(tab.tabId)
+      const leafId = floatLeaf ?? allTabToLeaf.get(tab.tabId)
       const dest = leafId ? paneBodyRefs.current.get(leafId) : null
       if (!leafId || !dest) return null
-      const isFocused = leafId === (activeTabId != null ? focusedLeafId : null)
+      // A popped-out terminal is always the focused/active surface within its window.
+      const isFocused = floatLeaf != null || leafId === (activeTabId != null ? focusedLeafId : null)
       // Stable key: without it, removing one tab shifts the others' array
       // index, making React remount the surviving terminal — which re-runs
       // its connection (looks like the "other pane reconnected").
@@ -3623,7 +3638,16 @@ export default function App() {
               onMove={(x, y) => moveFloating(item.floatId, x, y)}
               onResize={(w, h) => resizeFloating(item.floatId, w, h)}
             >
-              {renderFloatingContent(item)}
+              {/* Terminal floats reuse the SAME mounted TerminalComponent instance
+                  (routed into this body by terminalPortals), so its scrollback and
+                  output survive the pop-out. Overlay floats (file editor / docker
+                  log) render their own content here as before. */}
+              <div
+                ref={getPaneBodyRef(`floatbody-${item.floatId}`)}
+                style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+              >
+                {item.kind === 'terminal' ? null : renderFloatingContent(item)}
+              </div>
             </FloatingWindow>
           ))}
         <div

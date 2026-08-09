@@ -37,8 +37,9 @@ export async function connect(
   tabId: number,
   cols: number,
   rows: number,
+  reuseExisting: boolean = true,
 ): Promise<{ status: string }> {
-  return await invoke<{ status: string }>('connect', { config, tabId, cols, rows })
+  return await invoke<{ status: string }>('connect', { config, tabId, cols, rows, reuseExisting })
 }
 
 export async function disconnect(tabId: number): Promise<boolean> {
@@ -63,8 +64,14 @@ export async function openLocalShell(
   tabId: number,
   shell?: string,
   cwd?: string,
+  reuseExisting: boolean = true,
 ): Promise<void> {
-  return await invoke('open_local_shell', { tabId, shell: shell ?? null, cwd: cwd ?? null })
+  return await invoke('open_local_shell', {
+    tabId,
+    shell: shell ?? null,
+    cwd: cwd ?? null,
+    reuseExisting,
+  })
 }
 
 /// Get saved local terminal entries.

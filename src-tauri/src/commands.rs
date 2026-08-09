@@ -356,12 +356,38 @@ pub async fn connect(
   tab_id: u32,
   cols: u32,
   rows: u32,
+  reuse_existing: bool,
 ) -> Result<ConnectResult, String> {
   let host = config.host.clone();
   let port = config.port;
   let username = config.username.clone();
 
   eprintln!("[connect] tab={} host={}:{} user={}", tab_id, host, port, username);
+
+  // Reuse path: if this tab already has a live SSH session (e.g. the terminal
+  // was floated/popped out and is now remounting), keep it instead of tearing
+  // it down and re-handshaking with the server. The output buffer is preserved
+  // so the remounted terminal replays the existing history — same session, same
+  // shell state (cwd, env, background jobs), no reconnect.
+  if reuse_existing {
+    let live = {
+      let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+      sessions
+        .get(&tab_id)
+        .map_or(false, |s| s.shutdown_tx.is_some())
+    };
+    if live {
+      eprintln!("[connect] reusing live session for tab={} (no reconnect)", tab_id);
+      return Ok(ConnectResult {
+        status: "connected".into(),
+        tab_id,
+      });
+    }
+    eprintln!(
+      "[connect] no live session to reuse for tab={}, connecting fresh",
+      tab_id
+    );
+  }
 
   // Clear stale output for this tab from previous sessions
   {
@@ -587,6 +613,16 @@ pub async fn connect(
               }));
             } else {
               eprintln!("[russh] session_id changed for tab={}, skipping stale event", tid);
+            }
+          }
+        }
+        // Mark the session dead so it isn't mistakenly reused (e.g. when the
+        // terminal is floated and remounts) before the user explicitly reconnects.
+        if let Ok(mut sessions) = app_state.sessions.lock() {
+          if let Some(s) = sessions.get_mut(&tid) {
+            if s.session_id == session_id {
+              s.shutdown_tx.take();
+              s.data_tx.take();
             }
           }
         }
@@ -839,7 +875,28 @@ pub async fn open_local_shell(
   tab_id: u32,
   shell: Option<String>,
   cwd: Option<String>,
+  reuse_existing: bool,
 ) -> Result<(), String> {
+  // Reuse path: if a live local shell already exists for this tab (e.g. the
+  // terminal was floated and is now remounting), keep it — no process restart.
+  if reuse_existing {
+    let live = {
+      let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+      if let Some(s) = shells.get_mut(&tab_id) {
+        s.child.try_wait().map_or(false, |exited| exited.is_none())
+      } else {
+        false
+      }
+    };
+    if live {
+      eprintln!(
+        "[open_local_shell] reusing live local shell for tab={}",
+        tab_id
+      );
+      return Ok(());
+    }
+  }
+
   // Clear any stale output for this tab
   {
     if let Ok(mut buffers) = state.output_buffers.lock() {
