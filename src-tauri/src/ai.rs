@@ -67,9 +67,15 @@ pub struct AiConfig {
   /// so a fresh install starts in the safer read-only mode.
   #[serde(default = "default_true")]
   pub read_only: bool,
+  /// When true, `run_command` types the command into the tab's live terminal
+  /// (visible on screen + captured in the session recording) instead of running
+  /// it silently on a separate exec channel. Falls back to the silent path
+  /// automatically when the tab has no live shell.
+  #[serde(default = "default_true")]
+  pub run_in_terminal: bool,
 }
 
-/// Serde default for `AiConfig.read_only` — read-only mode is on by default.
+/// Serde default for boolean `AiConfig` flags that are on by default.
 fn default_true() -> bool {
   true
 }
@@ -103,6 +109,7 @@ impl AiConfig {
       profiles: vec![profile],
       active_id,
       read_only: true,
+      run_in_terminal: true,
     }
   }
 }
@@ -186,6 +193,7 @@ pub fn load_ai_config() -> Result<AiConfig, String> {
             profiles: vec![profile],
             active_id,
             read_only: true,
+            run_in_terminal: true,
           })
         }
         Err(e) => Err(format!("Failed to parse AI config: {}", e)),
@@ -366,12 +374,19 @@ pub fn tool_definitions() -> Vec<OpenAiTool> {
       function: OpenAiFunction {
         name: "run_command".into(),
         description:
-          "Execute a shell command and return its output. Prefers the shell attached to \
-                     the given tabId (remote SSH server or local shell); when tabId is 0 / invalid \
-                     / not attached to any shell, the command runs on the user's LOCAL machine. \
-                     Use for read-only or non-destructive operations (status, logs, inspections). \
-                     Avoid destructive commands. NOTE: when the assistant is in read-only mode, \
-                     only inspection commands are permitted — modifying commands are blocked."
+          "Execute a shell command and return its output. When the given tabId has a live \
+                     terminal, the command is TYPED INTO THAT TERMINAL: the user watches it run \
+                     and it is saved in the session recording, and it inherits that shell's \
+                     working directory, environment and sudo state. In that mode the result has \
+                     `ranOnTerminal: true` and NO exit code (output is captured from the terminal \
+                     stream); check `timedOut` to see whether the capture window closed early. \
+                     When tabId is 0 / invalid / not attached to any shell, the command runs \
+                     silently on the user's LOCAL machine instead. Send ONE single-line command \
+                     per call (multi-line scripts are rejected). Use for read-only or \
+                     non-destructive operations (status, logs, inspections). Avoid destructive \
+                     commands, and avoid long-running/interactive ones (top, tail -f, vim) — they \
+                     will block the terminal. NOTE: when the assistant is in read-only mode, only \
+                     inspection commands are permitted — modifying commands are blocked."
             .into(),
         parameters: serde_json::json!({
             "type": "object",

@@ -234,6 +234,16 @@ impl SshHandler {
           .or_default()
           .push(data.to_string());
       }
+      // Tee a *copy* into the AI capture sink while an AI-issued command is
+      // running on this tab (see `run_command_on_terminal` in commands.rs).
+      // It must be a copy, never a move: the frontend still drains
+      // `output_buffers` via `poll_output`, so the user keeps seeing the
+      // output live while the agent collects it.
+      if let Ok(mut caps) = state.ai_captures.lock() {
+        if let Some(buf) = caps.get_mut(&self.tab_id) {
+          buf.push_str(data);
+        }
+      }
     }
   }
 
@@ -287,6 +297,12 @@ pub struct LocalShell {
   /// `Arc` clone and writes here, so it never has to reach back into the
   /// global `AppState` (which is unreliable from a plain `std::thread`).
   pub output: Arc<StdMutex<Vec<String>>>,
+  /// AI output capture sink. While this is `Some`, the reader thread appends a
+  /// *copy* of every chunk here so an AI-issued command can collect its result
+  /// without stealing chunks from the frontend's `poll_output` drain. Local
+  /// shells use their own `Arc` (rather than `AppState::ai_captures`) because
+  /// the reader runs on a plain `std::thread` that must not touch `AppState`.
+  pub ai_capture: Arc<StdMutex<Option<String>>>,
 }
 
 /// Active SSH session
@@ -425,6 +441,11 @@ pub struct AppState {
   pub sessions: StdMutex<HashMap<u32, SshSession>>,
   /// Polling output buffer: tab_id → pending text chunks (frontend polls every 100ms)
   pub output_buffers: StdMutex<HashMap<u32, Vec<String>>>,
+  /// AI output capture sinks for SSH tabs: tab_id → accumulated output.
+  /// An entry exists only while an AI-issued command is running on that tab;
+  /// `SshHandler::emit` tees a copy of every chunk into it. The local-shell
+  /// equivalent lives in `LocalShell::ai_capture`.
+  pub ai_captures: StdMutex<HashMap<u32, String>>,
   /// Transfer pause controls: tab_id → control
   pub transfer_controls: StdMutex<HashMap<u32, Arc<TransferControl>>>,
   /// Monotonic connection counter — bumped per new connect() call
@@ -482,6 +503,7 @@ impl AppState {
       connections: StdMutex::new(connections),
       sessions: StdMutex::new(HashMap::new()),
       output_buffers: StdMutex::new(HashMap::new()),
+      ai_captures: StdMutex::new(HashMap::new()),
       transfer_controls: StdMutex::new(HashMap::new()),
       next_session_id: AtomicU64::new(1),
       db,

@@ -252,6 +252,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
     '启用后，AI 默认以只读模式启动，只能运行查看类命令（状态、日志、文件读取），修改类命令会被阻止。可在面板顶部分别切换。',
   aiReadOnlyOn: '只读',
   aiReadOnlyOff: '可写',
+  aiRunInTerminal: '在终端中执行命令（默认）',
+  aiRunInTerminalDesc:
+    '启用后，AI 的命令会像你手动输入一样打进当前终端：屏幕上可见、计入会话录制，并共享该终端的工作目录、环境变量与 sudo 状态。关闭后命令改为后台静默执行（有退出码，但不可见、不录制）。当前标签页没有活动终端时会自动回退到静默执行。',
+  aiRunInTerminalOn: '在终端中执行',
   aiReadOnlyHint: '只读模式：仅执行查看类命令',
   aiFullModeHint: '可写模式：允许执行修改类命令',
   aiChatResizeInput: '拖动以调整输入区高度',

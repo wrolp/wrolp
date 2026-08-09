@@ -2525,6 +2525,33 @@ export default function App() {
                     </label>
                   </div>
 
+                  <div className="settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-icon">
+                        <Icon name="terminal" size={16} />
+                      </div>
+                      <div>
+                        <h3 className="settings-card-title">{t('aiRunInTerminal')}</h3>
+                        <p className="settings-card-sub">{t('aiRunInTerminalDesc')}</p>
+                      </div>
+                    </div>
+                    <label className="settings-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={aiConfig?.runInTerminal ?? true}
+                        onChange={(e) => {
+                          setAiConfig((prev) => {
+                            if (!prev) return prev
+                            const next = { ...prev, runInTerminal: e.target.checked }
+                            saveAiConfig(next).catch(() => {})
+                            return next
+                          })
+                        }}
+                      />
+                      <span>{t('aiRunInTerminalOn')}</span>
+                    </label>
+                  </div>
+
                   {aiConfig && aiConfig.profiles.length > 0 && (
                     <div className="settings-card">
                       <div className="settings-card-header">

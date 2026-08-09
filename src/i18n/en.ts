@@ -251,6 +251,10 @@ const en = {
     'When enabled, the AI starts in read-only mode and may only run inspection commands (status, logs, file reads). Modifying commands are blocked. The mode can be toggled per chat in the panel header.',
   aiReadOnlyOn: 'Read-only',
   aiReadOnlyOff: 'Full access',
+  aiRunInTerminal: 'Run commands in the terminal (default)',
+  aiRunInTerminalDesc:
+    "When enabled, AI commands are typed into the active terminal just like you would type them: visible on screen, saved in the session recording, and sharing that shell's working directory, environment and sudo state. When disabled, commands run silently in the background (exit code available, but invisible and not recorded). Tabs without a live shell fall back to silent execution automatically.",
+  aiRunInTerminalOn: 'Run in terminal',
   aiReadOnlyHint: 'Read-only mode: only inspection commands run',
   aiFullModeHint: 'Full access: modifying commands allowed',
   aiChatResizeInput: 'Drag to resize input area',

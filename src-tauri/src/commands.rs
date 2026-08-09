@@ -411,6 +411,12 @@ pub async fn connect(
     if let Ok(mut buffers) = state.output_buffers.lock() {
       buffers.remove(&tab_id);
     }
+    // Drop any AI capture sink left behind by a command that was still running
+    // when the previous session died — a stale sink would permanently block new
+    // AI commands on this tab.
+    if let Ok(mut caps) = state.ai_captures.lock() {
+      caps.remove(&tab_id);
+    }
   }
 
   // If an existing session with the same tab_id exists, disconnect it first
@@ -971,6 +977,9 @@ pub async fn open_local_shell(
   // ConPTY keeps addressing row 0 — which is exactly why typed input used to
   // land on the line *above* the prompt. Status goes to stderr instead.
   let output = Arc::new(StdMutex::new(Vec::<String>::new()));
+  // Sink for AI-issued commands; `None` while no AI command is in flight.
+  // Owned here (not in `AppState`) for the same reason as `output`.
+  let ai_capture = Arc::new(StdMutex::new(None::<String>));
   eprintln!("[open_local_shell] starting '{}' (tab={})", shell_cmd, tab_id);
 
   // Create the PTY at the actual terminal size up front. If the size is left at
@@ -1054,6 +1063,7 @@ pub async fn open_local_shell(
         session_id,
         cwd: cwd.clone(),
         output: output.clone(),
+        ai_capture: ai_capture.clone(),
       },
     );
   }
@@ -1074,6 +1084,7 @@ pub async fn open_local_shell(
   // orphaned queue the frontend no longer reads from — no stale-data corruption.
   let reader_tab = tab_id;
   let reader_output = output.clone();
+  let reader_ai_capture = ai_capture.clone();
   std::thread::spawn(move || {
     use std::io::Read;
     let mut buf = [0u8; 4096];
@@ -1082,6 +1093,13 @@ pub async fn open_local_shell(
         Ok(0) => break, // EOF: process exited
         Ok(n) => {
           let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+          // Tee a copy to the AI sink first (the chunk is moved into the
+          // frontend queue below). Only active while an AI command runs.
+          if let Ok(mut cap) = reader_ai_capture.lock() {
+            if let Some(sink) = cap.as_mut() {
+              sink.push_str(&chunk);
+            }
+          }
           if let Ok(mut q) = reader_output.lock() {
             q.push(chunk);
           }
@@ -2574,7 +2592,13 @@ pub async fn extract_commands(
     let mut seen = std::collections::HashSet::new();
     let mut commands = Vec::new();
     for raw in precise_commands {
-      let trimmed = raw.trim();
+      // AI-issued commands are stored with an `[AI] ` marker so playback can
+      // show who ran them; strip it here so the extracted list stays runnable.
+      let trimmed = raw
+        .trim()
+        .strip_prefix(AI_COMMAND_PREFIX.trim_end())
+        .unwrap_or(raw.trim())
+        .trim();
       if trimmed.is_empty() {
         continue;
       }
@@ -3486,6 +3510,494 @@ pub async fn confirm_ai_tool(
   Ok(())
 }
 
+// ==================== AI → Terminal execution ====================
+//
+// By default `run_command` used to execute through a *separate* channel
+// (`exec_on_handle` for SSH, `std::process::Command` for local). That is
+// invisible to the user: nothing shows on screen, nothing enters the session
+// recording, and the command does not share the interactive shell's cwd/env.
+//
+// The helpers below instead *type the command into the live shell*, exactly as
+// if the user had typed it, and capture the resulting output by teeing the
+// shell's output stream. See `task/plans/AI-TO-TERMINAL-PLAN.md`.
+
+/// Which live shell backs a tab. Decides how input is written and where the
+/// output capture sink lives.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LiveShell {
+  /// Interactive SSH PTY (`AppState::sessions`).
+  Ssh,
+  /// Local PTY-backed process (`AppState::local_shells`).
+  Local,
+}
+
+/// Wait at most this long for the *first* byte of output after sending.
+/// A command that produces nothing at all (e.g. `touch x`) ends here.
+const AI_TERM_FIRST_BYTE_MS: u128 = 5_000;
+/// Once output has started, treat the command as finished after this much
+/// silence. A PTY gives us no end-of-command signal, so this is a heuristic.
+const AI_TERM_QUIET_MS: u128 = 700;
+/// Hard ceiling for a single AI-issued command.
+const AI_TERM_MAX_MS: u128 = 60_000;
+/// Poll interval of the capture loop.
+const AI_TERM_POLL_MS: u64 = 50;
+/// Cap on the captured output handed back to the model (keeps tokens sane).
+const AI_TERM_MAX_OUTPUT: usize = 32 * 1024;
+
+/// Whether `run_command` should route through the live terminal. Controlled by
+/// the global AI setting; defaults to enabled when no config is loaded.
+fn ai_run_in_terminal_enabled(state: &AppState) -> bool {
+  state
+    .ai_config
+    .lock()
+    .ok()
+    .map(|c| c.as_ref().map_or(true, |c| c.run_in_terminal))
+    .unwrap_or(true)
+}
+
+/// Detect whether `tab_id` has a live interactive shell we can type into.
+fn live_shell_kind(state: &AppState, tab_id: u32) -> Option<LiveShell> {
+  if let Ok(shells) = state.local_shells.lock() {
+    if shells.contains_key(&tab_id) {
+      return Some(LiveShell::Local);
+    }
+  }
+  if let Ok(sessions) = state.sessions.lock() {
+    if sessions
+      .get(&tab_id)
+      .and_then(|s| s.data_tx.as_ref())
+      .is_some()
+    {
+      return Some(LiveShell::Ssh);
+    }
+  }
+  None
+}
+
+/// Install an empty AI capture sink for `tab_id`.
+///
+/// Returns `false` if a sink is already installed, which means another AI
+/// command is still running on this tab. Two commands typed into one shell
+/// would interleave their output and neither result would be trustworthy, so
+/// the caller must bail out instead of overwriting the sink.
+fn ai_capture_start(state: &AppState, tab_id: u32, kind: LiveShell) -> bool {
+  match kind {
+    LiveShell::Ssh => match state.ai_captures.lock() {
+      Ok(mut caps) => {
+        if caps.contains_key(&tab_id) {
+          return false;
+        }
+        caps.insert(tab_id, String::new());
+        true
+      }
+      Err(_) => false,
+    },
+    LiveShell::Local => {
+      // Clone the sink handle out so the `local_shells` guard is released
+      // before we lock the sink itself (the reader thread holds the same Arc).
+      let sink = match state.local_shells.lock() {
+        Ok(shells) => shells.get(&tab_id).map(|sh| sh.ai_capture.clone()),
+        Err(_) => None,
+      };
+      let Some(sink) = sink else { return false };
+      let Ok(mut cap) = sink.lock() else { return false };
+      if cap.is_some() {
+        return false;
+      }
+      *cap = Some(String::new());
+      true
+    }
+  }
+}
+
+/// Current size of the capture sink; used to detect "the stream went quiet".
+fn ai_capture_len(state: &AppState, tab_id: u32, kind: LiveShell) -> usize {
+  match kind {
+    LiveShell::Ssh => state
+      .ai_captures
+      .lock()
+      .ok()
+      .and_then(|caps| caps.get(&tab_id).map(|s| s.len()))
+      .unwrap_or(0),
+    LiveShell::Local => state
+      .local_shells
+      .lock()
+      .ok()
+      .and_then(|shells| {
+        shells
+          .get(&tab_id)
+          .and_then(|sh| sh.ai_capture.lock().ok().map(|c| c.as_ref().map_or(0, |s| s.len())))
+      })
+      .unwrap_or(0),
+  }
+}
+
+/// Remove the sink and return everything it captured.
+fn ai_capture_finish(state: &AppState, tab_id: u32, kind: LiveShell) -> String {
+  match kind {
+    LiveShell::Ssh => state
+      .ai_captures
+      .lock()
+      .ok()
+      .and_then(|mut caps| caps.remove(&tab_id))
+      .unwrap_or_default(),
+    LiveShell::Local => state
+      .local_shells
+      .lock()
+      .ok()
+      .and_then(|shells| {
+        shells
+          .get(&tab_id)
+          .and_then(|sh| sh.ai_capture.lock().ok().and_then(|mut c| c.take()))
+      })
+      .unwrap_or_default(),
+  }
+}
+
+/// Write `data` into the tab's live shell exactly as if the user had typed it.
+fn type_into_shell(
+  state: &AppState,
+  tab_id: u32,
+  kind: LiveShell,
+  data: &str,
+) -> Result<(), String> {
+  match kind {
+    LiveShell::Ssh => {
+      let data_tx = {
+        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        sessions
+          .get(&tab_id)
+          .and_then(|s| s.data_tx.clone())
+          .ok_or("Session not found")?
+      };
+      data_tx
+        .send(data.as_bytes().to_vec())
+        .map_err(|e| format!("Failed to send input: {}", e))
+    }
+    LiveShell::Local => {
+      use std::io::Write;
+      let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+      let sh = shells.get_mut(&tab_id).ok_or("Local shell not found")?;
+      sh.writer
+        .write_all(data.as_bytes())
+        .map_err(|e| format!("Failed to write to local shell: {}", e))?;
+      let _ = sh.writer.flush();
+      Ok(())
+    }
+  }
+}
+
+/// Record an AI-issued command in the tab's active recording.
+///
+/// Uses the same `command` direction as a user-typed line but with an `[AI] `
+/// prefix, so playback and `extract_commands` can tell them apart. There is no
+/// double-recording risk: xterm's `onData` (which drives `commit_command`)
+/// only fires for real keystrokes, never for input written from the backend.
+fn record_ai_command(state: &AppState, tab_id: u32, command: &str) {
+  if let Ok(mut recordings) = state.recordings.lock() {
+    if let Some(rec) = recordings.get_mut(&tab_id) {
+      if rec.recording_enabled {
+        let seq = rec.seq_counter;
+        rec.seq_counter += 1;
+        let elapsed = rec.started_at.elapsed().as_millis() as u64;
+        rec.events.push(db::RecordedEvent {
+          seq,
+          timestamp_ms: elapsed,
+          direction: "command".to_string(),
+          content: format!("{}{}", AI_COMMAND_PREFIX, command),
+        });
+      }
+    }
+  }
+}
+
+/// Marker prepended to `command` recording events issued by the assistant.
+pub const AI_COMMAND_PREFIX: &str = "[AI] ";
+
+/// Strip ANSI / VT escape sequences so the model sees plain text.
+fn strip_ansi(input: &str) -> String {
+  let mut out = String::with_capacity(input.len());
+  let mut chars = input.chars().peekable();
+  while let Some(c) = chars.next() {
+    match c {
+      '\x1b' => match chars.next() {
+        // CSI: ESC [ params... final-byte(0x40..=0x7E)
+        Some('[') => {
+          for n in chars.by_ref() {
+            if ('\x40'..='\x7e').contains(&n) {
+              break;
+            }
+          }
+        }
+        // OSC / DCS / PM / APC: terminated by BEL or ST (ESC \)
+        Some(']') | Some('P') | Some('^') | Some('_') => {
+          while let Some(n) = chars.next() {
+            if n == '\x07' {
+              break;
+            }
+            if n == '\x1b' {
+              if chars.peek() == Some(&'\\') {
+                chars.next();
+              }
+              break;
+            }
+          }
+        }
+        // Charset designators consume one more byte.
+        Some('(') | Some(')') | Some('*') | Some('+') => {
+          chars.next();
+        }
+        // Any other two-byte escape: already consumed.
+        _ => {}
+      },
+      // Bell / shift-in / shift-out carry no textual meaning.
+      '\x07' | '\x0e' | '\x0f' => {}
+      _ => out.push(c),
+    }
+  }
+  out
+}
+
+/// Turn raw PTY bytes into readable plain text: strip escapes, apply carriage
+/// returns and backspaces, normalise line endings, drop trailing blank lines.
+fn normalize_pty_text(raw: &str) -> String {
+  let stripped = strip_ansi(raw).replace("\r\n", "\n");
+  let mut lines: Vec<String> = Vec::new();
+  for segment in stripped.split('\n') {
+    // A bare CR rewrites the current line (progress bars, spinners): keep only
+    // what was painted last.
+    let visible = segment.rsplit('\r').next().unwrap_or(segment);
+    let mut line = String::with_capacity(visible.len());
+    for c in visible.chars() {
+      if c == '\x08' {
+        line.pop();
+      } else {
+        line.push(c);
+      }
+    }
+    lines.push(line.trim_end().to_string());
+  }
+  while lines.last().map_or(false, |l| l.is_empty()) {
+    lines.pop();
+  }
+  lines.join("\n")
+}
+
+/// Heuristic: does this look like a freshly drawn shell prompt rather than
+/// command output? Only consulted for the very last captured line.
+fn looks_like_prompt(line: &str) -> bool {
+  let t = line.trim_end();
+  if t.is_empty() || t.len() > 200 {
+    return false;
+  }
+  // cmd.exe `C:\Users\me>` / PowerShell `PS C:\Users\me>`
+  if t.ends_with('>') {
+    return true;
+  }
+  matches!(t.chars().last(), Some('$') | Some('#') | Some('%'))
+}
+
+/// Remove the shell's echo of the command and the trailing prompt it redraws,
+/// leaving just the command's own output.
+///
+/// `ended_without_newline` is the reliable prompt signal: a PTY leaves the
+/// cursor parked after the prompt, so the final chunk has no trailing newline.
+fn trim_echo_and_prompt(text: &str, command: &str, ended_without_newline: bool) -> String {
+  let mut lines: Vec<&str> = text.lines().collect();
+  while lines.first().map_or(false, |l| l.trim().is_empty()) {
+    lines.remove(0);
+  }
+  // The first line is `<prompt><echoed command>` on the same row.
+  let needle = command.trim();
+  if !needle.is_empty() && lines.first().map_or(false, |l| l.trim_end().ends_with(needle)) {
+    lines.remove(0);
+  }
+  while lines.last().map_or(false, |l| l.trim().is_empty()) {
+    lines.pop();
+  }
+  if ended_without_newline && lines.last().map_or(false, |l| looks_like_prompt(l)) {
+    lines.pop();
+  }
+  while lines.last().map_or(false, |l| l.trim().is_empty()) {
+    lines.pop();
+  }
+  lines.join("\n")
+}
+
+/// Run `command` by typing it into the tab's live interactive shell and
+/// capturing what the shell prints back.
+///
+/// The user sees the command and its output on screen in real time, it lands in
+/// the session recording, and it inherits the shell's cwd / env / sudo state.
+/// The trade-off is that a PTY exposes no exit code and no end-of-command
+/// signal — completion is detected with a quiet-period heuristic.
+async fn run_command_on_terminal(
+  state: &AppState,
+  tab_id: u32,
+  command: &str,
+  kind: LiveShell,
+) -> Result<String, String> {
+  let cmd = command.trim_end_matches(['\r', '\n']).to_string();
+  if cmd.trim().is_empty() {
+    return Err("Empty command".into());
+  }
+  // A multi-line command would be executed line by line by the shell and the
+  // quiet heuristic cannot tell the pieces apart — reject it explicitly rather
+  // than half-running it.
+  if cmd.contains('\n') || cmd.contains('\r') {
+    return Err("Multi-line commands cannot be typed into an interactive shell".into());
+  }
+
+  if !ai_capture_start(state, tab_id, kind) {
+    return Err("Another AI command is already running on this terminal".into());
+  }
+
+  // Visual cue that the next echoed line came from the assistant. Written
+  // WITHOUT a newline on purpose: the prompt is already drawn and the cursor
+  // parked after it, so this only shifts the column. Injecting extra *rows*
+  // desyncs ConPTY / readline repaints, which address the screen with absolute
+  // cursor positioning. Skipped for local shells because ConPTY repaints the
+  // prompt line constantly and would wipe the marker anyway.
+  if kind == LiveShell::Ssh {
+    if let Ok(mut buffers) = state.output_buffers.lock() {
+      buffers
+        .entry(tab_id)
+        .or_default()
+        .push("\x1b[2m[AI]\x1b[0m ".to_string());
+    }
+  }
+
+  if let Err(e) = type_into_shell(state, tab_id, kind, &format!("{}\r", cmd)) {
+    let _ = ai_capture_finish(state, tab_id, kind);
+    return Err(e);
+  }
+  record_ai_command(state, tab_id, &cmd);
+
+  let start = std::time::Instant::now();
+  let mut last_len = 0usize;
+  let mut last_change = std::time::Instant::now();
+  let mut timed_out = false;
+  loop {
+    tokio::time::sleep(std::time::Duration::from_millis(AI_TERM_POLL_MS)).await;
+    let len = ai_capture_len(state, tab_id, kind);
+    if len != last_len {
+      last_len = len;
+      last_change = std::time::Instant::now();
+    }
+    if last_len > 0 && last_change.elapsed().as_millis() >= AI_TERM_QUIET_MS {
+      break;
+    }
+    if last_len == 0 && start.elapsed().as_millis() >= AI_TERM_FIRST_BYTE_MS {
+      break;
+    }
+    if start.elapsed().as_millis() >= AI_TERM_MAX_MS {
+      timed_out = true;
+      break;
+    }
+  }
+
+  let raw = ai_capture_finish(state, tab_id, kind);
+  let ended_without_newline = !raw.trim_end_matches([' ', '\t']).ends_with('\n');
+  let mut output = trim_echo_and_prompt(&normalize_pty_text(&raw), &cmd, ended_without_newline);
+
+  let truncated = output.len() > AI_TERM_MAX_OUTPUT;
+  if truncated {
+    // Keep the tail: errors and summaries live at the end of most output.
+    let cut = output.len() - AI_TERM_MAX_OUTPUT;
+    let cut = output
+      .char_indices()
+      .map(|(i, _)| i)
+      .find(|i| *i >= cut)
+      .unwrap_or(0);
+    output = format!("...[truncated]...\n{}", &output[cut..]);
+  }
+
+  eprintln!(
+    "[run_command_on_terminal] tab={} kind={:?} bytes={} timed_out={} cmd={}",
+    tab_id,
+    kind,
+    raw.len(),
+    timed_out,
+    cmd
+  );
+
+  let mut note = String::from(
+    "Executed in the user's live terminal (visible on screen and recorded). \
+     Output was captured from the terminal stream, so there is no exit code \
+     and the shell prompt/echo has been stripped heuristically.",
+  );
+  if timed_out {
+    note.push_str(" WARNING: the command was still producing output when the capture window closed; the result is incomplete and the command may still be running.");
+  }
+
+  Ok(
+    serde_json::json!({
+      "ranOnTerminal": true,
+      "tabId": tab_id,
+      "shell": match kind { LiveShell::Ssh => "ssh", LiveShell::Local => "local" },
+      "command": cmd,
+      "output": output,
+      "truncated": truncated,
+      "timedOut": timed_out,
+      "note": note,
+    })
+    .to_string(),
+  )
+}
+
+#[cfg(test)]
+mod ai_terminal_tests {
+  use super::*;
+
+  #[test]
+  fn strips_csi_and_osc_sequences() {
+    assert_eq!(strip_ansi("\x1b[32mgreen\x1b[0m"), "green");
+    assert_eq!(strip_ansi("\x1b]0;window title\x07text"), "text");
+    assert_eq!(strip_ansi("\x1b]0;title\x1b\\text"), "text");
+    assert_eq!(strip_ansi("a\x1b[1;31mb\x1b[Kc"), "abc");
+    assert_eq!(strip_ansi("plain"), "plain");
+  }
+
+  #[test]
+  fn normalizes_carriage_returns_and_backspaces() {
+    // A progress bar repaints the same row; only the final paint survives.
+    assert_eq!(normalize_pty_text("10%\r55%\r100%\r\n"), "100%");
+    assert_eq!(normalize_pty_text("abcX\x08\r\n"), "abc");
+    assert_eq!(normalize_pty_text("one\r\ntwo\r\n\r\n\r\n"), "one\ntwo");
+  }
+
+  #[test]
+  fn drops_command_echo_and_trailing_prompt() {
+    let raw = "user@host:~$ ls -l\r\ntotal 0\r\n-rw-r--r-- 1 u u 0 a.txt\r\nuser@host:~$ ";
+    let text = normalize_pty_text(raw);
+    assert_eq!(
+      trim_echo_and_prompt(&text, "ls -l", true),
+      "total 0\n-rw-r--r-- 1 u u 0 a.txt"
+    );
+  }
+
+  #[test]
+  fn drops_cmd_exe_prompt() {
+    let raw = "C:\\Users\\me>echo hi\r\nhi\r\n\r\nC:\\Users\\me>";
+    let text = normalize_pty_text(raw);
+    assert_eq!(trim_echo_and_prompt(&text, "echo hi", true), "hi");
+  }
+
+  #[test]
+  fn keeps_output_line_that_merely_looks_like_a_prompt() {
+    // The stream ended with a newline, so the last line is real output, not a
+    // freshly drawn prompt — it must survive.
+    let text = normalize_pty_text("$ grep -c x f\r\ncount#\r\n");
+    assert_eq!(trim_echo_and_prompt(&text, "grep -c x f", false), "count#");
+  }
+
+  #[test]
+  fn handles_command_producing_no_output() {
+    let text = normalize_pty_text("user@host:~$ touch a\r\nuser@host:~$ ");
+    assert_eq!(trim_echo_and_prompt(&text, "touch a", true), "");
+  }
+}
+
 /// Dangerous command substrings rejected outright when executed through tools.
 fn is_dangerous_command(cmd: &str) -> bool {
   let lower = cmd.to_lowercase();
@@ -3976,6 +4488,25 @@ async fn execute_one_tool(
         return Ok(
           serde_json::json!({ "needsConfirmation": true, "command": command }).to_string(),
         );
+      }
+      // Preferred path: type the command into the tab's live terminal so the
+      // user sees it happen, it lands in the session recording, and it shares
+      // the shell's cwd / env / sudo state. Falls back to the silent exec path
+      // below when the tab has no live shell or the feature is disabled.
+      if ai_run_in_terminal_enabled(state) {
+        if let Some(kind) = live_shell_kind(state, tab_id) {
+          match run_command_on_terminal(state, tab_id, &command, kind).await {
+            Ok(out) => return Ok(out),
+            Err(e) => {
+              // Never fail the tool call on a typing/capture problem — degrade
+              // to the silent exec path so the agent can still make progress.
+              eprintln!(
+                "[run_command] terminal execution failed for tab {tab_id} ({e}); \
+                 falling back to silent execution"
+              );
+            }
+          }
+        }
       }
       // Local shell tab: run the command on the local machine.
       let local_cwd = {

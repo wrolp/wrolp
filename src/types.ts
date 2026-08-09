@@ -348,6 +348,11 @@ export interface AiConfig {
    *  inspection commands allowed). Configurable in the global AI settings;
    *  the per-chat panel can toggle it. */
   aiReadOnly: boolean
+  /** When true, `run_command` types the command into the tab's live terminal
+   *  (visible on screen + saved in the session recording) instead of running it
+   *  silently on a separate channel. Automatically falls back to the silent
+   *  path when the tab has no live shell. */
+  runInTerminal: boolean
 }
 
 export interface AiMessage {
