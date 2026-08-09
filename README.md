@@ -24,11 +24,14 @@
 ## ✨ Highlights
 
 - 🖥️ **Multi-tab SSH terminal** with xterm.js, password/key auth, and auto-reconnect
+- 💻 **Local terminal** — open shells on your own machine and browse local files, side by side with remote tabs
 - 📂 **SFTP file manager** — upload/download with pause & resume, remote file tree
 - ✍️ **Remote file editor** (Monaco) with UTF-8/GBK encoding auto-detect
+- 🔍 **Hex & image viewer** — inspect binary files as a hex dump or preview images directly
 - 🎬 **Session recording** to SQLite, replayable from the bottom panel
 - 🐳 **Docker & host analysis** — inspect containers, stream logs, analyze servers
-- 🤖 **AI assistant** with tool-calling agent mode and encrypted API-key storage
+- 🤖 **AI assistant** with tool-calling agent mode, multimodal input, and encrypted API-key storage
+- 🪟 **Floating panes & split layout** — split the terminal area any way you like and pop panes out into independent floating windows
 - 🪟 **Polished UX** — custom titlebar, tray icon, window geometry persistence, auto-updater
 
 <p align="center">
@@ -39,7 +42,7 @@
 ## Features
 
 ### SSH terminal
-- **Connection management**: CRUD connection profiles, grouping, drag-to-reorder, rename groups.
+- **Connection management**: CRUD connection profiles, grouping, drag-to-reorder, rename groups. Right-click a connection for connect / edit / delete and split-pane open (right / below); deletes use an in-app confirmation dialog (`ConfirmDialog`), not a browser `confirm()`.
 - **Interactive terminal**: xterm.js rendering per tab, multi-tab switching.
 - **Authentication**: password and SSH key authentication.
 - **PTY**: `xterm-256color` PTY + shell, resize support.
@@ -56,6 +59,19 @@
 - Monaco-based inline editor for remote files (split pane above the shell).
 - Encoding auto-detect: UTF-8 → GBK (`encoding_rs`); non-UTF-8 files are flagged and must be re-saved in the same charset.
 
+### Local terminal & local files
+- Open a **local shell** as a top-level tab or as a split pane inside an existing workspace (`openLocalShellTab` / `handleOpenLocalSplit`); runs a native shell on your own machine.
+- **Local file browser**: navigate and edit files on the local machine through the same `FilePanel` / `FileEditor` UI. A `LocalFs` (`local_fs.rs`) implements the same `RemoteFs` trait as SFTP, so local and remote targets share one code path. On Windows the local root maps to the current drive's root.
+
+### Hex & image viewer
+- Binary files opened in the editor can be viewed as a **hex dump** (`hex_base64` + `HexViewer.tsx`).
+- Image files are previewed inline; the backend reports the MIME type via `image_mime` / `detect_image_mime`.
+
+### Floating panes & split layout
+- The terminal area is a **split-tree** layout (`splitTree.ts`): tabs can be split horizontally or vertically, and each leaf shows a terminal, a docker-log, or an open file editor.
+- Any pane can be **popped out** into a floating window (`floatPane` / `FloatingWindow.tsx`, `position: fixed`, z-index starting at 1000). Terminal floats detach the leaf from the tree (the session stays alive); file-editor / docker-log floats render as an overlay above the still-mounted shell and restore `shellView` on close.
+- **Per-session view state** (`shellView` / `activeEditorKey` are `Record<number, ...>`) keeps each tab's open files and docker logs isolated — files opened in one session don't appear in another.
+
 ### Session recording
 - Recording is on by default (disable with `WROLP_RECORDING=0` / `false`).
 - Buffers events in memory, flushed every 5s and on disconnect into a SQLite `session_events` table.
@@ -69,6 +85,7 @@
 ### Docker & host analysis
 - `analyze_host`: read-only analysis of a connected server (OS, kernel, arch, packages, installed tools).
 - `analyze_docker_container` + `docker_container_logs`: inspect containers and stream their logs (`docker_logs_stream_start` / `poll_docker_logs` / `stop_docker_logs_stream`).
+- **Docker log tabs & floating**: a container's logs can be opened as a dedicated log tab and popped out into a floating window. When a tab reconnects, its `postConnectCmd` (e.g. the original `docker exec`) is re-sent automatically so the pane stays consistent across reconnects.
 - `command_help`: look up man-page / help text for a command on a connected server.
 - UI panels: `DockerPanel`, `DockerLogViewer`, `DockerAnalysisPanel`, `HostAnalysisPanel`.
 
@@ -76,9 +93,12 @@
 - Chat panel (`AiChatPanel`) with two modes:
   - **Chat** (non-streaming `ai_chat_sync`).
   - **Agent** (streaming with tool calling, `run_agent_stream`) — a full agent loop that can call tools on the connected servers.
+- **Multimodal input**: attach images to a message (the backend accepts `content` as structured multi-part via `openai_content`), so the model can reason about screenshots, diagrams, etc.
+- **Templates & re-send**: insert prompts from a template dropdown next to the image button; **edit and re-send** any previous message (re-runs from the edited content).
+- **Pause**: abort an in-flight agent/chat generation with `cancel_ai_chat` and continue from where it stopped.
 - **Multiple API endpoints**: save several `AiEndpointProfile`s, each with its own encrypted API key, endpoint URL, model, and system prompt. Select/apply one active profile. Legacy single-endpoint configs are migrated automatically.
 - **Model fetching**: `list_ai_models` calls `{endpoint}/v1/models` to populate the model dropdown; manual entry is always available.
-- **Agent tools** (dispatched to the Rust backend, which has `AppState` access): `run_command`, `analyze_server`, `list_directory`, `read_file`, `list_connections`, `search_help`, and more. Tool-call lifecycle events (`pending` → `executing` → `done`/`error`) are surfaced to the UI as tool cards.
+- **Agent tools** (dispatched to the Rust backend, which has `AppState` access): `run_command`, `analyze_server`, `list_directory`, `read_file`, `list_connections`, `search_help`, and more. Tool calls are grouped under their assistant message and surfaced as tool cards with lifecycle events (`pending` → `executing` → `done`/`error`). Bash code blocks in assistant messages get a one-click **copy** button.
 - **Security**: API keys are encrypted at rest via an OS keyring-backed vault (`encrypt_api_key` / `decrypt_api_key`).
 
 ### Window & shell integration
@@ -188,7 +208,9 @@ yarn tauri build
 │       ├── HostAnalysisPanel.tsx   # Host analysis results
 │       ├── ConfirmDialog.tsx       # Reusable confirm dialog
 │       ├── Icon.tsx                # SVG icons
-│       └── splitTree.ts            # File tree helpers
+│       ├── FloatingWindow.tsx      # Detached pane rendered as a floating window
+│       ├── HexViewer.tsx            # Hex dump viewer for binary files
+│       └── splitTree.ts            # Split-pane tree helpers (horizontal/vertical split layout)
 ├── src-tauri/                      # Rust backend
 │   ├── src/
 │   │   ├── main.rs                 # App entry
@@ -199,6 +221,7 @@ yarn tauri build
 │   │   ├── db.rs                   # SQLite access (recordings + command sets)
 │   │   ├── vault.rs                # Encrypted API key storage (OS keyring)
 │   │   ├── remote_fs.rs            # SFTP helpers
+│   │   ├── local_fs.rs             # Local filesystem (LocalFs, implements RemoteFs trait)
 │   │   ├── docker_fs.rs            # Docker log/analysis helpers
 │   │   ├── docker_analysis.rs      # Docker analysis logic
 │   │   ├── host_analysis.rs        # Host analysis logic
@@ -238,6 +261,8 @@ Released under the [MIT License](./LICENSE). See [LICENSE](./LICENSE) for detail
 
 - [russh](https://github.com/warp-tech/russh) — pure-Rust async SSH client
 - [Tauri](https://tauri.app/) — the app framework
+- [React](https://react.dev/) — UI library
 - [xterm.js](https://xtermjs.org/) — terminal rendering
 - [Monaco Editor](https://microsoft.github.io/monaco-editor/) — code editor
+- …and many other open-source libraries that make this project possible.
 

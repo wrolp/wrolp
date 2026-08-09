@@ -24,11 +24,14 @@
 ## ✨ 功能亮点
 
 - 🖥️ **多标签 SSH 终端** — 基于 xterm.js，支持密码 / 密钥认证与自动重连
+- 💻 **本地终端** — 在本机打开 Shell 并浏览本地文件，与远程标签并排使用
 - 📂 **SFTP 文件管理** — 上传 / 下载支持暂停与续传，远程文件树浏览
 - ✍️ **远程文件编辑器**（Monaco）— 自动识别 UTF-8 / GBK 编码
+- 🔍 **Hex 与图片查看** — 以十六进制转储查看二进制文件，或直接预览图片
 - 🎬 **会话录制** — 存入 SQLite，可在底部面板回放
 - 🐳 **Docker 与主机分析** — 查看容器、流式日志、分析服务器
-- 🤖 **AI 助手** — 支持工具调用 Agent 模式，API Key 加密存储
+- 🤖 **AI 助手** — 支持工具调用 Agent 模式、多模态输入，API Key 加密存储
+- 🪟 **浮动窗口与分栏布局** — 自由分割终端区域，并将面板弹出为独立浮动窗口
 - 🪟 **精致体验** — 自定义标题栏、托盘图标、窗口状态记忆、自动更新
 
 <p align="center">
@@ -39,7 +42,7 @@
 ## 功能特性
 
 ### SSH 终端
-- **连接管理**：增删改查连接配置、分组、拖拽排序、重命名分组。
+- **连接管理**：增删改查连接配置、分组、拖拽排序、重命名分组。可右键连接进行连接 / 编辑 / 删除与分栏打开（右 / 下）；删除使用应用内确认对话框（`ConfirmDialog`），而非浏览器的 `confirm()`。
 - **交互式终端**：每个标签使用 xterm.js 渲染，支持多标签切换。
 - **认证方式**：支持密码与 SSH 密钥认证。
 - **PTY**：`xterm-256color` PTY + Shell，支持窗口大小调整。
@@ -56,6 +59,19 @@
 - 基于 Monaco 的远程文件内联编辑器（Shell 上方的分栏面板）。
 - 编码自动检测：UTF-8 → GBK（`encoding_rs`）；非 UTF-8 文件会被标记，必须以相同字符集重新保存。
 
+### 本地终端与本地文件
+- 可将**本地 Shell** 作为顶层标签打开，也可在现有工作区内作为分栏面板打开（`openLocalShellTab` / `handleOpenLocalSplit`）；在本机运行原生 Shell。
+- **本地文件浏览器**：通过同一套 `FilePanel` / `FileEditor` 界面在本机浏览与编辑文件。一个 `LocalFs`（`local_fs.rs`）实现了与 SFTP 相同的 `RemoteFs` trait，因此本地与远程目标共用同一套代码路径。在 Windows 上本地根目录映射到当前盘符的根。
+
+### Hex 与图片查看器
+- 在编辑器中打开的二进制文件可以十六进制转储方式查看（`hex_base64` + `HexViewer.tsx`）。
+- 图片文件支持内联预览；后端通过 `image_mime` / `detect_image_mime` 上报 MIME 类型。
+
+### 浮动窗口与分栏布局
+- 终端区域采用**分栏树**布局（`splitTree.ts`）：标签可水平或垂直分割，每个叶节点显示终端、Docker 日志或已打开的文件编辑器。
+- 任意面板都可**弹出**为浮动窗口（`floatPane` / `FloatingWindow.tsx`，`position: fixed`，z-index 从 1000 起）。终端浮动会从树中摘下该叶节点（会话保持存活）；文件编辑器 / Docker 日志的浮动以覆盖层形式渲染在依然挂载的 Shell 之上，关闭浮动时恢复 `shellView`。
+- **按会话隔离的视图状态**（`shellView` / `activeEditorKey` 均为 `Record<number, ...>`）让每个标签打开的文件与 Docker 日志互不干扰 —— 在某个会话中打开的文件不会出现在另一个会话里。
+
 ### 会话录制
 - 默认开启录制（可通过 `WROLP_RECORDING=0` / `false` 关闭）。
 - 事件先缓存在内存中，每 5 秒及断开连接时刷入 SQLite 的 `session_events` 表。
@@ -69,6 +85,7 @@
 ### Docker 与主机分析
 - `analyze_host`：对连接中的服务器做只读分析（操作系统、内核、架构、软件包、已安装工具）。
 - `analyze_docker_container` + `docker_container_logs`：检视容器并流式获取其日志（`docker_logs_stream_start` / `poll_docker_logs` / `stop_docker_logs_stream`）。
+- **Docker 日志标签与浮动**：容器的日志可作为一个独立的日志标签打开，并弹出为浮动窗口。标签重连时会自动重新发送其 `postConnectCmd`（例如原始的 `docker exec`），从而让面板在重连后保持一致。
 - `command_help`：查询连接服务器上某命令的帮助 / 手册文本。
 - 相关 UI 面板：`DockerPanel`、`DockerLogViewer`、`DockerAnalysisPanel`、`HostAnalysisPanel`。
 
@@ -76,9 +93,12 @@
 - 聊天面板（`AiChatPanel`），含两种模式：
   - **对话**（非流式，`ai_chat_sync`）。
   - **智能体**（带工具调用的流式模式，`run_agent_stream`）—— 一个完整的智能体循环，可在连接的服务器上调用工具。
+- **多模态输入**：可在消息中附加图片（后端通过 `openai_content` 接受结构化的多段 `content`），让模型能理解截图、示意图等。
+- **模板与重发**：在图片按钮旁通过模板下拉框插入提示词；可**编辑并重新发送**任意历史消息（基于编辑后的内容重新运行）。
+- **暂停**：通过 `cancel_ai_chat` 中止正在进行的对话 / 智能体生成，并从中断处继续。
 - **多 API 端点**：可保存多个 `AiEndpointProfile`，各自拥有加密的 API Key、端点 URL、模型与系统提示词。可选择一个作为当前激活配置。旧版单端点配置会自动迁移。
 - **模型获取**：`list_ai_models` 调用 `{endpoint}/v1/models` 填充模型下拉框；始终支持手动输入。
-- **智能体工具**（分发到拥有 `AppState` 访问权限的 Rust 后端）：`run_command`、`analyze_server`、`list_directory`、`read_file`、`list_connections`、`search_help` 等。工具调用生命周期事件（`pending` → `executing` → `done`/`error`）以工具卡片形式展示在 UI 中。
+- **智能体工具**（分发到拥有 `AppState` 访问权限的 Rust 后端）：`run_command`、`analyze_server`、`list_directory`、`read_file`、`list_connections`、`search_help` 等。工具调用归组在其对应的助手消息下，以工具卡片形式展示，并带有生命周期事件（`pending` → `executing` → `done`/`error`）。助手消息中的 Bash 代码块提供一键**复制**按钮。
 - **安全性**：API Key 通过基于操作系统密钥环的保险库加密存储（`encrypt_api_key` / `decrypt_api_key`）。
 
 ### 窗口与系统集成
@@ -192,7 +212,9 @@ yarn tauri build
 │       ├── HostAnalysisPanel.tsx   # 主机分析结果
 │       ├── ConfirmDialog.tsx       # 可复用的确认对话框
 │       ├── Icon.tsx                # SVG 图标
-│       └── splitTree.ts            # 文件树辅助函数
+│       ├── FloatingWindow.tsx      # 作为浮动窗口渲染的弹出面板
+│       ├── HexViewer.tsx           # 二进制文件的十六进制查看器
+│       └── splitTree.ts            # 分栏树辅助函数（水平 / 垂直分栏布局）
 ├── src-tauri/                      # Rust 后端
 │   ├── src/
 │   │   ├── main.rs                 # 应用入口
@@ -203,6 +225,7 @@ yarn tauri build
 │   │   ├── db.rs                   # SQLite 访问（录制 + 命令集）
 │   │   ├── vault.rs                # 加密的 API Key 存储（OS 密钥环）
 │   │   ├── remote_fs.rs            # SFTP 辅助函数
+│   │   ├── local_fs.rs             # 本地文件系统（LocalFs，实现 RemoteFs trait）
 │   │   ├── docker_fs.rs            # Docker 日志 / 分析辅助函数
 │   │   ├── docker_analysis.rs      # Docker 分析逻辑
 │   │   ├── host_analysis.rs        # 主机分析逻辑
