@@ -5781,6 +5781,37 @@ input[type='password']::-ms-clear {
     background: rgba(0, 0, 0, 0.2);
   }
 
+  // Pretty-printed, syntax-highlighted JSON in tool-call arguments / results.
+  .ai-json {
+    white-space: pre-wrap;
+    word-break: break-word;
+
+    .json-key {
+      color: #7dd3fc;
+    }
+    .json-string {
+      color: #86efac;
+    }
+    .json-number {
+      color: #fdba74;
+    }
+    .json-boolean {
+      color: #c4b5fd;
+    }
+    .json-null {
+      color: #f87171;
+    }
+    .json-punct {
+      color: $text-dim;
+    }
+  }
+
+  .ai-tool-error {
+    color: #f87171;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
   // "needs-confirmation" prompt rendered at the bottom of the tool card.
   .ai-tool-confirm {
     border-color: rgba(230, 162, 60, 0.6);

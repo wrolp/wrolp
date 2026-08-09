@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent, AiPromptTemplate } from '../types'
@@ -1786,6 +1786,78 @@ function ToolCallList({
   )
 }
 
+// Pretty-prints a JSON string (2-space indent); returns the original text
+// untouched when it isn't valid JSON (e.g. a plain error message).
+function prettyJson(raw: string | undefined): string {
+  if (!raw) return ''
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
+
+// Tokenizes a (pretty) JSON string into styled React spans. Non-JSON input is
+// returned as plain text. Keys are detected by a trailing `:` outside the quotes.
+const JSON_TOKEN_RE =
+  /("(?:\\.|[^"\\])*"\s*:?)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(true|false)|(null)|([{}[\],:])/g
+
+function highlightJson(json: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  let last = 0
+  let key = 0
+  let m: RegExpExecArray | null
+  JSON_TOKEN_RE.lastIndex = 0
+  while ((m = JSON_TOKEN_RE.exec(json)) !== null) {
+    if (m.index > last) nodes.push(json.slice(last, m.index))
+    const [, str, num, bool, nul, punct] = m
+    if (str !== undefined) {
+      const isKey = str.trimEnd().endsWith(':')
+      nodes.push(
+        <span key={key++} className={isKey ? 'json-key' : 'json-string'}>
+          {str}
+        </span>,
+      )
+    } else if (num !== undefined) {
+      nodes.push(
+        <span key={key++} className="json-number">
+          {num}
+        </span>,
+      )
+    } else if (bool !== undefined) {
+      nodes.push(
+        <span key={key++} className="json-boolean">
+          {bool}
+        </span>,
+      )
+    } else if (nul !== undefined) {
+      nodes.push(
+        <span key={key++} className="json-null">
+          {nul}
+        </span>,
+      )
+    } else if (punct !== undefined) {
+      nodes.push(
+        <span key={key++} className="json-punct">
+          {punct}
+        </span>,
+      )
+    }
+    last = JSON_TOKEN_RE.lastIndex
+  }
+  if (last < json.length) nodes.push(json.slice(last))
+  return nodes
+}
+
+// Renders a JSON string (arguments or result of a tool call) prettified and
+// syntax-highlighted.
+function JsonBlock({ raw, className }: { raw: string; className?: string }) {
+  const pretty = prettyJson(raw)
+  return (
+    <pre className={`${className ?? ''} ai-json`}>{highlightJson(pretty)}</pre>
+  )
+}
+
 function ToolCallCard({
   tool,
   onConfirm,
@@ -1842,17 +1914,20 @@ function ToolCallCard({
           {tool.arguments && (
             <div className="ai-tool-detail-block">
               <div className="ai-tool-detail-label">{t('aiToolArgs')}</div>
-              <pre className="ai-tool-args">{tool.arguments}</pre>
+              <JsonBlock raw={tool.arguments} className="ai-tool-args" />
             </div>
           )}
-          {(tool.result || tool.error) && (
+          {tool.error ? (
             <div className="ai-tool-detail-block">
               <div className="ai-tool-detail-label">{t('aiToolResult')}</div>
-              <pre className="ai-tool-result">
-                {tool.error ? `Error: ${tool.error}` : tool.result}
-              </pre>
+              <pre className="ai-tool-result ai-tool-error">Error: {tool.error}</pre>
             </div>
-          )}
+          ) : tool.result ? (
+            <div className="ai-tool-detail-block">
+              <div className="ai-tool-detail-label">{t('aiToolResult')}</div>
+              <JsonBlock raw={tool.result} className="ai-tool-result" />
+            </div>
+          ) : null}
         </div>
       )}
       {isConfirmation && (
