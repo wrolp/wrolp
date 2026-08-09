@@ -597,7 +597,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     try {
       const text = await navigator.clipboard.readText()
       if (text) {
-        await sendInput(tabIdRef.current, text)
+        if (isLocal) {
+          await localSendInput(tabIdRef.current, text)
+        } else {
+          await sendInput(tabIdRef.current, text)
+        }
       }
     } catch {
       // Clipboard read may be blocked; silently ignore
