@@ -876,21 +876,39 @@ export default function AiChatPanel({
 
   // Fill the input box with the initial context text (e.g. terminal selection)
   // instead of auto-sending, so the user can review/edit before asking.
-  const initialSentRef = useRef(false)
+  // Repeated "Ask AI" calls append (newline-joined) rather than overwrite, so
+  // already-filled-but-unsent text is never lost. `lastContextRef` tracks the
+  // most recently consumed context so the same value isn't double-appended on
+  // the same render; it resets when the parent clears `initialContext`.
+  const lastContextRef = useRef<string | null>(null)
   useEffect(() => {
-    if (initialContext && !initialSentRef.current) {
-      initialSentRef.current = true
-      const ctxText = `Help me with this terminal output:\n\n\`\`\`\n${initialContext}\n\`\`\``
-      setInput(ctxText)
-      // Defer focus/caret/scroll until after the controlled value has rendered.
-      requestAnimationFrame(() => {
+    if (!initialContext) {
+      lastContextRef.current = null
+      return
+    }
+    if (initialContext !== lastContextRef.current) {
+      lastContextRef.current = initialContext
+      // Only prepend the explanatory prompt when the input is empty; when the
+      // box already has content, append just the code block (separated by a
+      // blank line) so the user's existing text is preserved verbatim.
+      setInput((prev) => {
+        const block = `\`\`\`\n${initialContext}\n\`\`\``
+        if (prev && prev.trim().length > 0) {
+          return prev + '\n\n' + block
+        }
+        return `Help me with this terminal output:\n\n` + block
+      })
+      // Defer focus/caret/scroll until after the controlled value has been
+      // committed to the DOM and laid out, then jump to the last line so the
+      // freshly appended block is visible.
+      setTimeout(() => {
         const el = inputRef.current
         if (!el) return
         const pos = el.value.length
         el.focus()
         el.setSelectionRange(pos, pos)
         el.scrollTop = el.scrollHeight
-      })
+      }, 0)
       if (onContextConsumed) onContextConsumed()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
