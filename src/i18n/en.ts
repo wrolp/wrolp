@@ -242,6 +242,8 @@ const en = {
   aiToolAllow: 'Allow',
   aiToolDeny: 'Deny',
   aiChatToolsUsed: 'Tools used',
+  aiToolListExpand: 'Expand tool calls',
+  aiToolListCollapse: 'Collapse tool calls',
   aiChatAskAi: 'Ask AI',
   aiChatInputHint: 'AI can use tools on connected servers. Destructive commands are blocked.',
   aiConfigRequired: 'No AI endpoint is configured. Please configure it in Settings first.',

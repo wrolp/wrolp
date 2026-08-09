@@ -1232,14 +1232,7 @@ export default function AiChatPanel({
                 </ReactMarkdown>
               </div>
               {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
-                <div className="ai-chat-msg-tools">
-                  <div className="ai-chat-tools-label">
-                    <Icon name="settings" size={11} /> {t('aiChatToolsUsed')}
-                  </div>
-                  {msg.toolCalls.map((tc) => (
-                    <ToolCallCard key={tc.id} tool={tc} onConfirm={confirmAndResume} />
-                  ))}
-                </div>
+                <ToolCallList tools={msg.toolCalls} onConfirm={confirmAndResume} />
               )}
               {msg.images && msg.images.length > 0 && (
                 <div className="ai-chat-msg-images">
@@ -1315,14 +1308,7 @@ export default function AiChatPanel({
         {/* Tool-call cards in-flight (the current streaming turn). Finished
             turns are attached to their assistant message instead. */}
         {streaming && toolCalls.length > 0 && (
-          <div className="ai-tool-calls">
-            <div className="ai-tool-calls-label">
-              <Icon name="settings" size={12} /> {t('aiChatToolsUsed')}
-            </div>
-            {toolCalls.map((tc) => (
-              <ToolCallCard key={tc.id} tool={tc} onConfirm={confirmAndResume} />
-            ))}
-          </div>
+          <ToolCallList tools={toolCalls} onConfirm={confirmAndResume} />
         )}
 
         {/* Streaming indicator */}
@@ -1764,6 +1750,38 @@ export default function AiChatPanel({
           />
         </div>
       )}
+    </div>
+  )
+}
+
+// Collapsible list of tool-call cards. Defaults to collapsed so a long run's
+// tool activity doesn't dominate the chat; auto-expands when a tool is waiting
+// for the user's confirmation (so the allow/deny actions stay reachable).
+function ToolCallList({
+  tools,
+  onConfirm,
+}: {
+  tools: ToolCallEvent[]
+  onConfirm: (approved: boolean) => void
+}) {
+  const [collapsed, setCollapsed] = useState(true)
+  const { t } = useI18n()
+  const hasConfirmation = tools.some((tc) => tc.status === 'needs-confirmation')
+  const open = !collapsed || hasConfirmation
+  return (
+    <div className={`ai-tool-calls${open ? ' open' : ' collapsed'}${hasConfirmation ? ' needs-confirm' : ''}`}>
+      <div
+        className="ai-tool-calls-label"
+        role="button"
+        onClick={() => setCollapsed((v) => !v)}
+        title={open ? t('aiToolListCollapse') : t('aiToolListExpand')}
+      >
+        <Icon name="chevronDown" size={12} className="ai-tool-chevron" />
+        <Icon name="settings" size={12} />
+        {t('aiChatToolsUsed')} ({tools.length})
+      </div>
+      {open &&
+        tools.map((tc) => <ToolCallCard key={tc.id} tool={tc} onConfirm={onConfirm} />)}
     </div>
   )
 }

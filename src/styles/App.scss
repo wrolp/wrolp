@@ -5624,6 +5624,24 @@ input[type='password']::-ms-clear {
     letter-spacing: 0.5px;
     color: $text-dim;
     padding-left: 2px;
+    cursor: pointer;
+    user-select: none;
+
+    &:hover {
+      color: $text-primary;
+    }
+
+    .ai-tool-chevron {
+      transition: transform 0.15s ease;
+    }
+  }
+
+  .ai-tool-calls.collapsed .ai-tool-chevron {
+    transform: rotate(-90deg);
+  }
+
+  .ai-tool-calls.needs-confirm .ai-tool-calls-label {
+    color: $warning;
   }
 
   .ai-chat-msg-tools {

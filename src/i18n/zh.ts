@@ -243,6 +243,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiToolAllow: '允许',
   aiToolDeny: '拒绝',
   aiChatToolsUsed: '使用过的工具',
+  aiToolListExpand: '展开工具调用',
+  aiToolListCollapse: '收起工具调用',
   aiChatAskAi: '询问 AI',
   aiChatInputHint: 'AI 可在已连接的服务器上使用工具。破坏性命令会被阻止。',
   aiConfigRequired: '尚未配置 AI 接口，请先在设置中配置 AI 接口后使用。',
