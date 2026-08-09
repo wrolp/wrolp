@@ -190,6 +190,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       fontSize: 14,
       fontFamily: '"Fira Code", "Cascadia Code", Consolas, "Courier New", monospace',
       scrollback: maxScrollback ?? 5000,
+      // NOTE: do NOT enable `windowsMode`. It is the legacy winpty / pre-1903
+      // ConPTY workaround (forces a line feed at the right edge and disables
+      // reflow) and actively misaligns rows against a modern ConPTY, which
+      // already emits proper VT sequences.
       theme: {
         background: '#00000000',
         foreground: '#d4d4d4',
@@ -332,7 +336,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onSizeChangeRef.current?.(cols, rows)
       onStatusChangeRef.current('connecting')
       if (isLocal) {
-        openLocalShell(currentTabId, localShellTypeRef.current, localCwd, true)
+        openLocalShell(currentTabId, localShellTypeRef.current, localCwd, true, cols, rows)
           .then(() => {
             onStatusChangeRef.current('connected')
             startPolling()
@@ -451,8 +455,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // Local shells have no SSH connectConfig; only SSH sessions need it.
     if (!cfg && !isLocal) return
 
-    // Write separator to terminal to mark new session
-    term.write('\r\n\x1b[33m══════ Reconnecting ══════\x1b[0m\r\n')
+    if (isLocal) {
+      // A local shell is driven by ConPTY, which repaints the screen with
+      // *absolute* cursor positioning relative to its own buffer origin. Any
+      // pre-existing content (old session output, a separator line, ...) shifts
+      // xterm's rows out of sync and typed input lands above the prompt. Reset
+      // to a clean screen so ConPTY's origin matches row 0.
+      term.reset()
+    } else {
+      // Write separator to terminal to mark new session
+      term.write('\r\n\x1b[33m══════ Reconnecting ══════\x1b[0m\r\n')
+    }
 
     const doConnect = () => {
       const cols = term.cols
@@ -462,7 +475,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onStatusChangeRef.current('connecting')
 
       if (isLocal) {
-        openLocalShell(currentTabId, localShellTypeRef.current, localCwd, false)
+        openLocalShell(currentTabId, localShellTypeRef.current, localCwd, false, term.cols, term.rows)
           .then(() => {
             onStatusChangeRef.current('connected')
             if (pollTimerRef.current) clearInterval(pollTimerRef.current)

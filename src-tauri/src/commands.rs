@@ -917,6 +917,8 @@ pub async fn open_local_shell(
   shell: Option<String>,
   cwd: Option<String>,
   reuse_existing: bool,
+  cols: u32,
+  rows: u32,
 ) -> Result<(), String> {
   // Reuse path: if a live local shell already exists for this tab (e.g. the
   // terminal was floated and is now remounting), keep it — no process restart.
@@ -961,17 +963,27 @@ pub async fn open_local_shell(
   // Per-tab output queue owned by this LocalShell. The reader thread holds an
   // `Arc` clone and writes here, so it never reaches back into the global
   // `AppState` (which behaves unreliably from a plain `std::thread`).
+  //
+  // IMPORTANT: do NOT push any banner/status text into this queue. ConPTY syncs
+  // the screen with *absolute* cursor positioning (CUP) and assumes the
+  // terminal's top-left corner is its own buffer origin. Any line we write
+  // before the shell's own output shifts xterm down by that many rows while
+  // ConPTY keeps addressing row 0 — which is exactly why typed input used to
+  // land on the line *above* the prompt. Status goes to stderr instead.
   let output = Arc::new(StdMutex::new(Vec::<String>::new()));
-  output.lock().map_err(|e| e.to_string())?.push(format!(
-    "\x1b[36m[local shell] starting '{}' ...\x1b[0m\r\n",
-    shell_cmd
-  ));
+  eprintln!("[open_local_shell] starting '{}' (tab={})", shell_cmd, tab_id);
 
+  // Create the PTY at the actual terminal size up front. If the size is left at
+  // the default 80x24, the shell lays out its prompt/wrapping using the wrong
+  // width and (on Windows ConPTY in particular) typed input ends up on the line
+  // above the prompt. The frontend passes the real cols/rows from xterm's fit.
+  let initial_cols = if cols == 0 { 80u16 } else { cols as u16 };
+  let initial_rows = if rows == 0 { 24u16 } else { rows as u16 };
   let pty_system = portable_pty::native_pty_system();
   let pair = pty_system
     .openpty(portable_pty::PtySize {
-      rows: 24,
-      cols: 80,
+      rows: initial_rows,
+      cols: initial_cols,
       pixel_width: 0,
       pixel_height: 0,
     })
@@ -997,6 +1009,21 @@ pub async fn open_local_shell(
     );
     format!("Failed to spawn shell '{}': {}", shell_cmd, e)
   })?;
+
+  // On some Windows builds ConPTY ignores the size passed to `openpty` and only
+  // honors an explicit resize issued *after* the child is spawned. Without this,
+  // cmd.exe lays out its prompt using the default 80x24 and typed input then
+  // appears on the line above the prompt. Force the real size now.
+  eprintln!(
+    "[open_local_shell] opening PTY for {} at {}x{}",
+    shell_cmd, initial_cols, initial_rows
+  );
+  let _ = pair.master.resize(portable_pty::PtySize {
+    rows: initial_rows,
+    cols: initial_cols,
+    pixel_width: 0,
+    pixel_height: 0,
+  });
   eprintln!(
     "[open_local_shell] spawned '{}' ok (tab={})",
     shell_cmd, tab_id

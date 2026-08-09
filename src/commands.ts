@@ -60,17 +60,23 @@ export async function pollOutput(tabId: number): Promise<string[]> {
 }
 
 /// Open a local shell (PTY-backed local process) for a tab.
+/// `cols`/`rows` set the initial PTY size so the shell lays out correctly
+/// (avoids input landing on the wrong line when the default 80x24 is used).
 export async function openLocalShell(
   tabId: number,
   shell?: string,
   cwd?: string,
   reuseExisting: boolean = true,
+  cols?: number,
+  rows?: number,
 ): Promise<void> {
   return await invoke('open_local_shell', {
     tabId,
     shell: shell ?? null,
     cwd: cwd ?? null,
     reuseExisting,
+    cols: cols ?? 0,
+    rows: rows ?? 0,
   })
 }
 
