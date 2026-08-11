@@ -3250,6 +3250,15 @@ export default function App() {
           {/* Terminal surface — stays mounted even while the file editor is
               shown on the focused pane, so switching tabs never reconnects. */}
           <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+          <div
             className="term-pane-term"
             ref={getPaneBodyRef(leaf.id)}
             style={{
@@ -3276,6 +3285,22 @@ export default function App() {
                 <div>{t('selectConnectionToStart')}</div>
               </div>
             )}
+          </div>
+          <div className="term-pane-statusbar">
+            <div className="tsb-left">
+              <span
+                className={`tsb-dot ${tab?.status ?? 'disconnected'}`}
+                title={tab?.status ?? 'disconnected'}
+              />
+            </div>
+            <div className="tsb-right">
+              {termSizes[leaf.id]?.cols > 0 && (
+                <span className="tsb-size" title="SSH terminal width × height">
+                  {termSizes[leaf.id].cols} × {termSizes[leaf.id].rows}
+                </span>
+              )}
+            </div>
+          </div>
           </div>
           {/* Docked AI chat attached to this pane's shell tab. Hidden while the
               pane is showing a file editor / docker log overlay so the AI panel
@@ -3532,21 +3557,6 @@ export default function App() {
             </div>
             )
           })()}
-        </div>
-        <div className="term-pane-statusbar">
-          <div className="tsb-left">
-            <span
-              className={`tsb-dot ${tab?.status ?? 'disconnected'}`}
-              title={tab?.status ?? 'disconnected'}
-            />
-          </div>
-          <div className="tsb-right">
-            {termSizes[leaf.id]?.cols > 0 && (
-              <span className="tsb-size" title="SSH terminal width × height">
-                {termSizes[leaf.id].cols} × {termSizes[leaf.id].rows}
-              </span>
-            )}
-          </div>
         </div>
         {/* VS Code-style drop mask: the whole target pane is highlighted as a
             droppable region the moment the cursor enters it (base mask), and a
