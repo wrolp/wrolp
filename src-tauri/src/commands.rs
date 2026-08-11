@@ -149,7 +149,9 @@ async fn persist_connections(state: &tauri::State<'_, AppState>) -> Result<(), S
   let path = get_connections_path();
   if let Some(ref path) = path {
     let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
-    crate::ssh_session::write_encrypted_connections(path, &all_conns)?;
+    let workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
+    let active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+    crate::ssh_session::write_encrypted_connections(path, &all_conns, &workspaces, &active_id)?;
   }
   Ok(())
 }
@@ -161,16 +163,24 @@ pub(crate) fn get_window_config_path() -> Option<std::path::PathBuf> {
 #[tauri::command]
 pub async fn list_connections(state: tauri::State<'_, AppState>) -> Result<String, String> {
   let connections = state.connections.lock().map_err(|e| e.to_string())?;
-  Ok(serde_json::to_string(&*connections).map_err(|e| e.to_string())?)
+  let active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+  let filtered: Vec<&ConnectionConfig> = connections
+    .iter()
+    .filter(|c| c.workspace_id.as_deref() == Some(&active_id))
+    .collect();
+  Ok(serde_json::to_string(&filtered).map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]
 pub async fn save_connection(
   state: tauri::State<'_, AppState>,
-  config: ConnectionConfig,
+  mut config: ConnectionConfig,
 ) -> Result<String, String> {
   {
     let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    let active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+    // Auto-assign to the active workspace on save (both create and update).
+    config.workspace_id = Some(active_id.clone());
     let found = connections.iter_mut().find(|c| c.id == config.id);
     if let Some(existing) = found {
       *existing = config.clone();
@@ -239,6 +249,93 @@ pub async fn reorder_connections(
   // Persist
   persist_connections(&state).await?;
 
+  Ok(true)
+}
+
+// ==================== Workspace management ====================
+
+#[tauri::command]
+pub async fn list_workspaces(
+  state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+  let workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
+  let active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+  serde_json::to_string(&serde_json::json!({
+    "workspaces": &*workspaces,
+    "activeWorkspaceId": &*active_id,
+  }))
+  .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_workspace(
+  state: tauri::State<'_, AppState>,
+  name: String,
+) -> Result<String, String> {
+  let id = uuid::Uuid::new_v4().to_string();
+  let ws = crate::ssh_session::WorkspaceInfo {
+    id: id.clone(),
+    name: name.clone(),
+    created_at: chrono::Utc::now().to_rfc3339(),
+  };
+  {
+    let mut workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
+    workspaces.push(ws);
+  }
+  persist_connections(&state).await?;
+  Ok(id)
+}
+
+#[tauri::command]
+pub async fn delete_workspace(
+  state: tauri::State<'_, AppState>,
+  workspace_id: String,
+) -> Result<bool, String> {
+  if workspace_id == "default" {
+    return Err("Cannot delete the default workspace".to_string());
+  }
+  {
+    // Remove the workspace and its connections.
+    let mut workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
+    workspaces.retain(|w| w.id != workspace_id);
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    connections.retain(|c| c.workspace_id.as_deref() != Some(&workspace_id));
+    // If we deleted the active workspace, switch to default.
+    let mut active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+    if *active_id == workspace_id {
+      *active_id = "default".to_string();
+    }
+  }
+  persist_connections(&state).await?;
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn rename_workspace(
+  state: tauri::State<'_, AppState>,
+  workspace_id: String,
+  name: String,
+) -> Result<bool, String> {
+  {
+    let mut workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
+    if let Some(w) = workspaces.iter_mut().find(|w| w.id == workspace_id) {
+      w.name = name;
+    }
+  }
+  persist_connections(&state).await?;
+  Ok(true)
+}
+
+#[tauri::command]
+pub async fn switch_workspace(
+  state: tauri::State<'_, AppState>,
+  workspace_id: String,
+) -> Result<bool, String> {
+  {
+    let mut active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+    *active_id = workspace_id;
+  }
+  persist_connections(&state).await?;
   Ok(true)
 }
 

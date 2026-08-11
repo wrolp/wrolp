@@ -9,6 +9,15 @@ export interface ConnectionConfig {
   passphrase?: string
   description?: string
   group?: string
+  /** Workspace this connection belongs to (set by backend on save). */
+  workspaceId?: string
+}
+
+/** A named workspace grouping connections. */
+export interface WorkspaceInfo {
+  id: string
+  name: string
+  createdAt: string
 }
 
 export interface SessionSummary {

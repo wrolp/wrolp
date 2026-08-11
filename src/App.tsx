@@ -7,6 +7,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
+import { WorkspaceSelector } from './components/WorkspaceSelector'
 import { ConnectionManager } from './components/ConnectionManager'
 import { TerminalComponent } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
@@ -35,8 +36,8 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, setAutoRecord, setRecordingEnabled, getRecordingEnabled, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, openConfigDir, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalTerminals } from './commands'
-import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent } from './types'
+import { loadWindowConfig, saveWindowConfig, setAutoRecord, setRecordingEnabled, getRecordingEnabled, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, openConfigDir, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalTerminals, listWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace, switchWorkspace, listConnections } from './commands'
+import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent, WorkspaceInfo } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
 import { detectLanguage } from './editor/languages'
@@ -54,6 +55,8 @@ export default function App() {
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('default')
   const [localTerminals, setLocalTerminals] = useState<LocalTerminalEntry[]>([])
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
   const tabContextMenuRef = useRef<HTMLDivElement | null>(null)
@@ -713,9 +716,10 @@ export default function App() {
   const [showUpdateBanner, setShowUpdateBanner] = useState(true)
   const updateRef = useRef<Update | null>(null)
 
-  // Load connection list
+  // Load connection list + workspaces
   useEffect(() => {
     loadConnections()
+    loadWorkspaceData()
     reloadLocalTerminals()
   }, [])
 
@@ -1007,12 +1011,21 @@ export default function App() {
 
   const loadConnections = async () => {
     try {
-      const result = await invoke<string>('list_connections')
-      const conns = JSON.parse(result) as ConnectionConfig[]
+      const conns = await listConnections()
       cachedConnections = conns
       setConnections(conns)
     } catch (err) {
       console.error('Failed to load connections:', err)
+    }
+  }
+
+  const loadWorkspaceData = async () => {
+    try {
+      const data = await listWorkspaces()
+      setWorkspaces(data.workspaces)
+      setActiveWorkspaceId(data.activeWorkspaceId)
+    } catch (err) {
+      console.error('Failed to load workspaces:', err)
     }
   }
 
@@ -1914,6 +1927,55 @@ export default function App() {
   const handleConnectionChange = useCallback(() => {
     loadConnections()
   }, [])
+
+  // Workspace handlers
+  const handleWorkspaceSwitch = useCallback(async (workspaceId: string) => {
+    try {
+      await switchWorkspace(workspaceId)
+      setActiveWorkspaceId(workspaceId)
+      loadConnections()
+    } catch (err) {
+      console.error('Failed to switch workspace:', err)
+    }
+  }, [])
+
+  const handleWorkspaceCreate = useCallback(
+    async (name: string) => {
+      try {
+        await createWorkspace(name)
+        loadWorkspaceData()
+        loadConnections()
+      } catch (err) {
+        console.error('Failed to create workspace:', err)
+      }
+    },
+    [],
+  )
+
+  const handleWorkspaceDelete = useCallback(
+    async (workspaceId: string) => {
+      try {
+        await deleteWorkspace(workspaceId)
+        loadWorkspaceData()
+        loadConnections()
+      } catch (err) {
+        console.error('Failed to delete workspace:', err)
+      }
+    },
+    [],
+  )
+
+  const handleWorkspaceRename = useCallback(
+    async (workspaceId: string, name: string) => {
+      try {
+        await renameWorkspace(workspaceId, name)
+        loadWorkspaceData()
+      } catch (err) {
+        console.error('Failed to rename workspace:', err)
+      }
+    },
+    [],
+  )
 
   // Load saved local terminal entries
   const reloadLocalTerminals = useCallback(() => {
@@ -3782,6 +3844,15 @@ export default function App() {
                 : { flexShrink: 0 }
             }
           >
+            {/* Workspace selector */}
+            <WorkspaceSelector
+              workspaces={workspaces}
+              activeId={activeWorkspaceId}
+              onSwitch={handleWorkspaceSwitch}
+              onCreate={handleWorkspaceCreate}
+              onDelete={handleWorkspaceDelete}
+              onRename={handleWorkspaceRename}
+            />
             <ConnectionManager
               connections={connections}
               onConnect={(_config, _tabId) => {

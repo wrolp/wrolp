@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, AiPromptTemplate, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile, LocalShellDir, LocalTerminalEntry } from './types'
+import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, AiPromptTemplate, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile, LocalShellDir, LocalTerminalEntry, WorkspaceInfo } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -30,6 +30,29 @@ export async function renameGroup(oldName: string, newName: string): Promise<boo
 
 export async function deleteGroup(groupName: string): Promise<boolean> {
   return await invoke<boolean>('delete_group', { groupName })
+}
+
+// ===== Workspace management =====
+
+export async function listWorkspaces(): Promise<{ workspaces: WorkspaceInfo[]; activeWorkspaceId: string }> {
+  const result = await invoke<string>('list_workspaces')
+  return JSON.parse(result)
+}
+
+export async function createWorkspace(name: string): Promise<string> {
+  return await invoke<string>('create_workspace', { name })
+}
+
+export async function deleteWorkspace(workspaceId: string): Promise<boolean> {
+  return await invoke<boolean>('delete_workspace', { workspaceId })
+}
+
+export async function renameWorkspace(workspaceId: string, name: string): Promise<boolean> {
+  return await invoke<boolean>('rename_workspace', { workspaceId, name })
+}
+
+export async function switchWorkspace(workspaceId: string): Promise<boolean> {
+  return await invoke<boolean>('switch_workspace', { workspaceId })
 }
 
 export async function connect(

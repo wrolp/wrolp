@@ -171,6 +171,170 @@ body.resize-v * {
   }
 }
 
+// ===== Workspace Selector =====
+
+.workspace-selector {
+  position: relative;
+  flex-shrink: 0;
+  border-bottom: 1px solid $border;
+}
+
+.workspace-selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: $text-primary;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
+.workspace-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: $text-dim;
+}
+
+.workspace-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.workspace-chevron {
+  font-size: 10px;
+  color: $text-dim;
+  transition: transform 0.15s;
+
+  &.open {
+    transform: rotate(180deg);
+  }
+}
+
+.workspace-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: $bg-tertiary;
+  border: 1px solid $border;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.workspace-item {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  height: 32px;
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.active {
+    background: rgba($accent, 0.12);
+
+    .workspace-item-label {
+      color: $accent;
+      font-weight: 600;
+    }
+  }
+}
+
+.workspace-item-label {
+  flex: 1;
+  font-size: 13px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-item-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+
+  .workspace-item:hover & {
+    opacity: 1;
+  }
+}
+
+.workspace-action-btn {
+  background: none;
+  border: none;
+  color: $text-dim;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: inherit;
+
+  &:hover {
+    color: $text-primary;
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.workspace-action-del:hover {
+  color: #ff6b6b;
+}
+
+.workspace-divider {
+  height: 1px;
+  background: $border;
+  margin: 4px 0;
+}
+
+.workspace-create-btn {
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: $text-dim;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    color: $text-primary;
+    background: $bg-hover;
+  }
+}
+
+.workspace-create-row {
+  padding: 4px 8px;
+}
+
+.workspace-create-input,
+.workspace-rename-input {
+  width: 100%;
+  padding: 4px 8px;
+  background: $bg-input;
+  border: 1px solid $accent;
+  border-radius: 4px;
+  color: $text-primary;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
 // ===== Collapsible Section =====
 .collapsible-section {
   display: flex;

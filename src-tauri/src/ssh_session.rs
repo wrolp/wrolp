@@ -44,10 +44,18 @@ pub struct ConnectionConfig {
   pub description: Option<String>,
   #[serde(default)]
   pub group: Option<String>,
+  /// Workspace this connection belongs to. Populated automatically on save
+  /// from the active workspace; never rendered in the frontend edit form.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub workspace_id: Option<String>,
 }
 
 fn default_port() -> u16 {
   22
+}
+
+fn default_workspace_id() -> String {
+  "default".to_string()
 }
 
 /// On-disk connection representation. Secrets are stored as AES-GCM vault blobs
@@ -75,14 +83,30 @@ pub struct PersistedConnection {
   pub description: Option<String>,
   #[serde(default)]
   pub group: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub workspace_id: Option<String>,
 }
 
-/// Envelope written to `connections.json` so we can detect the encrypted format
-/// (version == 1) versus legacy plaintext files (a bare JSON array).
+/// Envelope written to `connections.json`. Version history:
+/// - 1: encrypted format with `connections` array
+/// - 2: adds `workspaces`, `activeWorkspaceId`, per-connection `workspaceId`
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedFile {
   version: u8,
+  #[serde(default)]
+  workspaces: Vec<WorkspaceInfo>,
+  #[serde(default = "default_workspace_id")]
+  active_workspace_id: String,
   connections: Vec<PersistedConnection>,
+}
+
+/// A named workspace grouping connections.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceInfo {
+  pub id: String,
+  pub name: String,
+  pub created_at: String,
 }
 
 impl PersistedConnection {
@@ -107,6 +131,7 @@ impl PersistedConnection {
       passphrase_enc,
       description: c.description.clone(),
       group: c.group.clone(),
+      workspace_id: c.workspace_id.clone(),
     })
   }
 }
@@ -133,14 +158,17 @@ impl ConnectionConfig {
       passphrase,
       description: p.description.clone(),
       group: p.group.clone(),
+      workspace_id: p.workspace_id.clone(),
     })
   }
 }
 
-/// Serialize a slice of connections to disk in the encrypted envelope format.
+/// Serialize connections + workspace metadata to disk (v2 envelope).
 pub(crate) fn write_encrypted_connections(
   path: &std::path::Path,
   conns: &[ConnectionConfig],
+  workspaces: &[WorkspaceInfo],
+  active_workspace_id: &str,
 ) -> Result<(), String> {
   if let Some(parent) = path.parent() {
     let _ = std::fs::create_dir_all(parent);
@@ -150,7 +178,9 @@ pub(crate) fn write_encrypted_connections(
     persisted.push(PersistedConnection::from_conn(c)?);
   }
   let file = PersistedFile {
-    version: 1,
+    version: 2,
+    workspaces: workspaces.to_vec(),
+    active_workspace_id: active_workspace_id.to_string(),
     connections: persisted,
   };
   let content = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
@@ -438,6 +468,10 @@ pub struct ActiveRecording {
 /// Global application state
 pub struct AppState {
   pub connections: StdMutex<Vec<ConnectionConfig>>,
+  /// Available workspaces (owned by this app instance).
+  pub workspaces: StdMutex<Vec<WorkspaceInfo>>,
+  /// Currently active workspace id.
+  pub active_workspace_id: StdMutex<String>,
   pub sessions: StdMutex<HashMap<u32, SshSession>>,
   /// Polling output buffer: tab_id → pending text chunks (frontend polls every 100ms)
   pub output_buffers: StdMutex<HashMap<u32, Vec<String>>>,
@@ -496,11 +530,13 @@ pub struct LocalShellDir {
 
 impl AppState {
   pub fn new(db: DbConn) -> Self {
-    let connections = get_initial_connections();
+    let (connections, workspaces, active_workspace_id) = get_initial_connections();
 
     let ai_config = crate::ai::load_ai_config().ok();
     Self {
       connections: StdMutex::new(connections),
+      workspaces: StdMutex::new(workspaces),
+      active_workspace_id: StdMutex::new(active_workspace_id),
       sessions: StdMutex::new(HashMap::new()),
       output_buffers: StdMutex::new(HashMap::new()),
       ai_captures: StdMutex::new(HashMap::new()),
@@ -541,11 +577,10 @@ pub fn get_local_terminals_path() -> Option<std::path::PathBuf> {
   dirs::config_dir().map(|p| p.join("wrolp-terminal").join("local_terminals.json"))
 }
 
-/// Load initial connection list from config file.
-/// Supports the encrypted envelope format (version == 1) and transparently
-/// migrates legacy plaintext files (`Vec<ConnectionConfig>`) by re-writing
-/// them in the encrypted format on load.
-fn get_initial_connections() -> Vec<ConnectionConfig> {
+/// Load initial connection list, workspaces, and active workspace id from config.
+/// Supports v2 (workspace-aware) and v1 (encrypted) formats, and transparently
+/// migrates legacy plaintext files by re-writing them in the v2 format.
+fn get_initial_connections() -> (Vec<ConnectionConfig>, Vec<WorkspaceInfo>, String) {
   let path = get_connections_path();
   if let Some(ref path) = path {
     if path.exists() {
@@ -554,13 +589,25 @@ fn get_initial_connections() -> Vec<ConnectionConfig> {
       }
     }
   }
-  Vec::new()
+  let default_ws = default_workspace();
+  (Vec::new(), vec![default_ws], "default".to_string())
 }
 
-fn load_connections_content(path: &std::path::Path, content: &str) -> Vec<ConnectionConfig> {
-  // New encrypted format: { "version": 1, "connections": [...] }
+fn default_workspace() -> WorkspaceInfo {
+  WorkspaceInfo {
+    id: "default".to_string(),
+    name: "Default".to_string(),
+    created_at: chrono::Utc::now().to_rfc3339(),
+  }
+}
+
+fn load_connections_content(
+  path: &std::path::Path,
+  content: &str,
+) -> (Vec<ConnectionConfig>, Vec<WorkspaceInfo>, String) {
+  // v2: { "version": 2, "workspaces": [...], "activeWorkspaceId": "...", "connections": [...] }
   if let Ok(file) = serde_json::from_str::<PersistedFile>(content) {
-    if file.version == 1 {
+    if file.version >= 2 {
       let mut out = Vec::with_capacity(file.connections.len());
       for p in &file.connections {
         match ConnectionConfig::from_persisted(p) {
@@ -568,18 +615,47 @@ fn load_connections_content(path: &std::path::Path, content: &str) -> Vec<Connec
           Err(e) => eprintln!("[connections] failed to decrypt a connection: {}", e),
         }
       }
-      return out;
+      let workspaces = if file.workspaces.is_empty() {
+        vec![default_workspace()]
+      } else {
+        file.workspaces
+      };
+      return (out, workspaces, file.active_workspace_id);
+    }
+    if file.version == 1 {
+      // v1 → v2 migration: add a default workspace, assign legacy connections to it.
+      let mut out = Vec::with_capacity(file.connections.len());
+      for p in &file.connections {
+        match ConnectionConfig::from_persisted(p) {
+          Ok(c) => { out.push(c); }
+          Err(e) => eprintln!("[connections] failed to decrypt a connection: {}", e),
+        }
+      }
+      let default_ws = default_workspace();
+      // Assign all v1 connections to the default workspace.
+      for conn in &mut out {
+        conn.workspace_id = Some("default".to_string());
+      }
+      // Persist as v2 immediately.
+      if let Err(e) = write_encrypted_connections(path, &out, &[default_ws.clone()], "default") {
+        eprintln!("[connections] v1→v2 migration failed: {}", e);
+      }
+      return (out, vec![default_ws], "default".to_string());
     }
   }
 
-  // Legacy plaintext format (bare array of ConnectionConfig). Keep the
-  // decrypted secrets in memory and re-persist them encrypted.
-  if let Ok(old) = serde_json::from_str::<Vec<ConnectionConfig>>(content) {
-    if let Err(e) = write_encrypted_connections(path, &old) {
-      eprintln!("[connections] migration to encrypted format failed: {}", e);
+  // Legacy plaintext format (bare array of ConnectionConfig). Migrate to v2.
+  if let Ok(mut old) = serde_json::from_str::<Vec<ConnectionConfig>>(content) {
+    for conn in &mut old {
+      conn.workspace_id = Some("default".to_string());
     }
-    return old;
+    let default_ws = default_workspace();
+    if let Err(e) = write_encrypted_connections(path, &old, &[default_ws.clone()], "default") {
+      eprintln!("[connections] legacy→v2 migration failed: {}", e);
+    }
+    return (old, vec![default_ws], "default".to_string());
   }
 
-  Vec::new()
+  let default_ws = default_workspace();
+  (Vec::new(), vec![default_ws], "default".to_string())
 }
