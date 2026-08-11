@@ -2511,7 +2511,7 @@ export default function App() {
                     <label className="settings-checkbox-label">
                       <input
                         type="checkbox"
-                        checked={aiConfig?.readOnly ?? true}
+                        checked={aiConfig?.readOnly ?? false}
                         onChange={(e) => {
                           setAiConfig((prev) => {
                             if (!prev) return prev
@@ -3472,7 +3472,7 @@ export default function App() {
                         inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                         onInputHeightChange={handleAiInputHeightChange}
                         onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.readOnly ?? true}
+                        defaultReadOnly={aiConfig?.readOnly ?? false}
                         defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
                       />
                     </div>
@@ -4091,7 +4091,7 @@ export default function App() {
                     inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                     onInputHeightChange={handleAiInputHeightChange}
                     onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.readOnly ?? true}
+                        defaultReadOnly={aiConfig?.readOnly ?? false}
                         defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
                   />
                 </div>
@@ -4230,7 +4230,7 @@ export default function App() {
                       inputHeight={aiInputHeight}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.readOnly ?? true}
+                        defaultReadOnly={aiConfig?.readOnly ?? false}
                         defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
                     />
                   </div>

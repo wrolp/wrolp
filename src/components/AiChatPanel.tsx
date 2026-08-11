@@ -801,7 +801,10 @@ export default function AiChatPanel({
 
       const apiMessages: AiMessage[] = [
         { role: 'system' as const, content: config.systemPrompt },
-        ...messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        ...messages.map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content ?? '',
+        })),
         { role: 'user' as const, content: text, images },
       ]
       runAgent(apiMessages, text, images)
@@ -1255,7 +1258,7 @@ export default function AiChatPanel({
                     className="ai-chat-msg-copy"
                     type="button"
                     title={msgCopied === msg.id ? t('copied') : t('copyMessage')}
-                    onClick={() => copyMessage(msg.id, msg.content)}
+                    onClick={() => copyMessage(msg.id, msg.content ?? '')}
                   >
                     <Icon name={msgCopied === msg.id ? 'clipboard' : 'copy'} size={12} />
                   </button>

@@ -63,9 +63,9 @@ pub struct AiConfig {
   pub active_id: String,
   /// Default AI mode when a chat is opened. When true, the agent starts in
   /// read-only mode and may only run inspection commands (configurable in the
-  /// global AI settings; the per-chat panel can toggle it). Defaults to true
-  /// so a fresh install starts in the safer read-only mode.
-  #[serde(default = "default_true", alias = "aiReadOnly")]
+  /// global AI settings; the per-chat panel can toggle it). Defaults to false
+  /// so a fresh install starts with full access (can run modifying commands).
+  #[serde(default = "default_false", alias = "aiReadOnly")]
   pub read_only: bool,
   /// When true, `run_command` types the command into the tab's live terminal
   /// (visible on screen + captured in the session recording) instead of running
@@ -82,6 +82,11 @@ pub struct AiConfig {
 /// Serde default for boolean `AiConfig` flags that are on by default.
 fn default_true() -> bool {
   true
+}
+
+/// Serde default for boolean `AiConfig` flags that are off by default.
+fn default_false() -> bool {
+  false
 }
 
 /// Serde default for `max_agent_rounds`.
@@ -117,7 +122,7 @@ impl AiConfig {
     Self {
       profiles: vec![profile],
       active_id,
-      read_only: true,
+      read_only: false,
       run_in_terminal: true,
       max_agent_rounds: default_max_agent_rounds(),
     }
@@ -202,7 +207,7 @@ pub fn load_ai_config() -> Result<AiConfig, String> {
           Ok(AiConfig {
             profiles: vec![profile],
             active_id,
-            read_only: true,
+            read_only: false,
             run_in_terminal: true,
             max_agent_rounds: default_max_agent_rounds(),
           })
@@ -750,8 +755,9 @@ pub type ToolResult = (String, String);
 /// assistant tool-calls and tool-result messages.
 /// Build the OpenAI `content` value for a message. Plain text messages use a
 /// string; messages carrying images use a multimodal content array
-/// (`text` + `image_url` parts). Messages that only carry tool calls use `null`
-/// (as before).
+/// (`text` + `image_url` parts). (A message that *only* carries tool calls is
+/// handled separately in `to_openai_messages`, where its `content` becomes an
+/// empty string instead of `null`.)
 fn openai_content(m: &AiMessage) -> Option<serde_json::Value> {
   let has_images = m.images.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
   if !has_images {
@@ -793,12 +799,13 @@ fn to_openai_messages(messages: &[AiMessage]) -> Vec<OpenAiMessage> {
       let has_tool_calls = tool_calls.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
       OpenAiMessage {
         role: m.role.clone(),
-        // When an assistant message carries tool_calls, `content` is None
-        // and will be serialized as the explicit `null` that OpenAI-style
-        // models (incl. gpt-oss) require. Regular text messages keep their
-        // content string; messages with images get a multimodal array.
+        // When an assistant message carries tool_calls, `content` is sent as an
+        // empty string rather than `null`. Some OpenAI-style endpoints (incl.
+        // certain gpt-oss / open-weight proxies) reject `null` content on
+        // tool-call messages, so we default to `""`. Regular text messages keep
+        // their content string; messages with images get a multimodal array.
         content: if has_tool_calls {
-          None
+          Some(serde_json::Value::String(String::new()))
         } else {
           openai_content(m)
         },
