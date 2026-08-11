@@ -988,36 +988,52 @@ pub async fn open_local_shell(
   // above the prompt. The frontend passes the real cols/rows from xterm's fit.
   let initial_cols = if cols == 0 { 80u16 } else { cols as u16 };
   let initial_rows = if rows == 0 { 24u16 } else { rows as u16 };
-  let pty_system = portable_pty::native_pty_system();
-  let pair = pty_system
-    .openpty(portable_pty::PtySize {
-      rows: initial_rows,
-      cols: initial_cols,
-      pixel_width: 0,
-      pixel_height: 0,
-    })
-    .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-  let mut cmd = portable_pty::CommandBuilder::new(&shell_cmd);
-  if !shell_args.is_empty() {
-    cmd.args(&shell_args);
-  }
-  if let Some(ref dir) = cwd {
-    // An empty cwd means "use the default working directory", so don't set one.
-    if !dir.trim().is_empty() {
-      cmd.cwd(dir);
-    }
-  }
-  // Windows: let cmd/pwsh use its default console behavior
-  cmd.env("TERM", "xterm-256color");
+  // Offload the blocking Win32 ConPTY calls (CreatePseudoConsole +
+  // CreateProcess) to tokio's dedicated blocking thread pool so they never
+  // tie up an async worker and stall other commands / UI updates.
+  let shell_cmd_clone = shell_cmd.clone();
+  let cwd_clone = cwd.clone();
+  let (master, child) = tokio::task::spawn_blocking(
+    move || -> Result<
+      (
+        Box<dyn portable_pty::MasterPty + Send>,
+        Box<dyn portable_pty::Child + Send + Sync>,
+      ),
+      String,
+    > {
+      let pty_system = portable_pty::native_pty_system();
+      let pair = pty_system
+        .openpty(portable_pty::PtySize {
+          rows: initial_rows,
+          cols: initial_cols,
+          pixel_width: 0,
+          pixel_height: 0,
+        })
+        .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-  let child = pair.slave.spawn_command(cmd).map_err(|e| {
-    eprintln!(
-      "[open_local_shell] spawn_command failed for '{}': {}",
-      shell_cmd, e
-    );
-    format!("Failed to spawn shell '{}': {}", shell_cmd, e)
-  })?;
+      let mut cmd = portable_pty::CommandBuilder::new(&shell_cmd_clone);
+      if !shell_args.is_empty() {
+        cmd.args(&shell_args);
+      }
+      // An empty cwd means "use the default working directory"…
+      if let Some(ref dir) = cwd_clone {
+        if !dir.trim().is_empty() {
+          cmd.cwd(dir);
+        }
+      }
+      cmd.env("TERM", "xterm-256color");
+
+      let child = pair.slave.spawn_command(cmd).map_err(|e| {
+        format!("Failed to spawn shell '{}': {}", shell_cmd_clone, e)
+      })?;
+      Ok((pair.master, child))
+    },
+  )
+  .await
+  .map_err(|e| format!("spawn_blocking join error: {}", e))??;
+
+
 
   // On some Windows builds ConPTY ignores the size passed to `openpty` and only
   // honors an explicit resize issued *after* the child is spawned. Without this,
@@ -1027,7 +1043,7 @@ pub async fn open_local_shell(
     "[open_local_shell] opening PTY for {} at {}x{}",
     shell_cmd, initial_cols, initial_rows
   );
-  let _ = pair.master.resize(portable_pty::PtySize {
+  let _ = master.resize(portable_pty::PtySize {
     rows: initial_rows,
     cols: initial_cols,
     pixel_width: 0,
@@ -1038,13 +1054,11 @@ pub async fn open_local_shell(
     shell_cmd, tab_id
   );
 
-  let mut reader = pair
-    .master
+  let mut reader = master
     .try_clone_reader()
     .map_err(|e| format!("Failed to clone PTY reader: {}", e))?;
 
-  let writer = pair
-    .master
+  let writer = master
     .take_writer()
     .map_err(|e| format!("Failed to take PTY writer: {}", e))?;
 
@@ -1057,7 +1071,7 @@ pub async fn open_local_shell(
       tab_id,
       LocalShell {
         tab_id,
-        master: pair.master,
+        master,
         writer: Box::new(writer),
         child,
         session_id,

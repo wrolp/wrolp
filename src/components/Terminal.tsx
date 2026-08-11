@@ -98,6 +98,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
   const localShellTypeRef = useRef(localShellType)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
+  // Guards sendResize until the backend shell is registered (otherwise ResizeObserver
+  // fires before openLocalShell resolves, producing "local_resize: Local shell not found").
+  const connectedRef = useRef(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement | null>(null)
 
@@ -148,13 +151,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     console.log(`[Terminal] resizing to ${cols}x${rows}`)
     onSizeChangeRef.current?.(cols, rows)
     if (isLocal) {
-      localResize(tabIdRef.current, cols, rows).catch((err) =>
-        console.error('local_resize error:', err),
-      )
+      if (connectedRef.current) {
+        localResize(tabIdRef.current, cols, rows).catch((err) =>
+          console.error('local_resize error:', err),
+        )
+      }
     } else {
-      resizeTerminal(tabIdRef.current, cols, rows).catch((err) =>
-        console.error('resize_terminal error:', err),
-      )
+      if (connectedRef.current) {
+        resizeTerminal(tabIdRef.current, cols, rows).catch((err) =>
+          console.error('resize_terminal error:', err),
+        )
+      }
     }
   }, [isLocal])
 
@@ -314,18 +321,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // Poll SSH output (every 100ms), completely bypassing Tauri event system
     const startPolling = () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-      pollTimerRef.current = setInterval(async () => {
+      // Do one immediate poll so slow first-output doesn't wait for the first
+      // 100 ms interval tick.
+      const doPoll = async () => {
         try {
           const chunks = await pollOutput(currentTabId)
           if (chunks.length > 0) {
-            for (const chunk of chunks) {
-              term.write(chunk)
-            }
+            for (const chunk of chunks) term.write(chunk)
           }
         } catch {
           // Silently ignore polling failures to avoid spam
         }
-      }, 100)
+      }
+      doPoll()
+      pollTimerRef.current = setInterval(doPoll, 100)
     }
 
     // Wait for container to get actual layout dimensions, fit to get real cols/rows, then connect SSH with those dimensions
@@ -338,6 +347,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (isLocal) {
         openLocalShell(currentTabId, localShellTypeRef.current, localCwd, true, cols, rows)
           .then(() => {
+            connectedRef.current = true
             onStatusChangeRef.current('connected')
             startPolling()
           })
@@ -368,6 +378,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           true,
         )
           .then(() => {
+            connectedRef.current = true
             onStatusChangeRef.current('connected')
             startPolling()
           })
@@ -406,6 +417,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     return () => {
       console.log('[Terminal] cleanup, resetting hasRun')
       hasRun.current = false
+      connectedRef.current = false
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
         pollTimerRef.current = null
