@@ -344,6 +344,10 @@ export interface AiEndpointProfile {
   apiKeyEnc: string
   /** Model name (e.g. "gpt-4o"). */
   model: string
+  /** Tool call response format expected from this endpoint: "nested" (standard
+   *  OpenAI `tool_calls[].function.{name,arguments}`) or "flat" (`tool_calls[]`
+   *  items carrying `name`/`arguments` directly). Defaults to "nested". */
+  toolCallFormat: 'flat' | 'nested'
   /** System prompt for the AI assistant. */
   systemPrompt: string
 }

@@ -3340,6 +3340,7 @@ pub async fn start_ai_agent(
   profile: Option<crate::ai::AiEndpointProfile>,
   read_only: bool,
   max_agent_rounds: u32,
+  tool_call_format: Option<String>,
 ) -> Result<String, String> {
   let chat_id = {
     let state = app.state::<AppState>();
@@ -3426,18 +3427,33 @@ pub async fn start_ai_agent(
     }
   };
 
+  // Tool-call wire format for this run: per-conversation choice (from the
+  // frontend) wins; falls back to the profile setting, then "nested".
+  let tool_call_format = tool_call_format
+    .filter(|f| f == "flat" || f == "nested")
+    .unwrap_or_else(|| {
+      if config.tool_call_format == "flat" {
+        "flat"
+      } else {
+        "nested"
+      }
+      .to_string()
+    });
+
   let on_confirm = {
     let app2 = app_clone.clone();
     let cid2 = cid.clone();
     let conf2 = config.clone();
+    let fmt = tool_call_format.clone();
     move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-      save_pending(&app2, &cid2, &conf2, msgs, calls, read_only);
+      save_pending(&app2, &cid2, &conf2, msgs, calls, read_only, &fmt);
     }
   };
   spawn_agent(
     app_clone,
     cid.clone(),
     config,
+    tool_call_format,
     messages_with_context,
     current_tab_id,
     read_only,
@@ -3458,6 +3474,7 @@ fn save_pending(
   messages: Vec<crate::ai::AiMessage>,
   calls: Vec<crate::ai::OpenAiToolCall>,
   read_only: bool,
+  tool_call_format: &str,
 ) {
   {
     let st = app.state::<AppState>();
@@ -3469,6 +3486,7 @@ fn save_pending(
         messages,
         calls,
         read_only,
+        tool_call_format: tool_call_format.to_string(),
       });
     }
   }
@@ -3493,6 +3511,7 @@ fn spawn_agent(
   app: tauri::AppHandle,
   chat_id: String,
   config: crate::ai::AiEndpointProfile,
+  tool_call_format: String,
   messages: Vec<crate::ai::AiMessage>,
   current_tab_id: Option<u32>,
   read_only: bool,
@@ -3502,6 +3521,7 @@ fn spawn_agent(
   tauri::async_runtime::spawn(async move {
     let result = crate::ai::run_agent_stream(
       &config,
+      &tool_call_format,
       messages,
       |chunk| {
         let state = app.state::<AppState>();
@@ -3610,14 +3630,16 @@ pub async fn confirm_ai_tool(
     let cid2 = chat_id.clone();
     let conf2 = pending.config.clone();
     let ro = read_only;
+    let fmt = pending.tool_call_format.clone();
     move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-      save_pending(&app2, &cid2, &conf2, msgs, calls, ro);
+      save_pending(&app2, &cid2, &conf2, msgs, calls, ro, &fmt);
     }
   };
   spawn_agent(
     app,
     chat_id,
     pending.config,
+    pending.tool_call_format,
     messages,
     None,
     read_only,

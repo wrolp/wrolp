@@ -266,6 +266,7 @@ const en = {
   aiChatResizeInput: 'Drag to resize input area',
   aiChatAddImage: 'Add image',
   aiChatRemoveImage: 'Remove image',
+  aiToolCallFormat: 'Tool call format: nested (standard OpenAI structure) or flat (name/arguments at the top level)',
   aiChatPickTemplate: 'Pick template',
   aiChatViewImage: 'View image',
   aiChatEditMessage: 'Edit message',

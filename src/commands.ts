@@ -514,8 +514,8 @@ export async function cancelAiChat(chatId: string): Promise<void> {
   return await invoke<void>('cancel_ai_chat', { chatId })
 }
 
-export async function startAiAgent(messages: AiMessage[], tabId?: number, profile?: AiEndpointProfile, readOnly?: boolean, maxAgentRounds?: number): Promise<string> {
-  return await invoke<string>('start_ai_agent', { messages, tabId: tabId ?? null, profile: profile ?? null, readOnly: readOnly ?? false, maxAgentRounds: maxAgentRounds ?? 12 })
+export async function startAiAgent(messages: AiMessage[], tabId?: number, profile?: AiEndpointProfile, readOnly?: boolean, maxAgentRounds?: number, toolCallFormat?: 'flat' | 'nested'): Promise<string> {
+  return await invoke<string>('start_ai_agent', { messages, tabId: tabId ?? null, profile: profile ?? null, readOnly: readOnly ?? false, maxAgentRounds: maxAgentRounds ?? 12, toolCallFormat: toolCallFormat ?? null })
 }
 
 export async function confirmAiTool(chatId: string, approved: boolean, readOnly?: boolean, maxAgentRounds?: number): Promise<void> {

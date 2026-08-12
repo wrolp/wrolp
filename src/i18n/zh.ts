@@ -267,6 +267,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatResizeInput: '拖动以调整输入区高度',
   aiChatAddImage: '添加图片',
   aiChatRemoveImage: '移除图片',
+  aiToolCallFormat: '工具调用格式：nested（标准 OpenAI 结构）或 flat（name/arguments 位于顶层）',
   aiChatPickTemplate: '选择模板',
   aiChatViewImage: '查看图片',
   aiChatEditMessage: '编辑消息',

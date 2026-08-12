@@ -19,6 +19,10 @@ pub struct AiPendingConfirm {
   /// inspection commands). Preserved across the confirmation pause so a resumed
   /// session keeps the same mode.
   pub read_only: bool,
+  /// Tool-call wire format chosen for this conversation ("nested" or "flat").
+  /// Preserved across the confirmation pause so a resumed session keeps the
+  /// same format.
+  pub tool_call_format: String,
 }
 use crate::db::{DbConn, RecordedEvent};
 

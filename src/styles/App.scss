@@ -5048,6 +5048,11 @@ input[type='password']::-ms-clear {
     cursor: text;
   }
 
+  // Compact per-conversation tool-call format switch (nested/flat).
+  .ai-chat-tool-format-select {
+    max-width: 82px;
+  }
+
   .ai-chat-clear-btn {
     display: inline-flex;
     align-items: center;

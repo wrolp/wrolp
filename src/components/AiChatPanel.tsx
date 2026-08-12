@@ -140,6 +140,10 @@ interface AiConv {
   error: string | null
   toolCalls: ToolCallEvent[]
   showSuggestions: boolean
+  /** Tool-call wire format for this conversation: "nested" (standard OpenAI
+   *  `tool_calls[].function.{name,arguments}`) or "flat" (`tool_calls[]`
+   *  carrying `name`/`arguments` directly). Defaults to "nested". */
+  toolCallFormat: 'flat' | 'nested'
 }
 
 interface AiChatPanelProps {
@@ -239,7 +243,8 @@ export default function AiChatPanel({
   defaultMaxAgentRounds,
 }: AiChatPanelProps) {
   const { t } = useI18n()
-  const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions } = conv
+  const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions, toolCallFormat } =
+    conv
 
   // AI mode: read-only (inspection commands only) vs full (modifying commands
   // allowed). Starts from the global default and can be toggled at runtime.
@@ -486,6 +491,8 @@ export default function AiChatPanel({
     setConv((c) => ({ ...c, toolCalls: typeof u === 'function' ? u(c.toolCalls) : u }))
   const setShowSuggestions = (u: boolean | ((p: boolean) => boolean)) =>
     setConv((c) => ({ ...c, showSuggestions: typeof u === 'function' ? u(c.showSuggestions) : u }))
+  const setToolCallFormat = (u: 'flat' | 'nested') =>
+    setConv((c) => ({ ...c, toolCallFormat: u }))
 
   // Active agent chat id (set once a run starts); used to resume after a
   // sensitive-tool confirmation.
@@ -723,7 +730,7 @@ export default function AiChatPanel({
         ])
       }
 
-      startAiAgent(apiMessages, tabId, config ?? undefined, readOnly, maxAgentRounds)
+      startAiAgent(apiMessages, tabId, config ?? undefined, readOnly, maxAgentRounds, toolCallFormat)
         .then((id: string) => {
           setChatId(id)
           startPolling(id)
@@ -734,7 +741,7 @@ export default function AiChatPanel({
           finalizeAssistant('', String(e))
         })
     },
-    [mergeToolEvents, finalizeAssistant, tabId, config],
+    [mergeToolEvents, finalizeAssistant, tabId, config, toolCallFormat],
   )
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1048,6 +1055,15 @@ export default function AiChatPanel({
                 )}
               </select>
             )}
+            <select
+              className="ai-chat-select ai-chat-tool-format-select"
+              value={toolCallFormat}
+              onChange={(e) => setToolCallFormat(e.target.value as 'flat' | 'nested')}
+              title={t('aiToolCallFormat')}
+            >
+              <option value="nested">nested</option>
+              <option value="flat">flat</option>
+            </select>
           </div>
         </div>
         <button

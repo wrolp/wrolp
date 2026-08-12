@@ -470,6 +470,10 @@ export default function App() {
     error: string | null
     toolCalls: ToolCallEvent[]
     showSuggestions: boolean
+    /** Tool-call wire format for this conversation: "nested" (standard OpenAI
+     *  `tool_calls[].function.{name,arguments}`) or "flat" (`tool_calls[]`
+     *  carrying `name`/`arguments` directly). Defaults to "nested". */
+    toolCallFormat: 'flat' | 'nested'
   }
   const emptyConv = (): AiConv => ({
     messages: [],
@@ -479,6 +483,7 @@ export default function App() {
     error: null,
     toolCalls: [],
     showSuggestions: true,
+    toolCallFormat: 'nested',
   })
   const [aiConversations, setAiConversations] = useState<Record<number, AiConv>>({})
   // Which shell tabs have their AI pane open (docked).
@@ -2713,6 +2718,7 @@ export default function App() {
                             endpoint: 'https://api.openai.com/v1',
                             apiKeyEnc: '',
                             model: 'gpt-4o',
+                            toolCallFormat: 'nested',
                             systemPrompt:
                               activeProfile?.systemPrompt ??
                               'You are the AI assistant built into Wrolp Terminal, an SSH terminal and server operations (DevOps / Ops) tool for system administrators. You help users with system administration, command-line operations, debugging, performance tuning, Docker and service management, and understanding server configurations. When asked, run read-only tools on the connected server to investigate. Be concise, practical, and safety-conscious.',
@@ -2909,6 +2915,39 @@ export default function App() {
                         </div>
 
                         <div className="settings-field">
+                          <label htmlFor="ai-tool-call-format" className="settings-label">
+                            <Icon name="settings" size={13} /> Tool Call Format
+                          </label>
+                          <select
+                            id="ai-tool-call-format"
+                            className="settings-input"
+                            value={activeProfile.toolCallFormat ?? 'nested'}
+                            onChange={(e) =>
+                              setAiConfig((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      profiles: prev.profiles.map((p) =>
+                                        p.id === activeProfile.id
+                                          ? { ...p, toolCallFormat: e.target.value as 'flat' | 'nested' }
+                                          : p
+                                      ),
+                                    }
+                                  : prev
+                              )
+                            }
+                          >
+                            <option value="nested">nested (standard)</option>
+                            <option value="flat">flat</option>
+                          </select>
+                          <span className="settings-help">
+                            How the endpoint returns tool calls: <code>nested</code> = standard OpenAI{' '}
+                            <code>tool_calls[].function.{'{name,arguments}'}</code>; <code>flat</code> ={' '}
+                            <code>tool_calls[]</code> items carry <code>name</code>/<code>arguments</code> directly.
+                          </span>
+                        </div>
+
+                        <div className="settings-field">
                           <label htmlFor="ai-system-prompt" className="settings-label">
                             <Icon name="edit" size={13} /> System Prompt
                           </label>
@@ -3070,6 +3109,14 @@ export default function App() {
     const sessionDockerLogTabs = dockerLogTabs.filter((dt) => dt.jumpTabId === leaf.tabId)
     const sessionActiveEditorKey = leaf.tabId != null ? activeEditorKey[leaf.tabId] ?? null : null
     const dropPos = paneDrag.target === leaf.id ? paneDrag.position : null
+    // A non-floated overlay (file editor / docker log) replaces the terminal
+    // surface of the focused pane — the whole terminal column (including its
+    // status bar) is hidden so the overlay gets the full pane width.
+    const overlayVisible =
+      isFocused &&
+      sv !== 'terminal' &&
+      (sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) &&
+      !isOverlayFloated(sv)
     // Decide where a drop would land from the cursor position within the pane.
     const computePos = (e: React.DragEvent): DropPosition => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -3310,13 +3357,15 @@ export default function App() {
           }}
         >
           {/* Terminal surface — stays mounted even while the file editor is
-              shown on the focused pane, so switching tabs never reconnects. */}
+              shown on the focused pane, so switching tabs never reconnects.
+              Hidden entirely (incl. its status bar) when a non-floated overlay
+              takes over, so the editor gets the full pane width. */}
           <div
             style={{
               flex: 1,
               minWidth: 0,
               minHeight: 0,
-              display: 'flex',
+              display: overlayVisible ? 'none' : 'flex',
               flexDirection: 'column',
             }}
           >
@@ -3331,13 +3380,7 @@ export default function App() {
               // Hide the terminal only when a non-floated overlay is active;
               // a floated overlay renders exclusively in its floating window,
               // so the shell stays visible here.
-              display:
-                isFocused &&
-                sv !== 'terminal' &&
-                (sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) &&
-                !isOverlayFloated(sv)
-                  ? 'none'
-                  : 'flex',
+              display: overlayVisible ? 'none' : 'flex',
               flexDirection: 'column',
             }}
           >
