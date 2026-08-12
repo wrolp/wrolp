@@ -101,7 +101,7 @@ fn default_false() -> bool {
 
 /// Serde default for `max_agent_rounds`.
 fn default_max_agent_rounds() -> u32 {
-  12
+  100
 }
 
 impl AiConfig {

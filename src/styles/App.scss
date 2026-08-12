@@ -4894,6 +4894,17 @@ input[type='password']::-ms-clear {
     flex-shrink: 0;
   }
 
+  .ai-chat-header-spacer {
+    flex: 1;
+  }
+
+  .ai-chat-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
   // Docked AI pane (right/top/bottom/left inside the shell pane)
   .ai-dock-pane {
     background: $bg-primary;
@@ -5098,6 +5109,123 @@ input[type='password']::-ms-clear {
   // Compact per-conversation tool-call format switch (nested/flat).
   .ai-chat-tool-format-select {
     max-width: 82px;
+  }
+
+  // ---- "More" dropdown (secondary AI chat controls) ----
+  .ai-chat-more-wrapper {
+    position: relative;
+  }
+
+  .ai-chat-more-btn {
+    cursor: pointer;
+  }
+
+  .ai-chat-more-dropdown {
+    position: fixed;
+    min-width: 200px;
+    background: $bg-tertiary;
+    border: 1px solid $border;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    z-index: 2000;
+    padding: 4px;
+  }
+
+  .ai-chat-more-item {
+    display: flex;
+    align-items: center;
+    padding: 4px 6px;
+
+    > .ai-readonly-toggle,
+    > .ai-chat-clear-btn {
+      justify-content: flex-start;
+      width: 100%;
+      border-radius: 4px;
+      padding: 4px 8px;
+    }
+  }
+
+  .ai-chat-more-label {
+    flex: 1;
+    font-size: 11px;
+    color: $text-dim;
+    margin-right: 8px;
+    white-space: nowrap;
+  }
+
+  .ai-chat-more-separator {
+    border-top: 1px solid $border;
+    margin: 4px 0;
+    padding: 0;
+    height: 0;
+  }
+
+  // ---- Max rounds floating dialog (backdrop + centered dropdown) ----
+  .ai-max-rounds-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    // Transparent — just captures clicks to dismiss.
+  }
+
+  .ai-max-rounds-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 201;
+    background: $bg-tertiary;
+    border: 1px solid $border;
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+    padding: 16px;
+    min-width: 240px;
+  }
+
+  .ai-max-rounds-title {
+    display: block;
+    font-size: 13px;
+    color: $text-dim;
+    margin-bottom: 10px;
+  }
+
+  .ai-max-rounds-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .ai-max-rounds-input {
+    flex: 1;
+    height: 30px;
+    background: $bg-primary;
+    color: $text-primary;
+    border: 1px solid $border;
+    border-radius: 4px;
+    padding: 0 8px;
+    font-size: 13px;
+    outline: none;
+    min-width: 0;
+
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  .ai-max-rounds-apply {
+    height: 30px;
+    padding: 0 14px;
+    background: $accent;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    flex-shrink: 0;
+
+    &:hover {
+      opacity: 0.9;
+    }
   }
 
   .ai-chat-clear-btn {

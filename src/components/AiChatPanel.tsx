@@ -251,7 +251,76 @@ export default function AiChatPanel({
   const [readOnly, setReadOnly] = useState<boolean>(defaultReadOnly ?? false)
 
   // Maximum agent-loop rounds for a single run. Starts from the global default.
-  const [maxAgentRounds] = useState<number>(defaultMaxAgentRounds ?? 12)
+  const [maxAgentRounds, setMaxAgentRounds] = useState<number>(defaultMaxAgentRounds ?? 100)
+
+  // UI popup/dropdown toggles for the cramped header bar.
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null)
+  const [moreMenuPos, setMoreMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const [showMaxRoundsPopup, setShowMaxRoundsPopup] = useState(false)
+  const maxRoundsInputRef = useRef<HTMLInputElement | null>(null)
+
+  // ---- responsive header: controls progressively collapse into "More" ----
+  // Tier thresholds (cumulative — wider thresholds include narrower tiers).
+  // Priority: close(X) always visible > float/dock always > clear > maxRounds
+  // > readOnly > toolCallFormat.
+  const COLLAPSE_CLEAR = 380
+  const COLLAPSE_MAX_ROUNDS = 510
+  const COLLAPSE_READ_ONLY = 610
+  const COLLAPSE_TOOL_FORMAT = 710
+
+  const headerRef = useRef<HTMLDivElement | null>(null)
+  const [headerWidth, setHeaderWidth] = useState(900) // generous default
+
+  useEffect(() => {
+    const el = headerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry) setHeaderWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const compactToolFormat = headerWidth < COLLAPSE_TOOL_FORMAT
+  // When in "Full access" mode the readOnly toggle label is wider; keep the
+  // nested/flat select inline instead of pushing it into More.
+  const effectiveCompactToolFormat = readOnly ? compactToolFormat : false
+  const compactReadOnly = headerWidth < COLLAPSE_READ_ONLY
+  const compactMaxRounds = headerWidth < COLLAPSE_MAX_ROUNDS
+  const compactClear = headerWidth < COLLAPSE_CLEAR
+  // More dropdown visible only when at least one control is actually compacted.
+  const showMoreBtn =
+    effectiveCompactToolFormat || compactReadOnly || compactMaxRounds || compactClear
+
+  // Close the "More" dropdown on outside click / escape.
+  useEffect(() => {
+    if (!showMoreMenu) return
+    const close = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && moreBtnRef.current?.contains(t)) return
+      // Check dropdown items too (rendered outside the button subtree because
+      // they use position:fixed).
+      if (t?.closest('.ai-chat-more-dropdown')) return
+      setShowMoreMenu(false)
+    }
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowMoreMenu(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [showMoreMenu])
+
+  // Focus the max-rounds input when the popup opens.
+  useEffect(() => {
+    if (showMaxRoundsPopup) {
+      setTimeout(() => maxRoundsInputRef.current?.focus(), 0)
+    }
+  }, [showMaxRoundsPopup])
 
   // Whether a usable AI endpoint is configured (endpoint + model + saved key).
   const configured =
@@ -1009,7 +1078,7 @@ export default function AiChatPanel({
   return (
     <div className="ai-chat-panel">
       {/* Header */}
-      <div className="ai-chat-header">
+      <div className="ai-chat-header" ref={headerRef}>
         <div className="ai-chat-avatar" aria-hidden>
           <Icon name="sparkles" size={16} />
         </div>
@@ -1055,65 +1124,216 @@ export default function AiChatPanel({
                 )}
               </select>
             )}
-            <select
-              className="ai-chat-select ai-chat-tool-format-select"
-              value={toolCallFormat}
-              onChange={(e) => setToolCallFormat(e.target.value as 'flat' | 'nested')}
-              title={t('aiToolCallFormat')}
-            >
-              <option value="nested">nested</option>
-              <option value="flat">flat</option>
-            </select>
           </div>
         </div>
-        <button
-          className={'ai-readonly-toggle' + (readOnly ? ' active' : '')}
-          onClick={() => setReadOnly((v) => !v)}
-          title={readOnly ? t('aiReadOnlyHint') : t('aiFullModeHint')}
-        >
-          <span className="ai-readonly-dot" />
-          {readOnly ? t('aiReadOnlyOn') : t('aiReadOnlyOff')}
-        </button>
-        {!floating && onToggleFloat && (
-          <button
-            className="ai-chat-clear-btn"
-            onClick={onToggleFloat}
-            title={t('aiChatPopOut')}
+        {/* Spacer pushes right-group to the far end */}
+        <div className="ai-chat-header-spacer" />
+
+        {/* --- right group (always right-aligned, close at very end) --- */}
+        <div className="ai-chat-header-right">
+          {/* Each control is independently visible / folded based on header
+              width.  The More dropdown collects *only* the compacted ones. */}
+          {/* toolCallFormat */}
+          <select
+            className="ai-chat-select ai-chat-tool-format-select"
+            value={toolCallFormat}
+            onChange={(e) => setToolCallFormat(e.target.value as 'flat' | 'nested')}
+            title={t('aiToolCallFormat')}
+            style={{ display: effectiveCompactToolFormat || compactReadOnly ? 'none' : undefined }}
           >
-            <Icon name="externalLink" size={13} />
-            {t('aiChatPopOut')}
-          </button>
-        )}
-        {floating && onToggleFloat && (
+            <option value="nested">nested</option>
+            <option value="flat">flat</option>
+          </select>
+          {/* readOnly */}
           <button
-            className="ai-chat-clear-btn"
-            onClick={onToggleFloat}
-            title={t('aiChatDock')}
+            className={'ai-readonly-toggle' + (readOnly ? ' active' : '')}
+            onClick={() => setReadOnly((v) => !v)}
+            title={readOnly ? t('aiReadOnlyHint') : t('aiFullModeHint')}
+            style={{ display: compactReadOnly ? 'none' : undefined }}
           >
-            <Icon name="minimize" size={13} />
-            {t('aiChatDock')}
+            <span className="ai-readonly-dot" />
+            {readOnly ? t('aiReadOnlyOn') : t('aiReadOnlyOff')}
           </button>
-        )}
-        {onClose && (
+          {/* Max rounds */}
           <button
             className="ai-chat-clear-btn"
-            onClick={onClose}
+            onClick={() => setShowMaxRoundsPopup(true)}
+            title="Max rounds per run"
+            style={{ display: compactMaxRounds ? 'none' : undefined }}
+          >
+            <Icon name="refresh" size={13} />
+            Max rounds
+          </button>
+          {/* Clear */}
+          <button
+            className="ai-chat-clear-btn"
+            onClick={handleClear}
             disabled={streaming}
-            title={t('aiChatClose')}
+            title={t('clear')}
+            style={{ display: compactClear ? 'none' : undefined }}
           >
-            <Icon name="x" size={13} />
+            <Icon name="trash" size={13} />
           </button>
-        )}
-        <button
-          className="ai-chat-clear-btn"
-          onClick={handleClear}
-          disabled={streaming}
-          title={t('clear')}
-        >
-          <Icon name="trash" size={13} />
-          Clear
-        </button>
+
+          {/* "More" dropdown — visible when ANY control is compacted.
+              Contains ONLY the controls that are currently folded. */}
+          {showMoreBtn && (
+            <div className="ai-chat-more-wrapper">
+              <button
+                ref={moreBtnRef}
+                className="ai-chat-clear-btn ai-chat-more-btn"
+                onClick={() => {
+                  const rect = moreBtnRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    setMoreMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+                  }
+                  setShowMoreMenu((v) => !v)
+                }}
+                title="More options"
+              >
+                More
+                <Icon name="chevronDown" size={10} />
+              </button>
+              {showMoreMenu && moreMenuPos && (
+                <div
+                  className="ai-chat-more-dropdown"
+                  style={{ top: `${moreMenuPos.top}px`, right: `${moreMenuPos.right}px` }}
+                >
+                  {effectiveCompactToolFormat && (
+                    <div className="ai-chat-more-item">
+                      <span className="ai-chat-more-label">{t('aiToolCallFormat')}</span>
+                      <select
+                        className="ai-chat-select"
+                        value={toolCallFormat}
+                        onChange={(e) => {
+                          setToolCallFormat(e.target.value as 'flat' | 'nested')
+                          setShowMoreMenu(false)
+                        }}
+                      >
+                        <option value="nested">nested</option>
+                        <option value="flat">flat</option>
+                      </select>
+                    </div>
+                  )}
+                  {compactReadOnly && (
+                    <div className="ai-chat-more-item">
+                      <button
+                        className={'ai-readonly-toggle' + (readOnly ? ' active' : '')}
+                        onClick={() => {
+                          setReadOnly((v) => !v)
+                          setShowMoreMenu(false)
+                        }}
+                        title={readOnly ? t('aiReadOnlyHint') : t('aiFullModeHint')}
+                      >
+                        <span className="ai-readonly-dot" />
+                        {readOnly ? t('aiReadOnlyOn') : t('aiReadOnlyOff')}
+                      </button>
+                    </div>
+                  )}
+                  {compactMaxRounds && (
+                    <div className="ai-chat-more-item">
+                      <button
+                        className="ai-chat-clear-btn"
+                        onClick={() => {
+                          setShowMoreMenu(false)
+                          setTimeout(() => setShowMaxRoundsPopup(true), 50)
+                        }}
+                        title="Max rounds per run"
+                      >
+                        <Icon name="refresh" size={13} />
+                        Max rounds: {maxAgentRounds}
+                      </button>
+                    </div>
+                  )}
+                  {compactClear && (
+                    <div className="ai-chat-more-item ai-chat-more-separator" />
+                  )}
+                  {compactClear && (
+                    <div className="ai-chat-more-item">
+                      <button
+                        className="ai-chat-clear-btn"
+                        onClick={() => {
+                          handleClear()
+                          setShowMoreMenu(false)
+                        }}
+                        disabled={streaming}
+                      >
+                        <Icon name="trash" size={13} />
+                        Clear
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!floating && onToggleFloat && (
+            <button
+              className="ai-chat-clear-btn"
+              onClick={onToggleFloat}
+              title={t('aiChatPopOut')}
+            >
+              <Icon name="externalLink" size={13} />
+            </button>
+          )}
+          {floating && onToggleFloat && (
+            <button
+              className="ai-chat-clear-btn"
+              onClick={onToggleFloat}
+              title={t('aiChatDock')}
+            >
+              <Icon name="minimize" size={13} />
+            </button>
+          )}
+
+          {/* Close always at the far right */}
+          {onClose && (
+            <button
+              className="ai-chat-clear-btn ai-chat-close-btn"
+              onClick={onClose}
+              disabled={streaming}
+              title={t('aiChatClose')}
+            >
+              <Icon name="x" size={14} />
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Max rounds floating popup */}
+      {showMaxRoundsPopup && (
+        <>
+          <div className="ai-max-rounds-backdrop" onClick={() => setShowMaxRoundsPopup(false)} />
+          <div className="ai-max-rounds-dialog">
+            <span className="ai-max-rounds-title">Max agent rounds per run</span>
+            <div className="ai-max-rounds-row">
+              <input
+                ref={maxRoundsInputRef}
+                type="number"
+                min={1}
+                max={1000}
+                value={maxAgentRounds}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10)
+                  if (v >= 1 && v <= 1000) setMaxAgentRounds(v)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') setShowMaxRoundsPopup(false)
+                  if (e.key === 'Escape') setShowMaxRoundsPopup(false)
+                }}
+                className="ai-max-rounds-input"
+              />
+              <button
+                className="ai-max-rounds-apply"
+                onClick={() => setShowMaxRoundsPopup(false)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Messages */}
       <div
