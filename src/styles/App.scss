@@ -384,7 +384,7 @@ body.resize-v * {
   &-list {
     flex: 1;
     overflow-y: scroll;
-    padding: 4px 0;
+    padding: 4px 0 12px 0;
 
     // Hide native scrollbar — custom overlay scrollbar takes over
     &::-webkit-scrollbar { display: none; }
