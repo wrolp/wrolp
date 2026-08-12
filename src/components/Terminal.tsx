@@ -42,6 +42,10 @@ interface TerminalComponentProps {
   tabId: number
   isActive: boolean
   isFocused?: boolean
+  /** Current shell view for this tab's pane ("terminal", editor key, docker
+   *  log key). When transitioning back to "terminal" (e.g. from file editor),
+   *  the terminal is automatically focused. */
+  shellView?: string
   reconnectTrigger?: number
   connectConfig?: {
     id: string
@@ -73,6 +77,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
   isActive,
   isFocused,
+  shellView,
   reconnectTrigger,
   connectConfig,
   autoConnect,
@@ -655,6 +660,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       term.blur()
     }
   }, [isFocused])
+
+  // When the shell-view switches back to "terminal" (e.g. user clicks the
+  // terminal tab after editing a file), the terminal is already mounted and
+  // focused in the pane's sense — isFocused doesn't change.  This effect
+  // detects the view change and re-focuses the xterm textarea so the cursor
+  // lands in the shell prompt.
+  useEffect(() => {
+    if (shellView === 'terminal' && connectedRef.current) {
+      const term = termRef.current
+      if (term) {
+        activeTerminalByTab.set(tabIdRef.current, term)
+        term.focus()
+      }
+    }
+  }, [shellView])
 
   // Close context menu on click anywhere
   useEffect(() => {

@@ -2283,6 +2283,7 @@ export default function App() {
               tabId={tab.tabId}
               isActive={true}
               isFocused={isFocused}
+              shellView={getShellView(tab.tabId)}
               reconnectTrigger={reconnectKeys[tab.tabId] || 0}
               connectConfig={connectConfig}
               autoConnect={!!tab.connectionId || isLocalShell}
