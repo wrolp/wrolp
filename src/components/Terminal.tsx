@@ -104,6 +104,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement | null>(null)
 
+  // ---- custom overlay scrollbar (B13: terminal needs a visible scrollbar) ----
+  const [scrollThumb, setScrollThumb] = useState({ h: 0, t: 0, show: false })
+  const scrollThumbDragging = useRef(false)
+  const scrollThumbDragY = useRef(0)
+  const scrollThumbDragStart = useRef(0)
+  const viewportRef = useRef<HTMLElement | null>(null)
+  const scrollHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleScrollHide = useRef<() => void>(() => {})
+
   // Keep the right-click menu fully on-screen (e.g. when triggered near the
   // bottom edge of the shell pane it would otherwise be clipped).
   useLayoutEffect(() => {
@@ -242,6 +251,58 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     termRef.current = term
     fitRef.current = fitAddon
+
+    // ---- custom overlay scrollbar: track xterm's internal viewport ----
+    scheduleScrollHide.current = () => {
+      if (scrollHideTimer.current) clearTimeout(scrollHideTimer.current)
+      scrollHideTimer.current = setTimeout(() => {
+        setScrollThumb((p) => ({ ...p, show: false }))
+      }, 1000)
+    }
+    const updateThumb = () => {
+      const vp = viewportRef.current
+      if (!vp) return
+      const { scrollTop, scrollHeight, clientHeight } = vp
+      const pct = scrollHeight > 0 ? clientHeight / scrollHeight : 0
+      const h = Math.max(20, Math.round(clientHeight * pct))
+      const maxT = clientHeight - h
+      const maxS = scrollHeight - clientHeight
+      const t = maxS > 0 ? Math.round((scrollTop / maxS) * maxT) : 0
+      setScrollThumb((prev) => {
+        if (prev.h === h && prev.t === t && prev.show) return prev
+        return { h, t, show: true }
+      })
+      scheduleScrollHide.current()
+    }
+
+    const viewport = term.element?.querySelector('.xterm-viewport') as HTMLElement | null
+    if (viewport) {
+      viewportRef.current = viewport
+      viewport.addEventListener('scroll', updateThumb, { passive: true })
+      updateThumb()
+    }
+
+    const onViewportMouseEnter = () => {
+      if (scrollHideTimer.current) clearTimeout(scrollHideTimer.current)
+      setScrollThumb((p) => ({ ...p, show: true }))
+    }
+    const onViewportMouseLeave = (e: MouseEvent) => {
+      const rel = e.relatedTarget as HTMLElement | null
+      if (rel?.closest('.term-scrollbar')) return
+      scheduleScrollHide.current()
+    }
+    const vpEl = viewport as HTMLElement | undefined
+    if (vpEl) {
+      vpEl.addEventListener('mouseenter', onViewportMouseEnter)
+      vpEl.addEventListener('mouseleave', onViewportMouseLeave)
+    }
+
+    // ResizeObserver on the viewport so the thumb updates when xterm re-flows.
+    let viewportRO: ResizeObserver | null = null
+    if (viewport) {
+      viewportRO = new ResizeObserver(() => updateThumb())
+      viewportRO.observe(viewport)
+    }
 
     // User input → SSH. During a transient double-mount (React mounts the new
     // terminal before unmounting the old one — e.g. on split/close/reconcile),
@@ -427,6 +488,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       window.removeEventListener('resize', handleResize)
       resizeObserverRef.current?.disconnect()
       resizeObserverRef.current = null
+      // Scrollbar teardown
+      const vp = viewportRef.current
+      if (vp) {
+        vp.removeEventListener('scroll', updateThumb)
+        vp.removeEventListener('mouseenter', onViewportMouseEnter)
+        vp.removeEventListener('mouseleave', onViewportMouseLeave)
+        viewportRef.current = null
+      }
+      if (viewportRO) viewportRO.disconnect()
+      scrollThumbDragging.current = false
+      if (scrollHideTimer.current) clearTimeout(scrollHideTimer.current)
       // Drop this instance from the active registry if it was the registered
       // one (so a superseding instance isn't blocked by a disposed entry).
       if (activeTerminalByTab.get(currentTabId) === term) {
@@ -655,9 +727,53 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }, [onAskAi])
 
+  // ---- overlay scrollbar thumb drag ----
+  const handleThumbMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      scrollThumbDragging.current = true
+      scrollThumbDragY.current = e.clientY
+      const vp = viewportRef.current
+      if (vp) scrollThumbDragStart.current = vp.scrollTop
+      const thumbH = (e.target as HTMLElement).offsetHeight
+      const onMove = (ev: MouseEvent) => {
+        if (!scrollThumbDragging.current) return
+        const vp2 = viewportRef.current
+        if (!vp2) return
+        const dY = ev.clientY - scrollThumbDragY.current
+        const maxS = vp2.scrollHeight - vp2.clientHeight
+        const maxT = vp2.clientHeight - thumbH
+        const ratio = maxS / Math.max(1, maxT)
+        vp2.scrollTop = Math.max(0, Math.min(maxS, scrollThumbDragStart.current + dY * ratio))
+        setScrollThumb((p) => ({ ...p, show: true }))
+      }
+      const onUp = () => {
+        scrollThumbDragging.current = false
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+    },
+    [],
+  )
+
   return (
-    <>
-      <div ref={containerRef} style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'hidden' }} />
+    <div className="term-scrollbar-wrapper">
+      <div
+        ref={containerRef}
+        style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'hidden' }}
+      />
+      {/* Overlay custom scrollbar (B13) */}
+      {scrollThumb.show && scrollThumb.h > 0 && (
+        <div className="term-scrollbar" data-term-scrollbar={tabId}>
+          <div
+            className="term-scrollbar-thumb"
+            style={{ top: `${scrollThumb.t}px`, height: `${scrollThumb.h}px` }}
+            onMouseDown={handleThumbMouseDown}
+          />
+        </div>
+      )}
       {ctxMenu && (
         <div
           ref={ctxMenuRef}
@@ -685,7 +801,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }
 
