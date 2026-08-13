@@ -103,6 +103,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
   const localShellTypeRef = useRef(localShellType)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
+  // B16: last successfully-sent geometry, used to skip redundant resize sends.
+  const lastColsRef = useRef(0)
+  const lastRowsRef = useRef(0)
   // Guards sendResize until the backend shell is registered (otherwise ResizeObserver
   // fires before openLocalShell resolves, producing "local_resize: Local shell not found").
   const connectedRef = useRef(false)
@@ -373,20 +376,45 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
       fitRef.current.fit()
       term.refresh(0, term.rows - 1)
-      // Guard again: fit() may still resolve to 0 for a momentarily empty box.
-      if (term.cols > 0 && term.rows > 0) sendResize(term)
+      // B16: only send a resize when the geometry actually changed. Sending the
+      // same cols/rows repeatedly makes the remote shell repaint its prompt for
+      // nothing, and — worse — re-triggers xterm's scrollback reflow, which can
+      // race the shell's own SIGWINCH repaint and corrupt rows (the truncated /
+      // duplicated prompt artifacts). A changed-size check collapses these.
+      if (
+        term.cols > 0 &&
+        term.rows > 0 &&
+        (term.cols !== lastColsRef.current || term.rows !== lastRowsRef.current)
+      ) {
+        lastColsRef.current = term.cols
+        lastRowsRef.current = term.rows
+        sendResize(term)
+      }
+    }
+
+    // B16: coalesce bursts of resize events (window drag fires ResizeObserver +
+    // window.resize many times per frame) into a single fit/sendResize per
+    // animation frame. This avoids a pile-up of reflow-vs-SIGWINCH races that
+    // leave the terminal misaligned with duplicated/truncated prompt lines.
+    let resizeFrameId: number | null = null
+    const scheduleFitAndResize = () => {
+      if (resizeFrameId != null) return
+      resizeFrameId = requestAnimationFrame(() => {
+        resizeFrameId = null
+        maybeFitAndResize()
+      })
     }
 
     // Window resize
     const handleResize = () => {
-      maybeFitAndResize()
+      scheduleFitAndResize()
     }
     window.addEventListener('resize', handleResize)
 
     // Use ResizeObserver to monitor container size changes (more accurate than window resize)
     if (containerRef.current) {
       resizeObserverRef.current = new ResizeObserver(() => {
-        maybeFitAndResize()
+        scheduleFitAndResize()
       })
       resizeObserverRef.current.observe(containerRef.current)
     }
@@ -416,6 +444,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const rows = term.rows
       console.log(`[Terminal] initial fit done: ${cols}x${rows}, starting connect`)
       onSizeChangeRef.current?.(cols, rows)
+      // Seed the last-sent geometry so the first ResizeObserver tick after
+      // connect doesn't re-send an identical size (which would trigger a
+      // spurious SIGWINCH repaint and risk misalignment).
+      lastColsRef.current = cols
+      lastRowsRef.current = rows
       onStatusChangeRef.current('connecting')
       if (isLocal) {
         openLocalShell(currentTabId, localShellTypeRef.current, localCwd, true, cols, rows)
