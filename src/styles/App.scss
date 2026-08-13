@@ -355,8 +355,9 @@ body.resize-v * {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  flex-shrink: 0;
-  height: 100%;
+  flex-shrink: 1;
+  flex: 1;
+  min-height: 0;
 
   &-header {
     display: flex;
