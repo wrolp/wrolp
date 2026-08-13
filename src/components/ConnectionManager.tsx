@@ -486,8 +486,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             setEditing(null)
             setDefaultGroup('')
           }}
-          onSave={(config) => {
-            saveConn(config)
+          onSave={async (config) => {
+            // B15: saveConn is async (invoke save_connection -> backend mutates
+            // in-memory list + persists to disk). Calling onConnectionChange()
+            // (-> loadConnections -> list_connections) before the save resolves
+            // reads the stale list, so the new connection doesn't appear until
+            // a restart. Await the save first, then refresh.
+            try {
+              await saveConn(config)
+            } catch (err) {
+              console.error('Failed to save connection:', err)
+            }
             onConnectionChange()
             setShowModal(false)
             setEditing(null)
