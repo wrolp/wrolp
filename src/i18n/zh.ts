@@ -156,6 +156,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   newFolder: '新建文件夹',
   rename: '重命名',
   fileEditor: '文件编辑器',
+  transfers: '传输中',
+  transfersComplete: '传输完成',
+  dragToResize: '拖动调整高度',
+  failed: '失败',
 
   // Settings: general
   settingsGeneral: '通用',

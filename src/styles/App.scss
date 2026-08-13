@@ -2884,6 +2884,116 @@ input[type='password']::-ms-clear {
     }
   }
 
+  // Multi-file transfer progress list (bottom of the file panel).
+  .file-transfers {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    border-top: 1px solid $border;
+    background: $bg-secondary;
+    min-height: 48px;
+    overflow: hidden;
+  }
+
+  .file-transfers-drag {
+    flex-shrink: 0;
+    height: 5px;
+    cursor: row-resize;
+    background: transparent;
+
+    &:hover {
+      background: rgba(128, 128, 128, 0.25);
+    }
+  }
+
+  .file-transfers-head {
+    display: flex;
+    align-items: center;
+    padding: 2px 8px;
+    gap: 6px;
+    flex-shrink: 0;
+
+    .file-transfers-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: $text-dim;
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .file-transfers-body-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .file-transfers-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: scroll;
+    padding: 0 8px 4px;
+
+    // Hide native scrollbar — custom overlay scrollbar takes over.
+    &::-webkit-scrollbar {
+      display: none;
+    }
+    scrollbar-width: none;
+  }
+
+  .file-transfer-row {
+    padding: 3px 0;
+
+    .file-transfer-name {
+      font-size: 11px;
+      color: $text-primary;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+
+    .file-transfer-bar {
+      height: 3px;
+      background: $bg-input;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 2px;
+    }
+
+    .file-transfer-fill {
+      height: 100%;
+      width: 50%;
+      background: $accent;
+      border-radius: 2px;
+      animation: progress-indeterminate 1.2s ease-in-out infinite;
+      transition: width 0.15s ease;
+    }
+
+    .file-transfer-meta {
+      font-size: 10px;
+      color: $text-dim;
+    }
+
+    .file-transfer-error {
+      color: #f44747;
+    }
+
+    &.error .file-transfer-name {
+      color: #f44747;
+    }
+
+    &.done .file-transfer-fill {
+      background: #4caf50;
+    }
+  }
+
   @keyframes progress-indeterminate {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(200%); }

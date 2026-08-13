@@ -19,6 +19,18 @@ interface TransferProgress {
   elapsed: number
 }
 
+/** One row in the multi-file transfer progress list. */
+interface TransferRow {
+  /** Stable unique key: `up:`/`down:` + filename. */
+  key: string
+  filename: string
+  op: 'upload' | 'download'
+  status: 'queued' | 'active' | 'done' | 'error'
+  transferred: number
+  total: number
+  speed: string
+}
+
 interface TreeNode {
   name: string
   path: string
@@ -240,18 +252,18 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const [tree, setTree] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [selPath, setSelPath] = useState<string | null>(null)
+  const [selPaths, setSelPaths] = useState<Set<string>>(new Set())
   const [contextMenu, setContextMenu] = useState<{
     x: number; y: number; node: TreeNode | null
   } | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const [downloading, setDownloading] = useState(false)
   const [paused, setPaused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
-  const [transferStatus, setTransferStatus] = useState('')
-  const [transferProgress, setTransferProgress] = useState<{
-    transferred: number; total: number; speed: string
-  } | null>(null)
+  // Per-file transfer rows shown in the bottom progress panel. Both upload and
+  // download batches populate this list so the user sees one row per file
+  // (filename + progress bar + speed) instead of a single shared progress bar.
+  const [transferRows, setTransferRows] = useState<TransferRow[]>([])
+  // Height of the transfer list panel; user can drag the handle on its top edge.
+  const [transfersPanelHeight, setTransfersPanelHeight] = useState(140)
   const panelRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [contextMenuStyle, setContextMenuStyle] = useState<React.CSSProperties>({})
@@ -279,7 +291,6 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const loadRootDir = useCallback(async (path: string, sendCd = false): Promise<boolean> => {
     setLoading(true)
     setError('')
-    setTransferProgress(null)
     try {
       const result = await fsListFiles(target, path)
       setTree(result.map(toNode))
@@ -384,7 +395,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     return () => { active = false; clearInterval(interval) }
   }, [syncEnabled, isConnected, sessionTabId, loadRootDir])
 
-  // Transfer progress events (main session only)
+  // Transfer progress events (main session only). Each event carries the
+  // filename, so we can route it to the matching per-file row in the list.
   useEffect(() => {
     if (sessionTabId == null) return
     const unlisten = listen<TransferProgress>('transfer-progress', (event) => {
@@ -392,11 +404,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       if (p.tabId !== sessionTabId) return
       const elapsed = p.elapsed > 0 ? p.elapsed / 1000 : 0.001
       const bytesPerSec = p.transferred / elapsed
-      setTransferProgress({
-        transferred: p.transferred,
-        total: p.total,
-        speed: formatSpeed(bytesPerSec),
-      })
+      const key = `${p.op}:${p.filename}`
+      setTransferRows((prev) =>
+        prev.map((r) =>
+          r.key === key
+            ? { ...r, transferred: p.transferred, total: p.total, speed: formatSpeed(bytesPerSec), status: 'active' }
+            : r,
+        ),
+      )
     })
     return () => { unlisten.then(fn => fn()) }
   }, [sessionTabId])
@@ -451,39 +466,64 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   /* ---- upload ---- */
   const uploadFiles = useCallback(async (paths: string[]) => {
-    setUploading(true); setError(''); setPaused(false); setTransferProgress(null)
-    const total = paths.length
+    setError(''); setPaused(false)
+    const rows: TransferRow[] = paths.map((localPath) => {
+      const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
+      return {
+        key: `upload:${fileName}`,
+        filename: fileName,
+        op: 'upload',
+        status: 'queued',
+        transferred: 0,
+        total: 0,
+        speed: '',
+      }
+    })
+    setTransferRows(rows)
     for (let i = 0; i < paths.length; i++) {
       const localPath = paths[i]
-      const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
+      const fileName = rows[i].filename
       const remotePath = join(currentPath, fileName)
-      setTransferStatus(`Uploading ${i + 1}/${total}: ${fileName}`)
+      setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)))
       try {
         await fsUploadFile(target, localPath, remotePath)
+        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r)))
       } catch (e) {
+        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)))
         setError(`Upload ${fileName} failed: ${e}`); break
       }
     }
-    setUploading(false); setPaused(false); setTransferStatus(''); setTransferProgress(null)
+    setPaused(false)
     refresh()
   }, [target, currentPath, refresh])
 
   const handleDropUpload = useCallback(async (fileList: FileList) => {
-    setUploading(true); setError(''); setPaused(false); setTransferProgress(null)
-    const total = fileList.length
+    setError(''); setPaused(false)
+    const rows: TransferRow[] = Array.from(fileList).map((file) => ({
+      key: `upload:${file.name}`,
+      filename: file.name,
+      op: 'upload',
+      status: 'queued',
+      transferred: 0,
+      total: 0,
+      speed: '',
+    }))
+    setTransferRows(rows)
     for (let i = 0; i < fileList.length; i++) {
       const file = fileList[i]
       const remotePath = join(currentPath, file.name)
-      setTransferStatus(`Uploading ${i + 1}/${total}: ${file.name}`)
+      setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)))
       try {
         const buf = await file.arrayBuffer()
         const bytes = Array.from(new Uint8Array(buf))
         await fsUploadFileBytes(target, remotePath, bytes)
+        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r)))
       } catch (e) {
+        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)))
         setError(`Upload ${file.name} failed: ${e}`); break
       }
     }
-    setUploading(false); setPaused(false); setTransferStatus(''); setTransferProgress(null)
+    setPaused(false)
     refresh()
   }, [target, currentPath, refresh])
 
@@ -527,6 +567,19 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }
 
   /* ---- context-menu actions ---- */
+
+  // All selected non-directory nodes (used for multi-file download).
+  const selectedFiles = useMemo(() => {
+    const out: TreeNode[] = []
+    const collect = (ns: TreeNode[]) => {
+      for (const n of ns) {
+        if (selPaths.has(n.path) && !n.isDir) out.push(n)
+        if (n.children) collect(n.children)
+      }
+    }
+    collect(tree)
+    return out
+  }, [selPaths, tree])
 
   const newFile = async (baseNode: TreeNode | null) => {
     setContextMenu(null)
@@ -587,15 +640,74 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     try {
       const filePath = await save({ title: 'Save file as', defaultPath: node.name })
       if (filePath) {
-        setDownloading(true); setPaused(false)
-        setTransferStatus(`Downloading: ${node.name}`)
-        setTransferProgress(null)
-        await fsDownloadFile(target, node.path, filePath as string)
-        setDownloading(false); setPaused(false); setTransferStatus(''); setTransferProgress(null)
+        setPaused(false)
+        setTransferRows([{
+          key: `download:${node.name}`,
+          filename: node.name,
+          op: 'download',
+          status: 'queued',
+          transferred: 0,
+          total: 0,
+          speed: '',
+        }])
+        try {
+          await fsDownloadFile(target, node.path, filePath as string)
+          setTransferRows((prev) => prev.map((r) =>
+            r.key === `download:${node.name}` ? { ...r, status: 'done', transferred: r.total } : r))
+        } catch (e) {
+          setTransferRows((prev) => prev.map((r) =>
+            r.key === `download:${node.name}` ? { ...r, status: 'error' } : r))
+          setError(String(e))
+        }
       }
-    } catch (e) {
-      setDownloading(false); setTransferStatus(''); setTransferProgress(null); setError(String(e))
+    } catch (e) { setError(String(e)) }
+  }
+
+  /** Download several files (from multi-select) into a chosen local folder. */
+  const downloadFiles = async (files: TreeNode[]) => {
+    setContextMenu(null)
+    const targets = files.filter((n) => !n.isDir)
+    if (targets.length === 0) { setError('Downloading directories is not supported yet'); return }
+    let folder: string | null = null
+    if (targets.length === 1) {
+      const filePath = await save({ title: 'Save file as', defaultPath: targets[0].name })
+      if (!filePath) return
+      await downloadFilesInto([{ file: targets[0], localPath: filePath as string }])
+      return
     }
+    folder = await open({ directory: true, title: 'Select folder to download into' })
+    if (!folder) return
+    const sep = (folder as string).includes('\\') ? '\\' : '/'
+    await downloadFilesInto(targets.map((n) => ({
+      file: n,
+      localPath: `${(folder as string).replace(/[\\/]+$/, '')}${sep}${n.name}`,
+    })))
+  }
+
+  const downloadFilesInto = async (items: { file: TreeNode; localPath: string }[]) => {
+    setError(''); setPaused(false)
+    const rows: TransferRow[] = items.map(({ file }) => ({
+      key: `download:${file.name}`,
+      filename: file.name,
+      op: 'download',
+      status: 'queued',
+      transferred: 0,
+      total: 0,
+      speed: '',
+    }))
+    setTransferRows(rows)
+    for (let i = 0; i < items.length; i++) {
+      const { file, localPath } = items[i]
+      setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)))
+      try {
+        await fsDownloadFile(target, file.path, localPath)
+        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r)))
+      } catch (e) {
+        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)))
+        setError(`Download ${file.name} failed: ${e}`)
+      }
+    }
+    setPaused(false)
   }
 
   const handleEdit = (node: TreeNode) => {
@@ -675,10 +787,86 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     onMouseEnter: onFileMouseEnter,
     onMouseLeave: onFileMouseLeave,
   } = useCustomScrollbar()
+  // Second instance for the transfer list body (internal scrollbar).
+  const {
+    listRef: transfersListRef,
+    thumbHeight: transfersThumbHeight,
+    thumbTop: transfersThumbTop,
+    showThumb: transfersShowThumb,
+    onScroll: onTransfersScroll,
+    onThumbMouseDown: onTransfersThumbMouseDown,
+    onMouseEnter: onTransfersMouseEnter,
+    onMouseLeave: onTransfersMouseLeave,
+  } = useCustomScrollbar()
+
+  // Auto-clear the panel a few seconds after every row has finished, so the
+  // transfer list doesn't linger after the work is done.
+  useEffect(() => {
+    if (transferRows.length === 0) return
+    if (transferRows.some((r) => r.status === 'queued' || r.status === 'active')) return
+    const t = window.setTimeout(() => setTransferRows([]), 2500)
+    return () => window.clearTimeout(t)
+  }, [transferRows])
+
+  /* ---- transfers panel drag-to-resize ---- */
+  const transfersDragRef = useRef<{ startY: number; startH: number } | null>(null)
+  const onTransfersDragStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    transfersDragRef.current = { startY: e.clientY, startH: transfersPanelHeight }
+    const onMove = (ev: MouseEvent) => {
+      const drag = transfersDragRef.current
+      if (!drag) return
+      // Dragging up (negative delta) grows the panel; clamp to a sane range.
+      const h = Math.max(48, Math.min(320, drag.startH + (drag.startY - ev.clientY)))
+      setTransfersPanelHeight(h)
+    }
+    const onUp = () => {
+      transfersDragRef.current = null
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
 
   /* ---- node click ---- */
-  const handleNodeClick = (node: TreeNode) => {
-    setSelPath(node.path)
+  // Anchor for Shift+click range selection (last clicked / selected path).
+  const lastClickedRef = useRef<string | null>(null)
+  const handleNodeClick = (node: TreeNode, e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      // Multi-select: Ctrl/Cmd toggles a node, Shift extends the selection.
+      setSelPaths((prev) => {
+        const next = new Set(prev)
+        if (e.shiftKey && prev.size > 0 && lastClickedRef.current) {
+          // Range-select all nodes between the last clicked node and this one.
+          const all: string[] = []
+          const collect = (ns: TreeNode[]) => {
+            for (const n of ns) {
+              all.push(n.path)
+              if (n.expanded && n.children) collect(n.children)
+            }
+          }
+          collect(tree)
+          const last = lastClickedRef.current
+          const i1 = all.indexOf(last)
+          const i2 = all.indexOf(node.path)
+          if (i1 >= 0 && i2 >= 0) {
+            const [a, b] = i1 < i2 ? [i1, i2] : [i2, i1]
+            const range = new Set(next)
+            for (let i = a; i <= b; i++) range.add(all[i])
+            return range
+          }
+        }
+        if (next.has(node.path)) next.delete(node.path)
+        else next.add(node.path)
+        return next
+      })
+      lastClickedRef.current = node.path
+      return
+    }
+    setSelPaths(new Set([node.path]))
+    lastClickedRef.current = node.path
     if (node.isDir) {
       toggleDir(node)
     } else {
@@ -691,10 +879,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     return nodes.map((node) => (
       <div key={node.path}>
         <div
-          className={`tree-row ${selPath === node.path ? 'selected' : ''} ${node.isDir ? 'dir' : 'file'}`}
+          className={`tree-row ${selPaths.has(node.path) ? 'selected' : ''} ${node.isDir ? 'dir' : 'file'}`}
           style={{ paddingLeft: 8 + depth * 14 }}
-          onClick={() => handleNodeClick(node)}
-          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, node }) }}
+          onClick={(e) => handleNodeClick(node, e)}
+          onContextMenu={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            // Right-click on a node: select it (if not already selected) so
+            // "Download N files" always targets the right-clicked item too.
+            setSelPaths((prev) => (prev.has(node.path) ? prev : new Set([node.path])))
+            setContextMenu({ x: e.clientX, y: e.clientY, node })
+          }}
           title={node.path}
         >
           <span className="tree-icon">
@@ -840,32 +1034,79 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             )}
           </div>
 
-          {(loading || uploading || downloading || transferProgress) && (
+          {loading && (
             <div className="file-loading">
-              {transferStatus ? (
-                <>
-                  <div className="file-progress-bar">
-                    <div className="file-progress-fill" style={
-                      transferProgress && transferProgress.total > 0
-                        ? { width: `${(transferProgress.transferred / transferProgress.total) * 100}%`, animation: 'none' }
-                        : undefined
-                    } />
+              <span>Loading...</span>
+            </div>
+          )}
+
+          {/* Multi-file transfer progress list. Height is user-adjustable via the
+              drag handle on its top edge; rows scroll internally when they overflow. */}
+          {transferRows.length > 0 && (
+            <div className="file-transfers" style={{ height: transfersPanelHeight }}>
+              <div
+                className="file-transfers-drag"
+                onMouseDown={onTransfersDragStart}
+                title={t('dragToResize')}
+              />
+              <div className="file-transfers-head">
+                <span className="file-transfers-title">
+                  {transferRows.some((r) => r.status === 'active' || r.status === 'queued')
+                    ? t('transfers')
+                    : t('transfersComplete')}
+                </span>
+                {sessionTabId != null && (
+                  <button className="file-pause-btn" onClick={togglePause} title={paused ? 'Resume' : 'Pause'}>
+                    {paused ? <Icon name="play" /> : <Icon name="pause" />}
+                  </button>
+                )}
+              </div>
+              <div className="file-transfers-body-wrap">
+                <div
+                  className="file-transfers-body"
+                  ref={transfersListRef}
+                  onScroll={onTransfersScroll}
+                  onMouseEnter={onTransfersMouseEnter}
+                  onMouseLeave={onTransfersMouseLeave}
+                >
+                  {transferRows.map((row) => (
+                    <div key={row.key} className={`file-transfer-row ${row.status}`}>
+                      <div className="file-transfer-name" title={row.filename}>{row.filename}</div>
+                      <div className="file-transfer-bar">
+                        <div
+                          className="file-transfer-fill"
+                          style={
+                            row.total > 0
+                              ? { width: `${Math.min(100, (row.transferred / row.total) * 100)}%`, animation: 'none' }
+                              : row.status === 'active'
+                                ? undefined
+                                : undefined
+                          }
+                        />
+                      </div>
+                      <div className="file-transfer-meta">
+                        {row.status === 'error' && <span className="file-transfer-error">✗ {t('failed')}</span>}
+                        {row.status === 'done' && <span>✓</span>}
+                        {row.status === 'queued' && <span>· · ·</span>}
+                        {row.total > 0 && (
+                          <span>
+                            {' '}{formatSize(row.transferred)} / {formatSize(row.total)} · {row.speed}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {transfersThumbHeight > 0 && (
+                  <div className={`sidebar-scrollbar${transfersShowThumb ? ' show' : ''}`}>
+                    <div
+                      className="sidebar-scrollbar-thumb"
+                      style={{ height: transfersThumbHeight, top: transfersThumbTop }}
+                      onMouseDown={onTransfersThumbMouseDown}
+                    />
                   </div>
-                  <span>{transferStatus}</span>
-                  {sessionTabId != null && (
-                    <button className="file-pause-btn" onClick={togglePause} title={paused ? 'Resume' : 'Pause'}>
-                      {paused ? <Icon name="play" /> : <Icon name="pause" />}
-                    </button>
-                  )}
-                  {transferProgress && transferProgress.total > 0 && (
-                    <span className="file-progress-detail">
-                      {formatSize(transferProgress.transferred)} / {formatSize(transferProgress.total)} · {transferProgress.speed}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <span>{uploading ? 'Uploading...' : downloading ? 'Downloading...' : 'Loading...'}</span>
-              )}
+                )}
+              </div>
             </div>
           )}
         </>
@@ -960,6 +1201,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           {contextMenu.node && !contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => handleDownload(contextMenu.node!)}>
               <Icon name="download" /> Download
+            </div>
+          )}
+          {selectedFiles.length > 1 && (
+            <div className="context-menu-item" onClick={() => downloadFiles(selectedFiles)}>
+              <Icon name="download" /> Download {selectedFiles.length} files
             </div>
           )}
           {contextMenu.node && contextMenu.node.isDir && (

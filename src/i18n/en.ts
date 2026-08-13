@@ -154,6 +154,10 @@ const en = {
   newFolder: 'New Folder',
   rename: 'Rename',
   fileEditor: 'File Editor',
+  transfers: 'Transfers',
+  transfersComplete: 'Transfers complete',
+  dragToResize: 'Drag to resize',
+  failed: 'Failed',
 
   // Settings: general
   settingsGeneral: 'General',
