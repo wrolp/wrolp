@@ -289,9 +289,13 @@ export default function AiChatPanel({
   const compactReadOnly = headerWidth < COLLAPSE_READ_ONLY
   const compactMaxRounds = headerWidth < COLLAPSE_MAX_ROUNDS
   const compactClear = headerWidth < COLLAPSE_CLEAR
+  // The nested/flat select is hidden from the header whenever the readOnly
+  // toggle is compacted (per "show nested/flat only when Full/Read is visible")
+  // OR when it is itself compacted. In both cases it must move into More so it
+  // never disappears.
+  const toolFormatInMore = compactReadOnly || effectiveCompactToolFormat
   // More dropdown visible only when at least one control is actually compacted.
-  const showMoreBtn =
-    effectiveCompactToolFormat || compactReadOnly || compactMaxRounds || compactClear
+  const showMoreBtn = toolFormatInMore || compactMaxRounds || compactClear
 
   // Close the "More" dropdown on outside click / escape.
   useEffect(() => {
@@ -1199,7 +1203,7 @@ export default function AiChatPanel({
                   className="ai-chat-more-dropdown"
                   style={{ top: `${moreMenuPos.top}px`, right: `${moreMenuPos.right}px` }}
                 >
-                  {effectiveCompactToolFormat && (
+                  {toolFormatInMore && (
                     <div className="ai-chat-more-item">
                       <span className="ai-chat-more-label">{t('aiToolCallFormat')}</span>
                       <select
