@@ -484,6 +484,8 @@ pub struct AppState {
   /// `SshHandler::emit` tees a copy of every chunk into it. The local-shell
   /// equivalent lives in `LocalShell::ai_capture`.
   pub ai_captures: StdMutex<HashMap<u32, String>>,
+  /// Monotonic counter pairing `ai-term-mark` begin/end events per tab.
+  pub next_ai_term_seq: AtomicU64,
   /// Transfer pause controls: tab_id → control
   pub transfer_controls: StdMutex<HashMap<u32, Arc<TransferControl>>>,
   /// Monotonic connection counter — bumped per new connect() call
@@ -544,6 +546,7 @@ impl AppState {
       sessions: StdMutex::new(HashMap::new()),
       output_buffers: StdMutex::new(HashMap::new()),
       ai_captures: StdMutex::new(HashMap::new()),
+      next_ai_term_seq: AtomicU64::new(1),
       transfer_controls: StdMutex::new(HashMap::new()),
       next_session_id: AtomicU64::new(1),
       db,

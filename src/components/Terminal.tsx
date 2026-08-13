@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
+import { listen } from '@tauri-apps/api/event'
 import '@xterm/xterm/css/xterm.css'
 import {
   connect,
@@ -21,6 +22,7 @@ import {
   stripAnsi,
   preloadHighlightLanguages,
 } from '../lib/termHighlight'
+import type { AiTermMark } from '../types'
 
 // Tracks the single "active" terminal instance per session tabId. During a
 // transient double-mount (React mounts the new terminal before unmounting the
@@ -161,6 +163,38 @@ function feedCapture(term: Terminal, c: CaptureState, chunk: string, onEnd: () =
   }, CAPTURE_TIMEOUT_MS)
 }
 
+// ---- AI-issued command/output highlight (ai-term-mark) ----
+//
+// `run_command_on_terminal` types AI commands into the live shell and emits
+// `ai-term-mark` begin/end events. xterm's `onData` never fires for backend
+// writes, so the command line can't be detected via keystrokes — instead the
+// frontend colorizes the output stream itself: bright cyan + bold for the
+// echoed command line (up to its first newline), dim cyan for the command's
+// output, restoring the default color on `end`. This is a pure output-stream
+// rewrite, so it works identically for SSH and ConPTY local shells.
+
+const AI_CMD_FG = '\x1b[96m\x1b[1m' // bright cyan + bold
+const AI_OUTPUT_FG = '\x1b[2m\x1b[36m' // dim cyan
+const ANSI_RESET = '\x1b[0m'
+const AI_MARK_TIMEOUT_MS = 90_000
+
+interface AiMarkState {
+  mode: 'cmd' | 'output'
+  seq: number
+}
+
+/** Rewrite a chunk's foreground color, dropping any pre-existing SGR color. */
+function colorizeChunk(chunk: string, fg: string): string {
+  if (!chunk.includes('\x1b[')) return fg + chunk + ANSI_RESET
+  return fg + chunk.replace(/(\x1b\[[0-9;]*m)/g, ANSI_RESET + fg) + ANSI_RESET
+}
+
+/** Dim a plain output chunk; pass colored chunks (grep/git) through untouched. */
+function colorizeOutputChunk(chunk: string): string {
+  if (chunk.includes('\x1b[')) return chunk
+  return AI_OUTPUT_FG + chunk + ANSI_RESET
+}
+
 interface TerminalComponentProps {
   tabId: number
   isActive: boolean
@@ -253,11 +287,72 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     captureRef.current = null
   }
 
-  // Single funnel for all output chunks: passthrough normally, or feed the
-  // capture state machine while a print-style command's output is streaming.
+  // ---- AI-issued command/output highlight (ai-term-mark) ----
+  const aiMarkRef = useRef<AiMarkState | null>(null)
+  const aiMarkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearAiMarkTimeout = () => {
+    if (aiMarkTimeoutRef.current) {
+      clearTimeout(aiMarkTimeoutRef.current)
+      aiMarkTimeoutRef.current = null
+    }
+  }
+
+  // Restore default color on `end`. (No timed-out/truncated status text is
+  // written here: appending anything after the shell prompt would desync the
+  // cursor the same way injecting extra rows does for ConPTY/readline repaints.
+  // Those hints already surface in the AI chat panel's result note.)
+  const endAiMark = (mark: AiTermMark) => {
+    const st = aiMarkRef.current
+    if (!st || mark.seq !== st.seq) return // stale end — ignore
+    clearAiMarkTimeout()
+    aiMarkRef.current = null
+    termRef.current?.write(ANSI_RESET)
+  }
+
+  const beginAiMark = (mark: AiTermMark) => {
+    // An AI command supersedes any in-flight cat/head/tail capture.
+    resetCapture()
+    aiMarkRef.current = { mode: 'cmd', seq: mark.seq }
+    clearAiMarkTimeout()
+    // Safety net: if the backend dies before emitting `end`, stop coloring.
+    aiMarkTimeoutRef.current = setTimeout(() => {
+      aiMarkTimeoutRef.current = null
+      aiMarkRef.current = null
+      termRef.current?.write(ANSI_RESET)
+    }, AI_MARK_TIMEOUT_MS)
+  }
+
+  const writeAiChunk = (st: AiMarkState, chunk: string) => {
+    const term = termRef.current
+    if (!term) return
+    if (st.mode === 'output') {
+      term.write(colorizeOutputChunk(chunk))
+      return
+    }
+    // cmd mode: the echoed command line is everything up to its first newline;
+    // what follows is output.
+    const idx = chunk.indexOf('\n')
+    if (idx === -1) {
+      term.write(colorizeChunk(chunk, AI_CMD_FG))
+    } else {
+      term.write(colorizeChunk(chunk.slice(0, idx + 1), AI_CMD_FG))
+      st.mode = 'output'
+      const rest = chunk.slice(idx + 1)
+      if (rest.length > 0) term.write(colorizeOutputChunk(rest))
+    }
+  }
+
+  // Single funnel for all output chunks: AI-command coloring first, then the
+  // cat/head/tail capture machine, otherwise passthrough.
   const writeOutput = (chunk: string) => {
     const term = termRef.current
     if (!term) return
+    const ai = aiMarkRef.current
+    if (ai) {
+      writeAiChunk(ai, chunk)
+      return
+    }
     const c = captureRef.current
     if (!c) {
       term.write(chunk)
@@ -378,6 +473,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
 
     const currentTabId = tabIdRef.current
+
+    // Colorize AI-issued command lines and their output on this terminal (see
+    // the ai-term-mark state machine above). Filtered to this tab; the backend
+    // emits begin/end around every run_command_on_terminal.
+    let unlistenAiMark: (() => void) | null = null
+    listen<AiTermMark>('ai-term-mark', (event) => {
+      const m = event.payload
+      if (m.tabId !== currentTabId) return
+      if (m.mark === 'begin') beginAiMark(m)
+      else endAiMark(m)
+    }).then((un) => {
+      unlistenAiMark = un
+    })
 
     const term = new Terminal({
       cursorBlink: true,
@@ -699,6 +807,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       hasRun.current = false
       connectedRef.current = false
       resetCapture()
+      clearAiMarkTimeout()
+      aiMarkRef.current = null
+      unlistenAiMark?.()
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
         pollTimerRef.current = null
@@ -753,6 +864,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     // A reconnect starts a fresh session — abandon any in-flight highlight capture.
     resetCapture()
+    clearAiMarkTimeout()
+    aiMarkRef.current = null
 
     const term = termRef.current
     if (!term) return

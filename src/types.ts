@@ -404,6 +404,21 @@ export interface AiChatChunk {
   error: string | null
 }
 
+/**
+ * Boundary marker emitted by `run_command_on_terminal` so the frontend can
+ * colorize the AI-issued command line (`begin`) and its output (until `end`)
+ * differently from user-typed text. `seq` pairs begin/end per tab.
+ */
+export interface AiTermMark {
+  tabId: number
+  kind: 'ssh' | 'local'
+  command: string
+  mark: 'begin' | 'end'
+  seq: number
+  timedOut: boolean
+  truncated: boolean
+}
+
 // ===== Customizable workspace layout =====
 
 export type DockSide = 'left' | 'right'

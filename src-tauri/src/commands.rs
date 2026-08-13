@@ -3588,7 +3588,7 @@ pub async fn confirm_ai_tool(
   let mut results: Vec<crate::ai::ToolResult> = Vec::new();
   for call in &pending.calls {
     let result = if approved {
-      execute_one_tool(&state, call, None, true, read_only)
+      execute_one_tool(&app, &state, call, None, true, read_only)
         .await
         .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string())
     } else {
@@ -3963,6 +3963,34 @@ fn trim_echo_and_prompt(text: &str, command: &str, ended_without_newline: bool) 
   lines.join("\n")
 }
 
+/// Emit an `ai-term-mark` event so the frontend can colorize the AI-issued
+/// command line (from `begin`) and its output (until `end`) on the live
+/// terminal. `begin` is emitted *before* the command is typed so the frontend
+/// enters command-highlight mode before the echo arrives over the PTY.
+fn emit_ai_term_mark(
+  app: &tauri::AppHandle,
+  tab_id: u32,
+  kind: LiveShell,
+  command: &str,
+  mark: &str,
+  seq: u64,
+  timed_out: bool,
+  truncated: bool,
+) {
+  let _ = app.emit(
+    "ai-term-mark",
+    serde_json::json!({
+      "tabId": tab_id,
+      "kind": match kind { LiveShell::Ssh => "ssh", LiveShell::Local => "local" },
+      "command": command,
+      "mark": mark,
+      "seq": seq,
+      "timedOut": timed_out,
+      "truncated": truncated,
+    }),
+  );
+}
+
 /// Run `command` by typing it into the tab's live interactive shell and
 /// capturing what the shell prints back.
 ///
@@ -3971,6 +3999,7 @@ fn trim_echo_and_prompt(text: &str, command: &str, ended_without_newline: bool) 
 /// The trade-off is that a PTY exposes no exit code and no end-of-command
 /// signal — completion is detected with a quiet-period heuristic.
 async fn run_command_on_terminal(
+  app: &tauri::AppHandle,
   state: &AppState,
   tab_id: u32,
   command: &str,
@@ -3991,6 +4020,14 @@ async fn run_command_on_terminal(
     return Err("Another AI command is already running on this terminal".into());
   }
 
+  // Allocate a per-tab monotonic sequence so the frontend can pair begin/end
+  // and ignore stale events from a previous command.
+  let seq = state.next_ai_term_seq.fetch_add(1, Ordering::SeqCst);
+
+  // Signal the start *before* typing so the echo is already being colorized by
+  // the time it lands in the output buffer.
+  emit_ai_term_mark(app, tab_id, kind, &cmd, "begin", seq, false, false);
+
   // Visual cue that the next echoed line came from the assistant. Written
   // WITHOUT a newline on purpose: the prompt is already drawn and the cursor
   // parked after it, so this only shifts the column. Injecting extra *rows*
@@ -4008,6 +4045,9 @@ async fn run_command_on_terminal(
 
   if let Err(e) = type_into_shell(state, tab_id, kind, &format!("{}\r", cmd)) {
     let _ = ai_capture_finish(state, tab_id, kind);
+    // Typing failed (e.g. shell vanished) — tell the frontend to reset so it
+    // does not stay stuck in command-highlight mode.
+    emit_ai_term_mark(app, tab_id, kind, &cmd, "end", seq, false, false);
     return Err(e);
   }
   record_ai_command(state, tab_id, &cmd);
@@ -4050,6 +4090,10 @@ async fn run_command_on_terminal(
       .unwrap_or(0);
     output = format!("...[truncated]...\n{}", &output[cut..]);
   }
+
+  // Signal the end so the frontend restores default colors. `timed_out` and
+  // `truncated` ride along for the frontend (e.g. the AI chat result note).
+  emit_ai_term_mark(app, tab_id, kind, &cmd, "end", seq, timed_out, truncated);
 
   eprintln!(
     "[run_command_on_terminal] tab={} kind={:?} bytes={} timed_out={} cmd={}",
@@ -4477,7 +4521,7 @@ async fn execute_ai_tools(
   let mut results: Vec<crate::ai::ToolResult> = Vec::new();
 
   for call in calls {
-    let result = execute_one_tool(&state, &call, current_tab_id, false, read_only)
+    let result = execute_one_tool(app, &state, &call, current_tab_id, false, read_only)
       .await
       .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string());
     results.push((call.id, result));
@@ -4584,6 +4628,7 @@ async fn run_local_command(command: String, cwd: Option<String>) -> Result<Strin
 }
 
 async fn execute_one_tool(
+  app: &tauri::AppHandle,
   state: &tauri::State<'_, AppState>,
   call: &crate::ai::OpenAiToolCall,
   current_tab_id: Option<u32>,
@@ -4634,7 +4679,7 @@ async fn execute_one_tool(
       // below when the tab has no live shell or the feature is disabled.
       if ai_run_in_terminal_enabled(state) {
         if let Some(kind) = live_shell_kind(state, tab_id) {
-          match run_command_on_terminal(state, tab_id, &command, kind).await {
+          match run_command_on_terminal(app, state, tab_id, &command, kind).await {
             Ok(out) => return Ok(out),
             Err(e) => {
               // Never fail the tool call on a typing/capture problem — degrade
