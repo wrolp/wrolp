@@ -15,6 +15,12 @@ import {
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
+import {
+  parsePrintCommand,
+  highlightLines,
+  stripAnsi,
+  preloadHighlightLanguages,
+} from '../lib/termHighlight'
 
 // Tracks the single "active" terminal instance per session tabId. During a
 // transient double-mount (React mounts the new terminal before unmounting the
@@ -36,6 +42,123 @@ const replayScrollback = (term: Terminal, tabId: number): void => {
   scrollbackCache.delete(tabId)
   term.write(cached)
   term.scrollToBottom()
+}
+
+// ---- terminal output syntax highlight state machine (cat/head/tail) ----
+//
+// When the user runs `cat file.py`, we enter "capture" mode: output chunks are
+// buffered (ANSI-stripped), complete lines are re-tokenized with Monaco and
+// written with ANSI colors as they stream in, and the next shell prompt (or a
+// silence timeout) ends the capture. Large outputs fall back to raw passthrough.
+
+interface CaptureState {
+  lang: string
+  /** Plain-text shell prompt captured from the submitted command line. */
+  prompt: string
+  /** ANSI-stripped output accumulated since capture started. */
+  buf: string
+  /** Number of `buf` lines already written to the terminal (line 0 = echo). */
+  writtenLines: number
+  bytes: number
+  timeout: ReturnType<typeof setTimeout> | null
+  flushTimer: ReturnType<typeof setTimeout> | null
+}
+
+const MAX_HIGHLIGHT_BYTES = 512 * 1024
+const CAPTURE_TIMEOUT_MS = 800
+const FLUSH_DEBOUNCE_MS = 40
+
+let highlightLanguagesPreloaded = false
+
+function clearCaptureTimers(c: CaptureState): void {
+  if (c.timeout) {
+    clearTimeout(c.timeout)
+    c.timeout = null
+  }
+  if (c.flushTimer) {
+    clearTimeout(c.flushTimer)
+    c.flushTimer = null
+  }
+}
+
+/**
+ * Write `buf` lines in the inclusive range `[from, to)`. Line 0 is the shell's
+ * echo of the command and is written plainly; the rest are colorized. When
+ * `trailingNewline` is true every written line is newline-terminated (used for
+ * flushing complete lines only); otherwise only interior lines get the newline.
+ */
+function writeRange(
+  term: Terminal,
+  c: CaptureState,
+  content: string,
+  from: number,
+  to: number,
+  trailingNewline: boolean,
+): void {
+  if (to <= from) return
+  const lines = content.split('\n')
+  const colored = highlightLines(content, c.lang)
+  for (let i = from; i < to; i++) {
+    term.write(i === 0 ? lines[0] : colored[i])
+    if (trailingNewline || i < to - 1) term.write('\r\n')
+  }
+  c.writtenLines = to
+}
+
+/** Flush any new *complete* lines (buffered so far) as colored output. */
+function flushCapturedLines(term: Terminal, c: CaptureState): void {
+  const completeCount = c.buf.split('\n').length - 1
+  writeRange(term, c, c.buf, c.writtenLines, completeCount, true)
+}
+
+/** Colorize everything remaining and stop capturing; optionally append the prompt. */
+function finalizeCapture(term: Terminal, c: CaptureState, promptEnd: string | null): void {
+  clearCaptureTimers(c)
+  const content = promptEnd ? c.buf.slice(0, c.buf.length - promptEnd.length) : c.buf
+  writeRange(term, c, content, c.writtenLines, content.split('\n').length, false)
+  if (promptEnd) term.write(promptEnd)
+}
+
+/** Abort capture (over the size threshold): dump the unwritten tail raw. */
+function giveUpCapture(term: Terminal, c: CaptureState): void {
+  clearCaptureTimers(c)
+  const rest = c.buf.split('\n').slice(c.writtenLines).join('\r\n')
+  if (rest.length > 0) term.write(rest)
+}
+
+/**
+ * Feed one output chunk while capturing. `onEnd` is invoked (synchronously for
+ * prompt/size endings, or later from the silence timeout) once capture has
+ * ended, so the caller can drop the capture state and resume passthrough.
+ */
+function feedCapture(term: Terminal, c: CaptureState, chunk: string, onEnd: () => void): void {
+  c.buf += stripAnsi(chunk)
+  c.bytes += chunk.length
+
+  if (c.bytes > MAX_HIGHLIGHT_BYTES) {
+    giveUpCapture(term, c)
+    onEnd()
+    return
+  }
+
+  if (c.prompt && c.buf.endsWith(c.prompt)) {
+    finalizeCapture(term, c, c.prompt)
+    onEnd()
+    return
+  }
+
+  if (c.flushTimer) clearTimeout(c.flushTimer)
+  c.flushTimer = setTimeout(() => {
+    c.flushTimer = null
+    flushCapturedLines(term, c)
+  }, FLUSH_DEBOUNCE_MS)
+
+  if (c.timeout) clearTimeout(c.timeout)
+  c.timeout = setTimeout(() => {
+    c.timeout = null
+    finalizeCapture(term, c, null)
+    onEnd()
+  }, CAPTURE_TIMEOUT_MS)
 }
 
 interface TerminalComponentProps {
@@ -121,6 +244,45 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const scrollHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleScrollHide = useRef<() => void>(() => {})
 
+  // ---- terminal output syntax highlighting (cat/head/tail) ----
+  const captureRef = useRef<CaptureState | null>(null)
+
+  const resetCapture = () => {
+    const c = captureRef.current
+    if (c) clearCaptureTimers(c)
+    captureRef.current = null
+  }
+
+  // Single funnel for all output chunks: passthrough normally, or feed the
+  // capture state machine while a print-style command's output is streaming.
+  const writeOutput = (chunk: string) => {
+    const term = termRef.current
+    if (!term) return
+    const c = captureRef.current
+    if (!c) {
+      term.write(chunk)
+      return
+    }
+    feedCapture(term, c, chunk, () => {
+      captureRef.current = null
+    })
+  }
+
+  const startCaptureIfPrint = (cmd: string, prompt: string) => {
+    resetCapture()
+    const match = parsePrintCommand(cmd)
+    if (!match) return
+    captureRef.current = {
+      lang: match.lang,
+      prompt: prompt || '',
+      buf: '',
+      writtenLines: 0,
+      bytes: 0,
+      timeout: null,
+      flushTimer: null,
+    }
+  }
+
   // Keep the right-click menu fully on-screen (e.g. when triggered near the
   // bottom edge of the shell pane it would otherwise be clipped).
   useLayoutEffect(() => {
@@ -162,25 +324,28 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   })
 
   // Calculate terminal cols/rows and send resize command
-  const sendResize = useCallback((term: Terminal) => {
-    const cols = term.cols
-    const rows = term.rows
-    console.log(`[Terminal] resizing to ${cols}x${rows}`)
-    onSizeChangeRef.current?.(cols, rows)
-    if (isLocal) {
-      if (connectedRef.current) {
-        localResize(tabIdRef.current, cols, rows).catch((err) =>
-          console.error('local_resize error:', err),
-        )
+  const sendResize = useCallback(
+    (term: Terminal) => {
+      const cols = term.cols
+      const rows = term.rows
+      console.log(`[Terminal] resizing to ${cols}x${rows}`)
+      onSizeChangeRef.current?.(cols, rows)
+      if (isLocal) {
+        if (connectedRef.current) {
+          localResize(tabIdRef.current, cols, rows).catch((err) =>
+            console.error('local_resize error:', err),
+          )
+        }
+      } else {
+        if (connectedRef.current) {
+          resizeTerminal(tabIdRef.current, cols, rows).catch((err) =>
+            console.error('resize_terminal error:', err),
+          )
+        }
       }
-    } else {
-      if (connectedRef.current) {
-        resizeTerminal(tabIdRef.current, cols, rows).catch((err) =>
-          console.error('resize_terminal error:', err),
-        )
-      }
-    }
-  }, [isLocal])
+    },
+    [isLocal],
+  )
 
   // Create terminal + start connection + poll output
   useEffect(() => {
@@ -197,6 +362,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       return
     }
     hasRun.current = true
+
+    if (!highlightLanguagesPreloaded) {
+      highlightLanguagesPreloaded = true
+      preloadHighlightLanguages()
+    }
 
     const cfg = connectConfigRef.current
     console.log('[Terminal] connectConfig=', cfg)
@@ -328,6 +498,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // submits it, before the remote echo changes the buffer row.
       if (data.includes('\r') || data.includes('\n')) {
         commitSubmittedCommands(term, data, currentTabId)
+        // A lone Enter submits a single command: detect print-style commands
+        // (`cat`/`head`/`tail`) and start capturing their output for syntax
+        // highlighting. The prompt is captured from the same buffer line so
+        // capture can end precisely when the next prompt arrives.
+        if (/^[\r\n]+$/.test(data)) {
+          const { prompt, command } = splitPromptCommand(getCurrentCommandLine(term))
+          startCaptureIfPrint(command, prompt)
+        }
       }
       if (isLocal) {
         localSendInput(currentTabId, data).catch((err) =>
@@ -345,7 +523,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             return pollOutput(currentTabId)
           })
           .then((chunks) => {
-            for (const chunk of chunks) term.write(chunk)
+            for (const chunk of chunks) writeOutput(chunk)
           })
           .catch((err) => console.error('send_input error:', err))
       }
@@ -428,7 +606,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         try {
           const chunks = await pollOutput(currentTabId)
           if (chunks.length > 0) {
-            for (const chunk of chunks) term.write(chunk)
+            for (const chunk of chunks) writeOutput(chunk)
           }
         } catch {
           // Silently ignore polling failures to avoid spam
@@ -458,8 +636,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             startPolling()
           })
           .catch((err) => {
-            const errMsg =
-              typeof err === 'string' ? err : (err as any)?.message || String(err)
+            const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
             // Show the error inside the terminal instead of hiding the pane,
             // so the user can see *why* the local shell failed to start.
             term.write(`\x1b[31m[local shell] failed to start: ${errMsg}\x1b[0m\r\n`)
@@ -489,10 +666,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             startPolling()
           })
           .catch((err) => {
-            const errMsg =
-              typeof err === 'string'
-                ? err
-                : (err as any)?.message || String(err)
+            const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
             onStatusChangeRef.current('error', errMsg)
             console.error('connect error:', err)
           })
@@ -524,6 +698,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       console.log('[Terminal] cleanup, resetting hasRun')
       hasRun.current = false
       connectedRef.current = false
+      resetCapture()
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
         pollTimerRef.current = null
@@ -576,6 +751,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       pollTimerRef.current = null
     }
 
+    // A reconnect starts a fresh session — abandon any in-flight highlight capture.
+    resetCapture()
+
     const term = termRef.current
     if (!term) return
 
@@ -604,7 +782,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onStatusChangeRef.current('connecting')
 
       if (isLocal) {
-        openLocalShell(currentTabId, localShellTypeRef.current, localCwd, false, term.cols, term.rows)
+        openLocalShell(
+          currentTabId,
+          localShellTypeRef.current,
+          localCwd,
+          false,
+          term.cols,
+          term.rows,
+        )
           .then(() => {
             onStatusChangeRef.current('connected')
             if (pollTimerRef.current) clearInterval(pollTimerRef.current)
@@ -612,16 +797,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
               try {
                 const chunks = await pollOutput(currentTabId)
                 if (chunks.length > 0) {
-                  for (const chunk of chunks) term.write(chunk)
+                  for (const chunk of chunks) writeOutput(chunk)
                 }
               } catch {}
             }, 100)
           })
           .catch((err) => {
-            const errMsg =
-              typeof err === 'string'
-                ? err
-                : (err as any)?.message || String(err)
+            const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
             onStatusChangeRef.current('error', errMsg)
             console.error('local reconnect error:', err)
           })
@@ -653,17 +835,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
               const chunks = await pollOutput(currentTabId)
               if (chunks.length > 0) {
                 for (const chunk of chunks) {
-                  term.write(chunk)
+                  writeOutput(chunk)
                 }
               }
             } catch {}
           }, 100)
         })
         .catch((err) => {
-          const errMsg =
-            typeof err === 'string'
-              ? err
-              : (err as any)?.message || String(err)
+          const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
           onStatusChangeRef.current('error', errMsg)
           console.error('reconnect error:', err)
         })
@@ -828,35 +1007,32 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }, [onAskAi])
 
   // ---- overlay scrollbar thumb drag ----
-  const handleThumbMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      scrollThumbDragging.current = true
-      scrollThumbDragY.current = e.clientY
-      const vp = viewportRef.current
-      if (vp) scrollThumbDragStart.current = vp.scrollTop
-      const thumbH = (e.target as HTMLElement).offsetHeight
-      const onMove = (ev: MouseEvent) => {
-        if (!scrollThumbDragging.current) return
-        const vp2 = viewportRef.current
-        if (!vp2) return
-        const dY = ev.clientY - scrollThumbDragY.current
-        const maxS = vp2.scrollHeight - vp2.clientHeight
-        const maxT = vp2.clientHeight - thumbH
-        const ratio = maxS / Math.max(1, maxT)
-        vp2.scrollTop = Math.max(0, Math.min(maxS, scrollThumbDragStart.current + dY * ratio))
-        setScrollThumb((p) => ({ ...p, show: true }))
-      }
-      const onUp = () => {
-        scrollThumbDragging.current = false
-        document.removeEventListener('mousemove', onMove)
-        document.removeEventListener('mouseup', onUp)
-      }
-      document.addEventListener('mousemove', onMove)
-      document.addEventListener('mouseup', onUp)
-    },
-    [],
-  )
+  const handleThumbMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    scrollThumbDragging.current = true
+    scrollThumbDragY.current = e.clientY
+    const vp = viewportRef.current
+    if (vp) scrollThumbDragStart.current = vp.scrollTop
+    const thumbH = (e.target as HTMLElement).offsetHeight
+    const onMove = (ev: MouseEvent) => {
+      if (!scrollThumbDragging.current) return
+      const vp2 = viewportRef.current
+      if (!vp2) return
+      const dY = ev.clientY - scrollThumbDragY.current
+      const maxS = vp2.scrollHeight - vp2.clientHeight
+      const maxT = vp2.clientHeight - thumbH
+      const ratio = maxS / Math.max(1, maxT)
+      vp2.scrollTop = Math.max(0, Math.min(maxS, scrollThumbDragStart.current + dY * ratio))
+      setScrollThumb((p) => ({ ...p, show: true }))
+    }
+    const onUp = () => {
+      scrollThumbDragging.current = false
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [])
 
   return (
     <div className="term-scrollbar-wrapper">
@@ -925,9 +1101,9 @@ function getCurrentCommandLine(term: Terminal): string {
   return text
 }
 
-// Remove ANSI escape sequences and strip a leading shell prompt so only the
-// command itself remains.
-function stripPrompt(line: string): string {
+// Remove ANSI escape sequences and split a submitted buffer line into its
+// leading shell prompt (plain text) and the command that follows.
+function splitPromptCommand(line: string): { prompt: string; command: string } {
   const noAnsi = line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
   const markers = ['$ ', '# ', '% ', '> ', '❯ ']
   let idx = -1
@@ -936,9 +1112,15 @@ function stripPrompt(line: string): string {
     if (pos > idx) idx = pos
   }
   if (idx >= 0) {
-    return noAnsi.slice(idx + 2).trimEnd()
+    return { prompt: noAnsi.slice(0, idx + 2), command: noAnsi.slice(idx + 2).trimEnd() }
   }
-  return noAnsi.trim()
+  return { prompt: '', command: noAnsi.trim() }
+}
+
+// Remove ANSI escape sequences and strip a leading shell prompt so only the
+// command itself remains.
+function stripPrompt(line: string): string {
+  return splitPromptCommand(line).command
 }
 
 // Capture commands submitted by the user. A single Enter commits the current
@@ -948,18 +1130,14 @@ function commitSubmittedCommands(term: Terminal, data: string, tabId: number) {
   if (/^[\r\n]+$/.test(data)) {
     const cmd = stripPrompt(getCurrentCommandLine(term))
     if (cmd.trim().length > 0) {
-      commitCommand(tabId, cmd).catch((e) =>
-        console.error('commit_command error:', e),
-      )
+      commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
     }
     return
   }
   for (const raw of data.split(/[\r\n]+/)) {
     const cmd = raw.replace(/[\x00-\x1f]/g, '').trim()
     if (cmd.length > 0) {
-      commitCommand(tabId, cmd).catch((e) =>
-        console.error('commit_command error:', e),
-      )
+      commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
     }
   }
 }
