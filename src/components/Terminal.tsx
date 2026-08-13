@@ -362,24 +362,31 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     containerRef.current.addEventListener('contextmenu', handleContextMenu)
 
+    // Fit + optionally propagate the new size to the shell. When the container
+    // is hidden (display:none — e.g. a file editor overlay covers this pane),
+    // `fit()` resolves to 0 columns/rows; sending that to ConPTY poisons the
+    // local shell's width (SIGWINCH to 0 cols) and the prompt repaints
+    // truncated/misaligned after switching back. So only propagate real sizes.
+    const maybeFitAndResize = () => {
+      if (!isActiveRef.current || !fitRef.current) return
+      const container = containerRef.current
+      if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+      fitRef.current.fit()
+      term.refresh(0, term.rows - 1)
+      // Guard again: fit() may still resolve to 0 for a momentarily empty box.
+      if (term.cols > 0 && term.rows > 0) sendResize(term)
+    }
+
     // Window resize
     const handleResize = () => {
-      if (isActiveRef.current && fitRef.current) {
-        fitRef.current.fit()
-        term.refresh(0, term.rows - 1)
-        sendResize(term)
-      }
+      maybeFitAndResize()
     }
     window.addEventListener('resize', handleResize)
 
     // Use ResizeObserver to monitor container size changes (more accurate than window resize)
     if (containerRef.current) {
       resizeObserverRef.current = new ResizeObserver(() => {
-        if (isActiveRef.current && fitRef.current) {
-          fitRef.current.fit()
-          term.refresh(0, term.rows - 1)
-          sendResize(term)
-        }
+        maybeFitAndResize()
       })
       resizeObserverRef.current.observe(containerRef.current)
     }
@@ -672,7 +679,47 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (term) {
         activeTerminalByTab.set(tabIdRef.current, term)
         term.focus()
+        // B14: switching back from the file editor can leave the xterm
+        // viewport scrolled up (pane re-show resets the scroll position),
+        // while the cursor lands at the top and newer output stays out of
+        // sight below. Bring the viewport back to the bottom so the prompt /
+        // latest output is visible.
+        term.scrollToBottom()
       }
+      // B14 follow-up: while the editor overlay was shown the terminal column
+      // was display:none, and depending on timing the local shell's ConPTY may
+      // have received a 0-sized resize (or none at all) — so its width no
+      // longer matches xterm and the prompt can repaint truncated. Wait one
+      // frame for the layout to settle, then re-align geometry and force a
+      // repaint.
+      //
+      // NOTE: do NOT call t.reset() here. Unlike reconnect, the PTY process is
+      // still alive and ConPTY's own buffer still holds all history. reset()
+      // only wipes the xterm-side buffer, so after switching back the screen
+      // appears cleared (cursor at top-left) and, once the shell repaints at
+      // its absolute cursor row, the rows above stay blank. Keeping xterm's
+      // buffer intact + refitting + sendResize lets the shell repaint the
+      // prompt in place and preserves the scrollback.
+      const frame = requestAnimationFrame(() => {
+        const t = termRef.current
+        if (!t) return
+        const container = containerRef.current
+        // Still hidden / zero-size: nothing to align yet; ResizeObserver will
+        // fire again once the container gets real dimensions.
+        if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+        try {
+          if (fitRef.current) fitRef.current.fit()
+        } catch {
+          /* container may be temporarily 0-sized mid-layout */
+        }
+        if (t.cols > 0 && t.rows > 0) sendResize(t)
+        // Force xterm to re-render every visible row from its buffer, repairing
+        // any rows that were drawn against stale geometry.
+        t.refresh(0, t.rows - 1)
+        t.focus()
+        t.scrollToBottom()
+      })
+      return () => cancelAnimationFrame(frame)
     }
   }, [shellView])
 
