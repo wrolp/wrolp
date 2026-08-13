@@ -84,7 +84,7 @@ pub struct AiConfig {
   #[serde(default = "default_true")]
   pub run_in_terminal: bool,
   /// Maximum number of agent-loop rounds (one assistant turn plus its tool
-  /// calls) for a single AI run. Guards against runaway loops. Defaults to 12.
+  /// calls) for a single AI run. Guards against runaway loops. Defaults to 200.
   #[serde(default = "default_max_agent_rounds")]
   pub max_agent_rounds: u32,
 }
@@ -101,7 +101,7 @@ fn default_false() -> bool {
 
 /// Serde default for `max_agent_rounds`.
 fn default_max_agent_rounds() -> u32 {
-  100
+  200
 }
 
 impl AiConfig {

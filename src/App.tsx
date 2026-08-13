@@ -2634,12 +2634,12 @@ export default function App() {
                       <input
                         type="number"
                         min={1}
-                        max={100}
-                        value={aiConfig?.maxAgentRounds ?? 12}
+                        max={1000}
+                        value={aiConfig?.maxAgentRounds ?? 200}
                         onChange={(e) => {
                           setAiConfig((prev) => {
                             if (!prev) return prev
-                            const n = Math.max(1, Math.min(100, parseInt(e.target.value || '12', 10) || 12))
+                            const n = Math.max(1, Math.min(1000, parseInt(e.target.value || '200', 10) || 200))
                             const next = { ...prev, maxAgentRounds: n }
                             saveAiConfig(next).catch(() => {})
                             return next
@@ -3604,7 +3604,7 @@ export default function App() {
                         onInputHeightChange={handleAiInputHeightChange}
                         onOpenSettings={handleOpenAiSettings}
                         defaultReadOnly={aiConfig?.readOnly ?? false}
-                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
+                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
                       />
                     </div>
                     <div className="ai-dock-resize" onMouseDown={startDockResize} style={resizeHandleStyle} />
@@ -4217,7 +4217,7 @@ export default function App() {
                     onInputHeightChange={handleAiInputHeightChange}
                     onOpenSettings={handleOpenAiSettings}
                         defaultReadOnly={aiConfig?.readOnly ?? false}
-                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
+                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
                   />
                 </div>
               )}
@@ -4356,7 +4356,7 @@ export default function App() {
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
                         defaultReadOnly={aiConfig?.readOnly ?? false}
-                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 12}
+                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
                     />
                   </div>
                   {resizeHandles.map((h) => (

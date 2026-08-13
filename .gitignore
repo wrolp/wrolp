@@ -6,6 +6,9 @@ task
 .tauri
 package-lock.json
 
+CODEBUDDY.md
+dist-ckeck
+
 # Local app data (credentials, recordings, window state)
 *.db
 *.db-wal

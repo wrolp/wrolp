@@ -264,7 +264,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiRunInTerminalOn: '在终端中执行',
   aiMaxRounds: '单次 AI 运行的最大轮数',
   aiMaxRoundsDesc:
-    '限制一次 AI 对话（一个 agent 循环）内"助手回复 + 工具调用"的最大轮数，防止模型陷入死循环。范围 1–100，默认 12。',
+    '限制一次 AI 对话（一个 agent 循环）内"助手回复 + 工具调用"的最大轮数，防止模型陷入死循环。范围 1–1000，默认 200。每个 AI 聊天页可单独覆盖自己的值。',
   aiMaxRoundsUnit: '轮',
   aiReadOnlyHint: '只读模式：仅执行查看类命令',
   aiFullModeHint: '可写模式：允许执行修改类命令',

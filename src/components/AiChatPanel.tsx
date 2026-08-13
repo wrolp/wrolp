@@ -251,7 +251,7 @@ export default function AiChatPanel({
   const [readOnly, setReadOnly] = useState<boolean>(defaultReadOnly ?? false)
 
   // Maximum agent-loop rounds for a single run. Starts from the global default.
-  const [maxAgentRounds, setMaxAgentRounds] = useState<number>(defaultMaxAgentRounds ?? 100)
+  const [maxAgentRounds, setMaxAgentRounds] = useState<number>(defaultMaxAgentRounds ?? 200)
 
   // UI popup/dropdown toggles for the cramped header bar.
   const [showMoreMenu, setShowMoreMenu] = useState(false)
