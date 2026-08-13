@@ -464,7 +464,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         setError(`Upload ${fileName} failed: ${e}`); break
       }
     }
-    setUploading(false); setPaused(false); setTransferStatus('')
+    setUploading(false); setPaused(false); setTransferStatus(''); setTransferProgress(null)
     refresh()
   }, [target, currentPath, refresh])
 
@@ -483,7 +483,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         setError(`Upload ${file.name} failed: ${e}`); break
       }
     }
-    setUploading(false); setPaused(false); setTransferStatus('')
+    setUploading(false); setPaused(false); setTransferStatus(''); setTransferProgress(null)
     refresh()
   }, [target, currentPath, refresh])
 
@@ -591,9 +591,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         setTransferStatus(`Downloading: ${node.name}`)
         setTransferProgress(null)
         await fsDownloadFile(target, node.path, filePath as string)
-        setDownloading(false); setPaused(false); setTransferStatus('')
+        setDownloading(false); setPaused(false); setTransferStatus(''); setTransferProgress(null)
       }
-    } catch (e) { setDownloading(false); setTransferStatus(''); setError(String(e)) }
+    } catch (e) {
+      setDownloading(false); setTransferStatus(''); setTransferProgress(null); setError(String(e))
+    }
   }
 
   const handleEdit = (node: TreeNode) => {
