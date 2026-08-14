@@ -1,0 +1,123 @@
+# Wrolp Terminal Release Notes
+
+---
+
+## v0.0.4 — 2026-08-08
+
+Adding local terminal support, floating panes, binary file viewing, and AI workflow improvements.
+
+### Features
+- **Local terminal** — open PTY-backed shells on your local machine alongside remote SSH tabs, with full AI support
+- **Floating panes** — drag any panel (editor, docker logs, hex viewer) out into an independent floating window
+- **Hex dump viewer** — inspect binary files as a formatted hex dump with ASCII side-panel
+- **Image preview** — view image files (PNG, JPG, GIF, WEBP) directly in the file panel
+- **AI prompt templates** — built-in template categories, custom templates with dropdown picker in chat input
+- **"Send to terminal"** — send AI-generated code blocks or selected text directly to the active terminal
+- **User confirmation for sensitive commands** — AI prompts for confirmation before executing dangerous operations (e.g., `rm -rf`, `docker system prune`)
+- **Edit last message** — modify and re-send your last AI chat message, with tool-call history preserved
+- **Cancel in-flight AI streams** — stop a running AI response mid-stream
+- **Always-on-top toggle** — pin the window above all others
+- **Toast notifications** — show brief notifications for Docker container restart events
+- **Server label in file panel** — display the connected host name in the file manager header
+- **Local terminal entries** — configure named local shell entries in settings
+- **HEX/image viewer integrated into tab headers** — seamless switching between file views
+- **Improved AI chat UX** — react-markdown rendering, copy buttons on code blocks, simplified icon-only copy button
+- **Docker log auto-scroll** — smart scroll anchoring when trimming logs
+- **Per-pane session recording toggle** — enable/disable recording per terminal pane; global auto-record setting
+
+### Fixes
+- Persist tool calls per assistant message and refocus input after send
+- Fall back to local execution when no remote shell is attached to the AI chat tab
+- Isolate editor and log tabs per SSH session to prevent cross-session leakage
+- Update titlebar icons to Feather style with adjusted spacing
+- Support Log4j-style timestamps and improved ANSI color mapping
+- Prevent context menu from clipping off-screen
+- Fix resize handles on image and hex viewers
+
+---
+
+## v0.0.3 — 2026-08-02
+
+Focusing on internationalization, AI enhancements, and Docker UX.
+
+### Features
+- **i18n support** — full English and Chinese (zh) localization; switch language in settings
+- **AI endpoint & model picker** — configure OpenAI-compatible endpoint and model per chat session
+- **Auto-inject server context** — AI automatically receives current server info; new `get_current_server` tool
+- **Per-tab AI chat panels** — docked or floating AI chat windows, one per shell tab
+- **Drag-and-drop tab reordering** — reorder tabs by dragging the tab bar
+- **Host analysis panel** — gather CPU, memory, disk, network info from remote hosts
+- **Docker log viewer enhancements** — ANSI color parsing, right-click "Ask AI Assistant", jump-to-bottom button
+- **Docker compose detection** — identify and display compose project context
+- **Docker container analysis** — inspect container config, environment, volumes, networks
+- **Terminal scrollback control** — configurable max scrollback buffer and clear option
+- **AI settings redesign** — tabbed settings layout, dedicated AI config section with new icons
+- **Persistent AI chat state** — chat history survives tab switches
+- **Configurable Docker log preferences** — line limit, follow mode, auto-scroll
+- **Automated release pipeline** — scripts for building, signing, and publishing releases
+- **Chinese README** — full translation of project documentation
+
+### Fixes
+- Strip leading whitespace from streaming AI text
+- Improve dock resize behavior and prevent terminal interference
+- Fix multi-column `ls` and `ls -F` output rendering
+- Ensure AI edit replaces message and clears tool history correctly
+- Sync API key input when switching profiles
+- Prevent terminal resize errors during startup
+
+---
+
+## v0.0.2 — 2026-07-28
+
+Significant UI and feature improvements across layout, file management, and security.
+
+### Features
+- **Split terminal panes** — split SSH sessions horizontally or vertically with resizable dividers
+- **Pane reordering** — drag tabs and panes to rearrange layout
+- **Panel docking** — dock any panel (file manager, AI chat, docker logs) to left, right, or bottom
+- **Password visibility toggle** — show/hide password in connection form
+- **Connection encryption at rest** — securely store SSH passwords and API keys using OS keychain
+- **Unified remote filesystem** — shared filesystem abstraction across SSH and Docker targets
+- **File transfer progress** — real-time progress bars for upload/download with pause & resume
+- **Monaco editor enhancements** — nginx config and properties file language support, minimap toggle, smaller scrollbar
+- **Inline remote editing** — open remote files directly from the terminal or file panel
+- **Session recording & command sets** — record terminal sessions and save reusable command groups
+- **SSH reconnection** — automatic reconnect for stale sessions with monotonic session ID guard
+- **Drag-and-drop file upload** — drop files onto the file panel to upload
+- **Editable file path input** — type a path directly instead of browsing
+- **Workspace layout persistence** — remember split positions and panel states across restarts
+- **Terminal status bar** — per-pane size indicator
+- **Delete all sessions** — bulk clear with confirmation dialog
+- **App icon updates** — refined SVG-based icon set replacing emoji icons
+- **Tauri bundle** — MSI installer for Windows (Linux/macOS builds also available)
+
+### Fixes
+- Constrain resize handles to image bounds
+- Suppress auxiliary channel output leaking into terminal
+- Disable minimap by default to reduce visual clutter
+- Fix context menu clipping at viewport edges
+- Fix SSH key path tilde expansion and default to `~/.ssh/id_rsa`
+- Fix tab remount when toggling editor overlay
+- Fix Docker panel resize direction
+
+---
+
+## v0.0.1 — 2026-06-28
+
+Initial release.
+
+### Features
+- **Multi-tab SSH terminal** using xterm.js with password and SSH key authentication
+- **Remote file management** — SFTP file browser with upload/download via `russh-sftp`
+- **Remote file editor** — Monaco-based editor with UTF-8/GBK encoding auto-detection
+- **Session recording** — auto-record all terminal sessions to SQLite, replayable from the bottom panel
+- **Command sets** — save and reuse frequently used command groups
+- **Tab management** — drag-to-reorder tabs, duplicate tabs, tab context menu
+- **Resizing & layout** — resizable sidebar, split-pane support, docked/floating panels
+- **Docker integration** — inspect containers, view logs, enter container shells
+- **Host analysis** — gather system info from remote hosts
+- **AI assistant** — OpenAI-compatible chat integration with streaming, tool-calling agent loop, and multimodal (image) input
+- **System tray** — minimize to tray, show/hide/quit via tray icon
+- **Auto-updater** — check for and install updates automatically
+- **Window controls** — custom titlebar, transparent/background mode, window geometry persistence
+- **Encrypted secrets** — connection credentials encrypted at rest
