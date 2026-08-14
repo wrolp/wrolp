@@ -107,6 +107,15 @@ export interface FileEntry {
   modified: string
 }
 
+/** Summary returned by `download_directory` / `target_download_directory`. */
+export interface DirDownloadSummary {
+  totalFiles: number
+  doneFiles: number
+  totalBytes: number
+  doneBytes: number
+  skipped: number
+}
+
 export interface FileContent {
   path: string
   content: string
@@ -387,7 +396,13 @@ export interface AiToolCall {
   arguments: string
 }
 
-export type ToolCallStatus = 'pending' | 'executing' | 'done' | 'error' | 'denied' | 'needs-confirmation'
+export type ToolCallStatus =
+  | 'pending'
+  | 'executing'
+  | 'done'
+  | 'error'
+  | 'denied'
+  | 'needs-confirmation'
 
 export interface ToolCallEvent {
   id: string
@@ -481,8 +496,12 @@ export function mergeLayout(base: WorkspaceLayout, override: unknown): Workspace
       const bv = result[key]
       const ov = (o as Record<string, unknown>)[key]
       if (
-        bv && typeof bv === 'object' && !Array.isArray(bv) &&
-        ov && typeof ov === 'object' && !Array.isArray(ov)
+        bv &&
+        typeof bv === 'object' &&
+        !Array.isArray(bv) &&
+        ov &&
+        typeof ov === 'object' &&
+        !Array.isArray(ov)
       ) {
         result[key] = deepMerge(bv, ov)
       } else if (ov !== undefined) {

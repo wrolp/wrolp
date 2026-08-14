@@ -1,10 +1,10 @@
 use super::ssh_session::{
-  ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, FileEntry, LocalShell,
-  LocalShellDir, LocalTerminalEntry, SshError, SshHandler, SshSession, SwitchedUser, TargetRef,
-  TransferControl,
+  ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
+  FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SshError, SshHandler, SshSession,
+  SwitchedUser, TargetRef, TransferControl,
 };
 use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
-use crate::remote_fs::build_fs;
+use crate::remote_fs::{build_fs, delete_dir_recursive};
 use encoding_rs::{Encoding, UTF_8};
 use russh::client::{self, Handler};
 use russh::ChannelId;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use tauri::Emitter;
 use tauri::Manager;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
 /// Wait if the transfer for this tab is paused. Returns immediately if not paused.
@@ -1828,6 +1828,157 @@ pub async fn download_file(
   Ok(true)
 }
 
+/// Recursively walk a remote directory over a single SFTP session, collecting
+/// (absolute_path, relative_path, size) for files and the relative paths of all
+/// directories. Symlinks are skipped so the walk cannot loop.
+async fn walk_sftp_dir(
+  sftp: &russh_sftp::client::SftpSession,
+  remote_root: &str,
+  rel: &str,
+  dirs: &mut Vec<String>,
+  files: &mut Vec<(String, String, u64)>,
+  skipped: &mut usize,
+) -> Result<(), String> {
+  let entries = sftp
+    .read_dir(remote_root)
+    .await
+    .map_err(|e| format!("Failed to list remote directory '{}': {}", remote_root, e))?;
+  for entry in entries {
+    let name = entry.file_name();
+    let md = entry.metadata();
+    if md.file_type().is_symlink() {
+      *skipped += 1;
+      continue;
+    }
+    let child_abs = format!("{}/{}", remote_root.trim_end_matches('/'), name);
+    let child_rel = if rel.is_empty() {
+      name.clone()
+    } else {
+      format!("{}/{}", rel, name)
+    };
+    if md.is_dir() {
+      dirs.push(child_rel.clone());
+      Box::pin(walk_sftp_dir(sftp, &child_abs, &child_rel, dirs, files, skipped)).await?;
+    } else {
+      files.push((child_abs, child_rel, md.size.unwrap_or(0)));
+    }
+  }
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn download_directory(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  remote_dir: String,
+  local_dir: String,
+) -> Result<DirDownloadSummary, String> {
+  // Set up pause control
+  let control = Arc::new(TransferControl {
+    paused: AtomicBool::new(false),
+    notify: tokio::sync::Notify::new(),
+  });
+  {
+    let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+    controls.insert(tab_id, control.clone());
+  }
+  let _cleanup = TransferGuard {
+    state_ptr: &*state as *const AppState,
+    tab_id,
+  };
+
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  // Single-session recursive walk (no per-file reconnects).
+  let mut dirs = Vec::new();
+  let mut files = Vec::new();
+  let mut skipped = 0usize;
+  walk_sftp_dir(&sftp, &remote_dir, "", &mut dirs, &mut files, &mut skipped).await?;
+
+  // The selected local folder is the *parent*: the downloaded directory keeps
+  // its own name so the tree appears as `<local_dir>/<dir_name>/...`.
+  let dir_name = std::path::Path::new(&remote_dir)
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| remote_dir.trim_end_matches('/').rsplit('/').next().unwrap_or("download").to_string());
+  let local_root = std::path::Path::new(&local_dir).join(&dir_name);
+
+  // Create local directory skeleton (root + all subdirs).
+  let _ = tokio::fs::create_dir_all(&local_root).await;
+  for d in &dirs {
+    let _ = tokio::fs::create_dir_all(local_root.join(d)).await;
+  }
+
+  let total_files = files.len();
+  let total_bytes: u64 = files.iter().map(|(_, _, s)| s).sum();
+  let mut done_bytes = 0u64;
+  let mut done_files = 0usize;
+  let start = std::time::Instant::now();
+
+  for (remote_path, rel, size) in &files {
+    check_pause(&control).await;
+
+    let mut file = sftp
+      .open(remote_path)
+      .await
+      .map_err(|e| format!("Failed to open remote file '{}': {}", remote_path, e))?;
+    let local_path = local_root.join(rel);
+    if let Some(parent) = local_path.parent() {
+      let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let mut out = tokio::fs::File::create(&local_path)
+      .await
+      .map_err(|e| format!("Failed to create local file '{}': {}", local_path.display(), e))?;
+
+    let mut buf = vec![0u8; 65536];
+    let mut offset = 0u64;
+    loop {
+      check_pause(&control).await;
+      let n = file
+        .read(&mut buf)
+        .await
+        .map_err(|e| format!("Failed to read '{}': {}", remote_path, e))?;
+      if n == 0 {
+        break;
+      }
+      out
+        .write_all(&buf[..n])
+        .await
+        .map_err(|e| format!("Failed to write '{}': {}", local_path.display(), e))?;
+      offset += n as u64;
+      done_bytes += n as u64;
+
+      let _ = app.emit(
+        "transfer-progress",
+        serde_json::json!({
+          "tabId": tab_id,
+          "op": "directory",
+          "dirName": dir_name,
+          "filename": rel,
+          "relativePath": rel,
+          "transferred": offset,
+          "total": size,
+          "doneFiles": done_files,
+          "totalFiles": total_files,
+          "doneBytes": done_bytes,
+          "totalBytes": total_bytes,
+          "elapsed": start.elapsed().as_millis()
+        }),
+      );
+    }
+    done_files += 1;
+  }
+
+  Ok(DirDownloadSummary {
+    total_files,
+    done_files,
+    total_bytes,
+    done_bytes,
+    skipped,
+  })
+}
+
 #[tauri::command]
 pub async fn upload_file(
   app: tauri::AppHandle,
@@ -2123,10 +2274,9 @@ pub async fn delete_file(
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
   if is_dir {
-    sftp
-      .remove_dir(&path)
-      .await
-      .map_err(|e| format!("Failed to delete directory: {}", e))?;
+    // Recursively delete a non-empty directory over the same session.
+    let fs = crate::remote_fs::SftpFs::new(sftp);
+    delete_dir_recursive(&fs, &path).await?;
   } else {
     sftp
       .remove_file(&path)
@@ -2200,11 +2350,74 @@ pub async fn target_delete_file(
 ) -> Result<bool, String> {
   let fs = build_fs(&app, &state, &target).await?;
   if is_dir {
-    fs.remove_dir(&path).await?;
+    delete_dir_recursive(fs.as_ref(), &path).await?;
   } else {
     fs.remove_file(&path).await?;
   }
   Ok(true)
+}
+
+#[tauri::command]
+pub async fn target_download_directory(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  remote_dir: String,
+  local_dir: String,
+) -> Result<DirDownloadSummary, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  // The chosen local folder is the *parent*; keep the remote directory's own
+  // name so the tree downloads as `<local_dir>/<dir_name>/...`.
+  let dir_name = std::path::Path::new(&remote_dir)
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| {
+      remote_dir
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("download")
+        .to_string()
+    });
+  let local_root = std::path::Path::new(&local_dir).join(&dir_name);
+  let mut done_bytes = 0u64;
+  let mut done_files = 0usize;
+  let start = std::time::Instant::now();
+  let tab_id = match &target {
+    TargetRef::Session { tab_id } | TargetRef::Local { tab_id } => *tab_id,
+    TargetRef::JumpRemote { jump_tab_id, .. }
+    | TargetRef::DockerSsh { jump_tab_id, .. }
+    | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
+  };
+  let local_root_str = local_root.to_string_lossy().to_string();
+  let summary = crate::remote_fs::download_dir_recursive(
+    fs.as_ref(),
+    &remote_dir,
+    &local_root_str,
+    |rel, transferred, _total| {
+      done_bytes += transferred;
+      done_files += 1;
+      let _ = app.emit(
+        "transfer-progress",
+        serde_json::json!({
+          "tabId": tab_id,
+          "op": "directory",
+          "dirName": dir_name,
+          "filename": rel,
+          "relativePath": rel,
+          "transferred": transferred,
+          "total": transferred,
+          "doneFiles": done_files,
+          "totalFiles": 0,
+          "doneBytes": done_bytes,
+          "totalBytes": 0,
+          "elapsed": start.elapsed().as_millis()
+        }),
+      );
+    },
+  )
+  .await?;
+  Ok(summary)
 }
 
 #[tauri::command]

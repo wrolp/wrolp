@@ -104,7 +104,8 @@ const en = {
   splitRight: 'Split Right',
   splitDown: 'Split Down',
   deleteConnectionConfirm: 'Delete connection "{name}"?',
-  deleteGroupConfirm: 'Delete group "{group}"?\nConnections in this group will be moved to Ungrouped.',
+  deleteGroupConfirm:
+    'Delete group "{group}"?\nConnections in this group will be moved to Ungrouped.',
   addConnectionTo: 'Add connection to {group}',
   renameGroup: 'Rename Group',
   deleteGroup: 'Delete Group',
@@ -116,6 +117,7 @@ const en = {
   restoreOriginalUser: 'Restore original user',
   switchSftpUser: 'Switch SFTP user',
   uploadFile: 'Upload',
+  selectDownloadFolder: 'Select download folder',
   newItem: 'New item',
   parentDir: 'Parent',
   home: 'Home',
@@ -181,7 +183,8 @@ const en = {
   maxRetainedLines: 'Max Retained Lines',
   olderLinesDropped: 'Older lines are dropped so the buffer isn’t flooded.',
   about: 'About',
-  aboutDesc: 'Wrolp Terminal — an SSH terminal and server-ops tool. Build and repository information:',
+  aboutDesc:
+    'Wrolp Terminal — an SSH terminal and server-ops tool. Build and repository information:',
   openConfigDir: 'Open config folder',
   language: 'Language',
 
@@ -270,7 +273,8 @@ const en = {
   aiChatResizeInput: 'Drag to resize input area',
   aiChatAddImage: 'Add image',
   aiChatRemoveImage: 'Remove image',
-  aiToolCallFormat: 'Tool call format: nested (standard OpenAI structure) or flat (name/arguments at the top level)',
+  aiToolCallFormat:
+    'Tool call format: nested (standard OpenAI structure) or flat (name/arguments at the top level)',
   aiChatPickTemplate: 'Pick template',
   aiChatViewImage: 'View image',
   aiChatEditMessage: 'Edit message',
@@ -349,7 +353,8 @@ const en = {
   startRecording: 'Start recording',
   stopRecording: 'Stop recording',
   autoRecordSessions: 'Auto-record sessions',
-  autoRecordSessionsDesc: 'Start recording automatically after an SSH connection. When off, use the per-pane record button to record manually.',
+  autoRecordSessionsDesc:
+    'Start recording automatically after an SSH connection. When off, use the per-pane record button to record manually.',
   retry: 'Retry',
   copy: 'Copy',
   paste: 'Paste',
@@ -426,7 +431,8 @@ const en = {
   analyzeContainer: 'Analyze Container',
   viewLogs: 'View Logs',
   noDataForContainer: 'No data for "{container}"',
-  dockerAnalyzeHint: 'Right-click a running container in the Docker panel and choose "Analyze Container".',
+  dockerAnalyzeHint:
+    'Right-click a running container in the Docker panel and choose "Analyze Container".',
   reAnalyze: 'Re-analyse',
   dockerCompose: 'Docker Compose',
   directRun: 'Direct Run',

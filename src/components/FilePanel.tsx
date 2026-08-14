@@ -17,6 +17,7 @@ import {
   fsUploadFile,
   fsUploadFileBytes,
   fsDownloadFile,
+  fsDownloadDirectory,
   fsDeleteFile,
   fsCreateDirectory,
   fsRenameFile,
@@ -39,11 +40,19 @@ import { useI18n } from '../i18n'
 
 interface TransferProgress {
   tabId: number
-  op: 'upload' | 'download'
+  op: 'upload' | 'download' | 'directory'
   filename: string
   transferred: number
   total: number
   elapsed: number
+  /** Directory downloads: the base directory name (row key), the current
+      file's path relative to it, and aggregate counters. */
+  dirName?: string
+  relativePath?: string
+  doneFiles?: number
+  totalFiles?: number
+  doneBytes?: number
+  totalBytes?: number
 }
 
 /** One row in the multi-file transfer progress list. */
@@ -51,7 +60,7 @@ interface TransferRow {
   /** Stable unique key: `up:`/`down:` + filename. */
   key: string
   filename: string
-  op: 'upload' | 'download'
+  op: 'upload' | 'download' | 'directory'
   status: 'queued' | 'active' | 'done' | 'error'
   transferred: number
   total: number
@@ -465,6 +474,27 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       const p = event.payload
       if (p.tabId !== sessionTabId) return
       const elapsed = p.elapsed > 0 ? p.elapsed / 1000 : 0.001
+      if (p.op === 'directory') {
+        // A directory download streams many files; the row is keyed by the
+        // base directory and shows aggregate bytes + the current relative path.
+        const key = `directory:${p.dirName ?? ''}`
+        const bytesPerSec = (p.doneBytes ?? 0) / elapsed
+        setTransferRows((prev) =>
+          prev.map((r) =>
+            r.key === key
+              ? {
+                  ...r,
+                  filename: p.relativePath || p.filename,
+                  transferred: p.doneBytes ?? r.transferred,
+                  total: p.totalBytes ?? r.total,
+                  speed: formatSpeed(bytesPerSec),
+                  status: 'active',
+                }
+              : r,
+          ),
+        )
+        return
+      }
       const bytesPerSec = p.transferred / elapsed
       const key = `${p.op}:${p.filename}`
       setTransferRows((prev) =>
@@ -761,7 +791,50 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const handleDownload = async (node: TreeNode) => {
     setContextMenu(null)
     if (node.isDir) {
-      setError('Downloading directories is not supported yet')
+      // Recursive directory download: pick a local target folder, then stream
+      // the whole tree into it (backend walks once, emits per-file progress).
+      try {
+        const folder = await open({
+          directory: true,
+          title: t('selectDownloadFolder'),
+          defaultPath: node.name,
+        })
+        if (!folder) return
+        setPaused(false)
+        setTransferRows([
+          {
+            key: `directory:${node.name}`,
+            filename: node.name + '/',
+            op: 'directory',
+            status: 'queued',
+            transferred: 0,
+            total: 0,
+            speed: '',
+          },
+        ])
+        try {
+          const summary = await fsDownloadDirectory(target, node.path, folder as string)
+          setTransferRows((prev) =>
+            prev.map((r) =>
+              r.key === `directory:${node.name}`
+                ? {
+                    ...r,
+                    status: 'done',
+                    transferred: summary.doneBytes,
+                    total: summary.totalBytes,
+                  }
+                : r,
+            ),
+          )
+        } catch (e) {
+          setTransferRows((prev) =>
+            prev.map((r) => (r.key === `directory:${node.name}` ? { ...r, status: 'error' } : r)),
+          )
+          setError(String(e))
+        }
+      } catch (e) {
+        setError(String(e))
+      }
       return
     }
     try {
@@ -1514,7 +1587,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               <Icon name="edit" /> Open
             </div>
           )}
-          {contextMenu.node && !contextMenu.node.isDir && (
+          {contextMenu.node && (
             <div className="context-menu-item" onClick={() => handleDownload(contextMenu.node!)}>
               <Icon name="download" /> Download
             </div>

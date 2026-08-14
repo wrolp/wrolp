@@ -371,3 +371,104 @@ impl RemoteFs for SftpFs {
     Ok(())
   }
 }
+
+use crate::ssh_session::DirDownloadSummary;
+use std::path::Path;
+
+/// Recursively delete a directory (and all its contents) through a `RemoteFs`.
+/// Symlinks are removed as files (never followed), so cycles are impossible.
+pub async fn delete_dir_recursive(fs: &dyn RemoteFs, path: &str) -> Result<(), String> {
+  let entries = fs.list_dir(path).await?;
+  for e in entries {
+    if e.is_dir {
+      Box::pin(delete_dir_recursive(fs, &e.path)).await?;
+    } else {
+      fs.remove_file(&e.path).await?;
+    }
+  }
+  fs.remove_dir(path).await?;
+  Ok(())
+}
+
+/// Recursively enumerate a remote directory tree into (absolute, relative) pairs.
+/// `rel` is relative to `remote_root` ("" for the root itself). Symlink entries
+/// are detected via `FileEntry.mode` (starts with `l`) and skipped so the walk
+/// can never loop.
+async fn collect_dir_tree(
+  fs: &dyn RemoteFs,
+  remote_root: &str,
+  rel: &str,
+  dirs: &mut Vec<String>,
+  files: &mut Vec<(String, String, u64)>,
+  skipped: &mut usize,
+) -> Result<(), String> {
+  let entries = fs.list_dir(remote_root).await?;
+  for e in entries {
+    // Symlink detection across backends: Docker `stat -c%A` yields `lrwxrwxrwx`,
+    // SFTP yields an octal mode whose file-type bits are `0120...`, LocalFs uses
+    // `d`/`-` prefixes (symlinks resolved by the OS, not distinguishable here).
+    let is_symlink = e.mode.starts_with('l') || e.mode.starts_with("120");
+    let child_rel = if rel.is_empty() {
+      e.name.clone()
+    } else {
+      format!("{}/{}", rel, e.name)
+    };
+    if is_symlink {
+      *skipped += 1;
+      continue;
+    }
+    if e.is_dir {
+      dirs.push(child_rel.clone());
+      Box::pin(collect_dir_tree(fs, &e.path, &child_rel, dirs, files, skipped)).await?;
+    } else {
+      files.push((e.path, child_rel, e.size));
+    }
+  }
+  Ok(())
+}
+
+/// Recursively download a remote directory into `local_root`, preserving the
+/// relative structure. Calls `on_file` with (relative_path, transferred, total)
+/// after each file completes. Symlinks are skipped (counted in the summary).
+pub async fn download_dir_recursive(
+  fs: &dyn RemoteFs,
+  remote_root: &str,
+  local_root: &str,
+  mut on_file: impl FnMut(&str, u64, u64),
+) -> Result<DirDownloadSummary, String> {
+  let mut dirs = Vec::new();
+  let mut files = Vec::new();
+  let mut skipped = 0usize;
+  collect_dir_tree(fs, remote_root, "", &mut dirs, &mut files, &mut skipped).await?;
+
+  // Create all directories first (including the root), then stream files.
+  let _ = tokio::fs::create_dir_all(local_root).await;
+  for d in &dirs {
+    let _ = tokio::fs::create_dir_all(Path::new(local_root).join(d)).await;
+  }
+
+  let total_files = files.len();
+  let total_bytes: u64 = files.iter().map(|(_, _, s)| s).sum();
+  let mut done_bytes = 0u64;
+  let mut done_files = 0usize;
+
+  for (remote_path, rel, size) in &files {
+    let data = fs.read_file(remote_path).await?;
+    let local = Path::new(local_root).join(rel);
+    if let Some(parent) = local.parent() {
+      let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    tokio::fs::write(&local, &data).await.map_err(|e| e.to_string())?;
+    done_bytes += size;
+    done_files += 1;
+    on_file(rel, *size, *size);
+  }
+
+  Ok(DirDownloadSummary {
+    total_files,
+    done_files,
+    total_bytes,
+    done_bytes,
+    skipped,
+  })
+}

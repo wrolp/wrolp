@@ -1,5 +1,21 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ConnectionConfig, FileEntry, SessionSummary, SessionEventDto, CommandSetDto, AiPromptTemplate, FileContent, TargetRef, ContainerInfo, ToolCallEvent, AiEndpointProfile, LocalShellDir, LocalTerminalEntry, WorkspaceInfo } from './types'
+import type {
+  ConnectionConfig,
+  FileEntry,
+  SessionSummary,
+  SessionEventDto,
+  CommandSetDto,
+  AiPromptTemplate,
+  FileContent,
+  TargetRef,
+  ContainerInfo,
+  ToolCallEvent,
+  AiEndpointProfile,
+  LocalShellDir,
+  LocalTerminalEntry,
+  WorkspaceInfo,
+  DirDownloadSummary,
+} from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')
@@ -34,7 +50,10 @@ export async function deleteGroup(groupName: string): Promise<boolean> {
 
 // ===== Workspace management =====
 
-export async function listWorkspaces(): Promise<{ workspaces: WorkspaceInfo[]; activeWorkspaceId: string }> {
+export async function listWorkspaces(): Promise<{
+  workspaces: WorkspaceInfo[]
+  activeWorkspaceId: string
+}> {
   const result = await invoke<string>('list_workspaces')
   return JSON.parse(result)
 }
@@ -144,16 +163,28 @@ export async function listFiles(tabId: number, path: string): Promise<FileEntry[
   return await invoke<FileEntry[]>('list_files', { tabId, path })
 }
 
-export async function downloadFile(tabId: number, remotePath: string, localPath: string): Promise<boolean> {
+export async function downloadFile(
+  tabId: number,
+  remotePath: string,
+  localPath: string,
+): Promise<boolean> {
   return await invoke<boolean>('download_file', { tabId, remotePath, localPath })
 }
 
-export async function uploadFile(tabId: number, localPath: string, remotePath: string): Promise<boolean> {
+export async function uploadFile(
+  tabId: number,
+  localPath: string,
+  remotePath: string,
+): Promise<boolean> {
   return await invoke<boolean>('upload_file', { tabId, localPath, remotePath })
 }
 
 /// Upload file as raw bytes (for HTML5 drag-drop where we have file data, not paths)
-export async function uploadFileBytes(tabId: number, remotePath: string, fileData: number[]): Promise<boolean> {
+export async function uploadFileBytes(
+  tabId: number,
+  remotePath: string,
+  fileData: number[],
+): Promise<boolean> {
   return await invoke<boolean>('upload_file_bytes', { tabId, remotePath, fileData })
 }
 
@@ -165,7 +196,11 @@ export async function createDirectory(tabId: number, path: string): Promise<bool
   return await invoke<boolean>('create_directory', { tabId, path })
 }
 
-export async function renameFile(tabId: number, oldPath: string, newPath: string): Promise<boolean> {
+export async function renameFile(
+  tabId: number,
+  oldPath: string,
+  newPath: string,
+): Promise<boolean> {
   return await invoke<boolean>('rename_file', { tabId, oldPath, newPath })
 }
 
@@ -233,7 +268,11 @@ export async function resumeTransfer(tabId: number): Promise<void> {
 
 // ===== SFTP User Switching =====
 
-export async function switchSftpUser(tabId: number, username: string, password: string): Promise<void> {
+export async function switchSftpUser(
+  tabId: number,
+  username: string,
+  password: string,
+): Promise<void> {
   await invoke('switch_sftp_user', { tabId, username, password })
 }
 
@@ -309,9 +348,7 @@ export async function writeFileContent(
 
 // ===== Command Sets =====
 
-export async function listCommandSets(
-  connectionId?: string,
-): Promise<CommandSetDto[]> {
+export async function listCommandSets(connectionId?: string): Promise<CommandSetDto[]> {
   return await invoke<CommandSetDto[]>('list_command_sets', { connectionId })
 }
 
@@ -365,35 +402,81 @@ function isSession(t: TargetRef): t is { kind: 'session'; tabId: number } {
  * target routes to the `target_*` commands which operate via RemoteFs.
  */
 export async function fsListFiles(target: TargetRef, path: string): Promise<FileEntry[]> {
-  return isSession(target) ? listFiles(target.tabId, path) : invoke<FileEntry[]>('target_list_files', { target, path })
+  return isSession(target)
+    ? listFiles(target.tabId, path)
+    : invoke<FileEntry[]>('target_list_files', { target, path })
 }
 
-export async function fsDownloadFile(target: TargetRef, remotePath: string, localPath: string): Promise<boolean> {
-  return isSession(target) ? downloadFile(target.tabId, remotePath, localPath) : invoke<boolean>('target_download_file', { target, remotePath, localPath })
+export async function fsDownloadFile(
+  target: TargetRef,
+  remotePath: string,
+  localPath: string,
+): Promise<boolean> {
+  return isSession(target)
+    ? downloadFile(target.tabId, remotePath, localPath)
+    : invoke<boolean>('target_download_file', { target, remotePath, localPath })
 }
 
-export async function fsUploadFile(target: TargetRef, localPath: string, remotePath: string): Promise<boolean> {
-  return isSession(target) ? uploadFile(target.tabId, localPath, remotePath) : invoke<boolean>('target_upload_file', { target, localPath, remotePath })
+export async function fsDownloadDirectory(
+  target: TargetRef,
+  remoteDir: string,
+  localDir: string,
+): Promise<DirDownloadSummary> {
+  return isSession(target)
+    ? invoke<DirDownloadSummary>('download_directory', { tabId: target.tabId, remoteDir, localDir })
+    : invoke<DirDownloadSummary>('target_download_directory', { target, remoteDir, localDir })
 }
 
-export async function fsUploadFileBytes(target: TargetRef, remotePath: string, fileData: number[]): Promise<boolean> {
-  return isSession(target) ? uploadFileBytes(target.tabId, remotePath, fileData) : invoke<boolean>('target_upload_file_bytes', { target, remotePath, fileData })
+export async function fsUploadFile(
+  target: TargetRef,
+  localPath: string,
+  remotePath: string,
+): Promise<boolean> {
+  return isSession(target)
+    ? uploadFile(target.tabId, localPath, remotePath)
+    : invoke<boolean>('target_upload_file', { target, localPath, remotePath })
+}
+
+export async function fsUploadFileBytes(
+  target: TargetRef,
+  remotePath: string,
+  fileData: number[],
+): Promise<boolean> {
+  return isSession(target)
+    ? uploadFileBytes(target.tabId, remotePath, fileData)
+    : invoke<boolean>('target_upload_file_bytes', { target, remotePath, fileData })
 }
 
 export async function fsFileExists(target: TargetRef, path: string): Promise<boolean> {
-  return isSession(target) ? fileExists(target.tabId, path) : invoke<boolean>('target_file_exists', { target, path })
+  return isSession(target)
+    ? fileExists(target.tabId, path)
+    : invoke<boolean>('target_file_exists', { target, path })
 }
 
 export async function fsCreateDirectory(target: TargetRef, path: string): Promise<boolean> {
-  return isSession(target) ? createDirectory(target.tabId, path) : invoke<boolean>('target_create_directory', { target, path })
+  return isSession(target)
+    ? createDirectory(target.tabId, path)
+    : invoke<boolean>('target_create_directory', { target, path })
 }
 
-export async function fsRenameFile(target: TargetRef, oldPath: string, newPath: string): Promise<boolean> {
-  return isSession(target) ? renameFile(target.tabId, oldPath, newPath) : invoke<boolean>('target_rename_file', { target, oldPath, newPath })
+export async function fsRenameFile(
+  target: TargetRef,
+  oldPath: string,
+  newPath: string,
+): Promise<boolean> {
+  return isSession(target)
+    ? renameFile(target.tabId, oldPath, newPath)
+    : invoke<boolean>('target_rename_file', { target, oldPath, newPath })
 }
 
-export async function fsDeleteFile(target: TargetRef, path: string, isDir: boolean): Promise<boolean> {
-  return isSession(target) ? deleteFile(target.tabId, path, isDir) : invoke<boolean>('target_delete_file', { target, path, isDir })
+export async function fsDeleteFile(
+  target: TargetRef,
+  path: string,
+  isDir: boolean,
+): Promise<boolean> {
+  return isSession(target)
+    ? deleteFile(target.tabId, path, isDir)
+    : invoke<boolean>('target_delete_file', { target, path, isDir })
 }
 
 export async function fsReadFileContent(
@@ -403,7 +486,12 @@ export async function fsReadFileContent(
 ): Promise<FileContent> {
   return isSession(target)
     ? readFileContent(target.tabId, path, options)
-    : invoke<FileContent>('target_read_file', { target, path, maxSize: options?.maxSize, encoding: options?.encoding })
+    : invoke<FileContent>('target_read_file', {
+        target,
+        path,
+        maxSize: options?.maxSize,
+        encoding: options?.encoding,
+      })
 }
 
 // ===== App Version =====
@@ -429,19 +517,26 @@ export async function commandHelp(tabId: number, command: string): Promise<strin
   return await invoke<string>('command_help', { tabId, command })
 }
 
-export async function analyzeDockerContainer(tabId: number, containerName: string): Promise<import('./types').DockerAnalysis> {
-  return await invoke<import('./types').DockerAnalysis>('analyze_docker_container', { tabId, containerName })
+export async function analyzeDockerContainer(
+  tabId: number,
+  containerName: string,
+): Promise<import('./types').DockerAnalysis> {
+  return await invoke<import('./types').DockerAnalysis>('analyze_docker_container', {
+    tabId,
+    containerName,
+  })
 }
 
-export async function dockerContainerLogs(tabId: number, containerName: string, tailLines?: number): Promise<string> {
+export async function dockerContainerLogs(
+  tabId: number,
+  containerName: string,
+  tailLines?: number,
+): Promise<string> {
   return await invoke<string>('docker_container_logs', { tabId, containerName, tailLines })
 }
 
 /** Restart a running Docker container on the jump host. */
-export async function restartDockerContainer(
-  tabId: number,
-  containerName: string,
-): Promise<void> {
+export async function restartDockerContainer(tabId: number, containerName: string): Promise<void> {
   return await invoke('restart_docker_container', { tabId, containerName })
 }
 
@@ -507,17 +602,43 @@ export async function startAiChatStream(messages: AiMessage[]): Promise<string> 
 export async function pollAiChunks(
   chatId: string,
 ): Promise<[string, boolean, string | null, ToolCallEvent[]] | null> {
-  return await invoke<[string, boolean, string | null, ToolCallEvent[]] | null>('poll_ai_chunks', { chatId })
+  return await invoke<[string, boolean, string | null, ToolCallEvent[]] | null>('poll_ai_chunks', {
+    chatId,
+  })
 }
 
 export async function cancelAiChat(chatId: string): Promise<void> {
   return await invoke<void>('cancel_ai_chat', { chatId })
 }
 
-export async function startAiAgent(messages: AiMessage[], tabId?: number, profile?: AiEndpointProfile, readOnly?: boolean, maxAgentRounds?: number, toolCallFormat?: 'flat' | 'nested'): Promise<string> {
-  return await invoke<string>('start_ai_agent', { messages, tabId: tabId ?? null, profile: profile ?? null, readOnly: readOnly ?? false, maxAgentRounds: maxAgentRounds ?? 12, toolCallFormat: toolCallFormat ?? null })
+export async function startAiAgent(
+  messages: AiMessage[],
+  tabId?: number,
+  profile?: AiEndpointProfile,
+  readOnly?: boolean,
+  maxAgentRounds?: number,
+  toolCallFormat?: 'flat' | 'nested',
+): Promise<string> {
+  return await invoke<string>('start_ai_agent', {
+    messages,
+    tabId: tabId ?? null,
+    profile: profile ?? null,
+    readOnly: readOnly ?? false,
+    maxAgentRounds: maxAgentRounds ?? 12,
+    toolCallFormat: toolCallFormat ?? null,
+  })
 }
 
-export async function confirmAiTool(chatId: string, approved: boolean, readOnly?: boolean, maxAgentRounds?: number): Promise<void> {
-  return await invoke<void>('confirm_ai_tool', { chatId, approved, readOnly: readOnly ?? false, maxAgentRounds: maxAgentRounds ?? 12 })
+export async function confirmAiTool(
+  chatId: string,
+  approved: boolean,
+  readOnly?: boolean,
+  maxAgentRounds?: number,
+): Promise<void> {
+  return await invoke<void>('confirm_ai_tool', {
+    chatId,
+    approved,
+    readOnly: readOnly ?? false,
+    maxAgentRounds: maxAgentRounds ?? 12,
+  })
 }
