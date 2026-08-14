@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from 'react'
 import { Terminal } from '@xterm/xterm'
-import type { IDecoration, ILink } from '@xterm/xterm'
+import type { ILink } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { listen } from '@tauri-apps/api/event'
@@ -224,13 +224,6 @@ function colorizeOutputChunk(chunk: string): string {
 const LS_CAPTURE_TIMEOUT_MS = 2000
 const LS_MAX_BYTES = 128 * 1024
 
-// Persistent highlight colors so clickable `ls` entries are visibly distinct
-// from ordinary output (dirs / files / symlinks). Decorations are purely
-// visual; the link provider (below) still owns click handling.
-const LS_DIR_BG = '#1e4620'
-const LS_FILE_BG = '#1a3650'
-const LS_LINK_BG = '#3d1e50'
-
 interface LsCaptureState {
   format: 'long' | 'dir'
   prompt: string
@@ -239,6 +232,17 @@ interface LsCaptureState {
   buf: string
   bytes: number
   timeout: ReturnType<typeof setTimeout> | null
+}
+
+/**
+ * A parsed `ls` entry bound to the absolute base directory of *its own*
+ * listing (captured at submit time). Carrying the baseDir per entry — rather
+ * than reading a single global "latest listing" ref — is what lets multiple
+ * listings coexist on screen: each click resolves against the directory of
+ * the listing it came from, even after a newer `ls` has run elsewhere.
+ */
+interface LsClickableEntry extends LsEntry {
+  baseDirPromise: Promise<string | null>
 }
 
 function joinPath(base: string, name: string): string {
@@ -382,27 +386,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // ---- clickable `ls` output (ls/ll/dir) ----
   const lsCaptureRef = useRef<LsCaptureState | null>(null)
   // Parsed ls entries keyed by absolute buffer row (0-based), consumed by the
-  // link provider that is registered once per terminal.
-  const lsEntriesRef = useRef<Map<number, LsEntry[]>>(new Map())
-  // Persistent clickable-entry decorations (one per entry name), disposed on
-  // clear/new command/clear-screen/disconnect/AI command.
-  const lsDecorationsRef = useRef<IDecoration[]>([])
-  // Absolute directory the current listing lives in, captured at submit time
-  // (one-shot `pwd` for SSH, prompt parse for local) and resolved with the
-  // command's target arg. Clicks read this so they resolve the right path even
-  // after the user has `cd`'d away from the listing's directory.
+  // link provider that is registered once per terminal. Multiple listings
+  // accumulate here (a new `ls` does NOT clear the old ones) — entries from
+  // older listings stay clickable as long as their rows remain in the buffer,
+  // each carrying its own baseDir so a click resolves against the right dir.
+  const lsEntriesRef = useRef<Map<number, LsClickableEntry[]>>(new Map())
+  // Base directory of the listing currently being captured (set by
+  // startLsCaptureIfMatch, consumed by finalizeLsCapture → setLsEntries to bind
+  // onto each entry). Not read at click time — clicks use entry.baseDirPromise.
   const lsBaseDirPromiseRef = useRef<Promise<string | null> | null>(null)
 
   const clearLsLinks = () => {
     lsEntriesRef.current.clear()
-    for (const d of lsDecorationsRef.current) {
-      try {
-        d.dispose()
-      } catch {
-        // disposal must never throw
-      }
-    }
-    lsDecorationsRef.current = []
   }
 
   const resetLsCapture = () => {
@@ -410,15 +405,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     if (c && c.timeout) clearTimeout(c.timeout)
     lsCaptureRef.current = null
     lsBaseDirPromiseRef.current = null
-    // Any lingering clickable overlay belongs to a previous listing — drop it.
-    clearLsLinks()
+    // NOTE: do NOT clearLsLinks() here. A new `ls`/`ll`/`dir` must NOT wipe the
+    // previous listing's clickable entries — they stay clickable while their
+    // rows are still in the buffer (the link provider matches live line text,
+    // so scrolled-off entries can't produce phantom links). Only the true
+    // resets (clear / disconnect / reconnect / AI command / unmount) call
+    // clearLsLinks().
   }
 
-  const onLsEntryClick = async (entry: LsEntry) => {
-    // Resolve the entry's absolute path from the listing's base directory
-    // (captured at submit time), so the click lands in the right place even
-    // after the user has `cd`'d away from where `ls` was run.
-    const base = (await lsBaseDirPromiseRef.current) ?? null
+  const onLsEntryClick = async (entry: LsClickableEntry) => {
+    // Resolve the entry's absolute path from *this listing's* base directory
+    // (captured at submit time and bound to the entry), so the click lands in
+    // the right place even after the user has `cd`'d away — and even if a newer
+    // `ls` has since run in a different directory.
+    const base = (await entry.baseDirPromise) ?? null
     const abs = base ? joinPath(base, entry.name) : entry.name
     if (entry.kind === 'dir') {
       if (isLocal) {
@@ -487,47 +487,43 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     return expectedRow
   }
 
-  // Populate the link table for a freshly parsed ls block. Rows are resolved
-  // against the live terminal buffer (not just `startRow + entry.line`) so the
-  // link provider matches the lines xterm actually renders. Also paints a subtle
-  // background highlight on each entry name so the user can see at a glance that
-  // the listing is clickable, without clobbering the existing ANSI colors
-  // emitted by `ls --color`.
-  const setLsEntries = (startRow: number, entries: LsEntry[]) => {
-    clearLsLinks()
-    const map = new Map<number, LsEntry[]>()
+  // Append a freshly parsed ls block's entries to the link table. Rows are
+  // resolved against the live terminal buffer (not just `startRow + entry.line`)
+  // so the link provider matches the lines xterm actually renders. Each entry is
+  // bound to its listing's `baseDirPromise` so a click resolves against the
+  // right directory even when several listings coexist on screen. Also paints a
+  // subtle background highlight on each entry name. Does NOT clear previous
+  // listings — those stay clickable while their rows remain in the buffer.
+  const setLsEntries = (
+    startRow: number,
+    entries: LsEntry[],
+    baseDirPromise: Promise<string | null>,
+  ) => {
     const term = termRef.current
-    for (const entry of entries) {
-      const row = term ? resolveLsRow(term, startRow + entry.line, entry) : startRow + entry.line
-      const arr = map.get(row)
-      if (arr) arr.push(entry)
-      else map.set(row, [entry])
-      if (term && entry.name.length > 0) {
-        try {
-          // `registerMarker` pins to a line relative to the *current cursor*;
-          // convert the absolute entry row into that offset so the decoration
-          // tracks the correct line as the buffer scrolls.
-          const buf = term.buffer.active
-          const cursorRow = buf.baseY + buf.cursorY
-          const marker = term.registerMarker(row - cursorRow)
-          // xterm decoration `x` is a 0-based offset from the anchor (unlike
-          // the link provider's 1-based buffer positions), so use entry.col
-          // directly so the highlight exactly covers the name cells.
-          const dec = term.registerDecoration({
-            marker,
-            layer: 'top',
-            x: entry.col,
-            width: entry.name.length,
-            backgroundColor:
-              entry.kind === 'dir' ? LS_DIR_BG : entry.kind === 'link' ? LS_LINK_BG : LS_FILE_BG,
-          })
-          if (dec) lsDecorationsRef.current.push(dec)
-        } catch {
-          // decoration creation must never break link setup
+    const map = lsEntriesRef.current
+    // GC: drop entries whose row has scrolled out of the buffer. Keeps the map
+    // bounded across many ls invocations without affecting visible listings
+    // (the link provider reads live line text anyway, so a stale row can never
+    // match once it's gone from the buffer).
+    if (term) {
+      const bufLen = term.buffer.active.length
+      if (bufLen > 0) {
+        for (const row of map.keys()) {
+          if (row >= bufLen) map.delete(row)
         }
       }
     }
-    lsEntriesRef.current = map
+    for (const entry of entries) {
+      const row = term ? resolveLsRow(term, startRow + entry.line, entry) : startRow + entry.line
+      const clickable: LsClickableEntry = { ...entry, baseDirPromise }
+      const arr = map.get(row)
+      if (arr) arr.push(clickable)
+      else map.set(row, [clickable])
+      // No background-color decoration: the link provider (hover underline +
+      // pointer cursor) is the sole visual affordance that the name is
+      // clickable. xterm decorations only support backgroundColor/foregroundColor
+      // (no underline), and a persistent background was deemed too noisy.
+    }
   }
 
   const finalizeLsCapture = (term: Terminal, ls: LsCaptureState, promptEnd: string | null) => {
@@ -539,7 +535,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     let text = ls.buf
     if (promptEnd) text = text.slice(0, text.length - promptEnd.length)
     const entries = parseLsBlock(text, ls.format)
-    if (entries.length > 0) setLsEntries(ls.startRow, entries)
+    const baseDirPromise = lsBaseDirPromiseRef.current
+    if (entries.length > 0 && baseDirPromise) {
+      setLsEntries(ls.startRow, entries, baseDirPromise)
+    }
   }
 
   const writeLsChunk = (term: Terminal, ls: LsCaptureState, chunk: string) => {
@@ -689,6 +688,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     resetCapture()
     const match = parsePrintCommand(cmd)
     if (!match) return
+    // NOTE: do NOT clearLsLinks() here. A previous `ls` listing may still be
+    // visible on screen and should stay clickable. The link provider matches
+    // live line text (column-anchored + name-boundary), so `cat`/`head`/`tail`
+    // output can only produce a link where it genuinely matches an entry name
+    // at the right column — which is benign (the user sees the name and can
+    // click it). Listings are cleared only on clear/disconnect/reconnect/AI
+    // command/unmount.
     captureRef.current = {
       lang: match.lang,
       prompt: prompt || '',
@@ -867,9 +873,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     latestTerminalByTab.set(currentTabId, term)
 
     // Clickable `ls` output: a single link provider makes directory/file names
-    // from the last parsed `ls` block hoverable (underline + pointer) and
-    // clickable. xterm's linkifier handles the mouse events natively — far more
-    // reliable than decoration overlays for receiving clicks.
+    // from any parsed `ls` block hoverable (underline + pointer) and clickable.
+    // Multiple listings accumulate (a new `ls` doesn't clear the old ones); the
+    // provider matches against the live hovered line, so only entries whose
+    // names are actually visible at the cursor produce links. xterm's linkifier
+    // handles the mouse events natively — far more reliable than decoration
+    // overlays for receiving clicks.
     const lsLinkProviderDisposable = term.registerLinkProvider({
       provideLinks: (bufferLineNumber, callback) => {
         const term = termRef.current
@@ -881,23 +890,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         const buf = term.buffer.active
         // Match entries against the *live* hovered line, not cached row keys.
         // xterm's `bufferLineNumber` is 1-based and `getLine` is 0-based, so the
-        // hovered row is `bufferLineNumber - 1`. Cached absolute-row keys go stale
-        // once the buffer scrolls (and an earlier off-by-one read the wrong row
-        // entirely), which made a click activate a different entry than the one
-        // under the cursor. Reading the line text and requiring the entry's name
-        // to sit exactly at its recorded column makes the click land on whatever
-        // is visibly under the cursor — immune to scroll and to substring names
-        // (`dir` no longer matches a row showing `dir1`).
+        // hovered row is `bufferLineNumber - 1`. Reading the line text and
+        // requiring the entry's name to sit exactly at its recorded column (plus
+        // a name boundary) makes the click land on whatever is visibly under the
+        // cursor — immune to scroll, to substring names (`dir` won't match a row
+        // showing `dir1`), and to multiple listings sharing the buffer.
         const line = buf.getLine(bufferLineNumber - 1)
         if (!line) {
           callback([])
           return
         }
         const text = line.translateToString(true)
-        const allEntries: LsEntry[] = []
+        const allEntries: LsClickableEntry[] = []
         for (const arr of entries.values()) allEntries.push(...arr)
         const links: ILink[] = []
-        const seen = new Set<LsEntry>()
+        const seen = new Set<LsClickableEntry>()
         for (const entry of allEntries) {
           if (entry.name.length === 0 || seen.has(entry)) continue
           const end = entry.col + entry.name.length
@@ -1007,7 +1014,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // capture can end precisely when the next prompt arrives.
         if (/^[\r\n]+$/.test(data)) {
           const { prompt, command } = splitPromptCommand(getCurrentCommandLine(term))
-          clearLsLinks()
+          // NOTE: do NOT clearLsLinks() on Enter. A previous `ls` listing stays
+          // visible on screen across ordinary commands (Enter, `cd`, `cat`, a
+          // new `ls`…) and should remain clickable throughout. The link provider
+          // matches the *live* hovered line (column-anchored + name-boundary),
+          // so entries can't produce phantom links once their rows scroll off —
+          // they simply stop matching. Each entry carries its own baseDir, so a
+          // click always resolves against the listing it came from, even after
+          // a newer `ls` elsewhere. Links are cleared only on:
+          //   `clear` / disconnect / reconnect / AI command / unmount.
           startCaptureIfPrint(command, prompt)
           startLsCaptureIfMatch(command, prompt)
         }
