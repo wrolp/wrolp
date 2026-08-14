@@ -243,7 +243,44 @@ interface LsCaptureState {
 
 function joinPath(base: string, name: string): string {
   if (!base) return name
-  return `${base.replace(/[\\/]+$/, '')}/${name}`
+  // Use the host's native separator so Windows local paths stay `C:\a\b`
+  // (cmd/PowerShell/backend PathBuf all accept it) and Unix paths stay `/a/b`.
+  const sep = /^[A-Za-z]:[\\/]/.test(base) ? '\\' : '/'
+  return `${base.replace(/[\\/]+$/, '')}${sep}${name}`
+}
+
+/** Extract a single non-flag path argument from an `ls`-style command, if any. */
+function extractLsTargetArg(cmd: string): string | null {
+  const tokens = cmd.trim().split(/\s+/).filter(Boolean)
+  const nonFlag = tokens.slice(1).filter((a) => !a.startsWith('-'))
+  return nonFlag.length === 1 ? nonFlag[0] : null
+}
+
+/**
+ * Resolve the directory a listing's entries live in: the command's target path
+ * argument when present (absolute `/…` / `X:\…` / `~…` used as-is, relative
+ * joined to the cwd captured at submit time), otherwise the cwd itself. Returns
+ * null only when neither the target nor the cwd is known.
+ */
+function resolveLsBaseDir(cwd: string | null, targetArg: string | null): string | null {
+  if (!targetArg) return cwd
+  if (targetArg.startsWith('~') || targetArg.startsWith('/') || /^[A-Za-z]:[\\/]/.test(targetArg)) {
+    return targetArg.replace(/[\\/]+$/, '')
+  }
+  if (!cwd) return null
+  return joinPath(cwd, targetArg)
+}
+
+/**
+ * Expand a leading `~/…` (or bare `~`) to `home`; leave other paths untouched.
+ * SFTP doesn't expand `~` itself, and the backend's `expand_tilde` resolves the
+ * *local* machine's home — so remote editor-open paths must be absolutized here.
+ */
+function expandTilde(cwd: string | null, home: string | null): string | null {
+  if (!cwd) return null
+  if (cwd === '~') return home ?? cwd
+  if (cwd.startsWith('~/') && home) return `${home}${cwd.slice(1)}` // cwd.slice(1) → '/…'
+  return cwd
 }
 
 interface TerminalComponentProps {
@@ -350,7 +387,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Persistent clickable-entry decorations (one per entry name), disposed on
   // clear/new command/clear-screen/disconnect/AI command.
   const lsDecorationsRef = useRef<IDecoration[]>([])
-  const lsPromptRef = useRef<string>('')
+  // Absolute directory the current listing lives in, captured at submit time
+  // (one-shot `pwd` for SSH, prompt parse for local) and resolved with the
+  // command's target arg. Clicks read this so they resolve the right path even
+  // after the user has `cd`'d away from the listing's directory.
+  const lsBaseDirPromiseRef = useRef<Promise<string | null> | null>(null)
 
   const clearLsLinks = () => {
     lsEntriesRef.current.clear()
@@ -368,45 +409,43 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const c = lsCaptureRef.current
     if (c && c.timeout) clearTimeout(c.timeout)
     lsCaptureRef.current = null
+    lsBaseDirPromiseRef.current = null
     // Any lingering clickable overlay belongs to a previous listing — drop it.
     clearLsLinks()
   }
 
-  const onLsEntryClick = (entry: LsEntry) => {
-    console.log('[ls click]', entry.kind, JSON.stringify(entry.name), 'col', entry.col)
+  const onLsEntryClick = async (entry: LsEntry) => {
+    // Resolve the entry's absolute path from the listing's base directory
+    // (captured at submit time), so the click lands in the right place even
+    // after the user has `cd`'d away from where `ls` was run.
+    const base = (await lsBaseDirPromiseRef.current) ?? null
+    const abs = base ? joinPath(base, entry.name) : entry.name
     if (entry.kind === 'dir') {
-      const safeName = entry.name.replace(/'/g, "'\\'")
-      // Local shells (cmd/PowerShell) don't understand `--`; remote bash/zsh do.
-      const cmd = isLocal ? `cd ${entry.name}\r` : `cd -- '${safeName}'\r`
       if (isLocal) {
-        localSendInput(tabIdRef.current, cmd).catch((e) =>
+        // cmd/PowerShell: double-quote to tolerate spaces; both accept it.
+        localSendInput(tabIdRef.current, `cd "${abs}"\r`).catch((e) =>
           console.error('local_send_input error:', e),
         )
       } else {
+        // `~` must stay unquoted so the shell expands it; absolute/relative
+        // paths are single-quoted to tolerate spaces and special chars.
+        const cmd = abs.startsWith('~')
+          ? `cd -- ${abs}\r`
+          : `cd -- '${abs.replace(/'/g, "'\\''")}'\r`
         sendInput(tabIdRef.current, cmd)
       }
       return
     }
-    void openLsFile(entry.name)
+    void openLsFile(abs)
   }
 
-  const openLsFile = async (name: string) => {
+  const openLsFile = async (absPath: string) => {
     const cb = onOpenFileRef.current
     if (!cb) return
-    let cwd: string | null = null
-    if (isLocal) {
-      cwd = extractCwdFromPrompt(lsPromptRef.current) ?? localCwd ?? null
-    } else {
-      try {
-        cwd = await pollWorkingDir(tabIdRef.current)
-      } catch {
-        cwd = null
-      }
-    }
     const target: TargetRef = isLocal
       ? { kind: 'local', tabId: tabIdRef.current }
       : { kind: 'session', tabId: tabIdRef.current }
-    cb(target, joinPath(cwd ?? '', name))
+    cb(target, absPath)
   }
 
   // The parsed `entry.line` is a logical-line index into the (ANSI-stripped)
@@ -421,15 +460,29 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // row (searching outward in both directions).
   const resolveLsRow = (term: Terminal, expectedRow: number, entry: LsEntry): number => {
     const buf = term.buffer.active
-    const rowHasName = (y: number): boolean => {
+    // Column-anchored + name-boundary match. The name must sit exactly at
+    // [col, col+len) on the candidate row, AND the character immediately after
+    // it must be a boundary (EOL / whitespace / start of a ` -> ` symlink
+    // arrow). Otherwise a shorter name like `password-platform` wrongly passes
+    // when evaluated against a row that actually contains the longer name
+    // `password-platform-dev` at the same column (the first 17 chars match,
+    // but `-dev` follows so it's a different entry).
+    const nameAt = (y: number): boolean => {
       const line = buf.getLine(y)
       if (!line) return false
-      return line.translateToString(true).includes(entry.name)
+      const text = line.translateToString(true)
+      const end = entry.col + entry.name.length
+      if (text.slice(entry.col, end) !== entry.name) return false
+      const after = text[end]
+      return after === undefined || /\s/.test(after) || text.slice(end, end + 4) === ' -> '
     }
-    if (rowHasName(expectedRow)) return expectedRow
-    for (let d = 1; d <= 6; d++) {
-      if (rowHasName(expectedRow - d)) return expectedRow - d
-      if (rowHasName(expectedRow + d)) return expectedRow + d
+    if (nameAt(expectedRow)) return expectedRow
+    // The expected row can drift when the buffer scrolled between submit and
+    // finalize (full scrollback) or an extra blank/redraw line was emitted —
+    // search outward for the real row.
+    for (let d = 1; d <= 12; d++) {
+      if (nameAt(expectedRow - d)) return expectedRow - d
+      if (nameAt(expectedRow + d)) return expectedRow + d
     }
     return expectedRow
   }
@@ -515,7 +568,27 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     resetLsCapture()
     const term = termRef.current
     if (!term) return
-    lsPromptRef.current = prompt || ''
+    // Capture the listing's base directory now (at submit time) so later clicks
+    // resolve the correct absolute path regardless of the current cwd.
+    //
+    // SSH: the interactive shell's cwd is parsed from the *prompt* — the prompt
+    // reflects the real session cwd. A fresh `poll_working_dir` connection runs
+    // `pwd` in the user's $HOME, NOT the shell's current dir, so it can't be
+    // trusted for the cwd; it's fired only to fetch $HOME so a leading `~` (from
+    // the prompt or from `ls -l ~/docs`) can be expanded to an absolute path
+    // (SFTP doesn't expand `~`, and the backend `expand_tilde` uses the *local*
+    // machine's home, not the remote one).
+    // Local: cwd from the prompt, falling back to the shell's start dir.
+    const targetArg = extractLsTargetArg(cmd)
+    const promptCwd = extractCwdFromPrompt(prompt || '')
+    const homePromise: Promise<string | null> = isLocal
+      ? Promise.resolve(null)
+      : pollWorkingDir(tabIdRef.current).catch(() => null)
+    lsBaseDirPromiseRef.current = homePromise.then((home) => {
+      const cwd = isLocal ? promptCwd ?? localCwd ?? null : promptCwd ?? home
+      const base = resolveLsBaseDir(cwd, targetArg)
+      return isLocal ? base : expandTilde(base, home)
+    })
     const buf = term.buffer.active
     lsCaptureRef.current = {
       format,
@@ -806,48 +879,55 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           return
         }
         const buf = term.buffer.active
-        // xterm hands us the absolute line number of the hovered row, but its
-        // numbering base (0- vs 1-based) and our map's row keys can disagree.
-        // That disagreement previously made a click run `cd` on the directory
-        // rendered *above* the one that was actually clicked. Resolve the real
-        // line text for this visual row (trying both likely bases) and match
-        // the entry by its name on that line, ignoring all row arithmetic.
+        // Match entries against the *live* hovered line, not cached row keys.
+        // xterm's `bufferLineNumber` is 1-based and `getLine` is 0-based, so the
+        // hovered row is `bufferLineNumber - 1`. Cached absolute-row keys go stale
+        // once the buffer scrolls (and an earlier off-by-one read the wrong row
+        // entirely), which made a click activate a different entry than the one
+        // under the cursor. Reading the line text and requiring the entry's name
+        // to sit exactly at its recorded column makes the click land on whatever
+        // is visibly under the cursor — immune to scroll and to substring names
+        // (`dir` no longer matches a row showing `dir1`).
+        const line = buf.getLine(bufferLineNumber - 1)
+        if (!line) {
+          callback([])
+          return
+        }
+        const text = line.translateToString(true)
         const allEntries: LsEntry[] = []
         for (const arr of entries.values()) allEntries.push(...arr)
-        const readLine = (y: number): string => {
-          const line = buf.getLine(y)
-          return line ? line.translateToString(true) : ''
-        }
-        const hasEntry = (text: string) =>
-          allEntries.some((e) => e.name.length > 0 && text.includes(e.name))
-        let lineText = readLine(bufferLineNumber)
-        if (!hasEntry(lineText)) {
-          const alt = readLine(bufferLineNumber - 1)
-          if (hasEntry(alt)) lineText = alt
-          else {
-            const alt2 = readLine(bufferLineNumber + 1)
-            if (hasEntry(alt2)) lineText = alt2
-          }
-        }
         const links: ILink[] = []
         const seen = new Set<LsEntry>()
         for (const entry of allEntries) {
           if (entry.name.length === 0 || seen.has(entry)) continue
-          if (lineText.includes(entry.name)) {
-            seen.add(entry)
-            links.push({
-              range: {
-                start: { x: entry.col + 1, y: bufferLineNumber },
-                end: { x: entry.col + entry.name.length + 1, y: bufferLineNumber },
-              },
-              text: entry.name,
-              decorations: { pointerCursor: true, underline: true },
-              activate: () => {
-                clearLsLinks()
-                onLsEntryClick(entry)
-              },
-            })
-          }
+          const end = entry.col + entry.name.length
+          if (text.slice(entry.col, end) !== entry.name) continue
+          // Name boundary: the next char must be EOL / whitespace / the start of
+          // a ` -> ` symlink arrow. Without this, a shorter entry like
+          // `password-platform` (17 chars) wrongly matches on the row of its
+          // longer neighbor `password-platform-dev` — the slice matches the
+          // first 17 chars even though the real token on that row is 22 chars.
+          const after = text[end]
+          const boundaryOk =
+            after === undefined || /\s/.test(after) || text.slice(end, end + 4) === ' -> '
+          if (!boundaryOk) continue
+          seen.add(entry)
+          links.push({
+            range: {
+              start: { x: entry.col + 1, y: bufferLineNumber },
+              end: { x: entry.col + entry.name.length + 1, y: bufferLineNumber },
+            },
+            text: entry.name,
+            decorations: { pointerCursor: true, underline: true },
+            activate: () => {
+              // Keep links clickable after a click — a click is not a "new
+              // command" from the buffer's perspective (cd is sent straight
+              // via sendInput, not through onData). Links are cleared at the
+              // right moments: next Enter-submitted command, clear, disconnect,
+              // reconnect, AI command, and unmount.
+              onLsEntryClick(entry)
+            },
+          })
         }
         callback(links)
       },
