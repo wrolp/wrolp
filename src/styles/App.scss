@@ -2095,6 +2095,21 @@ body.resizing-v {
     color: #e0e0e0;
   }
 
+  .file-modal-input {
+    width: 100%;
+    padding: 8px 10px;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: 4px;
+    color: $text-primary;
+    font-size: 13px;
+    outline: none;
+
+    &:focus {
+      border-color: $border-focus;
+    }
+  }
+
   &-actions {
     display: flex;
     justify-content: flex-end;

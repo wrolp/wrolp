@@ -1,8 +1,35 @@
-import React, { useState, useEffect, useCallback, useRef, useLayoutEffect, useImperativeHandle, useMemo, forwardRef, type ReactNode } from 'react'
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useLayoutEffect,
+  useImperativeHandle,
+  useMemo,
+  forwardRef,
+  type ReactNode,
+} from 'react'
 import { listen } from '@tauri-apps/api/event'
 import type { FileEntry, TargetRef, FileTargetMode, ContainerInfo } from '../types'
 import { targetLabel } from '../types'
-import { fsListFiles, fsUploadFile, fsUploadFileBytes, fsDownloadFile, fsDeleteFile, fsCreateDirectory, fsRenameFile, fsWriteFileContent, pauseTransfer, resumeTransfer, switchSftpUser, revertSftpUser, getSftpUser, sendInput, pollWorkingDir, listDockerContainers } from '../commands'
+import {
+  fsListFiles,
+  fsUploadFile,
+  fsUploadFileBytes,
+  fsDownloadFile,
+  fsDeleteFile,
+  fsCreateDirectory,
+  fsRenameFile,
+  fsWriteFileContent,
+  pauseTransfer,
+  resumeTransfer,
+  switchSftpUser,
+  revertSftpUser,
+  getSftpUser,
+  sendInput,
+  pollWorkingDir,
+  listDockerContainers,
+} from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
@@ -118,7 +145,11 @@ function toNode(e: FileEntry): TreeNode {
   }
 }
 
-function updateNode(nodes: TreeNode[], path: string, updater: (n: TreeNode) => TreeNode): TreeNode[] {
+function updateNode(
+  nodes: TreeNode[],
+  path: string,
+  updater: (n: TreeNode) => TreeNode,
+): TreeNode[] {
   return nodes.map((n) => {
     if (n.path === path) return updater(n)
     if (n.children) return { ...n, children: updateNode(n.children, path, updater) }
@@ -146,21 +177,24 @@ const formatSpeed = (bytesPerSec: number): string => {
 
 /* ---------- component ---------- */
 
-export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function FilePanel({
-  tabId,
-  isConnected,
-  defaultPath = '.',
-  expanded = true,
-  onToggleExpanded,
-  syncEnabled = false,
-  onToggleSync,
-  onEditFile,
-  targetRef,
-  fileMode = 'ssh',
-  onFileModeChange,
-  onSelectTarget,
-  serverLabel,
-}, ref) {
+export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function FilePanel(
+  {
+    tabId,
+    isConnected,
+    defaultPath = '.',
+    expanded = true,
+    onToggleExpanded,
+    syncEnabled = false,
+    onToggleSync,
+    onEditFile,
+    targetRef,
+    fileMode = 'ssh',
+    onFileModeChange,
+    onSelectTarget,
+    serverLabel,
+  },
+  ref,
+) {
   const { t } = useI18n()
   // The remote filesystem this panel operates on (defaults to the tab session).
   // Memoized by its serialized form so callbacks/effects get a stable identity.
@@ -203,7 +237,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }, [tabId])
 
   // Decide what the body should render given the active mode and current target.
-  const showJumpForm = fileMode === 'jump' && target.kind !== 'jumpRemote' && target.kind !== 'dockerSsh'
+  const showJumpForm =
+    fileMode === 'jump' && target.kind !== 'jumpRemote' && target.kind !== 'dockerSsh'
   const showDockerPicker = fileMode === 'docker' && target.kind !== 'docker'
   const showTree = !showJumpForm && !showDockerPicker
 
@@ -254,8 +289,15 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const [error, setError] = useState('')
   const [selPaths, setSelPaths] = useState<Set<string>>(new Set())
   const [contextMenu, setContextMenu] = useState<{
-    x: number; y: number; node: TreeNode | null
+    x: number
+    y: number
+    node: TreeNode | null
   } | null>(null)
+  // Custom rename / delete dialogs (replaces the native browser prompt/confirm
+  // which looks out of place in the WebView and can be blocked).
+  const [renameTarget, setRenameTarget] = useState<TreeNode | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null)
   const [paused, setPaused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   // Per-file transfer rows shown in the bottom progress panel. Both upload and
@@ -281,35 +323,48 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   rootPathRef.current = rootPath
   const lastPolledPath = useRef<string | null>(null)
 
-  const cdToTerminal = useCallback(async (path: string) => {
-    if (!syncRef.current || sessionTabId == null) return
-    const cmd = path === '.' ? 'cd\n' : `cd "${path}"\n`
-    try { await sendInput(sessionTabId, cmd) } catch { /* ignore */ }
-  }, [sessionTabId])
+  const cdToTerminal = useCallback(
+    async (path: string) => {
+      if (!syncRef.current || sessionTabId == null) return
+      const cmd = path === '.' ? 'cd\n' : `cd "${path}"\n`
+      try {
+        await sendInput(sessionTabId, cmd)
+      } catch {
+        /* ignore */
+      }
+    },
+    [sessionTabId],
+  )
 
   /* ---- tree load ---- */
-  const loadRootDir = useCallback(async (path: string, sendCd = false): Promise<boolean> => {
-    setLoading(true)
-    setError('')
-    try {
-      const result = await fsListFiles(target, path)
-      setTree(result.map(toNode))
-      setCurrentPath(path)
-      if (sendCd) cdToTerminal(path)
-      return true
-    } catch (e) {
-      setError(String(e))
-      return false
-    } finally {
-      setLoading(false)
-    }
-  }, [target, cdToTerminal])
+  const loadRootDir = useCallback(
+    async (path: string, sendCd = false): Promise<boolean> => {
+      setLoading(true)
+      setError('')
+      try {
+        const result = await fsListFiles(target, path)
+        setTree(result.map(toNode))
+        setCurrentPath(path)
+        if (sendCd) cdToTerminal(path)
+        return true
+      } catch (e) {
+        setError(String(e))
+        return false
+      } finally {
+        setLoading(false)
+      }
+    },
+    [target, cdToTerminal],
+  )
 
   // Refresh: re-load root + re-load any previously expanded directories
   const refresh = useCallback(async () => {
     setLoading(true)
     setError('')
-    const reloadDir = async (path: string, prevMap?: Map<string, TreeNode>): Promise<TreeNode[]> => {
+    const reloadDir = async (
+      path: string,
+      prevMap?: Map<string, TreeNode>,
+    ): Promise<TreeNode[]> => {
       const result = await fsListFiles(target, path)
       const nodes: TreeNode[] = result.map(toNode)
       if (prevMap) {
@@ -364,7 +419,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       }
       attemptLoad()
       if (sessionTabId != null) {
-        getSftpUser(sessionTabId).then(setSftpUser).catch(() => {})
+        getSftpUser(sessionTabId)
+          .then(setSftpUser)
+          .catch(() => {})
       }
       return () => {
         cancelled = true
@@ -388,11 +445,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             loadRootDir(remotePath, false)
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     poll()
     const interval = setInterval(poll, 5000)
-    return () => { active = false; clearInterval(interval) }
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
   }, [syncEnabled, isConnected, sessionTabId, loadRootDir])
 
   // Transfer progress events (main session only). Each event carries the
@@ -408,12 +470,20 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       setTransferRows((prev) =>
         prev.map((r) =>
           r.key === key
-            ? { ...r, transferred: p.transferred, total: p.total, speed: formatSpeed(bytesPerSec), status: 'active' }
+            ? {
+                ...r,
+                transferred: p.transferred,
+                total: p.total,
+                speed: formatSpeed(bytesPerSec),
+                status: 'active',
+              }
             : r,
         ),
       )
     })
-    return () => { unlisten.then(fn => fn()) }
+    return () => {
+      unlisten.then((fn) => fn())
+    }
   }, [sessionTabId])
 
   // Close context menu
@@ -438,109 +508,142 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   /* ---- tree actions ---- */
 
-  const toggleDir = useCallback(async (node: TreeNode) => {
-    if (node.expanded) {
-      setTree((t) => updateNode(t, node.path, (n) => ({ ...n, expanded: false })))
-    } else {
-      if (!node.loaded) {
-        setTree((t) => updateNode(t, node.path, (n) => ({ ...n, loading: true })))
-        try {
-          const result = await fsListFiles(target, node.path)
-          setTree((t) =>
-            updateNode(t, node.path, (n) => ({
-              ...n,
-              expanded: true,
-              loaded: true,
-              loading: false,
-              children: result.map(toNode),
-            })),
-          )
-        } catch {
-          setTree((t) => updateNode(t, node.path, (n) => ({ ...n, loading: false })))
-        }
+  const toggleDir = useCallback(
+    async (node: TreeNode) => {
+      if (node.expanded) {
+        setTree((t) => updateNode(t, node.path, (n) => ({ ...n, expanded: false })))
       } else {
-        setTree((t) => updateNode(t, node.path, (n) => ({ ...n, expanded: true })))
+        if (!node.loaded) {
+          setTree((t) => updateNode(t, node.path, (n) => ({ ...n, loading: true })))
+          try {
+            const result = await fsListFiles(target, node.path)
+            setTree((t) =>
+              updateNode(t, node.path, (n) => ({
+                ...n,
+                expanded: true,
+                loaded: true,
+                loading: false,
+                children: result.map(toNode),
+              })),
+            )
+          } catch {
+            setTree((t) => updateNode(t, node.path, (n) => ({ ...n, loading: false })))
+          }
+        } else {
+          setTree((t) => updateNode(t, node.path, (n) => ({ ...n, expanded: true })))
+        }
       }
-    }
-  }, [target])
+    },
+    [target],
+  )
 
   /* ---- upload ---- */
-  const uploadFiles = useCallback(async (paths: string[]) => {
-    setError(''); setPaused(false)
-    const rows: TransferRow[] = paths.map((localPath) => {
-      const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
-      return {
-        key: `upload:${fileName}`,
-        filename: fileName,
+  const uploadFiles = useCallback(
+    async (paths: string[]) => {
+      setError('')
+      setPaused(false)
+      const rows: TransferRow[] = paths.map((localPath) => {
+        const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
+        return {
+          key: `upload:${fileName}`,
+          filename: fileName,
+          op: 'upload',
+          status: 'queued',
+          transferred: 0,
+          total: 0,
+          speed: '',
+        }
+      })
+      setTransferRows(rows)
+      for (let i = 0; i < paths.length; i++) {
+        const localPath = paths[i]
+        const fileName = rows[i].filename
+        const remotePath = join(currentPath, fileName)
+        setTransferRows((prev) =>
+          prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)),
+        )
+        try {
+          await fsUploadFile(target, localPath, remotePath)
+          setTransferRows((prev) =>
+            prev.map((r) =>
+              r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r,
+            ),
+          )
+        } catch (e) {
+          setTransferRows((prev) =>
+            prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)),
+          )
+          setError(`Upload ${fileName} failed: ${e}`)
+          break
+        }
+      }
+      setPaused(false)
+      refresh()
+    },
+    [target, currentPath, refresh],
+  )
+
+  const handleDropUpload = useCallback(
+    async (fileList: FileList) => {
+      setError('')
+      setPaused(false)
+      const rows: TransferRow[] = Array.from(fileList).map((file) => ({
+        key: `upload:${file.name}`,
+        filename: file.name,
         op: 'upload',
         status: 'queued',
         transferred: 0,
         total: 0,
         speed: '',
+      }))
+      setTransferRows(rows)
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i]
+        const remotePath = join(currentPath, file.name)
+        setTransferRows((prev) =>
+          prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)),
+        )
+        try {
+          const buf = await file.arrayBuffer()
+          const bytes = Array.from(new Uint8Array(buf))
+          await fsUploadFileBytes(target, remotePath, bytes)
+          setTransferRows((prev) =>
+            prev.map((r) =>
+              r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r,
+            ),
+          )
+        } catch (e) {
+          setTransferRows((prev) =>
+            prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)),
+          )
+          setError(`Upload ${file.name} failed: ${e}`)
+          break
+        }
       }
-    })
-    setTransferRows(rows)
-    for (let i = 0; i < paths.length; i++) {
-      const localPath = paths[i]
-      const fileName = rows[i].filename
-      const remotePath = join(currentPath, fileName)
-      setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)))
-      try {
-        await fsUploadFile(target, localPath, remotePath)
-        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r)))
-      } catch (e) {
-        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)))
-        setError(`Upload ${fileName} failed: ${e}`); break
-      }
-    }
-    setPaused(false)
-    refresh()
-  }, [target, currentPath, refresh])
-
-  const handleDropUpload = useCallback(async (fileList: FileList) => {
-    setError(''); setPaused(false)
-    const rows: TransferRow[] = Array.from(fileList).map((file) => ({
-      key: `upload:${file.name}`,
-      filename: file.name,
-      op: 'upload',
-      status: 'queued',
-      transferred: 0,
-      total: 0,
-      speed: '',
-    }))
-    setTransferRows(rows)
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i]
-      const remotePath = join(currentPath, file.name)
-      setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)))
-      try {
-        const buf = await file.arrayBuffer()
-        const bytes = Array.from(new Uint8Array(buf))
-        await fsUploadFileBytes(target, remotePath, bytes)
-        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r)))
-      } catch (e) {
-        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)))
-        setError(`Upload ${file.name} failed: ${e}`); break
-      }
-    }
-    setPaused(false)
-    refresh()
-  }, [target, currentPath, refresh])
+      setPaused(false)
+      refresh()
+    },
+    [target, currentPath, refresh],
+  )
 
   // HTML5 drag-drop
   useEffect(() => {
-    const panel = panelRef.current; if (!panel) return
+    const panel = panelRef.current
+    if (!panel) return
     const onDragOver = (e: DragEvent) => {
-      e.preventDefault(); e.stopPropagation()
+      e.preventDefault()
+      e.stopPropagation()
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
       setDragOver(true)
     }
     const onDragLeave = (e: DragEvent) => {
-      e.preventDefault(); e.stopPropagation()
+      e.preventDefault()
+      e.stopPropagation()
       if (!panel.contains(e.relatedTarget as Node)) setDragOver(false)
     }
     const onDrop = (e: DragEvent) => {
-      e.preventDefault(); e.stopPropagation()
+      e.preventDefault()
+      e.stopPropagation()
       setDragOver(false)
       if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
         handleDropUpload(e.dataTransfer.files)
@@ -563,7 +666,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       if (!selected) return
       const paths = Array.isArray(selected) ? selected : [selected]
       if (paths.length > 0) await uploadFiles(paths)
-    } catch (e) { setError(String(e)) }
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   /* ---- context-menu actions ---- */
@@ -593,7 +698,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     try {
       await fsWriteFileContent(target, join(baseDir, name), '', 'utf-8')
       refresh()
-    } catch (e) { setError(String(e)) }
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   const newFolder = async (baseNode: TreeNode | null) => {
@@ -608,66 +715,99 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     try {
       await fsCreateDirectory(target, join(baseDir, name))
       refresh()
-    } catch (e) { setError(String(e)) }
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
-  const handleRename = async (node: TreeNode) => {
+  const handleRename = (node: TreeNode) => {
     setContextMenu(null)
-    const newName = window.prompt('New name:', node.name)
+    setRenameValue(node.name)
+    setRenameTarget(node)
+  }
+
+  const confirmRename = async () => {
+    if (!renameTarget) return
+    const newName = renameValue.trim()
+    const node = renameTarget
+    setRenameTarget(null)
     if (!newName || newName === node.name) return
     const parent = getParentDir(node.path)
     try {
       await fsRenameFile(target, node.path, join(parent, newName))
       refresh()
-    } catch (e) { setError(String(e)) }
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
-  const handleDelete = async (node: TreeNode) => {
+  const handleDelete = (node: TreeNode) => {
     setContextMenu(null)
-    const msg = node.isDir
-      ? `Delete directory "${node.name}" and all its contents?`
-      : `Delete file "${node.name}"?`
-    if (!window.confirm(msg)) return
+    setDeleteTarget(node)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    const node = deleteTarget
+    setDeleteTarget(null)
     try {
       await fsDeleteFile(target, node.path, node.isDir)
       refresh()
-    } catch (e) { setError(String(e)) }
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   const handleDownload = async (node: TreeNode) => {
     setContextMenu(null)
-    if (node.isDir) { setError('Downloading directories is not supported yet'); return }
+    if (node.isDir) {
+      setError('Downloading directories is not supported yet')
+      return
+    }
     try {
       const filePath = await save({ title: 'Save file as', defaultPath: node.name })
       if (filePath) {
         setPaused(false)
-        setTransferRows([{
-          key: `download:${node.name}`,
-          filename: node.name,
-          op: 'download',
-          status: 'queued',
-          transferred: 0,
-          total: 0,
-          speed: '',
-        }])
+        setTransferRows([
+          {
+            key: `download:${node.name}`,
+            filename: node.name,
+            op: 'download',
+            status: 'queued',
+            transferred: 0,
+            total: 0,
+            speed: '',
+          },
+        ])
         try {
           await fsDownloadFile(target, node.path, filePath as string)
-          setTransferRows((prev) => prev.map((r) =>
-            r.key === `download:${node.name}` ? { ...r, status: 'done', transferred: r.total } : r))
+          setTransferRows((prev) =>
+            prev.map((r) =>
+              r.key === `download:${node.name}`
+                ? { ...r, status: 'done', transferred: r.total }
+                : r,
+            ),
+          )
         } catch (e) {
-          setTransferRows((prev) => prev.map((r) =>
-            r.key === `download:${node.name}` ? { ...r, status: 'error' } : r))
+          setTransferRows((prev) =>
+            prev.map((r) => (r.key === `download:${node.name}` ? { ...r, status: 'error' } : r)),
+          )
           setError(String(e))
         }
       }
-    } catch (e) { setError(String(e)) }
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   /** Download several files (from multi-select) into a chosen local folder. */
   const downloadFiles = async (files: TreeNode[]) => {
     setContextMenu(null)
     const targets = files.filter((n) => !n.isDir)
-    if (targets.length === 0) { setError('Downloading directories is not supported yet'); return }
+    if (targets.length === 0) {
+      setError('Downloading directories is not supported yet')
+      return
+    }
     let folder: string | null = null
     if (targets.length === 1) {
       const filePath = await save({ title: 'Save file as', defaultPath: targets[0].name })
@@ -678,14 +818,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     folder = await open({ directory: true, title: 'Select folder to download into' })
     if (!folder) return
     const sep = (folder as string).includes('\\') ? '\\' : '/'
-    await downloadFilesInto(targets.map((n) => ({
-      file: n,
-      localPath: `${(folder as string).replace(/[\\/]+$/, '')}${sep}${n.name}`,
-    })))
+    await downloadFilesInto(
+      targets.map((n) => ({
+        file: n,
+        localPath: `${(folder as string).replace(/[\\/]+$/, '')}${sep}${n.name}`,
+      })),
+    )
   }
 
   const downloadFilesInto = async (items: { file: TreeNode; localPath: string }[]) => {
-    setError(''); setPaused(false)
+    setError('')
+    setPaused(false)
     const rows: TransferRow[] = items.map(({ file }) => ({
       key: `download:${file.name}`,
       filename: file.name,
@@ -698,12 +841,20 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     setTransferRows(rows)
     for (let i = 0; i < items.length; i++) {
       const { file, localPath } = items[i]
-      setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)))
+      setTransferRows((prev) =>
+        prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)),
+      )
       try {
         await fsDownloadFile(target, file.path, localPath)
-        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r)))
+        setTransferRows((prev) =>
+          prev.map((r) =>
+            r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r,
+          ),
+        )
       } catch (e) {
-        setTransferRows((prev) => prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)))
+        setTransferRows((prev) =>
+          prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)),
+        )
         setError(`Download ${file.name} failed: ${e}`)
       }
     }
@@ -718,18 +869,32 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   /* ---- SFTP user (main session only) ---- */
   const handleSwitchUser = async () => {
     if (sessionTabId == null) return
-    const name = switchUsername.trim(); const pw = switchPassword
-    if (!name || !pw) { setError('Username and password are required'); return }
+    const name = switchUsername.trim()
+    const pw = switchPassword
+    if (!name || !pw) {
+      setError('Username and password are required')
+      return
+    }
     try {
       await switchSftpUser(sessionTabId, name, pw)
-      setSftpUser(name); setShowSwitchUser(false)
-      setSwitchUsername(''); setSwitchPassword(''); setError('')
-    } catch (e) { setError(String(e)) }
+      setSftpUser(name)
+      setShowSwitchUser(false)
+      setSwitchUsername('')
+      setSwitchPassword('')
+      setError('')
+    } catch (e) {
+      setError(String(e))
+    }
   }
   const handleRevertUser = async () => {
     if (sessionTabId == null) return
-    try { await revertSftpUser(sessionTabId); setSftpUser(null); setError('') }
-    catch (e) { setError(String(e)) }
+    try {
+      await revertSftpUser(sessionTabId)
+      setSftpUser(null)
+      setError('')
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   /* ---- header actions ---- */
@@ -746,7 +911,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     setRootPath(p)
     loadRootDir(p, true)
   }
-  const goHome = () => { setRootPath('.'); loadRootDir('.', true) }
+  const goHome = () => {
+    setRootPath('.')
+    loadRootDir('.', true)
+  }
 
   const startEditPath = () => {
     setEditPathValue(currentPath === '.' ? '' : currentPath)
@@ -760,7 +928,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     if (norm === (currentPath === '.' ? '' : currentPath)) return
     if (isWithinRoot(norm, rootPath)) {
       loadRootDir(norm, true)
-    } else if (window.confirm(`"${norm}" is outside the current root directory.\nSet it as the new root?`)) {
+    } else if (
+      window.confirm(`"${norm}" is outside the current root directory.\nSet it as the new root?`)
+    ) {
       setRoot(norm)
     }
   }
@@ -772,8 +942,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   const togglePause = async () => {
     if (sessionTabId == null) return
-    if (paused) { setPaused(false); await resumeTransfer(sessionTabId) }
-    else { setPaused(true); await pauseTransfer(sessionTabId) }
+    if (paused) {
+      setPaused(false)
+      await resumeTransfer(sessionTabId)
+    } else {
+      setPaused(true)
+      await pauseTransfer(sessionTabId)
+    }
   }
 
   /* ---- scrollbar ---- */
@@ -883,7 +1058,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           style={{ paddingLeft: 8 + depth * 14 }}
           onClick={(e) => handleNodeClick(node, e)}
           onContextMenu={(e) => {
-            e.preventDefault(); e.stopPropagation()
+            e.preventDefault()
+            e.stopPropagation()
             // Right-click on a node: select it (if not already selected) so
             // "Download N files" always targets the right-clicked item too.
             setSelPaths((prev) => (prev.has(node.path) ? prev : new Set([node.path])))
@@ -900,7 +1076,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           </span>
           <span className="tree-name">{node.name}</span>
           {node.isDir ? null : <span className="tree-size">{formatSize(node.size)}</span>}
-          {node.loading && <span className="tree-spinner"><Icon name="refresh" className="spin" /></span>}
+          {node.loading && (
+            <span className="tree-spinner">
+              <Icon name="refresh" className="spin" />
+            </span>
+          )}
         </div>
         {node.expanded && node.children && renderNodes(node.children, depth + 1)}
       </div>
@@ -928,17 +1108,23 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 className={fileMode === 'ssh' ? 'active' : ''}
                 title={t('localSshSession')}
                 onClick={() => handleModeClick('ssh')}
-              >{t('modeSsh')}</button>
+              >
+                {t('modeSsh')}
+              </button>
               <button
                 className={fileMode === 'jump' ? 'active' : ''}
                 title={t('proxyJumpRemote')}
                 onClick={() => handleModeClick('jump')}
-              >{t('modeJump')}</button>
+              >
+                {t('modeJump')}
+              </button>
               <button
                 className={fileMode === 'docker' ? 'active' : ''}
                 title={t('dockerContainer')}
                 onClick={() => handleModeClick('docker')}
-              >{t('modeDocker')}</button>
+              >
+                {t('modeDocker')}
+              </button>
             </span>
           )}
         </span>
@@ -949,23 +1135,45 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 title={syncEnabled ? t('disableShellSync') : t('enableShellSync')}
                 onClick={onToggleSync}
                 className={syncEnabled ? 'sync-active' : ''}
-              ><Icon name="link" /></button>
+              >
+                <Icon name="link" />
+              </button>
             )}
-            {sessionTabId != null && (sftpUser ? (
-              <>
-                <span className="file-sftp-user" title={t('sftpAs', { user: sftpUser })}><Icon name="lock" />{sftpUser}</span>
-                <button title={t('restoreOriginalUser')} onClick={handleRevertUser}><Icon name="undo" /></button>
-              </>
-            ) : (
-              <button title={t('switchSftpUser')} onClick={() => setShowSwitchUser(!showSwitchUser)}><Icon name="user" /></button>
-            ))}
-            <button title={t('uploadFile')} onClick={handleUpload}><Icon name="upload" /></button>
-            <button title={t('newItem')} onClick={() => {
-              const btn = document.activeElement as HTMLElement
-              const r = btn?.getBoundingClientRect()
-              setContextMenu({ x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4, node: null })
-            }}><Icon name="plus" /></button>
-            <button title={t('refresh')} onClick={refresh} disabled={loading}><Icon name="refresh" /></button>
+            {sessionTabId != null &&
+              (sftpUser ? (
+                <>
+                  <span className="file-sftp-user" title={t('sftpAs', { user: sftpUser })}>
+                    <Icon name="lock" />
+                    {sftpUser}
+                  </span>
+                  <button title={t('restoreOriginalUser')} onClick={handleRevertUser}>
+                    <Icon name="undo" />
+                  </button>
+                </>
+              ) : (
+                <button
+                  title={t('switchSftpUser')}
+                  onClick={() => setShowSwitchUser(!showSwitchUser)}
+                >
+                  <Icon name="user" />
+                </button>
+              ))}
+            <button title={t('uploadFile')} onClick={handleUpload}>
+              <Icon name="upload" />
+            </button>
+            <button
+              title={t('newItem')}
+              onClick={() => {
+                const btn = document.activeElement as HTMLElement
+                const r = btn?.getBoundingClientRect()
+                setContextMenu({ x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4, node: null })
+              }}
+            >
+              <Icon name="plus" />
+            </button>
+            <button title={t('refresh')} onClick={refresh} disabled={loading}>
+              <Icon name="refresh" />
+            </button>
           </div>
         )}
       </div>
@@ -984,39 +1192,72 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
               onClick={currentPath === rootPath ? undefined : navigateUp}
               title={t('parentDir')}
-            ><Icon name="arrowUp" /></span>
-            <span className="file-path-home" onClick={goHome} title={t('home')}><Icon name="home" /></span>
-            <span className="file-path-pin" onClick={() => setRoot(currentPath)} title={t('setAsRoot')}><Icon name="pin" /></span>
+            >
+              <Icon name="arrowUp" />
+            </span>
+            <span className="file-path-home" onClick={goHome} title={t('home')}>
+              <Icon name="home" />
+            </span>
+            <span
+              className="file-path-pin"
+              onClick={() => setRoot(currentPath)}
+              title={t('setAsRoot')}
+            >
+              <Icon name="pin" />
+            </span>
             {editingPath ? (
-              <input className="file-path-input" type="text" value={editPathValue}
+              <input
+                className="file-path-input"
+                type="text"
+                value={editPathValue}
                 onChange={(e) => setEditPathValue(e.target.value)}
-                onBlur={commitEditPath} onKeyDown={handlePathKeyDown}
-                placeholder={t('enterPath')} autoFocus />
+                onBlur={commitEditPath}
+                onKeyDown={handlePathKeyDown}
+                placeholder={t('enterPath')}
+                autoFocus
+              />
             ) : (
               <span className="file-path-text" title={pathDisplay} onClick={startEditPath}>
                 {pathDisplay}
               </span>
             )}
             {rootPath !== '.' && (
-              <span className="file-path-root" title={`Root directory: ${rootPath}`}><Icon name="pin" /> {rootPath}</span>
+              <span className="file-path-root" title={`Root directory: ${rootPath}`}>
+                <Icon name="pin" /> {rootPath}
+              </span>
             )}
           </div>
 
           {showSwitchUser && (
             <div className="file-switch-user">
-              <input type="text" placeholder={t('enterUsername')} value={switchUsername}
+              <input
+                type="text"
+                placeholder={t('enterUsername')}
+                value={switchUsername}
                 onChange={(e) => setSwitchUsername(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSwitchUser() }} />
-              <input type="password" placeholder={t('enterPassword')} value={switchPassword}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSwitchUser()
+                }}
+              />
+              <input
+                type="password"
+                placeholder={t('enterPassword')}
+                value={switchPassword}
                 onChange={(e) => setSwitchPassword(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSwitchUser() }} />
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSwitchUser()
+                }}
+              />
               <button onClick={handleSwitchUser}>{t('switchUser')}</button>
               <button onClick={() => setShowSwitchUser(false)}>✕</button>
             </div>
           )}
 
-          <div className="file-list-wrapper"
-            onMouseEnter={onFileMouseEnter} onMouseLeave={onFileMouseLeave}>
+          <div
+            className="file-list-wrapper"
+            onMouseEnter={onFileMouseEnter}
+            onMouseLeave={onFileMouseLeave}
+          >
             <div className="file-list" ref={fileListRef} onScroll={onFileScroll}>
               {error && <div className="file-error">{error}</div>}
               {!loading && renderNodes(tree, 0)}
@@ -1027,9 +1268,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
             {fileThumbHeight > 0 && (
               <div className={`sidebar-scrollbar${fileShowThumb ? ' show' : ''}`}>
-                <div className="sidebar-scrollbar-thumb"
+                <div
+                  className="sidebar-scrollbar-thumb"
                   style={{ height: fileThumbHeight, top: fileThumbTop }}
-                  onMouseDown={onFileThumbMouseDown} />
+                  onMouseDown={onFileThumbMouseDown}
+                />
               </div>
             )}
           </div>
@@ -1056,7 +1299,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                     : t('transfersComplete')}
                 </span>
                 {sessionTabId != null && (
-                  <button className="file-pause-btn" onClick={togglePause} title={paused ? 'Resume' : 'Pause'}>
+                  <button
+                    className="file-pause-btn"
+                    onClick={togglePause}
+                    title={paused ? 'Resume' : 'Pause'}
+                  >
                     {paused ? <Icon name="play" /> : <Icon name="pause" />}
                   </button>
                 )}
@@ -1071,13 +1318,18 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 >
                   {transferRows.map((row) => (
                     <div key={row.key} className={`file-transfer-row ${row.status}`}>
-                      <div className="file-transfer-name" title={row.filename}>{row.filename}</div>
+                      <div className="file-transfer-name" title={row.filename}>
+                        {row.filename}
+                      </div>
                       <div className="file-transfer-bar">
                         <div
                           className="file-transfer-fill"
                           style={
                             row.total > 0
-                              ? { width: `${Math.min(100, (row.transferred / row.total) * 100)}%`, animation: 'none' }
+                              ? {
+                                  width: `${Math.min(100, (row.transferred / row.total) * 100)}%`,
+                                  animation: 'none',
+                                }
                               : row.status === 'active'
                                 ? undefined
                                 : undefined
@@ -1085,12 +1337,15 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                         />
                       </div>
                       <div className="file-transfer-meta">
-                        {row.status === 'error' && <span className="file-transfer-error">✗ {t('failed')}</span>}
+                        {row.status === 'error' && (
+                          <span className="file-transfer-error">✗ {t('failed')}</span>
+                        )}
                         {row.status === 'done' && <span>✓</span>}
                         {row.status === 'queued' && <span>· · ·</span>}
                         {row.total > 0 && (
                           <span>
-                            {' '}{formatSize(row.transferred)} / {formatSize(row.total)} · {row.speed}
+                            {' '}
+                            {formatSize(row.transferred)} / {formatSize(row.total)} · {row.speed}
                           </span>
                         )}
                       </div>
@@ -1117,45 +1372,94 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       {expanded && showJumpForm && (
         <div className="file-jump-form">
           <div className="file-jump-title">{t('connectViaProxyJump')}</div>
-          <label>{t('host')}
-            <input type="text" value={jumpHost} placeholder={t('remoteHost')}
+          <label>
+            {t('host')}
+            <input
+              type="text"
+              value={jumpHost}
+              placeholder={t('remoteHost')}
               onChange={(e) => setJumpHost(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConnectJump()
+              }}
+            />
           </label>
-          <label>{t('port')}
-            <input type="number" value={jumpPort}
-              onChange={(e) => setJumpPort(Number(e.target.value) || 22)} />
+          <label>
+            {t('port')}
+            <input
+              type="number"
+              value={jumpPort}
+              onChange={(e) => setJumpPort(Number(e.target.value) || 22)}
+            />
           </label>
-          <label>{t('username')}
-            <input type="text" value={jumpUser} placeholder={t('enterUsername')}
+          <label>
+            {t('username')}
+            <input
+              type="text"
+              value={jumpUser}
+              placeholder={t('enterUsername')}
               onChange={(e) => setJumpUser(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConnectJump()
+              }}
+            />
           </label>
           <div className="file-auth-type">
-            <button className={jumpAuthType === 'password' ? 'active' : ''} onClick={() => setJumpAuthType('password')}>{t('authPassword')}</button>
-            <button className={jumpAuthType === 'key' ? 'active' : ''} onClick={() => setJumpAuthType('key')}>{t('authKey')}</button>
+            <button
+              className={jumpAuthType === 'password' ? 'active' : ''}
+              onClick={() => setJumpAuthType('password')}
+            >
+              {t('authPassword')}
+            </button>
+            <button
+              className={jumpAuthType === 'key' ? 'active' : ''}
+              onClick={() => setJumpAuthType('key')}
+            >
+              {t('authKey')}
+            </button>
           </div>
           {jumpAuthType === 'password' ? (
-            <label>{t('password')}
-              <input type="password" value={jumpPassword}
+            <label>
+              {t('password')}
+              <input
+                type="password"
+                value={jumpPassword}
                 onChange={(e) => setJumpPassword(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleConnectJump()
+                }}
+              />
             </label>
           ) : (
             <>
-              <label>{t('keyPath')}
-                <input type="text" value={jumpKeyPath} placeholder="/path/to/key"
-                  onChange={(e) => setJumpKeyPath(e.target.value)} />
+              <label>
+                {t('keyPath')}
+                <input
+                  type="text"
+                  value={jumpKeyPath}
+                  placeholder="/path/to/key"
+                  onChange={(e) => setJumpKeyPath(e.target.value)}
+                />
               </label>
-              <label>{t('passphrase')}
-                <input type="password" value={jumpPassphrase}
+              <label>
+                {t('passphrase')}
+                <input
+                  type="password"
+                  value={jumpPassphrase}
                   onChange={(e) => setJumpPassphrase(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleConnectJump() }} />
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleConnectJump()
+                  }}
+                />
               </label>
             </>
           )}
           {jumpError && <div className="file-error">{jumpError}</div>}
-          <button className="file-jump-connect" onClick={handleConnectJump} disabled={jumpConnecting}>
+          <button
+            className="file-jump-connect"
+            onClick={handleConnectJump}
+            disabled={jumpConnecting}
+          >
             {t('connectTo')}
           </button>
           <div className="file-hint">Reached through the current host as a jump proxy.</div>
@@ -1168,7 +1472,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         <div className="file-docker-picker">
           <div className="file-docker-head">
             <span>{t('dockerContainers')}</span>
-            <button title={t('refresh')} onClick={loadDockerContainers} disabled={dockerLoading}><Icon name="refresh" /></button>
+            <button title={t('refresh')} onClick={loadDockerContainers} disabled={dockerLoading}>
+              <Icon name="refresh" />
+            </button>
           </div>
           {dockerError && <div className="file-error">{dockerError}</div>}
           {dockerLoading && <div className="file-empty">{t('loading')}</div>}
@@ -1176,9 +1482,15 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             <div className="file-empty">{t('noContainers')}</div>
           )}
           {dockerContainers.map((c) => (
-            <div key={c.id} className="docker-item" onClick={() => handlePickContainer(c)}
-              title={`${c.name}\n${c.image}\n${c.status}`}>
-              <span className="docker-icon"><Icon name="container" /></span>
+            <div
+              key={c.id}
+              className="docker-item"
+              onClick={() => handlePickContainer(c)}
+              title={`${c.name}\n${c.image}\n${c.status}`}
+            >
+              <span className="docker-icon">
+                <Icon name="container" />
+              </span>
               <div className="docker-info">
                 <div className="docker-name">{c.name}</div>
                 <div className="docker-image">{c.image}</div>
@@ -1191,8 +1503,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {/* context menu */}
       {contextMenu && (
-        <div ref={contextMenuRef} className="context-menu" style={contextMenuStyle}
-          onClick={(e) => e.stopPropagation()}>
+        <div
+          ref={contextMenuRef}
+          className="context-menu"
+          style={contextMenuStyle}
+          onClick={(e) => e.stopPropagation()}
+        >
           {contextMenu.node && !contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => handleEdit(contextMenu.node!)}>
               <Icon name="edit" /> Open
@@ -1209,7 +1525,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             </div>
           )}
           {contextMenu.node && contextMenu.node.isDir && (
-            <div className="context-menu-item" onClick={() => { setContextMenu(null); loadRootDir(contextMenu.node!.path, true) }}>
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                setContextMenu(null)
+                loadRootDir(contextMenu.node!.path, true)
+              }}
+            >
               <Icon name="folderOpen" /> Enter directory
             </div>
           )}
@@ -1236,10 +1558,62 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               <Icon name="trash" /> Delete
             </div>
           )}
-          {(!contextMenu.node) && <div className="context-menu-divider" />}
-          {(!contextMenu.node) && (
-            <div className="context-menu-item" onClick={handleUpload}><Icon name="upload" /> Upload here</div>
+          {!contextMenu.node && <div className="context-menu-divider" />}
+          {!contextMenu.node && (
+            <div className="context-menu-item" onClick={handleUpload}>
+              <Icon name="upload" /> Upload here
+            </div>
           )}
+        </div>
+      )}
+
+      {/* Custom rename dialog */}
+      {renameTarget && (
+        <div className="modal-overlay" onClick={() => setRenameTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">Rename {renameTarget.isDir ? 'directory' : 'file'}</div>
+            <div className="modal-body" style={{ padding: '12px 20px' }}>
+              <input
+                className="file-modal-input"
+                type="text"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void confirmRename()
+                  if (e.key === 'Escape') setRenameTarget(null)
+                }}
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                placeholder="New name"
+              />
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setRenameTarget(null)}>Cancel</button>
+              <button className="primary" onClick={() => void confirmRename()}>
+                Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom delete confirmation */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">Delete</div>
+            <div className="modal-body" style={{ padding: '12px 20px' }}>
+              {deleteTarget.isDir
+                ? `Delete directory "${deleteTarget.name}" and all its contents?`
+                : `Delete file "${deleteTarget.name}"?`}
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button className="danger" onClick={() => void confirmDelete()}>
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
