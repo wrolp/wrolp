@@ -197,8 +197,13 @@ const ANSI_RESET = '\x1b[0m'
 const AI_MARK_TIMEOUT_MS = 90_000
 
 interface AiMarkState {
-  mode: 'cmd' | 'output'
+  mode: 'cmd' | 'output' | 'done'
   seq: number
+  /** The shell prompt captured at `begin` (plain text, as read from the
+   *  terminal buffer). Used to detect when the shell redraws it after the
+   *  command finishes — at that point we stop tinting so the prompt keeps its
+   *  original color instead of inheriting the AI output tint. */
+  prompt: string
 }
 
 /** Rewrite a chunk's foreground color, dropping any pre-existing SGR color. */
@@ -673,13 +678,33 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     termRef.current?.write(ANSI_RESET)
   }
 
+  // Read the shell's current prompt (last non-empty viewport line) at `begin`
+  // time, before the AI command is typed. Used by the output colorizer to stop
+  // tinting when the shell redraws this prompt after the command finishes.
+  const readPromptFromTerm = (term: Terminal): string => {
+    const buf = term.buffer.active
+    const cursorRow = buf.baseY + buf.cursorY
+    for (let y = cursorRow; y >= 0; y--) {
+      const line = buf.getLine(y)
+      if (!line) continue
+      const text = line.translateToString(true).trim()
+      if (text) return text
+    }
+    return ''
+  }
+
   const beginAiMark = (mark: AiTermMark) => {
     // An AI command supersedes any in-flight cat/head/tail capture and any
     // stale clickable `ls` overlays.
     resetCapture()
     resetLsCapture()
     clearLsLinks()
-    aiMarkRef.current = { mode: 'cmd', seq: mark.seq }
+    const term = termRef.current
+    aiMarkRef.current = {
+      mode: 'cmd',
+      seq: mark.seq,
+      prompt: term ? readPromptFromTerm(term) : '',
+    }
     clearAiMarkTimeout()
     // Safety net: if the backend dies before emitting `end`, stop coloring.
     aiMarkTimeoutRef.current = setTimeout(() => {
@@ -692,7 +717,29 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const writeAiChunk = (st: AiMarkState, chunk: string) => {
     const term = termRef.current
     if (!term) return
+    // After the trailing prompt has been seen, pass everything through untouched
+    // (the `end` event hasn't arrived yet, but coloring is done).
+    if (st.mode === 'done') {
+      term.write(chunk)
+      return
+    }
     if (st.mode === 'output') {
+      // The shell redraws its prompt after the command finishes, and that prompt
+      // arrives as part of the output stream *before* the `end` event. Tinting
+      // it leaves the prompt stuck in the AI output color. Detect the prompt
+      // (captured at `begin`) and stop coloring at it. Only checked for plain
+      // chunks: a chunk carrying ANSI (colored PS1, or grep/git output) is
+      // already passed through untouched by colorizeOutputChunk, so its prompt
+      // keeps its color already.
+      if (st.prompt && st.prompt.length >= 3 && !chunk.includes('\x1b[')) {
+        const idx = chunk.indexOf(st.prompt)
+        if (idx !== -1) {
+          const before = chunk.slice(0, idx)
+          term.write(AI_OUTPUT_FG + before + ANSI_RESET + chunk.slice(idx))
+          st.mode = 'done'
+          return
+        }
+      }
       term.write(colorizeOutputChunk(chunk))
       return
     }
@@ -705,7 +752,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       term.write(colorizeChunk(chunk.slice(0, idx + 1), AI_CMD_FG))
       st.mode = 'output'
       const rest = chunk.slice(idx + 1)
-      if (rest.length > 0) term.write(colorizeOutputChunk(rest))
+      if (rest.length > 0) writeAiChunk(st, rest)
     }
   }
 
