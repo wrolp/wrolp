@@ -15,6 +15,7 @@ import {
   localSendInput,
   localResize,
   pollWorkingDir,
+  fsListFiles,
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -225,7 +226,7 @@ const LS_CAPTURE_TIMEOUT_MS = 2000
 const LS_MAX_BYTES = 128 * 1024
 
 interface LsCaptureState {
-  format: 'long' | 'dir'
+  format: 'long' | 'dir' | 'multi' | 'multiF'
   prompt: string
   /** Absolute buffer row of the echoed command line (captured at submit). */
   startRow: number
@@ -391,6 +392,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // older listings stay clickable as long as their rows remain in the buffer,
   // each carrying its own baseDir so a click resolves against the right dir.
   const lsEntriesRef = useRef<Map<number, LsClickableEntry[]>>(new Map())
+  // Cache of `ls -F`/plain-`ls` dir-vs-file lookups, keyed by the listing's
+  // base dir → (name → isDir). Plain `ls` entries are tagged `unknown` (the
+  // output carries no type info), so on click we list the base dir once and
+  // memoize the result to avoid re-listing on every click of the same listing.
+  const lsDirCacheRef = useRef<Map<string, Map<string, boolean>>>(new Map())
   // Base directory of the listing currently being captured (set by
   // startLsCaptureIfMatch, consumed by finalizeLsCapture → setLsEntries to bind
   // onto each entry). Not read at click time — clicks use entry.baseDirPromise.
@@ -398,6 +404,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
   const clearLsLinks = () => {
     lsEntriesRef.current.clear()
+    lsDirCacheRef.current.clear()
   }
 
   const resetLsCapture = () => {
@@ -413,6 +420,32 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // clearLsLinks().
   }
 
+  // Resolve whether a plain-`ls` (`unknown`-kind) entry is a directory, by
+  // listing its base dir (cached per base dir). Returns null when the lookup
+  // can't be performed (no base dir, or the listing failed) — callers fall
+  // back to a best-effort default.
+  const lookupIsDir = async (
+    baseDirPromise: Promise<string | null>,
+    name: string,
+  ): Promise<boolean | null> => {
+    const base = await baseDirPromise
+    if (!base) return null
+    const cache = lsDirCacheRef.current
+    let dirMap = cache.get(base)
+    if (dirMap?.has(name)) return dirMap.get(name) ?? null
+    try {
+      const target: TargetRef = isLocal
+        ? { kind: 'local', tabId: tabIdRef.current }
+        : { kind: 'session', tabId: tabIdRef.current }
+      const entries = await fsListFiles(target, base)
+      dirMap = new Map(entries.map((e) => [e.name, e.isDir]))
+      cache.set(base, dirMap)
+      return dirMap.get(name) ?? null
+    } catch {
+      return null
+    }
+  }
+
   const onLsEntryClick = async (entry: LsClickableEntry) => {
     // Resolve the entry's absolute path from *this listing's* base directory
     // (captured at submit time and bound to the entry), so the click lands in
@@ -420,7 +453,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // `ls` has since run in a different directory.
     const base = (await entry.baseDirPromise) ?? null
     const abs = base ? joinPath(base, entry.name) : entry.name
-    if (entry.kind === 'dir') {
+    // Plain `ls` (multi format) carries no type info — resolve dir-vs-file at
+    // click time. On lookup failure, default to treating it as a directory: a
+    // `cd` into a file fails gently in the shell, whereas opening a directory
+    // in the editor pops an error dialog.
+    let isDir = entry.kind === 'dir'
+    if (entry.kind === 'unknown') {
+      const resolved = await lookupIsDir(entry.baseDirPromise, entry.name)
+      isDir = resolved === null ? true : resolved
+    }
+    if (isDir) {
       if (isLocal) {
         // cmd/PowerShell: double-quote to tolerate spaces; both accept it.
         localSendInput(tabIdRef.current, `cd "${abs}"\r`).catch((e) =>
@@ -474,7 +516,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const end = entry.col + entry.name.length
       if (text.slice(entry.col, end) !== entry.name) return false
       const after = text[end]
-      return after === undefined || /\s/.test(after) || text.slice(end, end + 4) === ' -> '
+      // Boundary: EOL / whitespace / symlink arrow / an `ls -F` type indicator
+      // (`/ @ * = |`) — the indicator trails the name on screen but isn't part
+      // of entry.name (parseMultiLine strips it), so it must count as a valid
+      // boundary or `dir/` won't match the `dir` entry.
+      return (
+        after === undefined ||
+        /\s/.test(after) ||
+        text.slice(end, end + 4) === ' -> ' ||
+        /[@*=|/]/.test(after)
+      )
     }
     if (nameAt(expectedRow)) return expectedRow
     // The expected row can drift when the buffer scrolled between submit and
@@ -915,8 +966,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // longer neighbor `password-platform-dev` — the slice matches the
           // first 17 chars even though the real token on that row is 22 chars.
           const after = text[end]
+          // Boundary: EOL / whitespace / symlink arrow / `ls -F` indicator
+          // (`/ @ * = |`), which trails the name on screen but isn't part of
+          // entry.name (parseMultiLine strips it for `multiF` listings).
           const boundaryOk =
-            after === undefined || /\s/.test(after) || text.slice(end, end + 4) === ' -> '
+            after === undefined ||
+            /\s/.test(after) ||
+            text.slice(end, end + 4) === ' -> ' ||
+            /[@*=|/]/.test(after)
           if (!boundaryOk) continue
           seen.add(entry)
           links.push({

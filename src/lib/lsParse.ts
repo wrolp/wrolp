@@ -2,13 +2,16 @@
  * Parse `ls` / `dir` terminal output into clickable entries (name + kind +
  * column + line) so the terminal can overlay clickable decorations.
  *
- * Scope (P0): single-column `ls -l`-style output (`ls -l`/`ll`/`la`) and
- * Windows `dir`. Plain multi-column `ls` and `ls -1` are deferred (column
- * alignment is ambiguous and would mis-parse names containing spaces).
+ * Scope: single-column `ls -l`-style output (`ls -l`/`ll`/`la`), Windows
+ * `dir`, and plain multi-column / single-column `ls` (no `-l`). Plain `ls`
+ * output carries no per-entry type info, so entries are tagged `unknown` and
+ * the click handler resolves dir-vs-file at click time via a directory
+ * listing. `ls -F`/`--classify` appends a type indicator (`/ @ * = |`) that
+ * lets us infer the kind directly.
  */
 
-export type LsEntryKind = 'dir' | 'file' | 'link'
-export type LsFormat = 'long' | 'dir'
+export type LsEntryKind = 'dir' | 'file' | 'link' | 'unknown'
+export type LsFormat = 'long' | 'dir' | 'multi' | 'multiF'
 
 export interface LsEntry {
   name: string
@@ -50,7 +53,23 @@ export function detectLsCommand(rawCmd: string): LsFormat | null {
     // Short flag cluster containing l/o/g (e.g. -l, -la, -al, -lh, -ltr).
     return /[log]/.test(a.slice(1))
   })
-  return hasLong ? 'long' : null // plain multi-column `ls` is deferred
+  if (hasLong) return 'long'
+  // Reject -R/--recursive: its output interleaves subdirectory headers
+  // (`./sub:`) which aren't file names and would parse as bogus entries.
+  const hasRecursive = flags.some((a) => {
+    if (a === '--recursive') return true
+    if (a.startsWith('--')) return false
+    return /R/.test(a.slice(1))
+  })
+  if (hasRecursive) return null
+  // -F/--classify appends a type indicator to each name (/ @ * = |), which
+  // lets us distinguish dirs/links/files even in multi-column output.
+  const hasClassify = flags.some((a) => {
+    if (a === '--classify' || a === '--indicator-style=slash') return true
+    if (a.startsWith('--')) return false
+    return /F/.test(a.slice(1))
+  })
+  return hasClassify ? 'multiF' : 'multi'
 }
 
 /**
@@ -63,8 +82,46 @@ export function parseLsBlock(text: string, format: LsFormat, maxLines = 200): Ls
   if (lines.length > maxLines + 1) return []
   const out: LsEntry[] = []
   for (let i = 1; i < lines.length; i++) {
-    const entry = format === 'dir' ? parseDirLine(lines[i]) : parseLongLine(lines[i])
-    if (entry) out.push({ ...entry, line: i })
+    const line = lines[i]
+    if (format === 'multi' || format === 'multiF') {
+      for (const e of parseMultiLine(line, format === 'multiF')) out.push({ ...e, line: i })
+    } else if (format === 'dir') {
+      const entry = parseDirLine(line)
+      if (entry) out.push({ ...entry, line: i })
+    } else {
+      const entry = parseLongLine(line)
+      if (entry) out.push({ ...entry, line: i })
+    }
+  }
+  return out
+}
+
+/**
+ * Parse one plain `ls` line (multi-column or single-column, no `-l`). Each
+ * whitespace-separated token is a name. With `-F`/`--classify` (`classify =
+ * true`), a trailing indicator reveals the kind:
+ *   `/` → dir, `@` → link, `*`/`=`/`|` → file.
+ * Without `-F` the kind is `unknown` and resolved at click time.
+ *
+ * Names containing spaces can't be reliably split this way — GNU `ls` quotes
+ * such names (single quotes / `"` / `?` escapes) when output is to a terminal,
+ * but untangling that is deferred; the common case (no spaces) is handled.
+ */
+function parseMultiLine(line: string, classify: boolean): Omit<LsEntry, 'line'>[] {
+  const out: Omit<LsEntry, 'line'>[] = []
+  const re = /\S+/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(line)) !== null) {
+    const raw = m[0]
+    let name = raw
+    let kind: LsEntryKind = 'unknown'
+    if (classify && /[@*=|/]$/.test(raw) && raw.length > 1) {
+      const ind = raw[raw.length - 1]
+      name = raw.slice(0, -1)
+      kind = ind === '/' ? 'dir' : ind === '@' ? 'link' : 'file'
+    }
+    if (!name) continue
+    out.push({ name, kind, col: m.index })
   }
   return out
 }
