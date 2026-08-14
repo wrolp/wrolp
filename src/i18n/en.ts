@@ -233,6 +233,12 @@ const en = {
   aiChatThinking: 'Thinking…',
   aiChatError: 'Error',
   aiChatEmptyTitle: 'How can I help you today?',
+  aiTermRunning: 'AI running',
+  aiTermDone: 'Done',
+  aiTermTruncated: 'output truncated',
+  aiTermMayStillRun: 'may still be running',
+  aiTermError: 'AI error',
+  aiTermSec: 's',
   aiChatEmptyText:
     'I am an ops-focused AI assistant. I can run read-only tools on your connected servers — execute commands, browse files, analyze systems, troubleshoot issues, and inspect Docker and logs — to give you accurate operational guidance.',
   aiChatEmptyHint:

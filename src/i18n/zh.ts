@@ -233,6 +233,12 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatThinking: '思考中…',
   aiChatError: '错误',
   aiChatEmptyTitle: '今天我能帮你做什么？',
+  aiTermRunning: 'AI 执行中',
+  aiTermDone: '完成',
+  aiTermTruncated: '输出已截断',
+  aiTermMayStillRun: '可能仍在运行',
+  aiTermError: 'AI 执行错误',
+  aiTermSec: '秒',
   aiChatEmptyText:
     '我是面向运维的 AI 助手。我可以在你已连接的服务器上运行只读工具——执行命令、浏览文件、分析系统、排查故障、查看 Docker 与日志——从而给出准确的运维建议。',
   aiChatEmptyHint: '提示：在终端中选中文本，右键并选择“询问 AI”将其作为上下文发送。',

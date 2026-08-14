@@ -196,6 +196,12 @@ const AI_OUTPUT_FG = '\x1b[2m\x1b[36m' // dim cyan
 const ANSI_RESET = '\x1b[0m'
 const AI_MARK_TIMEOUT_MS = 90_000
 
+/** Truncate a command to a displayable length for the status badge. */
+function truncateCmd(cmd: string, max = 40): string {
+  if (cmd.length <= max) return cmd
+  return cmd.slice(0, max) + '…'
+}
+
 interface AiMarkState {
   mode: 'cmd' | 'output' | 'done'
   seq: number
@@ -640,7 +646,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       ? Promise.resolve(null)
       : pollWorkingDir(tabIdRef.current).catch(() => null)
     lsBaseDirPromiseRef.current = homePromise.then((home) => {
-      const cwd = isLocal ? promptCwd ?? localCwd ?? null : promptCwd ?? home
+      const cwd = isLocal ? (promptCwd ?? localCwd ?? null) : (promptCwd ?? home)
       const base = resolveLsBaseDir(cwd, targetArg)
       return isLocal ? base : expandTilde(base, home)
     })
@@ -658,6 +664,26 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // ---- AI-issued command/output highlight (ai-term-mark) ----
   const aiMarkRef = useRef<AiMarkState | null>(null)
   const aiMarkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Execution-status badge ("AI running → done/error") driven by the same
+  // ai-term-mark events, rendered as a DOM overlay on top of the terminal.
+  interface AiBadgeState {
+    state: 'running' | 'done' | 'error'
+    seq: number
+    command: string
+    elapsedMs?: number
+    timedOut?: boolean
+    truncated?: boolean
+    error?: string | null
+  }
+  const [aiBadge, setAiBadge] = useState<AiBadgeState | null>(null)
+  const aiBadgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearAiBadgeTimeout = () => {
+    if (aiBadgeTimeoutRef.current) {
+      clearTimeout(aiBadgeTimeoutRef.current)
+      aiBadgeTimeoutRef.current = null
+    }
+  }
 
   const clearAiMarkTimeout = () => {
     if (aiMarkTimeoutRef.current) {
@@ -910,8 +936,40 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     listen<AiTermMark>('ai-term-mark', (event) => {
       const m = event.payload
       if (m.tabId !== currentTabId) return
-      if (m.mark === 'begin') beginAiMark(m)
-      else endAiMark(m)
+      if (m.mark === 'begin') {
+        beginAiMark(m)
+        clearAiBadgeTimeout()
+        setAiBadge({ state: 'running', seq: m.seq, command: m.command })
+      } else if (m.mark === 'end') {
+        endAiMark(m)
+        // Only the badge for the currently running command gets updated; a
+        // stale end (different seq) is ignored.
+        setAiBadge((prev) => {
+          if (prev && prev.seq !== m.seq) return prev
+          return {
+            state: 'done',
+            seq: m.seq,
+            command: m.command,
+            elapsedMs: m.elapsedMs ?? 0,
+            timedOut: m.timedOut,
+            truncated: m.truncated,
+          }
+        })
+        clearAiBadgeTimeout()
+        aiBadgeTimeoutRef.current = setTimeout(() => setAiBadge(null), 3000)
+      } else if (m.mark === 'error') {
+        // Error marks reset the coloring state machine too (a begin may or may
+        // not have fired before the rejection).
+        endAiMark(m)
+        setAiBadge({
+          state: 'error',
+          seq: m.seq,
+          command: m.command,
+          error: m.error ?? t('aiTermError'),
+        })
+        clearAiBadgeTimeout()
+        aiBadgeTimeoutRef.current = setTimeout(() => setAiBadge(null), 5000)
+      }
     }).then((un) => {
       unlistenAiMark = un
     })
@@ -1325,6 +1383,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       resetCapture()
       clearAiMarkTimeout()
       aiMarkRef.current = null
+      clearAiBadgeTimeout()
       resetLsCapture()
       clearLsLinks()
       lsLinkProviderDisposable.dispose()
@@ -1687,6 +1746,34 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             style={{ top: `${scrollThumb.t}px`, height: `${scrollThumb.h}px` }}
             onMouseDown={handleThumbMouseDown}
           />
+        </div>
+      )}
+      {aiBadge && (
+        <div className={`term-ai-status term-ai-status-${aiBadge.state}`} title={aiBadge.command}>
+          {aiBadge.state === 'running' && (
+            <>
+              <span className="term-ai-status-spinner" aria-hidden />
+              {t('aiTermRunning')} · {truncateCmd(aiBadge.command)}
+            </>
+          )}
+          {aiBadge.state === 'done' && (
+            <>
+              ✓ {t('aiTermDone')}
+              {aiBadge.elapsedMs !== undefined && (
+                <span className="term-ai-status-meta">
+                  · {(aiBadge.elapsedMs / 1000).toFixed(1)}
+                  {t('aiTermSec')}
+                </span>
+              )}
+              {aiBadge.truncated && (
+                <span className="term-ai-status-meta">· {t('aiTermTruncated')}</span>
+              )}
+              {aiBadge.timedOut && (
+                <span className="term-ai-status-meta">· {t('aiTermMayStillRun')}</span>
+              )}
+            </>
+          )}
+          {aiBadge.state === 'error' && <>✗ {aiBadge.error || t('aiTermError')}</>}
         </div>
       )}
       {ctxMenu && (

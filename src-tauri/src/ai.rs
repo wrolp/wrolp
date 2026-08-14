@@ -412,24 +412,25 @@ pub fn tool_definitions() -> Vec<OpenAiTool> {
       function: OpenAiFunction {
         name: "run_command".into(),
         description:
-          "Execute a shell command and return its output. When the given tabId has a live \
-                     terminal, the command is TYPED INTO THAT TERMINAL: the user watches it run \
-                     and it is saved in the session recording, and it inherits that shell's \
-                     working directory, environment and sudo state. In that mode the result has \
-                     `ranOnTerminal: true` and NO exit code (output is captured from the terminal \
-                     stream); check `timedOut` to see whether the capture window closed early. \
-                     When tabId is 0 / invalid / not attached to any shell, the command runs \
-                     silently on the user's LOCAL machine instead. Send ONE single-line command \
-                     per call (multi-line scripts are rejected). Use for read-only or \
-                     non-destructive operations (status, logs, inspections). Avoid destructive \
-                     commands, and avoid long-running/interactive ones (top, tail -f, vim) — they \
-                     will block the terminal. NOTE: when the assistant is in read-only mode, only \
-                     inspection commands are permitted — modifying commands are blocked."
+          "Execute a shell command and return its output. The command is TYPED INTO THE \
+                     TERMINAL BOUND TO THIS CONVERSATION: the user watches it run, it is saved in \
+                     the session recording, and it inherits that shell's working directory, \
+                     environment and sudo state. Pass the conversation's tabId from the server \
+                     context (a bogus/0 tabId falls back to the bound terminal, or to silent local \
+                     execution only when this conversation is not attached to any terminal). In \
+                     terminal mode the result has `ranOnTerminal: true` and NO exit code (output \
+                     is captured from the terminal stream); check `timedOut` to see whether the \
+                     capture window closed early. Send ONE single-line command per call \
+                     (multi-line scripts are rejected). Use for read-only or non-destructive \
+                     operations (status, logs, inspections). Avoid destructive commands, and avoid \
+                     long-running/interactive ones (top, tail -f, vim) — they will block the \
+                     terminal. NOTE: when the assistant is in read-only mode, only inspection \
+                     commands are permitted — modifying commands are blocked."
             .into(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "tabId": { "type": "integer", "description": "Tab id of the connected server; use 0 to run on the local machine" },
+                "tabId": { "type": "integer", "description": "Tab id of the connected server from the current server context (0 falls back to the conversation's bound terminal)" },
                 "command": { "type": "string", "description": "Shell command to execute" }
             },
             "required": ["tabId", "command"]

@@ -3658,8 +3658,9 @@ pub async fn start_ai_agent(
     let cid2 = cid.clone();
     let conf2 = config.clone();
     let fmt = tool_call_format.clone();
+    let tab = current_tab_id;
     move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-      save_pending(&app2, &cid2, &conf2, msgs, calls, read_only, &fmt);
+      save_pending(&app2, &cid2, &conf2, msgs, calls, read_only, &fmt, tab);
     }
   };
   spawn_agent(
@@ -3688,6 +3689,7 @@ fn save_pending(
   calls: Vec<crate::ai::OpenAiToolCall>,
   read_only: bool,
   tool_call_format: &str,
+  current_tab_id: Option<u32>,
 ) {
   {
     let st = app.state::<AppState>();
@@ -3700,6 +3702,7 @@ fn save_pending(
         calls,
         read_only,
         tool_call_format: tool_call_format.to_string(),
+        current_tab_id,
       });
     }
   }
@@ -3801,7 +3804,9 @@ pub async fn confirm_ai_tool(
   let mut results: Vec<crate::ai::ToolResult> = Vec::new();
   for call in &pending.calls {
     let result = if approved {
-      execute_one_tool(&app, &state, call, None, true, read_only)
+      // Pass the conversation's bound tab so `run_command` can type into the
+      // terminal (and show the status badge) instead of silently executing.
+      execute_one_tool(&app, &state, call, pending.current_tab_id, true, read_only)
         .await
         .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string())
     } else {
@@ -3838,6 +3843,7 @@ pub async fn confirm_ai_tool(
   }
 
   // Reuse the same pause handler so chained sensitive calls keep asking.
+  let pending_tab = pending.current_tab_id;
   let on_confirm = {
     let app2 = app.clone();
     let cid2 = chat_id.clone();
@@ -3845,7 +3851,7 @@ pub async fn confirm_ai_tool(
     let ro = read_only;
     let fmt = pending.tool_call_format.clone();
     move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-      save_pending(&app2, &cid2, &conf2, msgs, calls, ro, &fmt);
+      save_pending(&app2, &cid2, &conf2, msgs, calls, ro, &fmt, pending_tab);
     }
   };
   spawn_agent(
@@ -4178,8 +4184,12 @@ fn trim_echo_and_prompt(text: &str, command: &str, ended_without_newline: bool) 
 
 /// Emit an `ai-term-mark` event so the frontend can colorize the AI-issued
 /// command line (from `begin`) and its output (until `end`) on the live
-/// terminal. `begin` is emitted *before* the command is typed so the frontend
-/// enters command-highlight mode before the echo arrives over the PTY.
+/// terminal, and drive the execution-status badge (running → done/error).
+/// `begin` is emitted *before* the command is typed so the frontend enters
+/// command-highlight mode before the echo arrives over the PTY. `error` is
+/// emitted when the command is rejected before/without typing (empty,
+/// multi-line, already-running, or typing failure) — `elapsed_ms` is 0 and
+/// `error` carries the message for the red badge.
 fn emit_ai_term_mark(
   app: &tauri::AppHandle,
   tab_id: u32,
@@ -4189,6 +4199,8 @@ fn emit_ai_term_mark(
   seq: u64,
   timed_out: bool,
   truncated: bool,
+  elapsed_ms: u64,
+  error: Option<&str>,
 ) {
   let _ = app.emit(
     "ai-term-mark",
@@ -4200,7 +4212,13 @@ fn emit_ai_term_mark(
       "seq": seq,
       "timedOut": timed_out,
       "truncated": truncated,
+      "elapsedMs": elapsed_ms,
+      "error": error,
     }),
+  );
+  eprintln!(
+    "[ai-term-mark] tab={} kind={:?} mark={} seq={} err={:?} cmd={}",
+    tab_id, kind, mark, seq, error, command
   );
 }
 
@@ -4220,16 +4238,19 @@ async fn run_command_on_terminal(
 ) -> Result<String, String> {
   let cmd = command.trim_end_matches(['\r', '\n']).to_string();
   if cmd.trim().is_empty() {
+    emit_ai_term_mark(app, tab_id, kind, command, "error", 0, false, false, 0, Some("Empty command"));
     return Err("Empty command".into());
   }
   // A multi-line command would be executed line by line by the shell and the
   // quiet heuristic cannot tell the pieces apart — reject it explicitly rather
   // than half-running it.
   if cmd.contains('\n') || cmd.contains('\r') {
+    emit_ai_term_mark(app, tab_id, kind, &cmd, "error", 0, false, false, 0, Some("Multi-line commands cannot be typed into an interactive shell"));
     return Err("Multi-line commands cannot be typed into an interactive shell".into());
   }
 
   if !ai_capture_start(state, tab_id, kind) {
+    emit_ai_term_mark(app, tab_id, kind, &cmd, "error", 0, false, false, 0, Some("Another AI command is already running on this terminal"));
     return Err("Another AI command is already running on this terminal".into());
   }
 
@@ -4239,28 +4260,43 @@ async fn run_command_on_terminal(
 
   // Signal the start *before* typing so the echo is already being colorized by
   // the time it lands in the output buffer.
-  emit_ai_term_mark(app, tab_id, kind, &cmd, "begin", seq, false, false);
+  emit_ai_term_mark(app, tab_id, kind, &cmd, "begin", seq, false, false, 0, None);
 
   // Visual cue that the next echoed line came from the assistant. Written
   // WITHOUT a newline on purpose: the prompt is already drawn and the cursor
   // parked after it, so this only shifts the column. Injecting extra *rows*
   // desyncs ConPTY / readline repaints, which address the screen with absolute
-  // cursor positioning. Skipped for local shells because ConPTY repaints the
-  // prompt line constantly and would wipe the marker anyway.
-  if kind == LiveShell::Ssh {
-    if let Ok(mut buffers) = state.output_buffers.lock() {
-      buffers
-        .entry(tab_id)
-        .or_default()
-        .push("\x1b[2m[AI]\x1b[0m ".to_string());
+  // cursor positioning.
+  match kind {
+    LiveShell::Ssh => {
+      if let Ok(mut buffers) = state.output_buffers.lock() {
+        buffers
+          .entry(tab_id)
+          .or_default()
+          .push("\x1b[2m[AI]\x1b[0m ".to_string());
+      }
+    }
+    LiveShell::Local => {
+      // Same marker for local shells, pushed into the per-shell output queue
+      // (the frontend drains it via poll_output and writes it to xterm, exactly
+      // like the SSH buffer). Character-echoing shells (cmd) keep it on screen;
+      // prompt-rewriting ones (PowerShell/PSReadLine) may repaint over it, in
+      // which case the running/status badge still identifies the AI command.
+      if let Ok(shells) = state.local_shells.lock() {
+        if let Some(sh) = shells.get(&tab_id) {
+          if let Ok(mut out) = sh.output.lock() {
+            out.push("\x1b[2m[AI]\x1b[0m ".to_string());
+          }
+        }
+      }
     }
   }
 
   if let Err(e) = type_into_shell(state, tab_id, kind, &format!("{}\r", cmd)) {
     let _ = ai_capture_finish(state, tab_id, kind);
     // Typing failed (e.g. shell vanished) — tell the frontend to reset so it
-    // does not stay stuck in command-highlight mode.
-    emit_ai_term_mark(app, tab_id, kind, &cmd, "end", seq, false, false);
+    // does not stay stuck in command-highlight mode, and show the error badge.
+    emit_ai_term_mark(app, tab_id, kind, &cmd, "error", seq, false, false, 0, Some(&e));
     return Err(e);
   }
   record_ai_command(state, tab_id, &cmd);
@@ -4304,9 +4340,21 @@ async fn run_command_on_terminal(
     output = format!("...[truncated]...\n{}", &output[cut..]);
   }
 
-  // Signal the end so the frontend restores default colors. `timed_out` and
-  // `truncated` ride along for the frontend (e.g. the AI chat result note).
-  emit_ai_term_mark(app, tab_id, kind, &cmd, "end", seq, timed_out, truncated);
+  // Signal the end so the frontend restores default colors and shows the
+  // "done" badge. `timed_out` and `truncated` ride along for the frontend
+  // (e.g. the AI chat result note).
+  emit_ai_term_mark(
+    app,
+    tab_id,
+    kind,
+    &cmd,
+    "end",
+    seq,
+    timed_out,
+    truncated,
+    start.elapsed().as_millis() as u64,
+    None,
+  );
 
   eprintln!(
     "[run_command_on_terminal] tab={} kind={:?} bytes={} timed_out={} cmd={}",
@@ -4854,10 +4902,18 @@ async fn execute_one_tool(
 
   let outcome: Result<String, String> = match tool {
     "run_command" => {
-      let tab_id = args
-        .get("tabId")
-        .and_then(|v| v.as_u64())
-        .ok_or("Missing 'tabId'")? as u32;
+      // The model is told "pass 0 to run on the local machine", which would
+      // bypass the terminal entirely. When this conversation is bound to a
+      // shell tab we prefer typing into that terminal (so the user sees it and
+      // the AI-status badge shows): fall back to the bound tab whenever the
+      // model's tabId is missing / 0 / not attached to any live shell.
+      let args_tab_id = args.get("tabId").and_then(|v| v.as_u64()).map(|v| v as u32);
+      let tab_id = match args_tab_id {
+        Some(t) if live_shell_kind(state, t).is_some() => t,
+        _ => current_tab_id
+          .filter(|t| live_shell_kind(state, *t).is_some())
+          .unwrap_or(args_tab_id.unwrap_or(0)),
+      };
       let command = args
         .get("command")
         .and_then(|v| v.as_str())

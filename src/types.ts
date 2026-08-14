@@ -422,16 +422,20 @@ export interface AiChatChunk {
 /**
  * Boundary marker emitted by `run_command_on_terminal` so the frontend can
  * colorize the AI-issued command line (`begin`) and its output (until `end`)
- * differently from user-typed text. `seq` pairs begin/end per tab.
+ * differently from user-typed text, and show an execution-status badge
+ * (running → done / error). `seq` pairs begin/end per tab. `elapsedMs` is set
+ * on `end`; `error` is set on `error` marks (rejected/typing-failure paths).
  */
 export interface AiTermMark {
   tabId: number
   kind: 'ssh' | 'local'
   command: string
-  mark: 'begin' | 'end'
+  mark: 'begin' | 'end' | 'error'
   seq: number
   timedOut: boolean
   truncated: boolean
+  elapsedMs?: number
+  error?: string | null
 }
 
 // ===== Customizable workspace layout =====
