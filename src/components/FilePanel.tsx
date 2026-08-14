@@ -309,6 +309,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null)
   const [paused, setPaused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  // Directory row currently under a dragged item (highlight + drop target).
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
   // Per-file transfer rows shown in the bottom progress panel. Both upload and
   // download batches populate this list so the user sees one row per file
   // (filename + progress bar + speed) instead of a single shared progress bar.
@@ -498,8 +500,18 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       const bytesPerSec = p.transferred / elapsed
       const key = `${p.op}:${p.filename}`
       setTransferRows((prev) =>
-        prev.map((r) =>
-          r.key === key
+        prev.map((r) => {
+          // Directory-drop uploads are keyed by the relative path (e.g.
+          // `upload:sub/dir/a.txt`) while the backend emits only the basename
+          // (`a.txt`); fall back to a basename suffix match on the active row.
+          const matchKey = r.key === key
+          const matchSuffix =
+            !matchKey &&
+            r.op === 'upload' &&
+            r.status === 'active' &&
+            p.filename.length > 0 &&
+            r.filename.endsWith(`/${p.filename}`)
+          return matchKey || matchSuffix
             ? {
                 ...r,
                 transferred: p.transferred,
@@ -507,8 +519,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 speed: formatSpeed(bytesPerSec),
                 status: 'active',
               }
-            : r,
-        ),
+            : r
+        }),
       )
     })
     return () => {
@@ -613,40 +625,118 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     [target, currentPath, refresh],
   )
 
+  /** A file resolved from a dropped entry, with its path relative to the drop root. */
   const handleDropUpload = useCallback(
-    async (fileList: FileList) => {
+    async (itemList: DataTransferItemList | null, baseDir?: string) => {
+      if (!itemList || itemList.length === 0) return
+      // `baseDir` is the directory the item was dropped *on*; blank-area drops
+      // fall back to the currently browsed directory.
+      const targetDir = baseDir && baseDir.length > 0 ? baseDir : currentPath
+      // Use the File System Access API so dropped *directories* are enumerated
+      // recursively instead of the browser flattening them into a file list.
+      const entries: FileSystemEntry[] = []
+      for (let i = 0; i < itemList.length; i++) {
+        const entry = itemList[i].webkitGetAsEntry?.()
+        if (entry) entries.push(entry)
+      }
+      if (entries.length === 0) return
+
+      interface DroppedFile {
+        relPath: string
+        file: File
+      }
+      const files: DroppedFile[] = []
+      const dirs: string[] = []
+
+      const readEntries = (reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> =>
+        new Promise((resolve, reject) => {
+          reader.readEntries(
+            (batch) => resolve(batch),
+            (err) => reject(err),
+          )
+        })
+      const readFileEntry = (entry: FileSystemFileEntry): Promise<File | null> =>
+        new Promise((resolve) => entry.file(resolve, () => resolve(null)))
+
+      const walkEntry = async (entry: FileSystemEntry, base: string): Promise<void> => {
+        const rel = base ? `${base}/${entry.name}` : entry.name
+        if (entry.isFile) {
+          const file = await readFileEntry(entry as FileSystemFileEntry)
+          if (file) files.push({ relPath: rel, file })
+        } else if (entry.isDirectory) {
+          dirs.push(rel)
+          const reader = (entry as FileSystemDirectoryEntry).createReader()
+          // `readEntries` returns batches (usually 100); keep draining until empty.
+          for (;;) {
+            const batch = await readEntries(reader)
+            if (batch.length === 0) break
+            for (const child of batch) await walkEntry(child, rel)
+          }
+        }
+      }
+      for (const e of entries) await walkEntry(e, '')
+
       setError('')
       setPaused(false)
-      const rows: TransferRow[] = Array.from(fileList).map((file) => ({
-        key: `upload:${file.name}`,
-        filename: file.name,
-        op: 'upload',
-        status: 'queued',
-        transferred: 0,
-        total: 0,
-        speed: '',
-      }))
+      const rows: TransferRow[] = [
+        ...dirs.map((d) => ({
+          key: `mkdir:${d}`,
+          filename: `${d}/`,
+          op: 'upload' as const,
+          status: 'queued' as const,
+          transferred: 0,
+          total: 0,
+          speed: '',
+        })),
+        ...files.map((f) => ({
+          key: `upload:${f.relPath}`,
+          filename: f.relPath,
+          op: 'upload' as const,
+          status: 'queued' as const,
+          transferred: 0,
+          total: 0,
+          speed: '',
+        })),
+      ]
       setTransferRows(rows)
-      for (let i = 0; i < fileList.length; i++) {
-        const file = fileList[i]
-        const remotePath = join(currentPath, file.name)
+
+      // Create remote directories first (DFS pre-order = shallow → deep), so
+      // empty directories are preserved and nested uploads always have parents.
+      for (const d of dirs) {
+        const mkKey = `mkdir:${d}`
         setTransferRows((prev) =>
-          prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)),
+          prev.map((r) => (r.key === mkKey ? { ...r, status: 'active' } : r)),
         )
         try {
-          const buf = await file.arrayBuffer()
+          await fsCreateDirectory(target, join(targetDir, d))
+          setTransferRows((prev) =>
+            prev.map((r) => (r.key === mkKey ? { ...r, status: 'done' } : r)),
+          )
+        } catch {
+          // Directory likely already exists — treat as done so the row isn't
+          // stuck in "uploading" forever.
+          setTransferRows((prev) =>
+            prev.map((r) => (r.key === mkKey ? { ...r, status: 'done' } : r)),
+          )
+        }
+      }
+
+      for (const f of files) {
+        const remotePath = join(targetDir, f.relPath)
+        const key = `upload:${f.relPath}`
+        setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'active' } : r)))
+        try {
+          const buf = await f.file.arrayBuffer()
           const bytes = Array.from(new Uint8Array(buf))
           await fsUploadFileBytes(target, remotePath, bytes)
           setTransferRows((prev) =>
-            prev.map((r) =>
-              r.key === rows[i].key ? { ...r, status: 'done', transferred: r.total } : r,
-            ),
+            prev.map((r) => (r.key === key ? { ...r, status: 'done', transferred: r.total } : r)),
           )
         } catch (e) {
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)),
+            prev.map((r) => (r.key === key ? { ...r, status: 'error' } : r)),
           )
-          setError(`Upload ${file.name} failed: ${e}`)
+          setError(`Upload ${f.relPath} failed: ${e}`)
           break
         }
       }
@@ -665,18 +755,36 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       e.stopPropagation()
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
       setDragOver(true)
+      // Highlight the directory row currently under the cursor. The row's React
+      // handlers can't run here: this native listener stops propagation, so the
+      // event never reaches React's delegated root listener.
+      const row = (e.target as HTMLElement | null)?.closest?.('[data-dir-path]')
+      setDropTargetPath(row?.getAttribute('data-dir-path') ?? null)
     }
     const onDragLeave = (e: DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      if (!panel.contains(e.relatedTarget as Node)) setDragOver(false)
+      if (!panel.contains(e.relatedTarget as Node)) {
+        setDragOver(false)
+        setDropTargetPath(null)
+      }
     }
     const onDrop = (e: DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
       setDragOver(false)
-      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
-        handleDropUpload(e.dataTransfer.files)
+      setDropTargetPath(null)
+      // If the drop landed on a directory row, upload into that directory
+      // (read from the row's data attribute); otherwise fall back to the
+      // currently browsed directory. This runs in the panel's native listener,
+      // which fires before React's delegated handlers, so it must be the single
+      // place that decides the target.
+      const row = (e.target as HTMLElement | null)?.closest?.('[data-dir-path]')
+      const baseDir = row?.getAttribute('data-dir-path') ?? undefined
+      // Pass the item list (not just `.files`) so directories survive the drop
+      // and can be enumerated recursively by the entry API.
+      if (e.dataTransfer?.items && e.dataTransfer.items.length > 0) {
+        handleDropUpload(e.dataTransfer.items, baseDir)
       }
     }
     panel.addEventListener('dragover', onDragOver)
@@ -1127,7 +1235,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     return nodes.map((node) => (
       <div key={node.path}>
         <div
-          className={`tree-row ${selPaths.has(node.path) ? 'selected' : ''} ${node.isDir ? 'dir' : 'file'}`}
+          className={`tree-row ${selPaths.has(node.path) ? 'selected' : ''} ${node.isDir ? 'dir' : 'file'} ${dropTargetPath === node.path ? 'drop-target' : ''}`}
           style={{ paddingLeft: 8 + depth * 14 }}
           onClick={(e) => handleNodeClick(node, e)}
           onContextMenu={(e) => {
@@ -1138,6 +1246,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             setSelPaths((prev) => (prev.has(node.path) ? prev : new Set([node.path])))
             setContextMenu({ x: e.clientX, y: e.clientY, node })
           }}
+          // Drop-target resolution lives in the panel's native dragover/drop
+          // listeners (React synthetic events never reach here because the
+          // native listener stops propagation). Only the data attribute is used.
+          data-dir-path={node.isDir ? node.path : undefined}
           title={node.path}
         >
           <span className="tree-icon">

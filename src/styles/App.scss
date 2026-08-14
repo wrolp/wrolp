@@ -2762,7 +2762,9 @@ input[type='password']::-ms-clear {
   .file-list {
     flex: 1;
     overflow-y: scroll;
-    padding: 2px 0;
+    // Extra bottom padding so the list doesn't butt against the panel edge when
+    // it fills up — gives breathing room and a drop target for empty space.
+    padding: 2px 0 72px;
 
     // Hide native scrollbar — custom overlay scrollbar takes over
     &::-webkit-scrollbar {
@@ -2831,6 +2833,16 @@ input[type='password']::-ms-clear {
 
     &.dir {
       color: #b8e0ff;
+    }
+
+    // A directory row currently under a dragged file/folder: show it as the
+    // upload target so the user knows where the items will land.
+    &.drop-target {
+      background: rgba($accent, 0.35);
+      outline: 1px solid $accent;
+      outline-offset: -1px;
+      box-shadow: inset 0 0 0 1px rgba($accent, 0.6);
+      color: #fff;
     }
 
     .tree-icon {
