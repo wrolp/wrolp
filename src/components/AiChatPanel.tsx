@@ -19,6 +19,7 @@ import {
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
+import { focusTerminal } from './Terminal'
 
 // Map markdown elements to our existing chat styles so the look stays
 // consistent with the previous (hand-rolled) renderer.
@@ -184,7 +185,10 @@ function nextId(): string {
   return 'ai-msg-' + Date.now().toString(36) + '-' + (++_msgSeq).toString(36)
 }
 
-const TOOL_LABELS: Record<string, { label: string; icon: 'terminal' | 'desktop' | 'folder' | 'file' | 'link' | 'search' }> = {
+const TOOL_LABELS: Record<
+  string,
+  { label: string; icon: 'terminal' | 'desktop' | 'folder' | 'file' | 'link' | 'search' }
+> = {
   run_command: { label: 'Run command', icon: 'terminal' },
   analyze_server: { label: 'Analyze server', icon: 'desktop' },
   list_directory: { label: 'List directory', icon: 'folder' },
@@ -243,8 +247,16 @@ export default function AiChatPanel({
   defaultMaxAgentRounds,
 }: AiChatPanelProps) {
   const { t } = useI18n()
-  const { messages, input, streaming, streamingText, error, toolCalls, showSuggestions, toolCallFormat } =
-    conv
+  const {
+    messages,
+    input,
+    streaming,
+    streamingText,
+    error,
+    toolCalls,
+    showSuggestions,
+    toolCallFormat,
+  } = conv
 
   // AI mode: read-only (inspection commands only) vs full (modifying commands
   // allowed). Starts from the global default and can be toggled at runtime.
@@ -327,8 +339,7 @@ export default function AiChatPanel({
   }, [showMaxRoundsPopup])
 
   // Whether a usable AI endpoint is configured (endpoint + model + saved key).
-  const configured =
-    !!config?.endpoint.trim() && !!config?.model.trim() && !!config?.apiKeyEnc
+  const configured = !!config?.endpoint.trim() && !!config?.model.trim() && !!config?.apiKeyEnc
 
   // User-defined prompt templates (Plan B) loaded from the backend.
   const [userTemplates, setUserTemplates] = useState<AiPromptTemplate[]>([])
@@ -389,7 +400,9 @@ export default function AiChatPanel({
     setTmplName(tpl.name)
     setTmplPrompt(tpl.prompt)
     setTmplCategory(tpl.category ?? '')
-    setTmplCategoryCustom(BUILTIN_GROUP_IDS.has((tpl.category ?? '').trim()) ? '' : (tpl.category ?? '').trim())
+    setTmplCategoryCustom(
+      BUILTIN_GROUP_IDS.has((tpl.category ?? '').trim()) ? '' : (tpl.category ?? '').trim(),
+    )
     setTmplFormOpen(true)
     setShowTemplateManager(true)
   }, [])
@@ -409,20 +422,24 @@ export default function AiChatPanel({
     setShowTemplateManager(true)
   }, [closeTemplateForm])
 
-  const handleTmplCategorySelect = useCallback((value: string) => {
-    if (value === '__custom__') {
-      setTmplCategory(tmplCategoryCustom.trim() || value)
-    } else {
-      setTmplCategory(value)
-    }
-  }, [tmplCategoryCustom])
+  const handleTmplCategorySelect = useCallback(
+    (value: string) => {
+      if (value === '__custom__') {
+        setTmplCategory(tmplCategoryCustom.trim() || value)
+      } else {
+        setTmplCategory(value)
+      }
+    },
+    [tmplCategoryCustom],
+  )
 
   const handleSaveTemplate = useCallback(async () => {
     const name = tmplName.trim()
     const prompt = tmplPrompt.trim()
     if (name.length === 0 || prompt.length === 0) return
     // Resolve the final category: custom select → the free-text custom name.
-    const category = tmplCatSelectValue === '__custom__' ? tmplCategoryCustom.trim() : tmplCatSelectValue
+    const category =
+      tmplCatSelectValue === '__custom__' ? tmplCategoryCustom.trim() : tmplCatSelectValue
     setTmplSaving(true)
     try {
       const id = editingTemplate?.id ?? crypto.randomUUID()
@@ -447,7 +464,14 @@ export default function AiChatPanel({
     } finally {
       setTmplSaving(false)
     }
-  }, [tmplName, tmplPrompt, tmplCatSelectValue, tmplCategoryCustom, editingTemplate, loadUserTemplates])
+  }, [
+    tmplName,
+    tmplPrompt,
+    tmplCatSelectValue,
+    tmplCategoryCustom,
+    editingTemplate,
+    loadUserTemplates,
+  ])
 
   const handleDeleteTemplate = useCallback(
     async (id: string) => {
@@ -499,6 +523,9 @@ export default function AiChatPanel({
       const trimmed = text.replace(/\s+$/, '')
       if (trimmed.length === 0) return
       sendInput(tabId, trimmed)
+      // Return keyboard focus to the terminal so the user can keep working in
+      // the shell without clicking it again.
+      focusTerminal(tabId)
     },
     [tabId],
   )
@@ -547,7 +574,6 @@ export default function AiChatPanel({
     window.getSelection()?.removeAllRanges()
   }, [])
 
-
   // Alias setters that operate on the per-tab conversation object so the rest
   // of the logic (runAgent / handleSend) stays unchanged.
   const setMessages = (u: ChatMessage[] | ((p: ChatMessage[]) => ChatMessage[])) =>
@@ -564,8 +590,7 @@ export default function AiChatPanel({
     setConv((c) => ({ ...c, toolCalls: typeof u === 'function' ? u(c.toolCalls) : u }))
   const setShowSuggestions = (u: boolean | ((p: boolean) => boolean)) =>
     setConv((c) => ({ ...c, showSuggestions: typeof u === 'function' ? u(c.showSuggestions) : u }))
-  const setToolCallFormat = (u: 'flat' | 'nested') =>
-    setConv((c) => ({ ...c, toolCallFormat: u }))
+  const setToolCallFormat = (u: 'flat' | 'nested') => setConv((c) => ({ ...c, toolCallFormat: u }))
 
   // Active agent chat id (set once a run starts); used to resume after a
   // sensitive-tool confirmation.
@@ -694,7 +719,10 @@ export default function AiChatPanel({
         if (text) {
           setMessages((ms) => [...ms, { id: nextId(), role: 'assistant', content: text }])
         } else if (err) {
-          setMessages((ms) => [...ms, { id: nextId(), role: 'assistant', content: 'Error: ' + err }])
+          setMessages((ms) => [
+            ...ms,
+            { id: nextId(), role: 'assistant', content: 'Error: ' + err },
+          ])
         }
         return prev
       }
@@ -715,56 +743,61 @@ export default function AiChatPanel({
   }, [])
 
   // Poll the backend for streamed chunks until the agent run finishes.
-  const startPolling = useCallback((id: string) => {
-    let accumulated = ''
-    const poll = () => {
-      pollAiChunks(id).then((result) => {
-        if (result === null) {
-          setStreaming(false)
-          finalizeAssistant(accumulated)
-          requestAnimationFrame(() => {
-            const el = inputRef.current
-            if (el) {
-              el.focus()
-              const pos = el.value.length
-              el.setSelectionRange(pos, pos)
+  const startPolling = useCallback(
+    (id: string) => {
+      let accumulated = ''
+      const poll = () => {
+        pollAiChunks(id)
+          .then((result) => {
+            if (result === null) {
+              setStreaming(false)
+              finalizeAssistant(accumulated)
+              requestAnimationFrame(() => {
+                const el = inputRef.current
+                if (el) {
+                  el.focus()
+                  const pos = el.value.length
+                  el.setSelectionRange(pos, pos)
+                }
+              })
+              return
             }
-          })
-          return
-        }
-        const [newText, done, err, events] = result
-        if (events && events.length) mergeToolEvents(events)
-        if (newText) {
-          accumulated += newText
-          setStreamingText(accumulated.replace(/^\s+/, ''))
-        }
-        if (done || err) {
-          setStreaming(false)
-          finalizeAssistant(accumulated.trim(), err)
-          setStreamingText('')
-          if (err) setError(err)
-          // Return focus to the input box so the user can continue the
-          // conversation without clicking.
-          requestAnimationFrame(() => {
-            const el = inputRef.current
-            if (el) {
-              el.focus()
-              const pos = el.value.length
-              el.setSelectionRange(pos, pos)
+            const [newText, done, err, events] = result
+            if (events && events.length) mergeToolEvents(events)
+            if (newText) {
+              accumulated += newText
+              setStreamingText(accumulated.replace(/^\s+/, ''))
             }
+            if (done || err) {
+              setStreaming(false)
+              finalizeAssistant(accumulated.trim(), err)
+              setStreamingText('')
+              if (err) setError(err)
+              // Return focus to the input box so the user can continue the
+              // conversation without clicking.
+              requestAnimationFrame(() => {
+                const el = inputRef.current
+                if (el) {
+                  el.focus()
+                  const pos = el.value.length
+                  el.setSelectionRange(pos, pos)
+                }
+              })
+              return
+            }
+            pollRef.current = window.setTimeout(poll, 100)
           })
-          return
-        }
-        pollRef.current = window.setTimeout(poll, 100)
-      }).catch((e) => {
-        setStreaming(false)
-        setError(String(e))
-        finalizeAssistant(accumulated.trim(), String(e))
-        setStreamingText('')
-      })
-    }
-    poll()
-  }, [finalizeAssistant, mergeToolEvents, setStreaming, setStreamingText, setError])
+          .catch((e) => {
+            setStreaming(false)
+            setError(String(e))
+            finalizeAssistant(accumulated.trim(), String(e))
+            setStreamingText('')
+          })
+      }
+      poll()
+    },
+    [finalizeAssistant, mergeToolEvents, setStreaming, setStreamingText, setError],
+  )
 
   // Resume the agent after the user approves/declines a sensitive tool call.
   const confirmAndResume = useCallback(
@@ -803,7 +836,14 @@ export default function AiChatPanel({
         ])
       }
 
-      startAiAgent(apiMessages, tabId, config ?? undefined, readOnly, maxAgentRounds, toolCallFormat)
+      startAiAgent(
+        apiMessages,
+        tabId,
+        config ?? undefined,
+        readOnly,
+        maxAgentRounds,
+        toolCallFormat,
+      )
         .then((id: string) => {
           setChatId(id)
           startPolling(id)
@@ -838,25 +878,22 @@ export default function AiChatPanel({
 
   // Fill the input box with text (e.g. a clicked template) instead of sending it,
   // so the user can review/edit before asking.
-  const fillInput = useCallback(
-    (text: string) => {
-      setInput((prev) => {
-        const next = prev.trim().length > 0 ? prev + '\n' + text : text
-        // Defer until the controlled value has rendered, then move the caret to
-        // the end and scroll the textarea to the last line.
-        requestAnimationFrame(() => {
-          const el = inputRef.current
-          if (!el) return
-          const pos = el.value.length
-          el.focus()
-          el.setSelectionRange(pos, pos)
-          el.scrollTop = el.scrollHeight
-        })
-        return next
+  const fillInput = useCallback((text: string) => {
+    setInput((prev) => {
+      const next = prev.trim().length > 0 ? prev + '\n' + text : text
+      // Defer until the controlled value has rendered, then move the caret to
+      // the end and scroll the textarea to the last line.
+      requestAnimationFrame(() => {
+        const el = inputRef.current
+        if (!el) return
+        const pos = el.value.length
+        el.focus()
+        el.setSelectionRange(pos, pos)
+        el.scrollTop = el.scrollHeight
       })
-    },
-    [],
-  )
+      return next
+    })
+  }, [])
 
   const handleSend = useCallback(
     (textOverride?: string) => {
@@ -1117,7 +1154,9 @@ export default function AiChatPanel({
                 title={t('selectModel')}
                 disabled={fetchingModels}
               >
-                {fetchingModels && <option value={config?.model || ''}>{t('loadingModels')}</option>}
+                {fetchingModels && (
+                  <option value={config?.model || ''}>{t('loadingModels')}</option>
+                )}
                 {models.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -1249,9 +1288,7 @@ export default function AiChatPanel({
                       </button>
                     </div>
                   )}
-                  {compactClear && (
-                    <div className="ai-chat-more-item ai-chat-more-separator" />
-                  )}
+                  {compactClear && <div className="ai-chat-more-item ai-chat-more-separator" />}
                   {compactClear && (
                     <div className="ai-chat-more-item">
                       <button
@@ -1273,20 +1310,12 @@ export default function AiChatPanel({
           )}
 
           {!floating && onToggleFloat && (
-            <button
-              className="ai-chat-clear-btn"
-              onClick={onToggleFloat}
-              title={t('aiChatPopOut')}
-            >
+            <button className="ai-chat-clear-btn" onClick={onToggleFloat} title={t('aiChatPopOut')}>
               <Icon name="externalLink" size={13} />
             </button>
           )}
           {floating && onToggleFloat && (
-            <button
-              className="ai-chat-clear-btn"
-              onClick={onToggleFloat}
-              title={t('aiChatDock')}
-            >
+            <button className="ai-chat-clear-btn" onClick={onToggleFloat} title={t('aiChatDock')}>
               <Icon name="minimize" size={13} />
             </button>
           )}
@@ -1328,10 +1357,7 @@ export default function AiChatPanel({
                 }}
                 className="ai-max-rounds-input"
               />
-              <button
-                className="ai-max-rounds-apply"
-                onClick={() => setShowMaxRoundsPopup(false)}
-              >
+              <button className="ai-max-rounds-apply" onClick={() => setShowMaxRoundsPopup(false)}>
                 OK
               </button>
             </div>
@@ -1414,9 +1440,7 @@ export default function AiChatPanel({
 
                 {customByBuiltin.generic.length > 0 && (
                   <div className="ai-chat-suggestion-group">
-                    <div className="ai-chat-suggestion-group-title">
-                      {t('aiChatSugCustom')}
-                    </div>
+                    <div className="ai-chat-suggestion-group-title">{t('aiChatSugCustom')}</div>
                     <div className="ai-chat-suggestion-chips">
                       {customByBuiltin.generic.map((tpl) => (
                         <button
@@ -1463,7 +1487,11 @@ export default function AiChatPanel({
         {messages.map((msg) => (
           <div key={msg.id} className={`ai-chat-msg ai-chat-msg-${msg.role}`}>
             <div className="ai-chat-msg-avatar" aria-hidden>
-              {msg.role === 'user' ? <Icon name="user" size={14} /> : <Icon name="sparkles" size={14} />}
+              {msg.role === 'user' ? (
+                <Icon name="user" size={14} />
+              ) : (
+                <Icon name="sparkles" size={14} />
+              )}
             </div>
             <div className="ai-chat-msg-body">
               <div className="ai-chat-msg-role">
@@ -1525,8 +1553,7 @@ export default function AiChatPanel({
             style={{
               top: selection.top,
               left: selection.left,
-              transform:
-                selection.top < 28 ? 'translate(-50%, 8px)' : 'translate(-50%, -100%)',
+              transform: selection.top < 28 ? 'translate(-50%, 8px)' : 'translate(-50%, -100%)',
             }}
             onMouseDown={(e) => e.preventDefault()}
           >
@@ -1576,14 +1603,14 @@ export default function AiChatPanel({
             <div className="ai-chat-msg-avatar" aria-hidden>
               <Icon name="sparkles" size={14} />
             </div>
-              <div className="ai-chat-msg-body">
-                <div className="ai-chat-msg-role">{t('aiChatRoleAi')}</div>
-                <div className="ai-chat-msg-content">
-                  <span className="ai-chat-typing">
-                    {t('aiChatThinking')}
-                    <span className="ai-chat-cursor" />
-                  </span>
-                </div>
+            <div className="ai-chat-msg-body">
+              <div className="ai-chat-msg-role">{t('aiChatRoleAi')}</div>
+              <div className="ai-chat-msg-content">
+                <span className="ai-chat-typing">
+                  {t('aiChatThinking')}
+                  <span className="ai-chat-cursor" />
+                </span>
+              </div>
             </div>
           </div>
         )}
@@ -1601,7 +1628,11 @@ export default function AiChatPanel({
       {!configured && (
         <div className="ai-chat-config-warning">
           <span>{t('aiConfigRequired')}</span>
-          <button type="button" className="ai-chat-config-warning-btn" onClick={() => onOpenSettings?.()}>
+          <button
+            type="button"
+            className="ai-chat-config-warning-btn"
+            onClick={() => onOpenSettings?.()}
+          >
             {t('aiOpenSettings')}
           </button>
         </div>
@@ -1610,9 +1641,7 @@ export default function AiChatPanel({
         className="ai-chat-input-area"
         ref={inputAreaRef}
         style={
-          inputHeight !== undefined
-            ? { height: inputHeight, flex: '0 0 auto' }
-            : { flex: '1 1 0' }
+          inputHeight !== undefined ? { height: inputHeight, flex: '0 0 auto' } : { flex: '1 1 0' }
         }
       >
         <div
@@ -1668,38 +1697,58 @@ export default function AiChatPanel({
                 onChange={handleImageSelect}
               />
               <div className="ai-chat-template-wrap" ref={templatePickerRef}>
-              <button
-                type="button"
-                className="ai-chat-action-btn"
-                onClick={() => setTemplatePickerOpen((v) => !v)}
-                disabled={streaming}
-                title={t('aiChatPickTemplate')}
-              >
-                <Icon name="sparkles" size={16} />
-              </button>
-              {templatePickerOpen && (
-                <div className="ai-chat-template-dropdown">
-                  {SUGGESTION_GROUPS.map((group) => {
-                    const visibleKeys = group.keys.filter((key) => !hiddenBuiltins.includes(key))
-                    const customInGroup = customByBuiltin.map.get(group.id) ?? []
-                    if (visibleKeys.length === 0 && customInGroup.length === 0) return null
-                    return (
-                      <div className="ai-chat-template-group" key={group.id}>
-                        <div className="ai-chat-template-group-title">{t(group.titleKey)}</div>
-                        {visibleKeys.map((key) => (
-                          <button
-                            key={key}
-                            type="button"
-                            className="ai-chat-template-item"
-                            onClick={() => {
-                              fillInput(t(key))
-                              setTemplatePickerOpen(false)
-                            }}
-                          >
-                            {t(key)}
-                          </button>
-                        ))}
-                        {customInGroup.map((tpl) => (
+                <button
+                  type="button"
+                  className="ai-chat-action-btn"
+                  onClick={() => setTemplatePickerOpen((v) => !v)}
+                  disabled={streaming}
+                  title={t('aiChatPickTemplate')}
+                >
+                  <Icon name="sparkles" size={16} />
+                </button>
+                {templatePickerOpen && (
+                  <div className="ai-chat-template-dropdown">
+                    {SUGGESTION_GROUPS.map((group) => {
+                      const visibleKeys = group.keys.filter((key) => !hiddenBuiltins.includes(key))
+                      const customInGroup = customByBuiltin.map.get(group.id) ?? []
+                      if (visibleKeys.length === 0 && customInGroup.length === 0) return null
+                      return (
+                        <div className="ai-chat-template-group" key={group.id}>
+                          <div className="ai-chat-template-group-title">{t(group.titleKey)}</div>
+                          {visibleKeys.map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              className="ai-chat-template-item"
+                              onClick={() => {
+                                fillInput(t(key))
+                                setTemplatePickerOpen(false)
+                              }}
+                            >
+                              {t(key)}
+                            </button>
+                          ))}
+                          {customInGroup.map((tpl) => (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              className="ai-chat-template-item"
+                              title={tpl.prompt}
+                              onClick={() => {
+                                fillInput(tpl.prompt)
+                                setTemplatePickerOpen(false)
+                              }}
+                            >
+                              {tpl.name}
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    })}
+                    {customByBuiltin.generic.length > 0 && (
+                      <div className="ai-chat-template-group">
+                        <div className="ai-chat-template-group-title">{t('aiChatSugCustom')}</div>
+                        {customByBuiltin.generic.map((tpl) => (
                           <button
                             key={tpl.id}
                             type="button"
@@ -1714,30 +1763,10 @@ export default function AiChatPanel({
                           </button>
                         ))}
                       </div>
-                    )
-                  })}
-                  {customByBuiltin.generic.length > 0 && (
-                    <div className="ai-chat-template-group">
-                      <div className="ai-chat-template-group-title">{t('aiChatSugCustom')}</div>
-                      {customByBuiltin.generic.map((tpl) => (
-                        <button
-                          key={tpl.id}
-                          type="button"
-                          className="ai-chat-template-item"
-                          title={tpl.prompt}
-                          onClick={() => {
-                            fillInput(tpl.prompt)
-                            setTemplatePickerOpen(false)
-                          }}
-                        >
-                          {tpl.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             <button
               className="ai-chat-send-btn"
@@ -1764,7 +1793,11 @@ export default function AiChatPanel({
           <div className="ai-tmpl-modal" onClick={(e) => e.stopPropagation()}>
             <div className="ai-tmpl-modal-head">
               <span className="ai-tmpl-modal-title">
-                {tmplFormOpen ? (editingTemplate ? t('aiChatSugManage') : t('aiChatSugAdd')) : t('aiChatSugList')}
+                {tmplFormOpen
+                  ? editingTemplate
+                    ? t('aiChatSugManage')
+                    : t('aiChatSugAdd')
+                  : t('aiChatSugList')}
               </span>
               <button
                 type="button"
@@ -1865,9 +1898,7 @@ export default function AiChatPanel({
                         <div className="ai-tmpl-item" key={`builtin:${key}`}>
                           <div className="ai-tmpl-item-body">
                             <div className="ai-tmpl-item-name">{t(key)}</div>
-                            <div className="ai-tmpl-item-prompt">
-                              {t(group.titleKey)}
-                            </div>
+                            <div className="ai-tmpl-item-prompt">{t(group.titleKey)}</div>
                           </div>
                           <div className="ai-tmpl-item-actions">
                             <button
@@ -1924,9 +1955,7 @@ export default function AiChatPanel({
                         <div className="ai-tmpl-item-body">
                           <div className="ai-tmpl-item-name">{tpl.name}</div>
                           <div className="ai-tmpl-item-prompt">{tpl.prompt}</div>
-                          {cat.length > 0 && (
-                            <div className="ai-tmpl-item-cat">{catLabel}</div>
-                          )}
+                          {cat.length > 0 && <div className="ai-tmpl-item-cat">{catLabel}</div>}
                         </div>
                         <div className="ai-tmpl-item-actions">
                           <button
@@ -2012,7 +2041,9 @@ function ToolCallList({
   const hasConfirmation = tools.some((tc) => tc.status === 'needs-confirmation')
   const open = !collapsed || hasConfirmation
   return (
-    <div className={`ai-tool-calls${open ? ' open' : ' collapsed'}${hasConfirmation ? ' needs-confirm' : ''}`}>
+    <div
+      className={`ai-tool-calls${open ? ' open' : ' collapsed'}${hasConfirmation ? ' needs-confirm' : ''}`}
+    >
       <div
         className="ai-tool-calls-label"
         role="button"
@@ -2023,8 +2054,7 @@ function ToolCallList({
         <Icon name="settings" size={12} />
         {t('aiChatToolsUsed')} ({tools.length})
       </div>
-      {open &&
-        tools.map((tc) => <ToolCallCard key={tc.id} tool={tc} onConfirm={onConfirm} />)}
+      {open && tools.map((tc) => <ToolCallCard key={tc.id} tool={tc} onConfirm={onConfirm} />)}
     </div>
   )
 }
@@ -2096,9 +2126,7 @@ function highlightJson(json: string): ReactNode[] {
 // syntax-highlighted.
 function JsonBlock({ raw, className }: { raw: string; className?: string }) {
   const pretty = prettyJson(raw)
-  return (
-    <pre className={`${className ?? ''} ai-json`}>{highlightJson(pretty)}</pre>
-  )
+  return <pre className={`${className ?? ''} ai-json`}>{highlightJson(pretty)}</pre>
 }
 
 function ToolCallCard({
@@ -2177,18 +2205,10 @@ function ToolCallCard({
         <div className="ai-tool-confirm-bar">
           <span className="ai-tool-confirm-text">{t('aiToolConfirm')}</span>
           <div className="ai-tool-confirm-actions">
-            <button
-              type="button"
-              className="ai-tool-confirm-deny"
-              onClick={() => onConfirm(false)}
-            >
+            <button type="button" className="ai-tool-confirm-deny" onClick={() => onConfirm(false)}>
               {t('aiToolDeny')}
             </button>
-            <button
-              type="button"
-              className="ai-tool-confirm-allow"
-              onClick={() => onConfirm(true)}
-            >
+            <button type="button" className="ai-tool-confirm-allow" onClick={() => onConfirm(true)}>
               {t('aiToolAllow')}
             </button>
           </div>
@@ -2199,4 +2219,3 @@ function ToolCallCard({
 }
 
 /** Very simple markdown-ish rendering: code blocks, inline code, bold, italic. */
-

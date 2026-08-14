@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState, useLayoutEffect } from 'react'
 import { Terminal } from '@xterm/xterm'
+import type { IDecoration, ILink } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { listen } from '@tauri-apps/api/event'
@@ -13,6 +14,7 @@ import {
   openLocalShell,
   localSendInput,
   localResize,
+  pollWorkingDir,
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -22,7 +24,9 @@ import {
   stripAnsi,
   preloadHighlightLanguages,
 } from '../lib/termHighlight'
-import type { AiTermMark } from '../types'
+import { detectLsCommand, parseLsBlock, extractCwdFromPrompt } from '../lib/lsParse'
+import type { LsEntry } from '../lib/lsParse'
+import type { AiTermMark, TargetRef } from '../types'
 
 // Tracks the single "active" terminal instance per session tabId. During a
 // transient double-mount (React mounts the new terminal before unmounting the
@@ -31,6 +35,19 @@ import type { AiTermMark } from '../types'
 // stale duplicate can never echo the same keystroke twice into the SSH session
 // (which produced bugs like typing "ls" reaching the shell as "lss").
 const activeTerminalByTab = new Map<number, Terminal>()
+
+// Tracks the most recently mounted terminal instance for each session tabId,
+// regardless of focus. Used by `focusTerminal` so callers outside this file
+// (reconnect button, "send to terminal") can move keyboard focus into the
+// right xterm instance — even when that terminal is not the currently focused
+// pane (e.g. a disconnected tab about to be reconnected).
+const latestTerminalByTab = new Map<number, Terminal>()
+
+/** Move keyboard focus into the terminal owned by `tabId` (no-op if none). */
+export const focusTerminal = (tabId: number): void => {
+  const term = latestTerminalByTab.get(tabId)
+  if (term) term.focus()
+}
 
 // Preserves terminal scrollback across transient re-mounts (float pop-out / dock
 // back). React tears down the xterm instance when its portal container changes,
@@ -195,6 +212,40 @@ function colorizeOutputChunk(chunk: string): string {
   return AI_OUTPUT_FG + chunk + ANSI_RESET
 }
 
+// ---- clickable `ls` output (ls/ll/dir) ----
+//
+// When the user runs `ls -l`/`ll`/`la`/`dir`, output is written to the
+// terminal unchanged (passthrough) while being buffered for parsing. Once the
+// next prompt (or a silence timeout) ends the block, each entry's name becomes
+// a clickable xterm link (via registerLinkProvider): directories send
+// `cd <name>`, files open in the editor. The row for each entry is derived
+// from the buffer row captured when the command was submitted.
+
+const LS_CAPTURE_TIMEOUT_MS = 2000
+const LS_MAX_BYTES = 128 * 1024
+
+// Persistent highlight colors so clickable `ls` entries are visibly distinct
+// from ordinary output (dirs / files / symlinks). Decorations are purely
+// visual; the link provider (below) still owns click handling.
+const LS_DIR_BG = '#1e4620'
+const LS_FILE_BG = '#1a3650'
+const LS_LINK_BG = '#3d1e50'
+
+interface LsCaptureState {
+  format: 'long' | 'dir'
+  prompt: string
+  /** Absolute buffer row of the echoed command line (captured at submit). */
+  startRow: number
+  buf: string
+  bytes: number
+  timeout: ReturnType<typeof setTimeout> | null
+}
+
+function joinPath(base: string, name: string): string {
+  if (!base) return name
+  return `${base.replace(/[\\/]+$/, '')}/${name}`
+}
+
 interface TerminalComponentProps {
   tabId: number
   isActive: boolean
@@ -228,6 +279,8 @@ interface TerminalComponentProps {
   ) => void
   onSizeChange?: (cols: number, rows: number) => void
   onAskAi?: (selectedText: string) => void
+  /** Open a file (clicked in `ls` output) in the remote/local editor. */
+  onOpenFile?: (target: TargetRef, path: string) => void
 }
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
@@ -242,6 +295,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onStatusChange,
   onSizeChange,
   onAskAi,
+  onOpenFile,
   isLocal,
   localCwd,
   localShellType,
@@ -255,6 +309,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const connectConfigRef = useRef(connectConfig)
   const onStatusChangeRef = useRef(onStatusChange)
   const onSizeChangeRef = useRef(onSizeChange)
+  const onOpenFileRef = useRef(onOpenFile)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const hasRun = useRef(false)
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
@@ -287,6 +342,191 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     captureRef.current = null
   }
 
+  // ---- clickable `ls` output (ls/ll/dir) ----
+  const lsCaptureRef = useRef<LsCaptureState | null>(null)
+  // Parsed ls entries keyed by absolute buffer row (0-based), consumed by the
+  // link provider that is registered once per terminal.
+  const lsEntriesRef = useRef<Map<number, LsEntry[]>>(new Map())
+  // Persistent clickable-entry decorations (one per entry name), disposed on
+  // clear/new command/clear-screen/disconnect/AI command.
+  const lsDecorationsRef = useRef<IDecoration[]>([])
+  const lsPromptRef = useRef<string>('')
+
+  const clearLsLinks = () => {
+    lsEntriesRef.current.clear()
+    for (const d of lsDecorationsRef.current) {
+      try {
+        d.dispose()
+      } catch {
+        // disposal must never throw
+      }
+    }
+    lsDecorationsRef.current = []
+  }
+
+  const resetLsCapture = () => {
+    const c = lsCaptureRef.current
+    if (c && c.timeout) clearTimeout(c.timeout)
+    lsCaptureRef.current = null
+    // Any lingering clickable overlay belongs to a previous listing — drop it.
+    clearLsLinks()
+  }
+
+  const onLsEntryClick = (entry: LsEntry) => {
+    console.log('[ls click]', entry.kind, JSON.stringify(entry.name), 'col', entry.col)
+    if (entry.kind === 'dir') {
+      const safeName = entry.name.replace(/'/g, "'\\'")
+      // Local shells (cmd/PowerShell) don't understand `--`; remote bash/zsh do.
+      const cmd = isLocal ? `cd ${entry.name}\r` : `cd -- '${safeName}'\r`
+      if (isLocal) {
+        localSendInput(tabIdRef.current, cmd).catch((e) =>
+          console.error('local_send_input error:', e),
+        )
+      } else {
+        sendInput(tabIdRef.current, cmd)
+      }
+      return
+    }
+    void openLsFile(entry.name)
+  }
+
+  const openLsFile = async (name: string) => {
+    const cb = onOpenFileRef.current
+    if (!cb) return
+    let cwd: string | null = null
+    if (isLocal) {
+      cwd = extractCwdFromPrompt(lsPromptRef.current) ?? localCwd ?? null
+    } else {
+      try {
+        cwd = await pollWorkingDir(tabIdRef.current)
+      } catch {
+        cwd = null
+      }
+    }
+    const target: TargetRef = isLocal
+      ? { kind: 'local', tabId: tabIdRef.current }
+      : { kind: 'session', tabId: tabIdRef.current }
+    cb(target, joinPath(cwd ?? '', name))
+  }
+
+  // The parsed `entry.line` is a logical-line index into the (ANSI-stripped)
+  // captured buffer, which only equals the rendered absolute row when there is a
+  // perfect 1:1 mapping between logical lines and terminal rows. That assumption
+  // breaks when the terminal wraps a long line (a long prompt + command, or a
+  // long entry line) or inserts an extra blank/redraw line between the echoed
+  // command and the listing — every following entry then lands one or more rows
+  // away from `startRow + entry.line`, so a click would `cd` into the directory
+  // rendered *above* the one that was clicked. Resolve the real absolute buffer
+  // row by matching the entry name against the live terminal near the expected
+  // row (searching outward in both directions).
+  const resolveLsRow = (term: Terminal, expectedRow: number, entry: LsEntry): number => {
+    const buf = term.buffer.active
+    const rowHasName = (y: number): boolean => {
+      const line = buf.getLine(y)
+      if (!line) return false
+      return line.translateToString(true).includes(entry.name)
+    }
+    if (rowHasName(expectedRow)) return expectedRow
+    for (let d = 1; d <= 6; d++) {
+      if (rowHasName(expectedRow - d)) return expectedRow - d
+      if (rowHasName(expectedRow + d)) return expectedRow + d
+    }
+    return expectedRow
+  }
+
+  // Populate the link table for a freshly parsed ls block. Rows are resolved
+  // against the live terminal buffer (not just `startRow + entry.line`) so the
+  // link provider matches the lines xterm actually renders. Also paints a subtle
+  // background highlight on each entry name so the user can see at a glance that
+  // the listing is clickable, without clobbering the existing ANSI colors
+  // emitted by `ls --color`.
+  const setLsEntries = (startRow: number, entries: LsEntry[]) => {
+    clearLsLinks()
+    const map = new Map<number, LsEntry[]>()
+    const term = termRef.current
+    for (const entry of entries) {
+      const row = term ? resolveLsRow(term, startRow + entry.line, entry) : startRow + entry.line
+      const arr = map.get(row)
+      if (arr) arr.push(entry)
+      else map.set(row, [entry])
+      if (term && entry.name.length > 0) {
+        try {
+          // `registerMarker` pins to a line relative to the *current cursor*;
+          // convert the absolute entry row into that offset so the decoration
+          // tracks the correct line as the buffer scrolls.
+          const buf = term.buffer.active
+          const cursorRow = buf.baseY + buf.cursorY
+          const marker = term.registerMarker(row - cursorRow)
+          // xterm decoration `x` is a 0-based offset from the anchor (unlike
+          // the link provider's 1-based buffer positions), so use entry.col
+          // directly so the highlight exactly covers the name cells.
+          const dec = term.registerDecoration({
+            marker,
+            layer: 'top',
+            x: entry.col,
+            width: entry.name.length,
+            backgroundColor:
+              entry.kind === 'dir' ? LS_DIR_BG : entry.kind === 'link' ? LS_LINK_BG : LS_FILE_BG,
+          })
+          if (dec) lsDecorationsRef.current.push(dec)
+        } catch {
+          // decoration creation must never break link setup
+        }
+      }
+    }
+    lsEntriesRef.current = map
+  }
+
+  const finalizeLsCapture = (term: Terminal, ls: LsCaptureState, promptEnd: string | null) => {
+    if (ls.timeout) {
+      clearTimeout(ls.timeout)
+      ls.timeout = null
+    }
+    lsCaptureRef.current = null
+    let text = ls.buf
+    if (promptEnd) text = text.slice(0, text.length - promptEnd.length)
+    const entries = parseLsBlock(text, ls.format)
+    if (entries.length > 0) setLsEntries(ls.startRow, entries)
+  }
+
+  const writeLsChunk = (term: Terminal, ls: LsCaptureState, chunk: string) => {
+    term.write(chunk)
+    ls.buf += stripAnsi(chunk)
+    ls.bytes += chunk.length
+    if (ls.bytes > LS_MAX_BYTES) {
+      resetLsCapture()
+      return
+    }
+    if (ls.prompt && ls.buf.endsWith(ls.prompt)) {
+      finalizeLsCapture(term, ls, ls.prompt)
+      return
+    }
+    if (ls.timeout) clearTimeout(ls.timeout)
+    ls.timeout = setTimeout(() => {
+      ls.timeout = null
+      finalizeLsCapture(term, ls, null)
+    }, LS_CAPTURE_TIMEOUT_MS)
+  }
+
+  const startLsCaptureIfMatch = (cmd: string, prompt: string) => {
+    const format = detectLsCommand(cmd)
+    if (!format) return
+    resetCapture()
+    resetLsCapture()
+    const term = termRef.current
+    if (!term) return
+    lsPromptRef.current = prompt || ''
+    const buf = term.buffer.active
+    lsCaptureRef.current = {
+      format,
+      prompt: prompt || '',
+      startRow: buf.baseY + buf.cursorY,
+      buf: '',
+      bytes: 0,
+      timeout: null,
+    }
+  }
+
   // ---- AI-issued command/output highlight (ai-term-mark) ----
   const aiMarkRef = useRef<AiMarkState | null>(null)
   const aiMarkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -311,8 +551,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }
 
   const beginAiMark = (mark: AiTermMark) => {
-    // An AI command supersedes any in-flight cat/head/tail capture.
+    // An AI command supersedes any in-flight cat/head/tail capture and any
+    // stale clickable `ls` overlays.
     resetCapture()
+    resetLsCapture()
+    clearLsLinks()
     aiMarkRef.current = { mode: 'cmd', seq: mark.seq }
     clearAiMarkTimeout()
     // Safety net: if the backend dies before emitting `end`, stop coloring.
@@ -344,13 +587,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }
 
   // Single funnel for all output chunks: AI-command coloring first, then the
-  // cat/head/tail capture machine, otherwise passthrough.
+  // ls clickable capture, then the cat/head/tail capture machine, otherwise
+  // passthrough.
   const writeOutput = (chunk: string) => {
     const term = termRef.current
     if (!term) return
     const ai = aiMarkRef.current
     if (ai) {
       writeAiChunk(ai, chunk)
+      return
+    }
+    const ls = lsCaptureRef.current
+    if (ls) {
+      writeLsChunk(term, ls, chunk)
       return
     }
     const c = captureRef.current
@@ -416,6 +665,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   })
   useEffect(() => {
     onSizeChangeRef.current = onSizeChange
+  })
+  useEffect(() => {
+    onOpenFileRef.current = onOpenFile
   })
 
   // Calculate terminal cols/rows and send resize command
@@ -537,6 +789,69 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     termRef.current = term
     fitRef.current = fitAddon
+    // Register this instance so external callers (reconnect, "send to terminal")
+    // can focus it. Overwrites any stale instance for the same tabId.
+    latestTerminalByTab.set(currentTabId, term)
+
+    // Clickable `ls` output: a single link provider makes directory/file names
+    // from the last parsed `ls` block hoverable (underline + pointer) and
+    // clickable. xterm's linkifier handles the mouse events natively — far more
+    // reliable than decoration overlays for receiving clicks.
+    const lsLinkProviderDisposable = term.registerLinkProvider({
+      provideLinks: (bufferLineNumber, callback) => {
+        const term = termRef.current
+        const entries = lsEntriesRef.current
+        if (!term || entries.size === 0) {
+          callback([])
+          return
+        }
+        const buf = term.buffer.active
+        // xterm hands us the absolute line number of the hovered row, but its
+        // numbering base (0- vs 1-based) and our map's row keys can disagree.
+        // That disagreement previously made a click run `cd` on the directory
+        // rendered *above* the one that was actually clicked. Resolve the real
+        // line text for this visual row (trying both likely bases) and match
+        // the entry by its name on that line, ignoring all row arithmetic.
+        const allEntries: LsEntry[] = []
+        for (const arr of entries.values()) allEntries.push(...arr)
+        const readLine = (y: number): string => {
+          const line = buf.getLine(y)
+          return line ? line.translateToString(true) : ''
+        }
+        const hasEntry = (text: string) =>
+          allEntries.some((e) => e.name.length > 0 && text.includes(e.name))
+        let lineText = readLine(bufferLineNumber)
+        if (!hasEntry(lineText)) {
+          const alt = readLine(bufferLineNumber - 1)
+          if (hasEntry(alt)) lineText = alt
+          else {
+            const alt2 = readLine(bufferLineNumber + 1)
+            if (hasEntry(alt2)) lineText = alt2
+          }
+        }
+        const links: ILink[] = []
+        const seen = new Set<LsEntry>()
+        for (const entry of allEntries) {
+          if (entry.name.length === 0 || seen.has(entry)) continue
+          if (lineText.includes(entry.name)) {
+            seen.add(entry)
+            links.push({
+              range: {
+                start: { x: entry.col + 1, y: bufferLineNumber },
+                end: { x: entry.col + entry.name.length + 1, y: bufferLineNumber },
+              },
+              text: entry.name,
+              decorations: { pointerCursor: true, underline: true },
+              activate: () => {
+                clearLsLinks()
+                onLsEntryClick(entry)
+              },
+            })
+          }
+        }
+        callback(links)
+      },
+    })
 
     // ---- custom overlay scrollbar: track xterm's internal viewport ----
     scheduleScrollHide.current = () => {
@@ -607,12 +922,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (data.includes('\r') || data.includes('\n')) {
         commitSubmittedCommands(term, data, currentTabId)
         // A lone Enter submits a single command: detect print-style commands
-        // (`cat`/`head`/`tail`) and start capturing their output for syntax
-        // highlighting. The prompt is captured from the same buffer line so
+        // (`cat`/`head`/`tail`) and `ls`-style listings for their respective
+        // capture machines. The prompt is captured from the same buffer line so
         // capture can end precisely when the next prompt arrives.
         if (/^[\r\n]+$/.test(data)) {
           const { prompt, command } = splitPromptCommand(getCurrentCommandLine(term))
+          clearLsLinks()
           startCaptureIfPrint(command, prompt)
+          startLsCaptureIfMatch(command, prompt)
         }
       }
       if (isLocal) {
@@ -809,6 +1126,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       resetCapture()
       clearAiMarkTimeout()
       aiMarkRef.current = null
+      resetLsCapture()
+      clearLsLinks()
+      lsLinkProviderDisposable.dispose()
       unlistenAiMark?.()
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
@@ -834,6 +1154,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // one (so a superseding instance isn't blocked by a disposed entry).
       if (activeTerminalByTab.get(currentTabId) === term) {
         activeTerminalByTab.delete(currentTabId)
+      }
+      if (latestTerminalByTab.get(currentTabId) === term) {
+        latestTerminalByTab.delete(currentTabId)
       }
       // Snapshot the full screen (colors + cursor) before tearing down the xterm
       // instance, so the next mount (e.g. float pop-out / dock-back) can replay it
@@ -866,6 +1189,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     resetCapture()
     clearAiMarkTimeout()
     aiMarkRef.current = null
+    resetLsCapture()
+    clearLsLinks()
 
     const term = termRef.current
     if (!term) return
@@ -1107,6 +1432,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     setCtxMenu(null)
     termRef.current?.focus()
     termRef.current?.clear()
+    clearLsLinks()
+    resetLsCapture()
   }, [])
 
   const handleAskAi = useCallback(() => {
@@ -1198,10 +1525,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 // continuation lines so long tab-completed commands are not truncated.
 function getCurrentCommandLine(term: Terminal): string {
   const buffer = term.buffer.active
-  const line = buffer.getLine(buffer.cursorY)
+  // `cursorY` is relative to `baseY` (0..rows-1) but `getLine` expects an
+  // absolute buffer index — offset by `baseY` so this reads the actual cursor
+  // row rather than a stale scrollback line.
+  let y = buffer.baseY + buffer.cursorY
+  const line = buffer.getLine(y)
   if (!line) return ''
   let text = line.translateToString(true)
-  let y = buffer.cursorY
   while (y > 0) {
     const prev = buffer.getLine(y - 1)
     if (prev && prev.isWrapped) {

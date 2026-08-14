@@ -9,7 +9,7 @@ import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
 import { WorkspaceSelector } from './components/WorkspaceSelector'
 import { ConnectionManager } from './components/ConnectionManager'
-import { TerminalComponent } from './components/Terminal'
+import { TerminalComponent, focusTerminal } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
@@ -18,7 +18,17 @@ import { DockerLogViewer } from './components/DockerLogViewer'
 import { Icon } from './components/Icon'
 import FloatingWindow from './components/FloatingWindow'
 import type { FileTreeHandle } from './components/FilePanel'
-import type { ConnectionConfig, TabInfo, TargetRef, ContainerInfo, WorkspaceLayout, FileTargetMode, LocalTerminalEntry, FloatingItem, FloatingKind } from './types'
+import type {
+  ConnectionConfig,
+  TabInfo,
+  TargetRef,
+  ContainerInfo,
+  WorkspaceLayout,
+  FileTargetMode,
+  LocalTerminalEntry,
+  FloatingItem,
+  FloatingKind,
+} from './types'
 import { defaultLayout, mergeLayout } from './types'
 import {
   SplitNode,
@@ -36,7 +46,34 @@ import {
   movePane,
   DropPosition,
 } from './components/splitTree'
-import { loadWindowConfig, saveWindowConfig, setAutoRecord, setRecordingEnabled, getRecordingEnabled, fsReadFileContent, fsWriteFileContent, loadLayout, saveLayout, sendInput, getAppVersion, openConfigDir, loadAiConfig, saveAiConfig, encryptApiKey, decryptApiKey, listAiModels, restartDockerContainer, localClose, getLocalTerminals, listWorkspaces, createWorkspace, deleteWorkspace, renameWorkspace, switchWorkspace, listConnections } from './commands'
+import {
+  loadWindowConfig,
+  saveWindowConfig,
+  setAutoRecord,
+  setRecordingEnabled,
+  getRecordingEnabled,
+  fsReadFileContent,
+  fsWriteFileContent,
+  loadLayout,
+  saveLayout,
+  sendInput,
+  getAppVersion,
+  openConfigDir,
+  loadAiConfig,
+  saveAiConfig,
+  encryptApiKey,
+  decryptApiKey,
+  listAiModels,
+  restartDockerContainer,
+  localClose,
+  getLocalTerminals,
+  listWorkspaces,
+  createWorkspace,
+  deleteWorkspace,
+  renameWorkspace,
+  switchWorkspace,
+  listConnections,
+} from './commands'
 import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent, WorkspaceInfo } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
@@ -58,7 +95,11 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('default')
   const [localTerminals, setLocalTerminals] = useState<LocalTerminalEntry[]>([])
-  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: TabInfo } | null>(null)
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    x: number
+    y: number
+    tab: TabInfo
+  } | null>(null)
   const tabContextMenuRef = useRef<HTMLDivElement | null>(null)
   const [tabDragIndex, setTabDragIndex] = useState<number | null>(null)
   const tabDragRef = useRef<number | null>(null)
@@ -108,7 +149,11 @@ export default function App() {
   // Phase 3 — terminal pane drag reorder. `source` is the dragged leaf id,
   // `target`/`position` describe where it would drop. `center` swaps the two
   // panes' sessions; a direction inserts the source as a sibling of the target.
-  const [paneDrag, setPaneDrag] = useState<{ source: string | null; target: string | null; position: DropPosition | null }>({
+  const [paneDrag, setPaneDrag] = useState<{
+    source: string | null
+    target: string | null
+    position: DropPosition | null
+  }>({
     source: null,
     target: null,
     position: null,
@@ -116,7 +161,11 @@ export default function App() {
   // Mirror of `paneDrag` kept in a ref so the drop can be applied reliably in
   // `onDragEnd` (which ALWAYS fires on release) instead of relying on the native
   // `drop` event, which is frequently swallowed by the portaled xterm surface.
-  const paneDragRef = useRef<{ source: string | null; target: string | null; position: DropPosition | null }>({
+  const paneDragRef = useRef<{
+    source: string | null
+    target: string | null
+    position: DropPosition | null
+  }>({
     source: null,
     target: null,
     position: null,
@@ -125,7 +174,10 @@ export default function App() {
   // which panel is being dragged; `over` is the dock zone currently hovered.
   // DockZone covers every zone either panel can be dropped into.
   type DockZone = 'left' | 'right' | 'bottom'
-  const [dockDrag, setDockDrag] = useState<{ source: 'sidebar' | 'bottomPanel' | null; over: DockZone | null }>({
+  const [dockDrag, setDockDrag] = useState<{
+    source: 'sidebar' | 'bottomPanel' | null
+    over: DockZone | null
+  }>({
     source: null,
     over: null,
   })
@@ -146,12 +198,12 @@ export default function App() {
   // Active workspace's tree (a stable single leaf if missing).
   const splitTree: SplitNode =
     activeTabId != null
-      ? splitTrees[activeTabId] ?? makeLeaf(newLeafId(), activeTabId)
+      ? (splitTrees[activeTabId] ?? makeLeaf(newLeafId(), activeTabId))
       : makeLeaf('leaf-0')
   const splitTreeRef = useRef<SplitNode>(splitTree)
   splitTreeRef.current = splitTree
   // Focused leaf within the active workspace.
-  const focusedLeafId = activeTabId != null ? focusedLeafByRoot[activeTabId] ?? null : null
+  const focusedLeafId = activeTabId != null ? (focusedLeafByRoot[activeTabId] ?? null) : null
   const focusedLeafIdRef = useRef<string | null>(focusedLeafId)
   focusedLeafIdRef.current = focusedLeafId
   // The connection whose remote filesystem the Files panel should show: the
@@ -160,7 +212,7 @@ export default function App() {
   // Files panel to that pane's connection.
   const focusedLeafTabId: number | null =
     activeTabId != null
-      ? (focusedLeafId ? findLeaf(splitTree, focusedLeafId)?.tabId : null) ?? activeTabId
+      ? ((focusedLeafId ? findLeaf(splitTree, focusedLeafId)?.tabId : null) ?? activeTabId)
       : null
   const activeTabIdRef = useRef(activeTabId)
   activeTabIdRef.current = activeTabId
@@ -175,7 +227,10 @@ export default function App() {
     (updater: (t: SplitNode) => SplitNode) => {
       const root = activeTabIdRef.current
       if (root == null) return
-      setSplitTrees((prev) => ({ ...prev, [root]: updater(prev[root] ?? makeLeaf(newLeafId(), root)) }))
+      setSplitTrees((prev) => ({
+        ...prev,
+        [root]: updater(prev[root] ?? makeLeaf(newLeafId(), root)),
+      }))
     },
     [newLeafId],
   )
@@ -193,7 +248,8 @@ export default function App() {
   useEffect(() => {
     if (prevFocusedLeafTabIdRef.current === focusedLeafTabId) return
     prevFocusedLeafTabIdRef.current = focusedLeafTabId
-    const focusedTab = focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
+    const focusedTab =
+      focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
     if (!focusedTab) return
     const container = focusedTab.dockerContainer
     if (focusedTab.tabType === 'localShell') {
@@ -218,7 +274,11 @@ export default function App() {
   // NOT added to the top tab bar (it lives inside this workspace's pane layout),
   // so the split never spawns a new top-level tab. Returns the new tab id.
   const openInSplit = useCallback(
-    (conn: ConnectionConfig, direction: 'row' | 'column', dockerContainer?: string): number | null => {
+    (
+      conn: ConnectionConfig,
+      direction: 'row' | 'column',
+      dockerContainer?: string,
+    ): number | null => {
       const rootId = activeTabIdRef.current
       if (rootId == null) return null
       const tree = splitTreeRef.current
@@ -383,7 +443,10 @@ export default function App() {
       } catch (e) {
         const msg = String(e)
         console.error(`Docker restart failed: ${msg}`)
-        setToast({ kind: 'error', text: t('dockerRestartFailed', { name: container.name, err: msg }) })
+        setToast({
+          kind: 'error',
+          text: t('dockerRestartFailed', { name: container.name, err: msg }),
+        })
       }
     },
     [activeTabId, t],
@@ -450,7 +513,9 @@ export default function App() {
 
   // Fetch app version info on mount
   useEffect(() => {
-    getAppVersion().then(setAppVersion).catch(() => {})
+    getAppVersion()
+      .then(setAppVersion)
+      .catch(() => {})
   }, [])
 
   // AI config
@@ -489,10 +554,14 @@ export default function App() {
   // Which shell tabs have their AI pane open (docked).
   const [showAiByTab, setShowAiByTab] = useState<Record<number, boolean>>({})
   // Dock side of the AI pane per shell tab: 'right' | 'left' | 'top' | 'bottom'.
-  const [aiDockSideByTab, setAiDockSideByTab] = useState<Record<number, 'right' | 'left' | 'top' | 'bottom'>>({})
+  const [aiDockSideByTab, setAiDockSideByTab] = useState<
+    Record<number, 'right' | 'left' | 'top' | 'bottom'>
+  >({})
   // Dock size (px) of the AI pane per shell tab: width for left/right, height for top/bottom.
   const [aiDockSizeByTab, setAiDockSizeByTab] = useState<Record<number, number>>({})
-  const aiDockResizeRef = useRef<{ dir: string; sx: number; sy: number; sSize: number } | null>(null)
+  const aiDockResizeRef = useRef<{ dir: string; sx: number; sy: number; sSize: number } | null>(
+    null,
+  )
   const MIN_DOCK = 140
   const MAX_DOCK = 900
   // Persist AI input-area height (debounced) so it survives reloads.
@@ -549,21 +618,26 @@ export default function App() {
 
   // Toggle session recording for one pane (the record button in the pane
   // header). Only meaningful for SSH sessions; the button is hidden otherwise.
-  const handleToggleRecording = useCallback(async (tabId: number) => {
-    try {
-      const cur = recordingByTab[tabId] ?? false
-      const next = await setRecordingEnabled(tabId, !cur)
-      setRecordingByTab((prev) => ({ ...prev, [tabId]: next }))
-    } catch {
-      // ignore
-    }
-  }, [recordingByTab])
+  const handleToggleRecording = useCallback(
+    async (tabId: number) => {
+      try {
+        const cur = recordingByTab[tabId] ?? false
+        const next = await setRecordingEnabled(tabId, !cur)
+        setRecordingByTab((prev) => ({ ...prev, [tabId]: next }))
+      } catch {
+        // ignore
+      }
+    },
+    [recordingByTab],
+  )
 
   // Refresh the recording indicator for a tab (after connect/reconnect).
   const refreshRecordingState = useCallback((tabId: number) => {
-    getRecordingEnabled(tabId).then((enabled) => {
-      setRecordingByTab((prev) => ({ ...prev, [tabId]: enabled }))
-    }).catch(() => {})
+    getRecordingEnabled(tabId)
+      .then((enabled) => {
+        setRecordingByTab((prev) => ({ ...prev, [tabId]: enabled }))
+      })
+      .catch(() => {})
   }, [])
   // Which tab's AI is currently floating as a separate draggable panel (null = none).
   const [aiFloatingTabId, setAiFloatingTabId] = useState<number | null>(null)
@@ -572,7 +646,13 @@ export default function App() {
   // Size of the floating AI panel (px).
   const [aiFloatSize, setAiFloatSize] = useState<{ w: number; h: number }>({ w: 420, h: 560 })
   const aiFloatDragRef = useRef<{ dx: number; dy: number } | null>(null)
-  const aiFloatResizeRef = useRef<{ dir: string; sx: number; sy: number; sw: number; sh: number } | null>(null)
+  const aiFloatResizeRef = useRef<{
+    dir: string
+    sx: number
+    sy: number
+    sw: number
+    sh: number
+  } | null>(null)
 
   const getAiConv = useCallback(
     (tabId: number): AiConv => aiConversations[tabId] ?? emptyConv(),
@@ -581,7 +661,10 @@ export default function App() {
   const setAiConv = useCallback((tabId: number, updater: AiConv | ((c: AiConv) => AiConv)) => {
     setAiConversations((prev) => {
       const cur = prev[tabId] ?? emptyConv()
-      const next = typeof updater === 'function' ? (updater as (c: AiConv) => AiConv)(cur) : { ...cur, ...updater }
+      const next =
+        typeof updater === 'function'
+          ? (updater as (c: AiConv) => AiConv)(cur)
+          : { ...cur, ...updater }
       return { ...prev, [tabId]: next }
     })
   }, [])
@@ -595,9 +678,10 @@ export default function App() {
   }, [saveFlash])
 
   // Transient toast notification (auto-dismiss, manually closable)
-  const [toast, setToast] = useState<
-    { kind: 'success' | 'error' | 'progress'; text: string } | null
-  >(null)
+  const [toast, setToast] = useState<{
+    kind: 'success' | 'error' | 'progress'
+    text: string
+  } | null>(null)
   useEffect(() => {
     if (toast && toast.kind !== 'progress') {
       const id = setTimeout(() => setToast(null), 3000)
@@ -614,7 +698,9 @@ export default function App() {
           try {
             const dec = await decryptApiKey(active.apiKeyEnc)
             setAiApiKeyInput(dec)
-          } catch { /* leave empty */ }
+          } catch {
+            /* leave empty */
+          }
         } else {
           setAiApiKeyInput('')
         }
@@ -649,9 +735,7 @@ export default function App() {
       if (!prev) return prev
       const next = {
         ...prev,
-        profiles: prev.profiles.map((p) =>
-          p.id === prev.activeId ? { ...p, model } : p,
-        ),
+        profiles: prev.profiles.map((p) => (p.id === prev.activeId ? { ...p, model } : p)),
       }
       saveAiConfig(next).catch(() => {})
       return next
@@ -717,7 +801,9 @@ export default function App() {
 
   // Update state
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body?: string } | null>(null)
-  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'downloading' | 'installing'>('idle')
+  const [updateState, setUpdateState] = useState<
+    'idle' | 'checking' | 'downloading' | 'installing'
+  >('idle')
   const [showUpdateBanner, setShowUpdateBanner] = useState(true)
   const updateRef = useRef<Update | null>(null)
 
@@ -772,7 +858,9 @@ export default function App() {
         ),
       )
     })
-    return () => { unlisten.then(fn => fn()) }
+    return () => {
+      unlisten.then((fn) => fn())
+    }
   }, [])
 
   // Enter key retry on disconnected/error tabs
@@ -784,7 +872,7 @@ export default function App() {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (activeTabId == null) return
-      const tab = tabs.find(t => t.tabId === activeTabId)
+      const tab = tabs.find((t) => t.tabId === activeTabId)
       if (!tab || (tab.status !== 'disconnected' && tab.status !== 'error')) return
       handleReconnectRef.current?.(activeTabId)
     }
@@ -880,22 +968,24 @@ export default function App() {
 
   // Load opacity from saved window config on startup
   useEffect(() => {
-    loadWindowConfig().then(config => {
-      if (config.opacity !== undefined) {
-        setOpacity(config.opacity)
-      }
-      if (config.aiInputHeight !== undefined && config.aiInputHeight > 0) {
-        setAiInputHeight(config.aiInputHeight)
-      } else {
-        setAiInputHeight(0)
-      }
-      if (config.collapsedGroups !== undefined && Array.isArray(config.collapsedGroups)) {
-        setCollapsedGroups(config.collapsedGroups)
-      }
-      if (config.autoRecordSessions !== undefined) {
-        setAutoRecordState(config.autoRecordSessions)
-      }
-    }).catch(() => {})
+    loadWindowConfig()
+      .then((config) => {
+        if (config.opacity !== undefined) {
+          setOpacity(config.opacity)
+        }
+        if (config.aiInputHeight !== undefined && config.aiInputHeight > 0) {
+          setAiInputHeight(config.aiInputHeight)
+        } else {
+          setAiInputHeight(0)
+        }
+        if (config.collapsedGroups !== undefined && Array.isArray(config.collapsedGroups)) {
+          setCollapsedGroups(config.collapsedGroups)
+        }
+        if (config.autoRecordSessions !== undefined) {
+          setAutoRecordState(config.autoRecordSessions)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   // Save window position/size on move/resize (restore handled by Rust setup)
@@ -929,8 +1019,16 @@ export default function App() {
       }, 500)
     }
 
-    win.onMoved(() => scheduleSave()).then(fn => { unlistenMoved = fn })
-    win.onResized(() => scheduleSave()).then(fn => { unlistenResized = fn })
+    win
+      .onMoved(() => scheduleSave())
+      .then((fn) => {
+        unlistenMoved = fn
+      })
+    win
+      .onResized(() => scheduleSave())
+      .then((fn) => {
+        unlistenResized = fn
+      })
 
     return () => {
       if (unlistenMoved) unlistenMoved()
@@ -1102,7 +1200,11 @@ export default function App() {
 
   // Open a LOCAL shell as an embedded split pane inside the active workspace.
   const handleOpenLocalSplit = useCallback(
-    (cwd: string | undefined, shell: string | undefined, direction: 'row' | 'column'): number | null => {
+    (
+      cwd: string | undefined,
+      shell: string | undefined,
+      direction: 'row' | 'column',
+    ): number | null => {
       const rootId = activeTabIdRef.current
       if (rootId == null) return null
       const tree = splitTreeRef.current
@@ -1133,7 +1235,7 @@ export default function App() {
 
   // Open settings as a tab (reuse if already open)
   const handleOpenSettings = useCallback(() => {
-    const existing = tabs.find(t => t.tabType === 'settings')
+    const existing = tabs.find((t) => t.tabType === 'settings')
     if (existing) {
       setActiveTabId(existing.tabId)
       return
@@ -1146,7 +1248,7 @@ export default function App() {
       status: 'settings',
       tabType: 'settings',
     }
-    setTabs(prev => [...prev, settingsTab])
+    setTabs((prev) => [...prev, settingsTab])
     setActiveTabId(tabId)
   }, [tabs])
 
@@ -1265,7 +1367,8 @@ export default function App() {
   // `target` identifies which remote filesystem the file lives on.
   const openInEditor = useCallback(async (target: TargetRef, path: string) => {
     const key = `${JSON.stringify(target)}:${path}`
-    const legacyTabId = target.kind === 'session' || target.kind === 'local' ? target.tabId : target.jumpTabId
+    const legacyTabId =
+      target.kind === 'session' || target.kind === 'local' ? target.tabId : target.jumpTabId
     setEditorTabs((prev) => {
       if (prev.some((t) => t.key === key)) return prev
       return [
@@ -1297,32 +1400,28 @@ export default function App() {
       setEditorTabs((prev) =>
         prev.map((t) =>
           t.key === key
-              ? {
-                  ...t,
-                  loading: false,
-                  content: fc.content,
-                  savedContent: fc.content,
-                  isBinary: fc.isBinary,
-                  isTooLarge: fc.isTooLarge,
-                  size: fc.size,
-                  encoding: fc.encoding,
-                  needsEncoding: fc.needsEncoding,
-                  hexBase64: fc.hexBase64,
-                  imageMime: fc.imageMime,
-                  lineEnding: (
-                    typeof fc.content === 'string' && /\r\n/.test(fc.content)
-                      ? 'CRLF'
-                      : 'LF'
-                  ) as 'LF' | 'CRLF',
-                }
+            ? {
+                ...t,
+                loading: false,
+                content: fc.content,
+                savedContent: fc.content,
+                isBinary: fc.isBinary,
+                isTooLarge: fc.isTooLarge,
+                size: fc.size,
+                encoding: fc.encoding,
+                needsEncoding: fc.needsEncoding,
+                hexBase64: fc.hexBase64,
+                imageMime: fc.imageMime,
+                lineEnding: (typeof fc.content === 'string' && /\r\n/.test(fc.content)
+                  ? 'CRLF'
+                  : 'LF') as 'LF' | 'CRLF',
+              }
             : t,
         ),
       )
     } catch (e) {
       setEditorTabs((prev) =>
-        prev.map((t) =>
-          t.key === key ? { ...t, loading: false, error: String(e) } : t,
-        ),
+        prev.map((t) => (t.key === key ? { ...t, loading: false, error: String(e) } : t)),
       )
     }
   }, [])
@@ -1340,7 +1439,10 @@ export default function App() {
         if (aek[sshTabId] === key) {
           return {
             ...aek,
-            [sshTabId]: sessionFiles.length > 0 ? sessionFiles[Math.min(idx, sessionFiles.length - 1)].key : '',
+            [sshTabId]:
+              sessionFiles.length > 0
+                ? sessionFiles[Math.min(idx, sessionFiles.length - 1)].key
+                : '',
           }
         }
         return aek
@@ -1375,11 +1477,7 @@ export default function App() {
 
   const handleEditorContentChange = useCallback((key: string, content: string) => {
     setEditorTabs((prev) =>
-      prev.map((t) =>
-        t.key === key
-          ? { ...t, content, isDirty: content !== t.savedContent }
-          : t,
-      ),
+      prev.map((t) => (t.key === key ? { ...t, content, isDirty: content !== t.savedContent } : t)),
     )
   }, [])
 
@@ -1392,21 +1490,20 @@ export default function App() {
       const target = editorTabs.find((t) => t.key === key)
       if (!target || target.isBinary || target.isTooLarge) return
       setEditorTabs((prev) =>
-        prev.map((t) =>
-          t.key === key ? { ...t, saving: true, error: undefined } : t,
-        ),
+        prev.map((t) => (t.key === key ? { ...t, saving: true, error: undefined } : t)),
       )
       try {
-        await fsWriteFileContent(
-          tabTarget(target),
-          target.path,
-          target.content,
-          target.encoding,
-        )
+        await fsWriteFileContent(tabTarget(target), target.path, target.content, target.encoding)
         setEditorTabs((prev) =>
           prev.map((t) =>
             t.key === key
-              ? { ...t, saving: false, savedContent: t.content, isDirty: false, needsEncoding: false }
+              ? {
+                  ...t,
+                  saving: false,
+                  savedContent: t.content,
+                  isDirty: false,
+                  needsEncoding: false,
+                }
               : t,
           ),
         )
@@ -1414,32 +1511,20 @@ export default function App() {
         fileTreeRef.current?.refresh()
       } catch (e) {
         setEditorTabs((prev) =>
-          prev.map((t) =>
-            t.key === key ? { ...t, saving: false, error: String(e) } : t,
-          ),
+          prev.map((t) => (t.key === key ? { ...t, saving: false, error: String(e) } : t)),
         )
       }
     },
     [editorTabs],
   )
 
-  const changeEditorTabLanguage = useCallback(
-    (key: string, language: string) => {
-      setEditorTabs((prev) =>
-        prev.map((t) => (t.key === key ? { ...t, language } : t)),
-      )
-    },
-    [],
-  )
+  const changeEditorTabLanguage = useCallback((key: string, language: string) => {
+    setEditorTabs((prev) => prev.map((t) => (t.key === key ? { ...t, language } : t)))
+  }, [])
 
-  const changeEditorTabLineEnding = useCallback(
-    (key: string, lineEnding: 'LF' | 'CRLF') => {
-      setEditorTabs((prev) =>
-        prev.map((t) => (t.key === key ? { ...t, lineEnding } : t)),
-      )
-    },
-    [],
-  )
+  const changeEditorTabLineEnding = useCallback((key: string, lineEnding: 'LF' | 'CRLF') => {
+    setEditorTabs((prev) => prev.map((t) => (t.key === key ? { ...t, lineEnding } : t)))
+  }, [])
 
   const changeEditorTabEncoding = useCallback(
     async (key: string, encoding: string) => {
@@ -1486,10 +1571,16 @@ export default function App() {
       ),
     )
     setReconnectKeys((prev) => ({ ...prev, [tabId]: (prev[tabId] || 0) + 1 }))
+    // Return keyboard focus to the terminal so the user can start typing right
+    // after the reconnect completes (the underlying xterm instance is preserved
+    // across reconnects, so focusing it is always valid).
+    requestAnimationFrame(() => focusTerminal(tabId))
   }, [])
 
   // Sync handleReconnect to ref for keyboard listener
-  useEffect(() => { handleReconnectRef.current = handleReconnect }, [handleReconnect])
+  useEffect(() => {
+    handleReconnectRef.current = handleReconnect
+  }, [handleReconnect])
 
   // Compute tab display label (number tabs sharing the same connection)
   const getTabLabel = useCallback(
@@ -1579,7 +1670,9 @@ export default function App() {
           // rootId tab as the workspace entry (now disconnected) so the top tab
           // bar stays valid; do not remove it.
           disconnectTab(rootId)
-          setTabs((prev) => prev.map((t) => (t.tabId === rootId ? { ...t, status: 'disconnected' } : t)))
+          setTabs((prev) =>
+            prev.map((t) => (t.tabId === rootId ? { ...t, status: 'disconnected' } : t)),
+          )
         } else {
           disconnectTab(closedTabId)
           setTabs((prev) => prev.filter((t) => t.tabId !== closedTabId))
@@ -1597,7 +1690,8 @@ export default function App() {
       setFocusedLeafByRoot((prev) => {
         const next: Record<number, string> = { ...prev }
         const f = next[rootId!]
-        next[rootId!] = f && findLeaf(nt, f) ? f : remainingLeaves[remainingLeaves.length - 1]?.id ?? ''
+        next[rootId!] =
+          f && findLeaf(nt, f) ? f : (remainingLeaves[remainingLeaves.length - 1]?.id ?? '')
         return next
       })
     },
@@ -1619,7 +1713,9 @@ export default function App() {
   // `tree` is null for overlay floats (file editor / docker log): the leaf is
   // kept in the split tree so the shell below stays mounted and usable, and
   // only the overlay is popped out — closing the float restores shellView.
-  const floatRestoreRef = useRef<Record<string, { rootId: number; tree: SplitNode | null; shellView?: string }>>({})
+  const floatRestoreRef = useRef<
+    Record<string, { rootId: number; tree: SplitNode | null; shellView?: string }>
+  >({})
   const floatingZRef = useRef(1000)
 
   const floatPane = useCallback(
@@ -1702,7 +1798,10 @@ export default function App() {
       if (kind === 'dockerLog') {
         // Prefer the docker log's own view key (works even when floated via the
         // tab's explicit float button and shellView points elsewhere).
-        restoreShellView = sv.startsWith('dockerlog:') && sv === `dockerlog:${dockerLogTabId}` ? sv : `dockerlog:${dockerLogTabId}`
+        restoreShellView =
+          sv.startsWith('dockerlog:') && sv === `dockerlog:${dockerLogTabId}`
+            ? sv
+            : `dockerlog:${dockerLogTabId}`
       } else if (kind === 'editor') {
         restoreShellView = editorKey
       }
@@ -1842,8 +1941,13 @@ export default function App() {
     setTabs((prev) => {
       const nonEmbedded = prev.filter((t) => !t.embedded)
       const embedded = prev.filter((t) => t.embedded)
-      if (sourceIndex < 0 || sourceIndex >= nonEmbedded.length ||
-          targetIndex < 0 || targetIndex >= nonEmbedded.length) return prev
+      if (
+        sourceIndex < 0 ||
+        sourceIndex >= nonEmbedded.length ||
+        targetIndex < 0 ||
+        targetIndex >= nonEmbedded.length
+      )
+        return prev
       const [moved] = nonEmbedded.splice(sourceIndex, 1)
       nonEmbedded.splice(targetIndex, 0, moved)
       return [...nonEmbedded, ...embedded]
@@ -1857,7 +1961,9 @@ export default function App() {
       e.stopPropagation()
       // The divider lives directly inside the workspace container now (no
       // intermediate .term-split wrapper), so measure the workspace box.
-      const splitEl = (e.currentTarget as HTMLElement).closest('.term-workspace') as HTMLElement | null
+      const splitEl = (e.currentTarget as HTMLElement).closest(
+        '.term-workspace',
+      ) as HTMLElement | null
       if (!splitEl) return
       const rect = splitEl.getBoundingClientRect()
       const isRow = branch.dir === 'row'
@@ -1944,43 +2050,34 @@ export default function App() {
     }
   }, [])
 
-  const handleWorkspaceCreate = useCallback(
-    async (name: string) => {
-      try {
-        await createWorkspace(name)
-        loadWorkspaceData()
-        loadConnections()
-      } catch (err) {
-        console.error('Failed to create workspace:', err)
-      }
-    },
-    [],
-  )
+  const handleWorkspaceCreate = useCallback(async (name: string) => {
+    try {
+      await createWorkspace(name)
+      loadWorkspaceData()
+      loadConnections()
+    } catch (err) {
+      console.error('Failed to create workspace:', err)
+    }
+  }, [])
 
-  const handleWorkspaceDelete = useCallback(
-    async (workspaceId: string) => {
-      try {
-        await deleteWorkspace(workspaceId)
-        loadWorkspaceData()
-        loadConnections()
-      } catch (err) {
-        console.error('Failed to delete workspace:', err)
-      }
-    },
-    [],
-  )
+  const handleWorkspaceDelete = useCallback(async (workspaceId: string) => {
+    try {
+      await deleteWorkspace(workspaceId)
+      loadWorkspaceData()
+      loadConnections()
+    } catch (err) {
+      console.error('Failed to delete workspace:', err)
+    }
+  }, [])
 
-  const handleWorkspaceRename = useCallback(
-    async (workspaceId: string, name: string) => {
-      try {
-        await renameWorkspace(workspaceId, name)
-        loadWorkspaceData()
-      } catch (err) {
-        console.error('Failed to rename workspace:', err)
-      }
-    },
-    [],
-  )
+  const handleWorkspaceRename = useCallback(async (workspaceId: string, name: string) => {
+    try {
+      await renameWorkspace(workspaceId, name)
+      loadWorkspaceData()
+    } catch (err) {
+      console.error('Failed to rename workspace:', err)
+    }
+  }, [])
 
   // Load saved local terminal entries
   const reloadLocalTerminals = useCallback(() => {
@@ -1990,162 +2087,172 @@ export default function App() {
   }, [])
 
   // Sidebar drag-to-resize
-  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    isDragging.current = true
-    const win = getCurrentWindow()
-    win.setResizable(false).catch(() => {})
+  const handleDividerMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      isDragging.current = true
+      const win = getCurrentWindow()
+      win.setResizable(false).catch(() => {})
 
-    const handleMouseMove = (ev: MouseEvent) => {
-      if (!isDragging.current) return
-      const newWidth =
-        layout.sidebar.side === 'right'
-          ? window.innerWidth - ev.clientX
-          : ev.clientX
-      updateLayout((l) => ({
-        ...l,
-        sidebar: { ...l.sidebar, width: Math.max(160, Math.min(500, newWidth)) },
-      }))
-    }
+      const handleMouseMove = (ev: MouseEvent) => {
+        if (!isDragging.current) return
+        const newWidth =
+          layout.sidebar.side === 'right' ? window.innerWidth - ev.clientX : ev.clientX
+        updateLayout((l) => ({
+          ...l,
+          sidebar: { ...l.sidebar, width: Math.max(160, Math.min(500, newWidth)) },
+        }))
+      }
 
-    const handleMouseUp = () => {
-      isDragging.current = false
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.classList.remove('resize-h')
-      document.body.style.userSelect = ''
-      win.setResizable(true).catch(() => {})
-    }
+      const handleMouseUp = () => {
+        isDragging.current = false
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.classList.remove('resize-h')
+        document.body.style.userSelect = ''
+        win.setResizable(true).catch(() => {})
+      }
 
-    document.body.classList.add('resize-h')
-    document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }, [layout.sidebar.side])
+      document.body.classList.add('resize-h')
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+    },
+    [layout.sidebar.side],
+  )
 
   // Connection list / SFTP vertical divider drag-to-resize
-  const handleVDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    isDraggingV.current = true
-    const win = getCurrentWindow()
-    const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
-    const startY = e.clientY
-    const startHeight = connectionListHeight
-    win.setResizable(false).catch(() => {})
+  const handleVDividerMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      isDraggingV.current = true
+      const win = getCurrentWindow()
+      const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
+      const startY = e.clientY
+      const startHeight = connectionListHeight
+      win.setResizable(false).catch(() => {})
 
-    const handleMouseMove = (ev: MouseEvent) => {
-      if (!isDraggingV.current) return
-      const delta = ev.clientY - startY
-      const containerHeight = sidebarEl?.clientHeight || 700
-      const newHeight = Math.max(60, Math.min(containerHeight - 100, startHeight + delta))
-      updateLayout((l) => ({
-        ...l,
-        sidebar: {
-          ...l.sidebar,
-          sections: {
-            ...l.sidebar.sections,
-            connections: { ...l.sidebar.sections.connections, height: newHeight },
+      const handleMouseMove = (ev: MouseEvent) => {
+        if (!isDraggingV.current) return
+        const delta = ev.clientY - startY
+        const containerHeight = sidebarEl?.clientHeight || 700
+        const newHeight = Math.max(60, Math.min(containerHeight - 100, startHeight + delta))
+        updateLayout((l) => ({
+          ...l,
+          sidebar: {
+            ...l.sidebar,
+            sections: {
+              ...l.sidebar.sections,
+              connections: { ...l.sidebar.sections.connections, height: newHeight },
+            },
           },
-        },
-      }))
-    }
+        }))
+      }
 
-    const handleMouseUp = () => {
-      isDraggingV.current = false
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.classList.remove('resize-v')
-      document.body.style.userSelect = ''
-      win.setResizable(true).catch(() => {})
-    }
+      const handleMouseUp = () => {
+        isDraggingV.current = false
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.classList.remove('resize-v')
+        document.body.style.userSelect = ''
+        win.setResizable(true).catch(() => {})
+      }
 
-    document.body.classList.add('resize-v')
-    document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }, [connectionListHeight])
+      document.body.classList.add('resize-v')
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+    },
+    [connectionListHeight],
+  )
 
   // Files <-> Docker vertical divider drag-to-resize (only when the Docker panel is expanded)
-  const handleDockerDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    isDraggingV.current = true
-    const win = getCurrentWindow()
-    const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
-    const startY = e.clientY
-    const startHeight = dockerHeight
-    win.setResizable(false).catch(() => {})
+  const handleDockerDividerMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      isDraggingV.current = true
+      const win = getCurrentWindow()
+      const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
+      const startY = e.clientY
+      const startHeight = dockerHeight
+      win.setResizable(false).catch(() => {})
 
-    const handleMouseMove = (ev: MouseEvent) => {
-      if (!isDraggingV.current) return
-      // Docker panel sits BELOW this divider, so dragging the divider down
-      // (increasing clientY) must SHRINK it — mirror the shell divider's sign.
-      const delta = startY - ev.clientY
-      const containerHeight = sidebarEl?.clientHeight || 700
-      const newHeight = Math.max(80, Math.min(containerHeight - 100, startHeight + delta))
-      updateLayout((l) => ({
-        ...l,
-        sidebar: {
-          ...l.sidebar,
-          sections: {
-            ...l.sidebar.sections,
-            docker: { ...l.sidebar.sections.docker, height: newHeight },
+      const handleMouseMove = (ev: MouseEvent) => {
+        if (!isDraggingV.current) return
+        // Docker panel sits BELOW this divider, so dragging the divider down
+        // (increasing clientY) must SHRINK it — mirror the shell divider's sign.
+        const delta = startY - ev.clientY
+        const containerHeight = sidebarEl?.clientHeight || 700
+        const newHeight = Math.max(80, Math.min(containerHeight - 100, startHeight + delta))
+        updateLayout((l) => ({
+          ...l,
+          sidebar: {
+            ...l.sidebar,
+            sections: {
+              ...l.sidebar.sections,
+              docker: { ...l.sidebar.sections.docker, height: newHeight },
+            },
           },
-        },
-      }))
-    }
+        }))
+      }
 
-    const handleMouseUp = () => {
-      isDraggingV.current = false
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.classList.remove('resize-v')
-      document.body.style.userSelect = ''
-      win.setResizable(true).catch(() => {})
-    }
+      const handleMouseUp = () => {
+        isDraggingV.current = false
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.classList.remove('resize-v')
+        document.body.style.userSelect = ''
+        win.setResizable(true).catch(() => {})
+      }
 
-    document.body.classList.add('resize-v')
-    document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }, [dockerHeight])
+      document.body.classList.add('resize-v')
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+    },
+    [dockerHeight],
+  )
 
   // Bottom panel resize when docked to the bottom (horizontal divider -> height).
-  const handleBottomDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    const win = getCurrentWindow()
-    win.setResizable(false).catch(() => {})
-    const isDragging = panelDragRef
-    isDragging.current = true
-    const startY = e.clientY
-    const startSize = layout.bottomPanel.size ?? 240
-    const handleMouseMove = (ev: MouseEvent) => {
-      if (!isDragging.current) return
-      const delta = startY - ev.clientY
-      const newSize = Math.max(120, Math.min(800, startSize + delta))
-      updateLayout((l) => ({
-        ...l,
-        bottomPanel: {
-          ...l.bottomPanel,
-          size: newSize,
-        },
-      }))
-    }
-    const handleMouseUp = () => {
-      isDragging.current = false
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.classList.remove('resize-v')
-      document.body.style.userSelect = ''
-      win.setResizable(true).catch(() => {})
-    }
-    document.body.classList.add('resize-v')
-    document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }, [layout.bottomPanel.size])
+  const handleBottomDividerMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const win = getCurrentWindow()
+      win.setResizable(false).catch(() => {})
+      const isDragging = panelDragRef
+      isDragging.current = true
+      const startY = e.clientY
+      const startSize = layout.bottomPanel.size ?? 240
+      const handleMouseMove = (ev: MouseEvent) => {
+        if (!isDragging.current) return
+        const delta = startY - ev.clientY
+        const newSize = Math.max(120, Math.min(800, startSize + delta))
+        updateLayout((l) => ({
+          ...l,
+          bottomPanel: {
+            ...l.bottomPanel,
+            size: newSize,
+          },
+        }))
+      }
+      const handleMouseUp = () => {
+        isDragging.current = false
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.classList.remove('resize-v')
+        document.body.style.userSelect = ''
+        win.setResizable(true).catch(() => {})
+      }
+      document.body.classList.add('resize-v')
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+    },
+    [layout.bottomPanel.size],
+  )
 
   // Bottom panel resize when docked to the right (vertical divider -> width).
   const handlePanelDividerMouseDown = useCallback((e: React.MouseEvent) => {
@@ -2305,6 +2412,7 @@ export default function App() {
               onAskAi={(selectedText) => {
                 handleOpenAiChat(selectedText, tab.tabId)
               }}
+              onOpenFile={openInEditor}
             />
           </div>
         )}
@@ -2351,7 +2459,9 @@ export default function App() {
                       </div>
 
                       <div className="settings-field">
-                        <label htmlFor="ui-language" className="settings-label">{t('language')}</label>
+                        <label htmlFor="ui-language" className="settings-label">
+                          {t('language')}
+                        </label>
                         <select
                           id="ui-language"
                           className="settings-input"
@@ -2369,7 +2479,9 @@ export default function App() {
                       </div>
 
                       <div className="settings-field">
-                        <label htmlFor="maxScrollback" className="settings-label">{t('maxScrollbackLines')}</label>
+                        <label htmlFor="maxScrollback" className="settings-label">
+                          {t('maxScrollbackLines')}
+                        </label>
                         <input
                           id="maxScro[plugin:vite:css] [sass] Error: Undefined variable.llback"
                           type="number"
@@ -2380,9 +2492,14 @@ export default function App() {
                           style={{ width: '140px' }}
                           value={maxScrollback}
                           onChange={(e) => {
-                            const v = Math.max(100, Math.min(100000, Number(e.target.value) || 5000))
+                            const v = Math.max(
+                              100,
+                              Math.min(100000, Number(e.target.value) || 5000),
+                            )
                             setMaxScrollback(v)
-                            try { localStorage.setItem('wrolp-maxScrollback', String(v)) } catch {}
+                            try {
+                              localStorage.setItem('wrolp-maxScrollback', String(v))
+                            } catch {}
                           }}
                         />
                         <span className="settings-help">{t('appliesToNewTabs')}</span>
@@ -2395,7 +2512,9 @@ export default function App() {
                           checked={autoRecord}
                           onChange={(e) => handleAutoRecordChange(e.target.checked)}
                         />
-                        <label htmlFor="auto-record-sessions" className="settings-label">{t('autoRecordSessions')}</label>
+                        <label htmlFor="auto-record-sessions" className="settings-label">
+                          {t('autoRecordSessions')}
+                        </label>
                         <span className="settings-help">{t('autoRecordSessionsDesc')}</span>
                       </div>
 
@@ -2414,7 +2533,9 @@ export default function App() {
                             {updateState === 'checking' ? t('loading') : t('checkForUpdates')}
                           </button>
                           {updateInfo ? (
-                            <span className="settings-update-status">{t('newVersion', { ver: updateInfo.version })}</span>
+                            <span className="settings-update-status">
+                              {t('newVersion', { ver: updateInfo.version })}
+                            </span>
                           ) : updateInfo === null && updateState !== 'checking' ? (
                             <span className="settings-update-status">{t('upToDate')}</span>
                           ) : null}
@@ -2454,10 +2575,17 @@ export default function App() {
                           checked={dockerWordWrap}
                           onChange={(e) => {
                             setDockerWordWrap(e.target.checked)
-                            try { localStorage.setItem('wrolp-docker-wordwrap', e.target.checked ? '1' : '0') } catch {}
+                            try {
+                              localStorage.setItem(
+                                'wrolp-docker-wordwrap',
+                                e.target.checked ? '1' : '0',
+                              )
+                            } catch {}
                           }}
                         />
-                        <label htmlFor="docker-wordwrap" className="settings-label">{t('autoWrapLines')}</label>
+                        <label htmlFor="docker-wordwrap" className="settings-label">
+                          {t('autoWrapLines')}
+                        </label>
                       </div>
                       <div className="settings-field checkbox-field">
                         <input
@@ -2466,13 +2594,22 @@ export default function App() {
                           checked={dockerFollow}
                           onChange={(e) => {
                             setDockerFollow(e.target.checked)
-                            try { localStorage.setItem('wrolp-docker-follow', e.target.checked ? '1' : '0') } catch {}
+                            try {
+                              localStorage.setItem(
+                                'wrolp-docker-follow',
+                                e.target.checked ? '1' : '0',
+                              )
+                            } catch {}
                           }}
                         />
-                        <label htmlFor="docker-follow" className="settings-label">{t('followNewest')}</label>
+                        <label htmlFor="docker-follow" className="settings-label">
+                          {t('followNewest')}
+                        </label>
                       </div>
                       <div className="settings-field">
-                        <label htmlFor="docker-maxlines" className="settings-label">{t('maxRetainedLines')}</label>
+                        <label htmlFor="docker-maxlines" className="settings-label">
+                          {t('maxRetainedLines')}
+                        </label>
                         <input
                           id="docker-maxlines"
                           type="number"
@@ -2483,9 +2620,14 @@ export default function App() {
                           style={{ width: '140px' }}
                           value={dockerMaxLines}
                           onChange={(e) => {
-                            const v = Math.max(100, Math.min(1000000, Number(e.target.value) || 5000))
+                            const v = Math.max(
+                              100,
+                              Math.min(1000000, Number(e.target.value) || 5000),
+                            )
                             setDockerMaxLines(v)
-                            try { localStorage.setItem('wrolp-docker-maxlines', String(v)) } catch {}
+                            try {
+                              localStorage.setItem('wrolp-docker-maxlines', String(v))
+                            } catch {}
                           }}
                         />
                         <span className="settings-help">{t('olderLinesDropped')}</span>
@@ -2538,7 +2680,17 @@ export default function App() {
                               }
                             }}
                           >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: 4 }}>
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              style={{ verticalAlign: 'middle', marginRight: 4 }}
+                            >
                               <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
                             </svg>
                             {t('openConfigDir')}
@@ -2547,8 +2699,14 @@ export default function App() {
                             className="app-version-link"
                             onClick={() => open(appVersion.repoUrl)}
                           >
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={{ verticalAlign: 'middle', marginRight: 4 }}>
-                              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 16 16"
+                              fill="currentColor"
+                              style={{ verticalAlign: 'middle', marginRight: 4 }}
+                            >
+                              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
                             </svg>
                             GitHub Repository
                           </button>
@@ -2563,7 +2721,10 @@ export default function App() {
                 <div className="settings-pane">
                   <div className="settings-pane-header">
                     <h3>AI Assistant</h3>
-                    <p>OpenAI-compatible chat with built-in tools. Configure multiple endpoints and pick one to use.</p>
+                    <p>
+                      OpenAI-compatible chat with built-in tools. Configure multiple endpoints and
+                      pick one to use.
+                    </p>
                   </div>
 
                   <div className="settings-card">
@@ -2639,7 +2800,10 @@ export default function App() {
                         onChange={(e) => {
                           setAiConfig((prev) => {
                             if (!prev) return prev
-                            const n = Math.max(1, Math.min(1000, parseInt(e.target.value || '200', 10) || 200))
+                            const n = Math.max(
+                              1,
+                              Math.min(1000, parseInt(e.target.value || '200', 10) || 200),
+                            )
                             const next = { ...prev, maxAgentRounds: n }
                             saveAiConfig(next).catch(() => {})
                             return next
@@ -2666,7 +2830,9 @@ export default function App() {
                         {aiConfig.profiles.map((p) => (
                           <div
                             key={p.id}
-                            className={'ai-profile-item' + (p.id === activeProfile?.id ? ' active' : '')}
+                            className={
+                              'ai-profile-item' + (p.id === activeProfile?.id ? ' active' : '')
+                            }
                             onClick={() => {
                               setAiConfig((prev) => {
                                 if (!prev) return prev
@@ -2693,9 +2859,7 @@ export default function App() {
                                   if (!prev) return prev
                                   const profiles = prev.profiles.filter((x) => x.id !== p.id)
                                   const activeId =
-                                    prev.activeId === p.id
-                                      ? profiles[0]?.id ?? ''
-                                      : prev.activeId
+                                    prev.activeId === p.id ? (profiles[0]?.id ?? '') : prev.activeId
                                   const next = { ...prev, profiles, activeId }
                                   saveAiConfig(next).catch(() => {})
                                   return next
@@ -2726,7 +2890,11 @@ export default function App() {
                           }
                           setAiConfig((prev) => {
                             if (!prev) return prev
-                            const next = { ...prev, profiles: [...prev.profiles, newProfile], activeId: id }
+                            const next = {
+                              ...prev,
+                              profiles: [...prev.profiles, newProfile],
+                              activeId: id,
+                            }
                             saveAiConfig(next).catch(() => {})
                             return next
                           })
@@ -2762,10 +2930,12 @@ export default function App() {
                                   ? {
                                       ...prev,
                                       profiles: prev.profiles.map((p) =>
-                                        p.id === activeProfile.id ? { ...p, name: e.target.value } : p
+                                        p.id === activeProfile.id
+                                          ? { ...p, name: e.target.value }
+                                          : p,
                                       ),
                                     }
-                                  : prev
+                                  : prev,
                               )
                             }
                             placeholder="My Endpoint"
@@ -2787,15 +2957,19 @@ export default function App() {
                                   ? {
                                       ...prev,
                                       profiles: prev.profiles.map((p) =>
-                                        p.id === activeProfile.id ? { ...p, endpoint: e.target.value } : p
+                                        p.id === activeProfile.id
+                                          ? { ...p, endpoint: e.target.value }
+                                          : p,
                                       ),
                                     }
-                                  : prev
+                                  : prev,
                               )
                             }
                             placeholder="https://api.openai.com/v1"
                           />
-                          <span className="settings-help">Base URL including the <code>/v1</code> path.</span>
+                          <span className="settings-help">
+                            Base URL including the <code>/v1</code> path.
+                          </span>
                         </div>
 
                         <div className="settings-field">
@@ -2821,7 +2995,9 @@ export default function App() {
                               <Icon name={aiShowKey ? 'eyeOff' : 'eye'} size={15} />
                             </button>
                           </div>
-                          <span className="settings-help">Stored encrypted locally; never sent anywhere except your endpoint.</span>
+                          <span className="settings-help">
+                            Stored encrypted locally; never sent anywhere except your endpoint.
+                          </span>
                         </div>
 
                         <div className="settings-field">
@@ -2840,10 +3016,12 @@ export default function App() {
                                     ? {
                                         ...prev,
                                         profiles: prev.profiles.map((p) =>
-                                          p.id === activeProfile.id ? { ...p, model: e.target.value } : p
+                                          p.id === activeProfile.id
+                                            ? { ...p, model: e.target.value }
+                                            : p,
                                         ),
                                       }
-                                    : prev
+                                    : prev,
                                 )
                               }
                               placeholder="gpt-4o"
@@ -2859,15 +3037,19 @@ export default function App() {
                                     ? {
                                         ...prev,
                                         profiles: prev.profiles.map((p) =>
-                                          p.id === activeProfile.id ? { ...p, model: e.target.value } : p
+                                          p.id === activeProfile.id
+                                            ? { ...p, model: e.target.value }
+                                            : p,
                                         ),
                                       }
-                                    : prev
+                                    : prev,
                                 )
                               }
                             >
                               {!aiModels.includes(activeProfile.model) && activeProfile.model && (
-                                <option value={activeProfile.model}>{activeProfile.model} (current)</option>
+                                <option value={activeProfile.model}>
+                                  {activeProfile.model} (current)
+                                </option>
                               )}
                               {aiModels.map((m) => (
                                 <option key={m} value={m}>
@@ -2883,14 +3065,20 @@ export default function App() {
                             onClick={async () => {
                               setAiFetchingModels(true)
                               try {
-                                const keyEnc = aiApiKeyInput ? await encryptApiKey(aiApiKeyInput) : ''
+                                const keyEnc = aiApiKeyInput
+                                  ? await encryptApiKey(aiApiKeyInput)
+                                  : ''
                                 const models = await listAiModels(keyEnc, activeProfile.endpoint)
                                 setAiModels(models)
                                 setAiModelManual(false)
                               } catch (e) {
                                 setAiModels([])
                                 setAiModelManual(true)
-                                alert('Failed to fetch models from /v1/models: ' + String(e) + '\n\nYou can type the model name manually.')
+                                alert(
+                                  'Failed to fetch models from /v1/models: ' +
+                                    String(e) +
+                                    '\n\nYou can type the model name manually.',
+                                )
                               } finally {
                                 setAiFetchingModels(false)
                               }
@@ -2930,11 +3118,14 @@ export default function App() {
                                       ...prev,
                                       profiles: prev.profiles.map((p) =>
                                         p.id === activeProfile.id
-                                          ? { ...p, toolCallFormat: e.target.value as 'flat' | 'nested' }
-                                          : p
+                                          ? {
+                                              ...p,
+                                              toolCallFormat: e.target.value as 'flat' | 'nested',
+                                            }
+                                          : p,
                                       ),
                                     }
-                                  : prev
+                                  : prev,
                               )
                             }
                           >
@@ -2942,9 +3133,10 @@ export default function App() {
                             <option value="flat">flat</option>
                           </select>
                           <span className="settings-help">
-                            How the endpoint returns tool calls: <code>nested</code> = standard OpenAI{' '}
-                            <code>tool_calls[].function.{'{name,arguments}'}</code>; <code>flat</code> ={' '}
-                            <code>tool_calls[]</code> items carry <code>name</code>/<code>arguments</code> directly.
+                            How the endpoint returns tool calls: <code>nested</code> = standard
+                            OpenAI <code>tool_calls[].function.{'{name,arguments}'}</code>;{' '}
+                            <code>flat</code> = <code>tool_calls[]</code> items carry{' '}
+                            <code>name</code>/<code>arguments</code> directly.
                           </span>
                         </div>
 
@@ -2964,15 +3156,17 @@ export default function App() {
                                       profiles: prev.profiles.map((p) =>
                                         p.id === activeProfile.id
                                           ? { ...p, systemPrompt: e.target.value }
-                                          : p
+                                          : p,
                                       ),
                                     }
-                                  : prev
+                                  : prev,
                               )
                             }
                             rows={3}
                           />
-                          <span className="settings-help">Optional instructions that shape the assistant's behavior.</span>
+                          <span className="settings-help">
+                            Optional instructions that shape the assistant's behavior.
+                          </span>
                         </div>
                       </div>
 
@@ -2986,7 +3180,7 @@ export default function App() {
                               const toSave: AiConfig = {
                                 ...aiConfig,
                                 profiles: aiConfig.profiles.map((p) =>
-                                  p.id === activeProfile.id ? { ...p, apiKeyEnc: keyEnc } : p
+                                  p.id === activeProfile.id ? { ...p, apiKeyEnc: keyEnc } : p,
                                 ),
                               }
                               await saveAiConfig(toSave)
@@ -3042,7 +3236,9 @@ export default function App() {
               justifyContent: 'center',
             }}
           >
-            <div style={{ color: '#f44747' }}>{t('connectionFailed')}: {tab.connectionName}</div>
+            <div style={{ color: '#f44747' }}>
+              {t('connectionFailed')}: {tab.connectionName}
+            </div>
             {tab.errorMessage && (
               <div
                 style={{
@@ -3108,7 +3304,7 @@ export default function App() {
     const sv = leaf.tabId != null ? getShellView(leaf.tabId) : 'terminal'
     const sessionEditorTabs = editorTabs.filter((et) => et.sshTabId === leaf.tabId)
     const sessionDockerLogTabs = dockerLogTabs.filter((dt) => dt.jumpTabId === leaf.tabId)
-    const sessionActiveEditorKey = leaf.tabId != null ? activeEditorKey[leaf.tabId] ?? null : null
+    const sessionActiveEditorKey = leaf.tabId != null ? (activeEditorKey[leaf.tabId] ?? null) : null
     const dropPos = paneDrag.target === leaf.id ? paneDrag.position : null
     // A non-floated overlay (file editor / docker log) replaces the terminal
     // surface of the focused pane — the whole terminal column (including its
@@ -3218,7 +3414,10 @@ export default function App() {
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation()
-                setShowAiByTab((prev) => ({ ...prev, [leaf.tabId as number]: !prev[leaf.tabId as number] }))
+                setShowAiByTab((prev) => ({
+                  ...prev,
+                  [leaf.tabId as number]: !prev[leaf.tabId as number],
+                }))
               }}
               title="Toggle AI chat for this shell"
             >
@@ -3232,96 +3431,96 @@ export default function App() {
               appear in another. */}
           {(isFocused || focusedLeafIdForRoot == null) &&
             (sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) && (
-            <div className="term-pane-file-tabs">
-              <div
-                className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (leaf.tabId != null) setShellViewFor(leaf.tabId, 'terminal')
-                }}
-                title={t('shellTerminal')}
-              >
-                <Icon name="terminal" size={11} />
-                <span>{t('shellTerminal')}</span>
+              <div className="term-pane-file-tabs">
+                <div
+                  className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (leaf.tabId != null) setShellViewFor(leaf.tabId, 'terminal')
+                  }}
+                  title={t('shellTerminal')}
+                >
+                  <Icon name="terminal" size={11} />
+                  <span>{t('shellTerminal')}</span>
+                </div>
+                {sessionEditorTabs
+                  .filter((et) => !isOverlayFloated(et.key))
+                  .map((et) => (
+                    <div
+                      key={et.key}
+                      className={`term-pane-file-tab${sv === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (leaf.tabId != null) {
+                          setActiveEditorKeyFor(leaf.tabId, et.key)
+                          setShellViewFor(leaf.tabId, et.key)
+                        }
+                      }}
+                      title={et.path}
+                    >
+                      <span className="term-pane-file-tab-name">{et.name}</span>
+                      {et.isDirty && <span className="term-pane-file-tab-dirty">●</span>}
+                      <span
+                        className="term-pane-file-tab-float"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          // Float the file editor overlay directly (explicit kind),
+                          // so it doesn't depend on the global shellView / focus.
+                          floatPane(leaf.id, { kind: 'editor', editorKey: et.key })
+                        }}
+                        title={t('floatPane')}
+                      >
+                        ⤢
+                      </span>
+                      <span
+                        className="term-pane-file-tab-close"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          closeEditorTab(et.key)
+                        }}
+                      >
+                        ×
+                      </span>
+                    </div>
+                  ))}
+                {sessionDockerLogTabs
+                  .filter((dt) => !isOverlayFloated(dt.tabId))
+                  .map((dt) => (
+                    <div
+                      key={dt.tabId}
+                      className={`term-pane-file-tab${sv === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (leaf.tabId != null) setShellViewFor(leaf.tabId, `dockerlog:${dt.tabId}`)
+                      }}
+                      title={`${t('dockerLogs')}: ${dt.containerName}`}
+                    >
+                      <span className="term-pane-file-tab-name">📋 {dt.containerName}</span>
+                      <span
+                        className="term-pane-file-tab-float"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          // Float the docker log overlay directly (explicit kind), so
+                          // it doesn't depend on the global shellView / focus state.
+                          floatPane(leaf.id, { kind: 'dockerLog', dockerLogTabId: dt.tabId })
+                        }}
+                        title={t('floatPane')}
+                      >
+                        ⤢
+                      </span>
+                      <span
+                        className="term-pane-file-tab-close"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          closeDockerLogTab(dt.tabId)
+                        }}
+                      >
+                        ×
+                      </span>
+                    </div>
+                  ))}
               </div>
-              {sessionEditorTabs
-                .filter((et) => !isOverlayFloated(et.key))
-                .map((et) => (
-                <div
-                  key={et.key}
-                  className={`term-pane-file-tab${sv === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (leaf.tabId != null) {
-                      setActiveEditorKeyFor(leaf.tabId, et.key)
-                      setShellViewFor(leaf.tabId, et.key)
-                    }
-                  }}
-                  title={et.path}
-                >
-                  <span className="term-pane-file-tab-name">{et.name}</span>
-                  {et.isDirty && <span className="term-pane-file-tab-dirty">●</span>}
-                  <span
-                    className="term-pane-file-tab-float"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      // Float the file editor overlay directly (explicit kind),
-                      // so it doesn't depend on the global shellView / focus.
-                      floatPane(leaf.id, { kind: 'editor', editorKey: et.key })
-                    }}
-                    title={t('floatPane')}
-                  >
-                    ⤢
-                  </span>
-                  <span
-                    className="term-pane-file-tab-close"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      closeEditorTab(et.key)
-                    }}
-                  >
-                    ×
-                  </span>
-                </div>
-              ))}
-              {sessionDockerLogTabs
-                .filter((dt) => !isOverlayFloated(dt.tabId))
-                .map((dt) => (
-                <div
-                  key={dt.tabId}
-                  className={`term-pane-file-tab${sv === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (leaf.tabId != null) setShellViewFor(leaf.tabId, `dockerlog:${dt.tabId}`)
-                  }}
-                  title={`${t('dockerLogs')}: ${dt.containerName}`}
-                >
-                  <span className="term-pane-file-tab-name">📋 {dt.containerName}</span>
-                  <span
-                    className="term-pane-file-tab-float"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      // Float the docker log overlay directly (explicit kind), so
-                      // it doesn't depend on the global shellView / focus state.
-                      floatPane(leaf.id, { kind: 'dockerLog', dockerLogTabId: dt.tabId })
-                    }}
-                    title={t('floatPane')}
-                  >
-                    ⤢
-                  </span>
-                  <span
-                    className="term-pane-file-tab-close"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      closeDockerLogTab(dt.tabId)
-                    }}
-                  >
-                    ×
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+            )}
           <span
             className="term-pane-float"
             onMouseDown={(e) => e.stopPropagation()}
@@ -3370,43 +3569,45 @@ export default function App() {
               flexDirection: 'column',
             }}
           >
-          <div
-            className="term-pane-term"
-            ref={getPaneBodyRef(leaf.id)}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              minHeight: 0,
-              overflow: 'hidden',
-              // Hide the terminal only when a non-floated overlay is active;
-              // a floated overlay renders exclusively in its floating window,
-              // so the shell stays visible here.
-              display: overlayVisible ? 'none' : 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            {leaf.tabId == null && (
-              <div className="terminal-placeholder">
-                <div className="icon"><Icon name="desktop" /></div>
-                <div>{t('selectConnectionToStart')}</div>
-              </div>
-            )}
-          </div>
-          <div className="term-pane-statusbar">
-            <div className="tsb-left">
-              <span
-                className={`tsb-dot ${tab?.status ?? 'disconnected'}`}
-                title={tab?.status ?? 'disconnected'}
-              />
-            </div>
-            <div className="tsb-right">
-              {termSizes[leaf.id]?.cols > 0 && (
-                <span className="tsb-size" title="SSH terminal width × height">
-                  {termSizes[leaf.id].cols} × {termSizes[leaf.id].rows}
-                </span>
+            <div
+              className="term-pane-term"
+              ref={getPaneBodyRef(leaf.id)}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                minHeight: 0,
+                overflow: 'hidden',
+                // Hide the terminal only when a non-floated overlay is active;
+                // a floated overlay renders exclusively in its floating window,
+                // so the shell stays visible here.
+                display: overlayVisible ? 'none' : 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              {leaf.tabId == null && (
+                <div className="terminal-placeholder">
+                  <div className="icon">
+                    <Icon name="desktop" />
+                  </div>
+                  <div>{t('selectConnectionToStart')}</div>
+                </div>
               )}
             </div>
-          </div>
+            <div className="term-pane-statusbar">
+              <div className="tsb-left">
+                <span
+                  className={`tsb-dot ${tab?.status ?? 'disconnected'}`}
+                  title={tab?.status ?? 'disconnected'}
+                />
+              </div>
+              <div className="tsb-right">
+                {termSizes[leaf.id]?.cols > 0 && (
+                  <span className="tsb-size" title="SSH terminal width × height">
+                    {termSizes[leaf.id].cols} × {termSizes[leaf.id].rows}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
           {/* Docked AI chat attached to this pane's shell tab. Hidden while the
               pane is showing a file editor / docker log overlay so the AI panel
@@ -3416,202 +3617,219 @@ export default function App() {
             activeProfile &&
             sv === 'terminal' &&
             showAiByTab[leaf.tabId] &&
-            aiFloatingTabId !== leaf.tabId && (
-              (() => {
-                const tid = leaf.tabId as number
-                const side = aiDockSideByTab[tid] ?? 'right'
-                const isVertical = side === 'top' || side === 'bottom'
-                // Default size is half of the pane; once the user drags the
-                // divider the explicit px size takes over (persisted per tab).
-                const hasExplicitSize = aiDockSizeByTab[tid] != null
-                const size = aiDockSizeByTab[tid] ?? (isVertical ? 220 : 340)
-                const dockFlex = hasExplicitSize ? `0 0 ${size}px` : '0 0 50%'
-                // Switch dock side (top/bottom = stacked above/below; left/right = beside).
-                const setDockSide = (s: 'left' | 'top' | 'right' | 'bottom') =>
-                  setAiDockSideByTab((prev) => ({ ...prev, [tid]: s }))
-                const dockStyle: React.CSSProperties = isVertical
-                  ? {
-                      height: hasExplicitSize ? size : undefined,
-                      flex: dockFlex,
-                      minWidth: 0,
-                      minHeight: 0,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      borderTop: side === 'top' ? '1px solid var(--border, #333)' : 'none',
-                      borderBottom: side === 'bottom' ? '1px solid var(--border, #333)' : 'none',
-                      order: side === 'top' ? -1 : 0,
-                      width: '100%',
-                    }
-                  : {
-                      width: hasExplicitSize ? size : undefined,
-                      flex: dockFlex,
-                      minWidth: 0,
-                      minHeight: 0,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      borderLeft: side === 'left' ? '1px solid var(--border, #333)' : 'none',
-                      borderRight: side === 'right' ? '1px solid var(--border, #333)' : 'none',
-                      order: side === 'left' ? -1 : 0,
-                    }
-                // Resize handle sits on the edge adjacent to the terminal.
-                const startDockResize = (e: React.MouseEvent) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  // Capture the workspace element now — `e.currentTarget` is only
-                  // valid during dispatch, so it would be null inside onUp.
-                  const ws = (e.currentTarget as HTMLElement).closest('.term-workspace') as HTMLElement | null
-                  // Without an explicit size the dock renders at 50% — seed the
-                  // drag baseline with the actual 50% of the workspace so the
-                  // first drag starts from the on-screen size, not the px fallback.
-                  const seedSize = hasExplicitSize
-                    ? size
-                    : ws
-                      ? isVertical
-                        ? Math.round(ws.clientHeight / 2)
-                        : Math.round(ws.clientWidth / 2)
-                      : size
-                  aiDockResizeRef.current = {
-                    dir: side,
-                    sx: e.clientX,
-                    sy: e.clientY,
-                    sSize: seedSize,
+            aiFloatingTabId !== leaf.tabId &&
+            (() => {
+              const tid = leaf.tabId as number
+              const side = aiDockSideByTab[tid] ?? 'right'
+              const isVertical = side === 'top' || side === 'bottom'
+              // Default size is half of the pane; once the user drags the
+              // divider the explicit px size takes over (persisted per tab).
+              const hasExplicitSize = aiDockSizeByTab[tid] != null
+              const size = aiDockSizeByTab[tid] ?? (isVertical ? 220 : 340)
+              const dockFlex = hasExplicitSize ? `0 0 ${size}px` : '0 0 50%'
+              // Switch dock side (top/bottom = stacked above/below; left/right = beside).
+              const setDockSide = (s: 'left' | 'top' | 'right' | 'bottom') =>
+                setAiDockSideByTab((prev) => ({ ...prev, [tid]: s }))
+              const dockStyle: React.CSSProperties = isVertical
+                ? {
+                    height: hasExplicitSize ? size : undefined,
+                    flex: dockFlex,
+                    minWidth: 0,
+                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    borderTop: side === 'top' ? '1px solid var(--border, #333)' : 'none',
+                    borderBottom: side === 'bottom' ? '1px solid var(--border, #333)' : 'none',
+                    order: side === 'top' ? -1 : 0,
+                    width: '100%',
                   }
-                  const onMove = (ev: MouseEvent) => {
-                    const r = aiDockResizeRef.current
-                    if (!r) return
-                    // Dragging away from the terminal grows the dock.
-                    const delta =
-                      r.dir === 'right'
-                        ? r.sx - ev.clientX
-                        : r.dir === 'left'
+                : {
+                    width: hasExplicitSize ? size : undefined,
+                    flex: dockFlex,
+                    minWidth: 0,
+                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    borderLeft: side === 'left' ? '1px solid var(--border, #333)' : 'none',
+                    borderRight: side === 'right' ? '1px solid var(--border, #333)' : 'none',
+                    order: side === 'left' ? -1 : 0,
+                  }
+              // Resize handle sits on the edge adjacent to the terminal.
+              const startDockResize = (e: React.MouseEvent) => {
+                e.preventDefault()
+                e.stopPropagation()
+                // Capture the workspace element now — `e.currentTarget` is only
+                // valid during dispatch, so it would be null inside onUp.
+                const ws = (e.currentTarget as HTMLElement).closest(
+                  '.term-workspace',
+                ) as HTMLElement | null
+                // Without an explicit size the dock renders at 50% — seed the
+                // drag baseline with the actual 50% of the workspace so the
+                // first drag starts from the on-screen size, not the px fallback.
+                const seedSize = hasExplicitSize
+                  ? size
+                  : ws
+                    ? isVertical
+                      ? Math.round(ws.clientHeight / 2)
+                      : Math.round(ws.clientWidth / 2)
+                    : size
+                aiDockResizeRef.current = {
+                  dir: side,
+                  sx: e.clientX,
+                  sy: e.clientY,
+                  sSize: seedSize,
+                }
+                const onMove = (ev: MouseEvent) => {
+                  const r = aiDockResizeRef.current
+                  if (!r) return
+                  // Dragging away from the terminal grows the dock.
+                  const delta =
+                    r.dir === 'right'
+                      ? r.sx - ev.clientX
+                      : r.dir === 'left'
                         ? ev.clientX - r.sx
                         : r.dir === 'bottom'
-                        ? r.sy - ev.clientY
-                        : ev.clientY - r.sy
-                    const next = Math.max(MIN_DOCK, Math.min(MAX_DOCK, r.sSize + delta))
-                    setAiDockSizeByTab((prev) => ({ ...prev, [tid]: next }))
-                  }
-                  const onUp = () => {
-                    aiDockResizeRef.current = null
-                    window.removeEventListener('mousemove', onMove)
-                    window.removeEventListener('mouseup', onUp)
-                    // Restore normal interaction / cursor.
-                    document.body.classList.remove('resizing-h', 'resizing-v', 'resizing-dock')
-                    document.body.style.userSelect = ''
-                    if (ws) ws.classList.remove('dock-resizing')
-                    try {
-                      getCurrentWindow().setResizable(true)
-                    } catch {
-                      /* ignore */
-                    }
-                  }
-                  // While dragging, block the terminal (xterm) and chat from
-                  // receiving the mouse so the drag resizes the panes instead of
-                  // scrolling/selecting content inside them.
-                  document.body.classList.add(isVertical ? 'resizing-v' : 'resizing-h', 'resizing-dock')
-                  document.body.style.userSelect = 'none'
-                  if (ws) ws.classList.add('dock-resizing')
-                  window.addEventListener('mousemove', onMove)
-                  window.addEventListener('mouseup', onUp)
+                          ? r.sy - ev.clientY
+                          : ev.clientY - r.sy
+                  const next = Math.max(MIN_DOCK, Math.min(MAX_DOCK, r.sSize + delta))
+                  setAiDockSizeByTab((prev) => ({ ...prev, [tid]: next }))
+                }
+                const onUp = () => {
+                  aiDockResizeRef.current = null
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                  // Restore normal interaction / cursor.
+                  document.body.classList.remove('resizing-h', 'resizing-v', 'resizing-dock')
+                  document.body.style.userSelect = ''
+                  if (ws) ws.classList.remove('dock-resizing')
                   try {
-                    getCurrentWindow().setResizable(false)
+                    getCurrentWindow().setResizable(true)
                   } catch {
-                    /* ignore — internal resize must still work even if window lock fails */
+                    /* ignore */
                   }
                 }
-                // For vertical docks the handle is horizontal (top/bottom edge);
-                // for horizontal docks it is vertical (left/right edge).
-                const resizeHandleStyle: React.CSSProperties = isVertical
-                  ? {
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      // Sit entirely in the gap between panes so it never overlaps
-                      // the chat's top/bottom edge (which would occlude content).
-                      [side === 'top' ? 'bottom' : 'top']: -6,
-                      height: 6,
-                      cursor: 'ns-resize',
-                      zIndex: 5,
-                    }
-                  : {
-                      position: 'absolute',
-                      top: 0,
-                      bottom: 0,
-                      [side === 'left' ? 'right' : 'left']: -6,
-                      width: 6,
-                      cursor: 'ew-resize',
-                      zIndex: 5,
-                    }
-                // Clear, grouped side buttons: docking position + pop-out/close.
-                const sideTitle: Record<'left' | 'top' | 'right' | 'bottom', string> = {
-                  left: t('aiChatDockLeft'),
-                  top: t('aiChatDockTop'),
-                  right: t('aiChatDockRight'),
-                  bottom: t('aiChatDockBottom'),
+                // While dragging, block the terminal (xterm) and chat from
+                // receiving the mouse so the drag resizes the panes instead of
+                // scrolling/selecting content inside them.
+                document.body.classList.add(
+                  isVertical ? 'resizing-v' : 'resizing-h',
+                  'resizing-dock',
+                )
+                document.body.style.userSelect = 'none'
+                if (ws) ws.classList.add('dock-resizing')
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+                try {
+                  getCurrentWindow().setResizable(false)
+                } catch {
+                  /* ignore — internal resize must still work even if window lock fails */
                 }
-                const sideBtn = (s: 'left' | 'top' | 'right' | 'bottom', icon: 'panelLeft' | 'panelTop' | 'panelRight' | 'panelBottom') => (
-                  <button
-                    key={s}
-                    className={'ai-dock-side-btn' + (side === s ? ' active' : '')}
-                    onClick={() => setDockSide(s)}
-                    title={sideTitle[s]}
-                  >
-                    <Icon name={icon} size={12} />
-                  </button>
-                )
-                return (
-                  <div className="ai-dock-pane" style={{ ...dockStyle, position: 'relative' }}>
-                    <div className="ai-dock-bar" style={{ position: 'relative', zIndex: 6 }}>
-                      <span className="ai-dock-bar-title">{t('aiChatTitle')}</span>
-                      <div className="ai-dock-sides">
-                        {sideBtn('left', 'panelLeft')}
-                        {sideBtn('top', 'panelTop')}
-                        {sideBtn('right', 'panelRight')}
-                        {sideBtn('bottom', 'panelBottom')}
-                      </div>
-                      <button
-                        className="ai-dock-bar-btn"
-                        onClick={() => setAiFloatingTabId(tid)}
-                        title={t('aiChatPopOut')}
-                      >
-                        ⤢
-                      </button>
-                      <button
-                        className="ai-dock-bar-btn"
-                        onClick={() =>
-                          setShowAiByTab((prev) => ({ ...prev, [tid]: false }))
-                        }
-                        title={t('aiChatClose')}
-                      >
-                        ×
-                      </button>
+              }
+              // For vertical docks the handle is horizontal (top/bottom edge);
+              // for horizontal docks it is vertical (left/right edge).
+              const resizeHandleStyle: React.CSSProperties = isVertical
+                ? {
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    // Sit entirely in the gap between panes so it never overlaps
+                    // the chat's top/bottom edge (which would occlude content).
+                    [side === 'top' ? 'bottom' : 'top']: -6,
+                    height: 6,
+                    cursor: 'ns-resize',
+                    zIndex: 5,
+                  }
+                : {
+                    position: 'absolute',
+                    top: 0,
+                    bottom: 0,
+                    [side === 'left' ? 'right' : 'left']: -6,
+                    width: 6,
+                    cursor: 'ew-resize',
+                    zIndex: 5,
+                  }
+              // Clear, grouped side buttons: docking position + pop-out/close.
+              const sideTitle: Record<'left' | 'top' | 'right' | 'bottom', string> = {
+                left: t('aiChatDockLeft'),
+                top: t('aiChatDockTop'),
+                right: t('aiChatDockRight'),
+                bottom: t('aiChatDockBottom'),
+              }
+              const sideBtn = (
+                s: 'left' | 'top' | 'right' | 'bottom',
+                icon: 'panelLeft' | 'panelTop' | 'panelRight' | 'panelBottom',
+              ) => (
+                <button
+                  key={s}
+                  className={'ai-dock-side-btn' + (side === s ? ' active' : '')}
+                  onClick={() => setDockSide(s)}
+                  title={sideTitle[s]}
+                >
+                  <Icon name={icon} size={12} />
+                </button>
+              )
+              return (
+                <div className="ai-dock-pane" style={{ ...dockStyle, position: 'relative' }}>
+                  <div className="ai-dock-bar" style={{ position: 'relative', zIndex: 6 }}>
+                    <span className="ai-dock-bar-title">{t('aiChatTitle')}</span>
+                    <div className="ai-dock-sides">
+                      {sideBtn('left', 'panelLeft')}
+                      {sideBtn('top', 'panelTop')}
+                      {sideBtn('right', 'panelRight')}
+                      {sideBtn('bottom', 'panelBottom')}
                     </div>
-                    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                      <AiChatPanel
-                        tabId={tid}
-                        config={activeProfile}
-                        profiles={aiConfig?.profiles ?? []}
-                        onSelectProfile={handleSelectAiProfile}
-                        onSelectModel={handleSelectAiModel}
-                        conv={getAiConv(tid)}
-                        setConv={(u) => setAiConv(tid, u)}
-                        floating={false}
-                        onToggleFloat={() => setAiFloatingTabId(tid)}
-                        onClose={() => setShowAiByTab((prev) => ({ ...prev, [tid]: false }))}
-                        initialContext={aiContextText}
-                        onContextConsumed={() => setAiContextText(null)}
-                        inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
-                        onInputHeightChange={handleAiInputHeightChange}
-                        onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.readOnly ?? false}
-                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
-                      />
-                    </div>
-                    <div className="ai-dock-resize" onMouseDown={startDockResize} style={resizeHandleStyle} />
+                    <button
+                      className="ai-dock-bar-btn"
+                      onClick={() => setAiFloatingTabId(tid)}
+                      title={t('aiChatPopOut')}
+                    >
+                      ⤢
+                    </button>
+                    <button
+                      className="ai-dock-bar-btn"
+                      onClick={() => setShowAiByTab((prev) => ({ ...prev, [tid]: false }))}
+                      title={t('aiChatClose')}
+                    >
+                      ×
+                    </button>
                   </div>
-                )
-              })()
-            )}
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      overflow: 'hidden',
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                  >
+                    <AiChatPanel
+                      tabId={tid}
+                      config={activeProfile}
+                      profiles={aiConfig?.profiles ?? []}
+                      onSelectProfile={handleSelectAiProfile}
+                      onSelectModel={handleSelectAiModel}
+                      conv={getAiConv(tid)}
+                      setConv={(u) => setAiConv(tid, u)}
+                      floating={false}
+                      onToggleFloat={() => setAiFloatingTabId(tid)}
+                      onClose={() => setShowAiByTab((prev) => ({ ...prev, [tid]: false }))}
+                      initialContext={aiContextText}
+                      onContextConsumed={() => setAiContextText(null)}
+                      inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
+                      onInputHeightChange={handleAiInputHeightChange}
+                      onOpenSettings={handleOpenAiSettings}
+                      defaultReadOnly={aiConfig?.readOnly ?? false}
+                      defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
+                    />
+                  </div>
+                  <div
+                    className="ai-dock-resize"
+                    onMouseDown={startDockResize}
+                    style={resizeHandleStyle}
+                  />
+                </div>
+              )
+            })()}
           {/* File editor replaces the terminal surface of the focused pane
               (the pane header with the AI button and file tabs stays). Only the
               current session's files are shown. Skipped when the overlay is
@@ -3621,48 +3839,73 @@ export default function App() {
             sessionEditorTabs.length > 0 &&
             sessionEditorTabs.some((et) => et.key === sv) &&
             !isOverlayFloated(sv) && (
-            <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <FileEditor
-                key="file-editor"
-                tabs={sessionEditorTabs}
-                activeKey={sessionActiveEditorKey && sessionEditorTabs.some((et) => et.key === sessionActiveEditorKey) ? sessionActiveEditorKey : sv}
-                onSelect={(key) => {
-                  if (leaf.tabId != null) {
-                    setActiveEditorKeyFor(leaf.tabId, key)
-                    setShellViewFor(leaf.tabId, key)
-                  }
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  minHeight: 0,
+                  overflow: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column',
                 }}
-                onClose={closeEditorTab}
-                onContentChange={handleEditorContentChange}
-                onSave={handleSaveEditorTab}
-                onChangeLanguage={changeEditorTabLanguage}
-                onChangeEncoding={changeEditorTabEncoding}
-                onChangeLineEnding={changeEditorTabLineEnding}
-                hideTabs
-              />
-            </div>
-          )}
+              >
+                <FileEditor
+                  key="file-editor"
+                  tabs={sessionEditorTabs}
+                  activeKey={
+                    sessionActiveEditorKey &&
+                    sessionEditorTabs.some((et) => et.key === sessionActiveEditorKey)
+                      ? sessionActiveEditorKey
+                      : sv
+                  }
+                  onSelect={(key) => {
+                    if (leaf.tabId != null) {
+                      setActiveEditorKeyFor(leaf.tabId, key)
+                      setShellViewFor(leaf.tabId, key)
+                    }
+                  }}
+                  onClose={closeEditorTab}
+                  onContentChange={handleEditorContentChange}
+                  onSave={handleSaveEditorTab}
+                  onChangeLanguage={changeEditorTabLanguage}
+                  onChangeEncoding={changeEditorTabEncoding}
+                  onChangeLineEnding={changeEditorTabLineEnding}
+                  hideTabs
+                />
+              </div>
+            )}
           {/* Docker log view replaces the terminal surface of the focused pane
               (like an open file). Skipped when floated — renders only in the
               floating window. */}
-          {isFocused && sessionDockerLogTabs.some((dt) => sv === `dockerlog:${dt.tabId}`) && (() => {
-            const dl = sessionDockerLogTabs.find((dt) => sv === `dockerlog:${dt.tabId}`)
-            if (!dl || isOverlayFloated(dl.tabId)) return null
-            return (
-            <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <DockerLogViewer
-                tabId={dl.tabId}
-                jumpTabId={dl.jumpTabId!}
-                containerName={dl.containerName!}
-                containerImage={dl.containerImage}
-                defaultWordWrap={dockerWordWrap}
-                defaultFollow={dockerFollow}
-                maxLines={dockerMaxLines}
-                onAskAi={(text) => handleOpenAiChat(text)}
-              />
-            </div>
-            )
-          })()}
+          {isFocused &&
+            sessionDockerLogTabs.some((dt) => sv === `dockerlog:${dt.tabId}`) &&
+            (() => {
+              const dl = sessionDockerLogTabs.find((dt) => sv === `dockerlog:${dt.tabId}`)
+              if (!dl || isOverlayFloated(dl.tabId)) return null
+              return (
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    minHeight: 0,
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
+                >
+                  <DockerLogViewer
+                    tabId={dl.tabId}
+                    jumpTabId={dl.jumpTabId!}
+                    containerName={dl.containerName!}
+                    containerImage={dl.containerImage}
+                    defaultWordWrap={dockerWordWrap}
+                    defaultFollow={dockerFollow}
+                    maxLines={dockerMaxLines}
+                    onAskAi={(text) => handleOpenAiChat(text)}
+                  />
+                </div>
+              )
+            })()}
         </div>
         {/* VS Code-style drop mask: the whole target pane is highlighted as a
             droppable region the moment the cursor enters it (base mask), and a
@@ -3678,7 +3921,10 @@ export default function App() {
     )
   }
 
-  const renderWorkspacePanes = (node: SplitNode, focusedLeafIdForRoot: string | null): React.ReactElement[] => {
+  const renderWorkspacePanes = (
+    node: SplitNode,
+    focusedLeafIdForRoot: string | null,
+  ): React.ReactElement[] => {
     const out: React.ReactElement[] = []
     const walk = (n: SplitNode, rect: PaneRect) => {
       if (n.type === 'leaf') {
@@ -3691,10 +3937,22 @@ export default function App() {
         const frac = (n.sizes[i] || 0) / total
         const childRect: PaneRect =
           n.dir === 'row'
-            ? { left: rect.left + offset * rect.width, top: rect.top, width: frac * rect.width, height: rect.height }
-            : { left: rect.left, top: rect.top + offset * rect.height, width: rect.width, height: frac * rect.height }
+            ? {
+                left: rect.left + offset * rect.width,
+                top: rect.top,
+                width: frac * rect.width,
+                height: rect.height,
+              }
+            : {
+                left: rect.left,
+                top: rect.top + offset * rect.height,
+                width: rect.width,
+                height: frac * rect.height,
+              }
         if (i > 0) {
-          const pct = (n.dir === 'row' ? rect.left + offset * rect.width : rect.top + offset * rect.height) * 100
+          const pct =
+            (n.dir === 'row' ? rect.left + offset * rect.width : rect.top + offset * rect.height) *
+            100
           out.push(
             <div
               key={`${n.id}-div-${i}`}
@@ -3757,7 +4015,11 @@ export default function App() {
     .map((tab) => {
       if (tab.tabType === 'settings') {
         return settingsOverlayRef.current
-          ? createPortal(renderTerminalForTab(tab, false), settingsOverlayRef.current, String(tab.tabId))
+          ? createPortal(
+              renderTerminalForTab(tab, false),
+              settingsOverlayRef.current,
+              String(tab.tabId),
+            )
           : null
       }
       // Route each terminal into the leaf that shows it within its own workspace,
@@ -3811,47 +4073,53 @@ export default function App() {
                 minWidth: 0,
                 minHeight: 0,
               }}
-                onDragOver={(e) => {
-                  // Accept the pane drag anywhere inside the workspace so the
-                  // cursor never shows the "no-drop" (prohibited) icon over gaps,
-                  // the source pane, or the terminal surface — the per-pane
-                  // onDragOver still decides where the mask lands.
-                  if (paneDrag.source) {
-                    e.preventDefault()
-                    e.dataTransfer.dropEffect = 'move'
-                  }
-                }}
-              >
-                {renderWorkspacePanes(tree, focusedLeafByRoot[root.tabId] ?? null)}
-              </div>
-            )
-          })}
+              onDragOver={(e) => {
+                // Accept the pane drag anywhere inside the workspace so the
+                // cursor never shows the "no-drop" (prohibited) icon over gaps,
+                // the source pane, or the terminal surface — the per-pane
+                // onDragOver still decides where the mask lands.
+                if (paneDrag.source) {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                }
+              }}
+            >
+              {renderWorkspacePanes(tree, focusedLeafByRoot[root.tabId] ?? null)}
+            </div>
+          )
+        })}
 
-          {/* Floating (pop-out) panes: draggable overlays rendered inside the
+        {/* Floating (pop-out) panes: draggable overlays rendered inside the
               same window. Each mirrors a pane currently removed from the split
               tree; closing one restores the pane to its original spot. */}
-          {floatingItems.map((item) => (
-            <FloatingWindow
-              key={item.floatId}
-              item={item}
-              t={t}
-              onClose={() => closeFloating(item.floatId)}
-              onFocus={() => bringFloatingToFront(item.floatId)}
-              onMove={(x, y) => moveFloating(item.floatId, x, y)}
-              onResize={(w, h) => resizeFloating(item.floatId, w, h)}
-            >
-              {/* Terminal floats reuse the SAME mounted TerminalComponent instance
+        {floatingItems.map((item) => (
+          <FloatingWindow
+            key={item.floatId}
+            item={item}
+            t={t}
+            onClose={() => closeFloating(item.floatId)}
+            onFocus={() => bringFloatingToFront(item.floatId)}
+            onMove={(x, y) => moveFloating(item.floatId, x, y)}
+            onResize={(w, h) => resizeFloating(item.floatId, w, h)}
+          >
+            {/* Terminal floats reuse the SAME mounted TerminalComponent instance
                   (routed into this body by terminalPortals), so its scrollback and
                   output survive the pop-out. Overlay floats (file editor / docker
                   log) render their own content here as before. */}
-              <div
-                ref={getPaneBodyRef(`floatbody-${item.floatId}`)}
-                style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-              >
-                {item.kind === 'terminal' ? null : renderFloatingContent(item)}
-              </div>
-            </FloatingWindow>
-          ))}
+            <div
+              ref={getPaneBodyRef(`floatbody-${item.floatId}`)}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+            >
+              {item.kind === 'terminal' ? null : renderFloatingContent(item)}
+            </div>
+          </FloatingWindow>
+        ))}
         <div
           ref={settingsOverlayRef}
           className="settings-overlay"
@@ -3859,7 +4127,7 @@ export default function App() {
             position: 'absolute',
             inset: 0,
             overflow: 'auto',
-            display: (settingsActive || aiChatActive) ? 'block' : 'none',
+            display: settingsActive || aiChatActive ? 'block' : 'none',
           }}
         />
         {terminalPortals}
@@ -3873,7 +4141,8 @@ export default function App() {
     // Show the Files panel only when the focused pane's connection is connected.
     // In a split, focusedLeafTabId points at the focused pane's session, so the
     // panel tracks whichever connection you clicked into.
-    const filesTab = focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
+    const filesTab =
+      focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
     const showFilePanel = filesTab?.status === 'connected'
     return (
       <>
@@ -3882,9 +4151,9 @@ export default function App() {
             className="collapsible-section"
             style={
               connectionsExpanded
-                ? (showFilePanel && filesExpanded
+                ? showFilePanel && filesExpanded
                   ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' }
-                  : { flex: 1, overflow: 'hidden' })
+                  : { flex: 1, overflow: 'hidden' }
                 : { flexShrink: 0 }
             }
           >
@@ -3911,7 +4180,9 @@ export default function App() {
               sidebarWidth={sidebarWidth}
               localTerminals={localTerminals}
               onOpenLocalTerminal={(entry) => handleOpenLocalTerminal(entry.cwd, entry.shell)}
-              onOpenLocalSplit={(entry, direction) => handleOpenLocalSplit(entry.cwd, entry.shell, direction)}
+              onOpenLocalSplit={(entry, direction) =>
+                handleOpenLocalSplit(entry.cwd, entry.shell, direction)
+              }
               onLocalTerminalsChanged={reloadLocalTerminals}
               expanded={connectionsExpanded}
               onToggleExpanded={() =>
@@ -3946,78 +4217,80 @@ export default function App() {
               className="collapsible-section"
               style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
             >
-                {(() => {
-                  // Server label shown in the file panel header: the SSH
-                  // connection of the focused tab (host:port), or a docker
-                  // target's container.
-                  const ftabId = focusedLeafTabId ?? activeTabId ?? 0
-                  const ftab = tabs.find((t) => t.tabId === ftabId)
-                  const fconn = ftab?.connectionId
-                    ? connections.find((c) => c.id === ftab.connectionId)
+              {(() => {
+                // Server label shown in the file panel header: the SSH
+                // connection of the focused tab (host:port), or a docker
+                // target's container.
+                const ftabId = focusedLeafTabId ?? activeTabId ?? 0
+                const ftab = tabs.find((t) => t.tabId === ftabId)
+                const fconn = ftab?.connectionId
+                  ? connections.find((c) => c.id === ftab.connectionId)
+                  : undefined
+                // When the connection name equals the host (a common case),
+                // drop the redundant name and show only host:port.
+                const hostLabel = fconn
+                  ? fconn.name === fconn.host
+                    ? `${fconn.host}:${fconn.port}`
+                    : `${fconn.name} (${fconn.host}:${fconn.port})`
+                  : (ftab?.connectionName ?? undefined)
+                // Docker targets: show BOTH the host machine and the container
+                // name (e.g. "prod (10.0.0.5:22) → docker:nginx"). Other
+                // non-session targets (jump) use their own targetLabel.
+                const serverLabel = fileTarget
+                  ? fileTarget.kind === 'docker'
+                    ? hostLabel
+                      ? `${hostLabel} → docker:${fileTarget.container}`
+                      : `docker:${fileTarget.container}`
                     : undefined
-                  // When the connection name equals the host (a common case),
-                  // drop the redundant name and show only host:port.
-                  const hostLabel = fconn
-                    ? fconn.name === fconn.host
-                      ? `${fconn.host}:${fconn.port}`
-                      : `${fconn.name} (${fconn.host}:${fconn.port})`
-                    : ftab?.connectionName ?? undefined
-                  // Docker targets: show BOTH the host machine and the container
-                  // name (e.g. "prod (10.0.0.5:22) → docker:nginx"). Other
-                  // non-session targets (jump) use their own targetLabel.
-                  const serverLabel = fileTarget
-                    ? fileTarget.kind === 'docker'
-                      ? hostLabel
-                        ? `${hostLabel} → docker:${fileTarget.container}`
-                        : `docker:${fileTarget.container}`
-                      : undefined
-                    : hostLabel
-                  return <FilePanel
-                  key={fileTarget ? JSON.stringify(fileTarget) : 'session'}
-                  ref={fileTreeRef}
-                  tabId={ftabId}
-                  isConnected={true}
-                  serverLabel={serverLabel}
-                  defaultPath={
-                    fileTarget?.kind === 'docker'
-                      ? '/'
-                      : fileTarget?.kind === 'local'
-                        ? tabs.find((t) => t.tabId === fileTarget.tabId)?.localShellCwd ?? '/'
-                        : '.'
-                  }
-                  targetRef={fileTarget ?? undefined}
-                  fileMode={fileMode}
-                  onFileModeChange={setFileMode}
-                  onSelectTarget={setFileTarget}
-                expanded={filesExpanded}
-                onToggleExpanded={() =>
-                  updateLayout((l) => ({
-                    ...l,
-                    sidebar: {
-                      ...l.sidebar,
-                      sections: {
-                        ...l.sidebar.sections,
-                        files: {
-                          ...l.sidebar.sections.files,
-                          collapsed: !l.sidebar.sections.files.collapsed,
+                  : hostLabel
+                return (
+                  <FilePanel
+                    key={fileTarget ? JSON.stringify(fileTarget) : 'session'}
+                    ref={fileTreeRef}
+                    tabId={ftabId}
+                    isConnected={true}
+                    serverLabel={serverLabel}
+                    defaultPath={
+                      fileTarget?.kind === 'docker'
+                        ? '/'
+                        : fileTarget?.kind === 'local'
+                          ? (tabs.find((t) => t.tabId === fileTarget.tabId)?.localShellCwd ?? '/')
+                          : '.'
+                    }
+                    targetRef={fileTarget ?? undefined}
+                    fileMode={fileMode}
+                    onFileModeChange={setFileMode}
+                    onSelectTarget={setFileTarget}
+                    expanded={filesExpanded}
+                    onToggleExpanded={() =>
+                      updateLayout((l) => ({
+                        ...l,
+                        sidebar: {
+                          ...l.sidebar,
+                          sections: {
+                            ...l.sidebar.sections,
+                            files: {
+                              ...l.sidebar.sections.files,
+                              collapsed: !l.sidebar.sections.files.collapsed,
+                            },
+                          },
                         },
-                      },
-                    },
-                  }))
-                }
-                syncEnabled={syncEnabled}
-                onToggleSync={() => {
-                  const next = !syncEnabled
-                  setSyncEnabled(next)
-                  try {
-                    localStorage.setItem('wrolp-sync-enabled', next ? '1' : '0')
-                  } catch {
-                    // ignore localStorage errors
-                  }
-                }}
-                onEditFile={openInEditor}
-              />
-                })()}
+                      }))
+                    }
+                    syncEnabled={syncEnabled}
+                    onToggleSync={() => {
+                      const next = !syncEnabled
+                      setSyncEnabled(next)
+                      try {
+                        localStorage.setItem('wrolp-sync-enabled', next ? '1' : '0')
+                      } catch {
+                        // ignore localStorage errors
+                      }
+                    }}
+                    onEditFile={openInEditor}
+                  />
+                )
+              })()}
             </div>
 
             {dockerExpanded && layout.sidebar.sections.docker.visible && (
@@ -4026,15 +4299,19 @@ export default function App() {
 
             {/* Docker containers on the focused host — follows the focused
                 shell so splitting / switching panes swaps the container list. */}
-            {layout.sidebar.sections.docker.visible && (focusedLeafTabId ?? activeTabId) != null && (
-              <div
-                className="collapsible-section"
-                style={dockerExpanded ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' } : { flexShrink: 0 }}
-              >
-                <DockerPanel
-                  jumpTabId={focusedLeafTabId ?? activeTabId ?? 0}
-                  serverLabel={
-                    (() => {
+            {layout.sidebar.sections.docker.visible &&
+              (focusedLeafTabId ?? activeTabId) != null && (
+                <div
+                  className="collapsible-section"
+                  style={
+                    dockerExpanded
+                      ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' }
+                      : { flexShrink: 0 }
+                  }
+                >
+                  <DockerPanel
+                    jumpTabId={focusedLeafTabId ?? activeTabId ?? 0}
+                    serverLabel={(() => {
                       const dtId = focusedLeafTabId ?? activeTabId ?? 0
                       const dt = tabs.find((t) => t.tabId === dtId)
                       const dc = dt?.connectionId
@@ -4045,33 +4322,32 @@ export default function App() {
                           ? `${dc.host}:${dc.port}`
                           : `${dc.name} (${dc.host}:${dc.port})`
                         : dt?.connectionName
-                    })()
-                  }
-                  expanded={dockerExpanded}
-                  onToggleExpanded={() =>
-                    updateLayout((l) => ({
-                      ...l,
-                      sidebar: {
-                        ...l.sidebar,
-                        sections: {
-                          ...l.sidebar.sections,
-                          docker: {
-                            ...l.sidebar.sections.docker,
-                            collapsed: !l.sidebar.sections.docker.collapsed,
+                    })()}
+                    expanded={dockerExpanded}
+                    onToggleExpanded={() =>
+                      updateLayout((l) => ({
+                        ...l,
+                        sidebar: {
+                          ...l.sidebar,
+                          sections: {
+                            ...l.sidebar.sections,
+                            docker: {
+                              ...l.sidebar.sections.docker,
+                              collapsed: !l.sidebar.sections.docker.collapsed,
+                            },
                           },
                         },
-                      },
-                    }))
-                  }
-                  activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
-                  onOpenContainer={handleOpenContainer}
-                  onEnterShell={handleEnterContainerShell}
-                  onAnalyzeContainer={handleAnalyzeContainer}
-                  onViewLogs={handleViewContainerLogs}
-                  onRestartContainer={handleRestartContainer}
-                />
-              </div>
-            )}
+                      }))
+                    }
+                    activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
+                    onOpenContainer={handleOpenContainer}
+                    onEnterShell={handleEnterContainerShell}
+                    onAnalyzeContainer={handleAnalyzeContainer}
+                    onViewLogs={handleViewContainerLogs}
+                    onRestartContainer={handleRestartContainer}
+                  />
+                </div>
+              )}
           </>
         )}
       </>
@@ -4112,122 +4388,178 @@ export default function App() {
         {/* Terminal area (right) */}
         <div className={`terminal-area ${layout.bottomPanel.pos === 'right' ? 'panel-right' : ''}`}>
           <div className="terminal-main">
-          {/* Tab bar */}
-          <div className="tab-bar">
-            <button
-              className="sidebar-toggle"
-              onClick={() =>
-                updateLayout((l) => ({ ...l, sidebar: { ...l.sidebar, visible: !l.sidebar.visible } }))
-              }
-              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
-            >
-              {showSidebar ? (
-                <svg width="14" height="14" viewBox="0 0 16 16">
-                  <rect x="1" y="2" width="4" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                  <rect x="6" y="2" width="9" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M12 6l-2 2 2 2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 16 16">
-                  <rect x="1" y="2" width="4" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                  <rect x="6" y="2" width="9" height="12" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M9 6l2 2-2 2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                </svg>
-              )}
-            </button>
-            {tabs.filter((tab) => !tab.embedded).map((tab, idx) => (
-              <div
-                key={tab.tabId}
-                className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
-                draggable
-                onClick={() => handleTabClick(tab.tabId)}
-                onDragStart={(e) => handleTabDragStart(e, idx)}
-                onDragOver={(e) => handleTabDragOver(e, idx)}
-                onDrop={(e) => handleTabDrop(e, idx)}
-                onDragEnd={handleTabDragEnd}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
-                }}
+            {/* Tab bar */}
+            <div className="tab-bar">
+              <button
+                className="sidebar-toggle"
+                onClick={() =>
+                  updateLayout((l) => ({
+                    ...l,
+                    sidebar: { ...l.sidebar, visible: !l.sidebar.visible },
+                  }))
+                }
+                title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
               >
-                <span>{getTabLabel(tab)}</span>
-                <span
-                  className="tab-close"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    closeTab(tab.tabId)
-                  }}
-                >
-                  ×
-                </span>
-              </div>
-            ))}
-            <button
-              className="tab-split-btn"
-              onClick={handleSplitTerminal}
-              title="Split Terminal (Ctrl+\)"
-            >
-              ⊞
-            </button>
-          </div>
-
-          {/* Tab right-click context menu */}
-          {tabContextMenu && tabContextMenu.tab.tabType === 'terminal' && tabContextMenu.tab.connectionId && (
-            <div
-              ref={tabContextMenuRef}
-              className="tab-context-menu"
-              style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="context-menu-item" onClick={() => duplicateTab(tabContextMenu.tab)}>
-                Duplicate Tab
-              </div>
+                {showSidebar ? (
+                  <svg width="14" height="14" viewBox="0 0 16 16">
+                    <rect
+                      x="1"
+                      y="2"
+                      width="4"
+                      height="12"
+                      rx="1"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    />
+                    <rect
+                      x="6"
+                      y="2"
+                      width="9"
+                      height="12"
+                      rx="1"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    />
+                    <path d="M12 6l-2 2 2 2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 16 16">
+                    <rect
+                      x="1"
+                      y="2"
+                      width="4"
+                      height="12"
+                      rx="1"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    />
+                    <rect
+                      x="6"
+                      y="2"
+                      width="9"
+                      height="12"
+                      rx="1"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    />
+                    <path d="M9 6l2 2-2 2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                  </svg>
+                )}
+              </button>
+              {tabs
+                .filter((tab) => !tab.embedded)
+                .map((tab, idx) => (
+                  <div
+                    key={tab.tabId}
+                    className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
+                    draggable
+                    onClick={() => handleTabClick(tab.tabId)}
+                    onDragStart={(e) => handleTabDragStart(e, idx)}
+                    onDragOver={(e) => handleTabDragOver(e, idx)}
+                    onDrop={(e) => handleTabDrop(e, idx)}
+                    onDragEnd={handleTabDragEnd}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
+                    }}
+                  >
+                    <span>{getTabLabel(tab)}</span>
+                    <span
+                      className="tab-close"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        closeTab(tab.tabId)
+                      }}
+                    >
+                      ×
+                    </span>
+                  </div>
+                ))}
+              <button
+                className="tab-split-btn"
+                onClick={handleSplitTerminal}
+                title="Split Terminal (Ctrl+\)"
+              >
+                ⊞
+              </button>
             </div>
-          )}
 
-          {/* Shell pane. The view tab bar (Terminal + open files) sits at the
+            {/* Tab right-click context menu */}
+            {tabContextMenu &&
+              tabContextMenu.tab.tabType === 'terminal' &&
+              tabContextMenu.tab.connectionId && (
+                <div
+                  ref={tabContextMenuRef}
+                  className="tab-context-menu"
+                  style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div
+                    className="context-menu-item"
+                    onClick={() => duplicateTab(tabContextMenu.tab)}
+                  >
+                    Duplicate Tab
+                  </div>
+                </div>
+              )}
+
+            {/* Shell pane. The view tab bar (Terminal + open files) sits at the
               top; the content area below it shows EITHER the terminal split
               tree OR the file editor. `terminalContent` stays mounted in the
               same DOM position regardless of the active view so opening a file
               never remounts the TerminalComponent (which would trigger a fresh
               connect() and lose focus). */}
-          <div className="shell-pane" style={{ flex: 1, minHeight: 0 }}>
-            <div className="shell-pane-body" style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'row' }}>
-              <div style={{ display: aiChatActive ? 'none' : 'flex', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-                {terminalContent}
-              </div>
-              {/* Standalone AI Chat tab (full screen) */}
-              {activeProfile && aiChatActive && activeTerminalTab && (
-                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                  <AiChatPanel
-                    tabId={activeTerminalTab.tabId}
-                    config={activeProfile}
-                    profiles={aiConfig?.profiles ?? []}
-                    onSelectProfile={handleSelectAiProfile}
-                    onSelectModel={handleSelectAiModel}
-                    conv={getAiConv(activeTerminalTab.tabId)}
-                    setConv={(u) => setAiConv(activeTerminalTab.tabId, u)}
-                    floating={false}
-                    onToggleFloat={() => setAiFloatingTabId(activeTerminalTab.tabId)}
-                    onClose={() => closeTab(activeTerminalTab.tabId)}
-                    initialContext={aiContextText}
-                    onContextConsumed={() => setAiContextText(null)}
-                    inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
-                    onInputHeightChange={handleAiInputHeightChange}
-                    onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.readOnly ?? false}
-                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
-                  />
+            <div className="shell-pane" style={{ flex: 1, minHeight: 0 }}>
+              <div
+                className="shell-pane-body"
+                style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'row' }}
+              >
+                <div
+                  style={{
+                    display: aiChatActive ? 'none' : 'flex',
+                    flex: 1,
+                    minHeight: 0,
+                    flexDirection: 'column',
+                  }}
+                >
+                  {terminalContent}
                 </div>
-              )}
+                {/* Standalone AI Chat tab (full screen) */}
+                {activeProfile && aiChatActive && activeTerminalTab && (
+                  <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <AiChatPanel
+                      tabId={activeTerminalTab.tabId}
+                      config={activeProfile}
+                      profiles={aiConfig?.profiles ?? []}
+                      onSelectProfile={handleSelectAiProfile}
+                      onSelectModel={handleSelectAiModel}
+                      conv={getAiConv(activeTerminalTab.tabId)}
+                      setConv={(u) => setAiConv(activeTerminalTab.tabId, u)}
+                      floating={false}
+                      onToggleFloat={() => setAiFloatingTabId(activeTerminalTab.tabId)}
+                      onClose={() => closeTab(activeTerminalTab.tabId)}
+                      initialContext={aiContextText}
+                      onContextConsumed={() => setAiContextText(null)}
+                      inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
+                      onInputHeightChange={handleAiInputHeightChange}
+                      onOpenSettings={handleOpenAiSettings}
+                      defaultReadOnly={aiConfig?.readOnly ?? false}
+                      defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          </div>
-
           {/* Floating AI chat panel (popped out from a shell tab) */}
-          {aiFloatingTabId !== null && activeProfile && (
+          {aiFloatingTabId !== null &&
+            activeProfile &&
             (() => {
               const MIN_W = 280
               const MIN_H = 240
@@ -4271,13 +4603,37 @@ export default function App() {
               }
               const resizeHandles: { dir: string; style: React.CSSProperties; cursor: string }[] = [
                 { dir: 'n', style: { top: -3, left: 8, right: 8, height: 6 }, cursor: 'ns-resize' },
-                { dir: 's', style: { bottom: -3, left: 8, right: 8, height: 6 }, cursor: 'ns-resize' },
+                {
+                  dir: 's',
+                  style: { bottom: -3, left: 8, right: 8, height: 6 },
+                  cursor: 'ns-resize',
+                },
                 { dir: 'w', style: { left: -3, top: 8, bottom: 8, width: 6 }, cursor: 'ew-resize' },
-                { dir: 'e', style: { right: -3, top: 8, bottom: 8, width: 6 }, cursor: 'ew-resize' },
-                { dir: 'nw', style: { top: -3, left: -3, width: 10, height: 10 }, cursor: 'nwse-resize' },
-                { dir: 'ne', style: { top: -3, right: -3, width: 10, height: 10 }, cursor: 'nesw-resize' },
-                { dir: 'sw', style: { bottom: -3, left: -3, width: 10, height: 10 }, cursor: 'nesw-resize' },
-                { dir: 'se', style: { bottom: -3, right: -3, width: 10, height: 10 }, cursor: 'nwse-resize' },
+                {
+                  dir: 'e',
+                  style: { right: -3, top: 8, bottom: 8, width: 6 },
+                  cursor: 'ew-resize',
+                },
+                {
+                  dir: 'nw',
+                  style: { top: -3, left: -3, width: 10, height: 10 },
+                  cursor: 'nwse-resize',
+                },
+                {
+                  dir: 'ne',
+                  style: { top: -3, right: -3, width: 10, height: 10 },
+                  cursor: 'nesw-resize',
+                },
+                {
+                  dir: 'sw',
+                  style: { bottom: -3, left: -3, width: 10, height: 10 },
+                  cursor: 'nesw-resize',
+                },
+                {
+                  dir: 'se',
+                  style: { bottom: -3, right: -3, width: 10, height: 10 },
+                  cursor: 'nwse-resize',
+                },
               ]
               return (
                 <div
@@ -4311,9 +4667,15 @@ export default function App() {
                       userSelect: 'none',
                     }}
                     onMouseDown={(e) => {
-                      aiFloatDragRef.current = { dx: e.clientX - aiFloatPos.x, dy: e.clientY - aiFloatPos.y }
+                      aiFloatDragRef.current = {
+                        dx: e.clientX - aiFloatPos.x,
+                        dy: e.clientY - aiFloatPos.y,
+                      }
                       const onMove = (ev: MouseEvent) => {
-                        setAiFloatPos({ x: ev.clientX - (aiFloatDragRef.current?.dx ?? 0), y: ev.clientY - (aiFloatDragRef.current?.dy ?? 0) })
+                        setAiFloatPos({
+                          x: ev.clientX - (aiFloatDragRef.current?.dx ?? 0),
+                          y: ev.clientY - (aiFloatDragRef.current?.dy ?? 0),
+                        })
                       }
                       const onUp = () => {
                         aiFloatDragRef.current = null
@@ -4325,7 +4687,8 @@ export default function App() {
                     }}
                   >
                     <span style={{ fontSize: 12, color: 'var(--text-secondary, #aaa)' }}>
-                      AI Chat · {tabs.find((t) => t.tabId === aiFloatingTabId)?.connectionName || 'Shell'}
+                      AI Chat ·{' '}
+                      {tabs.find((t) => t.tabId === aiFloatingTabId)?.connectionName || 'Shell'}
                     </span>
                     <button
                       className="ai-float-header-btn"
@@ -4355,8 +4718,8 @@ export default function App() {
                       inputHeight={aiInputHeight}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
-                        defaultReadOnly={aiConfig?.readOnly ?? false}
-                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
+                      defaultReadOnly={aiConfig?.readOnly ?? false}
+                      defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
                     />
                   </div>
                   {resizeHandles.map((h) => (
@@ -4373,8 +4736,7 @@ export default function App() {
                   ))}
                 </div>
               )
-            })()
-          )}
+            })()}
 
           {/* Bottom panel — session recordings & command sets */}
           {layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (
@@ -4413,15 +4775,27 @@ export default function App() {
               <>
                 <div
                   className={`dock-zone dock-left${dockDrag.over === 'left' ? ' active' : ''}`}
-                  onDragOver={(e) => { e.preventDefault(); setDockDrag((d) => ({ ...d, over: 'left' })) }}
-                  onDrop={(e) => { e.preventDefault(); applyDock('sidebar', 'left') }}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setDockDrag((d) => ({ ...d, over: 'left' }))
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    applyDock('sidebar', 'left')
+                  }}
                 >
                   ◧&nbsp;Left
                 </div>
                 <div
                   className={`dock-zone dock-right${dockDrag.over === 'right' ? ' active' : ''}`}
-                  onDragOver={(e) => { e.preventDefault(); setDockDrag((d) => ({ ...d, over: 'right' })) }}
-                  onDrop={(e) => { e.preventDefault(); applyDock('sidebar', 'right') }}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setDockDrag((d) => ({ ...d, over: 'right' }))
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    applyDock('sidebar', 'right')
+                  }}
                 >
                   Right&nbsp;◨
                 </div>
@@ -4430,15 +4804,27 @@ export default function App() {
               <>
                 <div
                   className={`dock-zone dock-right${dockDrag.over === 'right' ? ' active' : ''}`}
-                  onDragOver={(e) => { e.preventDefault(); setDockDrag((d) => ({ ...d, over: 'right' })) }}
-                  onDrop={(e) => { e.preventDefault(); applyDock('bottomPanel', 'right') }}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setDockDrag((d) => ({ ...d, over: 'right' }))
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    applyDock('bottomPanel', 'right')
+                  }}
                 >
                   Right&nbsp;◨
                 </div>
                 <div
                   className={`dock-zone dock-bottom${dockDrag.over === 'bottom' ? ' active' : ''}`}
-                  onDragOver={(e) => { e.preventDefault(); setDockDrag((d) => ({ ...d, over: 'bottom' })) }}
-                  onDrop={(e) => { e.preventDefault(); applyDock('bottomPanel', 'bottom') }}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setDockDrag((d) => ({ ...d, over: 'bottom' }))
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    applyDock('bottomPanel', 'bottom')
+                  }}
                 >
                   ▁&nbsp;Bottom
                 </div>
@@ -4520,8 +4906,6 @@ export default function App() {
           </span>
         </div>
       )}
-
-
     </div>
   )
 }

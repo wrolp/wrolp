@@ -1209,6 +1209,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             </div>
           )}
           {contextMenu.node && contextMenu.node.isDir && (
+            <div className="context-menu-item" onClick={() => { setContextMenu(null); loadRootDir(contextMenu.node!.path, true) }}>
+              <Icon name="folderOpen" /> Enter directory
+            </div>
+          )}
+          {contextMenu.node && contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => setRoot(contextMenu.node!.path)}>
               <Icon name="pin" /> Set as root
             </div>
