@@ -1120,9 +1120,6 @@ export default function AiChatPanel({
     <div className="ai-chat-panel">
       {/* Header */}
       <div className="ai-chat-header" ref={headerRef}>
-        <div className="ai-chat-avatar" aria-hidden>
-          <Icon name="sparkles" size={16} />
-        </div>
         <div className="ai-chat-title-group">
           <span className="ai-chat-title">{t('aiSettingsHeader')}</span>
           <div className="ai-chat-selectors">
@@ -1486,17 +1483,19 @@ export default function AiChatPanel({
 
         {messages.map((msg) => (
           <div key={msg.id} className={`ai-chat-msg ai-chat-msg-${msg.role}`}>
-            <div className="ai-chat-msg-avatar" aria-hidden>
-              {msg.role === 'user' ? (
-                <Icon name="user" size={14} />
-              ) : (
-                <Icon name="sparkles" size={14} />
-              )}
+            <div className="ai-chat-msg-head">
+              <div className="ai-chat-msg-avatar" aria-hidden>
+                {msg.role === 'user' ? (
+                  <Icon name="user" size={14} />
+                ) : (
+                  <Icon name="sparkles" size={14} />
+                )}
+              </div>
+              <span className="ai-chat-msg-role">
+                {msg.role === 'user' ? t('aiChatRoleYou') : t('aiChatRoleAi')}
+              </span>
             </div>
             <div className="ai-chat-msg-body">
-              <div className="ai-chat-msg-role">
-                <span>{msg.role === 'user' ? t('aiChatRoleYou') : t('aiChatRoleAi')}</span>
-              </div>
               <div className="ai-chat-msg-content">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                   {msg.content}
@@ -1584,11 +1583,13 @@ export default function AiChatPanel({
         {/* Streaming indicator */}
         {streaming && streamingText && (
           <div className="ai-chat-msg ai-chat-msg-assistant">
-            <div className="ai-chat-msg-avatar" aria-hidden>
-              <Icon name="sparkles" size={14} />
+            <div className="ai-chat-msg-head">
+              <div className="ai-chat-msg-avatar" aria-hidden>
+                <Icon name="sparkles" size={14} />
+              </div>
+              <span className="ai-chat-msg-role">{t('aiChatRoleAi')}</span>
             </div>
             <div className="ai-chat-msg-body">
-              <div className="ai-chat-msg-role">{t('aiChatRoleAi')}</div>
               <div className="ai-chat-msg-content streaming">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                   {streamingText}
@@ -1600,11 +1601,13 @@ export default function AiChatPanel({
         )}
         {streaming && !streamingText && toolCalls.length === 0 && (
           <div className="ai-chat-msg ai-chat-msg-assistant">
-            <div className="ai-chat-msg-avatar" aria-hidden>
-              <Icon name="sparkles" size={14} />
+            <div className="ai-chat-msg-head">
+              <div className="ai-chat-msg-avatar" aria-hidden>
+                <Icon name="sparkles" size={14} />
+              </div>
+              <span className="ai-chat-msg-role">{t('aiChatRoleAi')}</span>
             </div>
             <div className="ai-chat-msg-body">
-              <div className="ai-chat-msg-role">{t('aiChatRoleAi')}</div>
               <div className="ai-chat-msg-content">
                 <span className="ai-chat-typing">
                   {t('aiChatThinking')}
