@@ -47,6 +47,19 @@ export interface CommandSetDto {
   updatedAt: string
 }
 
+/** Single command snippet for the floating command list (sent to the terminal
+ *  without executing). */
+export interface CommandSnippetDto {
+  id: string
+  command: string
+  alias: string | null
+  favorite: boolean
+  hidden: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
 export interface AiPromptTemplate {
   id: string
   name: string

@@ -332,6 +332,8 @@ interface TerminalComponentProps {
   ) => void
   onSizeChange?: (cols: number, rows: number) => void
   onAskAi?: (selectedText: string) => void
+  /** Save the selected text as a command snippet (floating command list). */
+  onAddCommandSnippet?: (text: string) => void
   /** Open a file (clicked in `ls` output) in the remote/local editor. */
   onOpenFile?: (target: TargetRef, path: string) => void
 }
@@ -348,6 +350,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onStatusChange,
   onSizeChange,
   onAskAi,
+  onAddCommandSnippet,
   onOpenFile,
   isLocal,
   localCwd,
@@ -1704,6 +1707,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }, [onAskAi])
 
+  const handleAddSnippet = useCallback(() => {
+    setCtxMenu(null)
+    const term = termRef.current
+    if (!term) return
+    const sel = term.getSelection()
+    if (sel && onAddCommandSnippet) {
+      onAddCommandSnippet(sel)
+    }
+  }, [onAddCommandSnippet])
+
   // ---- overlay scrollbar thumb drag ----
   const handleThumbMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -1800,6 +1813,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleAskAi}>
             🤖 {t('aiChatAskAi')}
+          </div>
+          <div className="context-menu-item" onClick={handleAddSnippet}>
+            <Icon name="plus" size={12} /> {t('addToCommandList')}
           </div>
         </div>
       )}

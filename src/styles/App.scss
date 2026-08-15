@@ -98,13 +98,22 @@ body.resize-v * {
 
 .settings-btn,
 .ai-chat-btn,
-.pin-btn {
+.pin-btn,
+.cmd-list-btn {
   width: 20px;
   height: 20px;
 
   &:hover {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 4px;
+  }
+}
+
+.cmd-list-btn {
+  color: #8ab4f8;
+
+  &:hover {
+    color: #b6d4ff;
   }
 }
 
@@ -2356,7 +2365,8 @@ body.resizing-v {
   }
 
   input,
-  select {
+  select,
+  textarea {
     width: 100%;
     padding: 8px 12px;
     background: $bg-input;
@@ -2374,6 +2384,14 @@ body.resizing-v {
     &::placeholder {
       color: #777777;
     }
+  }
+
+  textarea {
+    font-family: $font-mono;
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 72px;
   }
 
   // Case-sensitive group suggestion dropdown (replaces native <datalist>,
@@ -7215,4 +7233,439 @@ input[type='password']::-ms-clear {
   input {
     cursor: pointer;
   }
+}
+
+// ===== Floating command list (command snippets) =====
+// No backdrop/mask — the panel floats freely and can be dragged by its header.
+.cmd-list-float {
+  position: fixed;
+  right: 24px;
+  top: 64px;
+  z-index: 2000;
+}
+
+.cmd-list-panel {
+  position: relative;
+  width: 560px;
+  height: 480px;
+  max-width: 92vw;
+  max-height: 80vh;
+  min-width: 320px;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.cmd-list-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid $border;
+  cursor: move;
+  user-select: none;
+}
+
+.cmd-list-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: $text-primary;
+  flex-shrink: 0;
+}
+
+.cmd-list-toggles {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cmd-list-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: $text-dim;
+  cursor: pointer;
+  user-select: none;
+
+  input {
+    accent-color: $accent;
+    cursor: pointer;
+  }
+
+  svg {
+    color: $accent;
+  }
+}
+
+.cmd-list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.cmd-list-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba($accent, 0.55);
+  border-radius: 5px;
+  background: rgba($accent, 0.15);
+  color: $accent-hover;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: rgba($accent, 0.3);
+    color: #fff;
+  }
+}
+
+.cmd-list-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+}
+
+.cmd-list-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid $border;
+  color: $text-muted;
+
+  svg {
+    flex-shrink: 0;
+  }
+
+  input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: $text-primary;
+    font-family: inherit;
+    font-size: 13px;
+
+    &::placeholder {
+      color: $text-dim;
+    }
+  }
+}
+
+.cmd-list-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.cmd-list-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: $text-dim;
+}
+
+.cmd-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.favorite {
+    .cmd-list-item-text {
+      .cmd-list-command {
+        color: $text-primary;
+        font-weight: 600;
+      }
+    }
+  }
+
+  &.hidden {
+    opacity: 0.55;
+  }
+}
+
+.cmd-list-star {
+  flex-shrink: 0;
+  color: #e6c069;
+}
+
+.cmd-list-hidden-icon {
+  flex-shrink: 0;
+  color: $text-muted;
+}
+
+.cmd-list-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cmd-list-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+
+  .cmd-list-item:hover & {
+    opacity: 1;
+  }
+}
+
+.cmd-list-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
+
+  &.active {
+    color: #e6c069;
+  }
+
+  &.danger:hover {
+    background: rgba(210, 70, 70, 0.35);
+    color: #ff7d7d;
+  }
+}
+
+// A "hidden" snippet uses a dimmed eye-off icon that is still visible against
+// the row background (distinct from the gold favorite state).
+.cmd-list-action--hidden.active {
+  color: $text-muted;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cmd-list-alias {
+  font-size: 11px;
+  color: $text-dim;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-list-command {
+  font-family: $font-mono;
+  font-size: 12.5px;
+  color: $text-secondary;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-list-footer {
+  padding: 8px 14px;
+  border-top: 1px solid $border;
+  text-align: center;
+}
+
+.cmd-list-hint {
+  font-size: 11px;
+  color: $text-dim;
+}
+
+.cmd-list-opacity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: $text-dim;
+  user-select: none;
+
+  input[type='range'] {
+    width: 64px;
+    height: 12px;
+    background: transparent;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+
+    &::-webkit-slider-runnable-track {
+      height: 3px;
+      border-radius: 2px;
+      background: rgba($accent, 0.35);
+    }
+
+    &::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 10px;
+      height: 10px;
+      margin-top: -3.5px;
+      border-radius: 50%;
+      background: $accent-hover;
+      border: none;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+    }
+
+    &::-moz-range-track {
+      height: 3px;
+      border-radius: 2px;
+      background: rgba($accent, 0.35);
+    }
+
+    &::-moz-range-thumb {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: $accent-hover;
+      border: none;
+    }
+  }
+
+  span {
+    min-width: 34px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.cmd-list-resize {
+  position: absolute;
+  z-index: 2050;
+}
+
+// Edge handles: thin invisible strips that can grab a full side.
+.cmd-list-rh-n {
+  top: -3px;
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.cmd-list-rh-s {
+  bottom: -3px;
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.cmd-list-rh-e {
+  right: -3px;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.cmd-list-rh-w {
+  left: -3px;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+// Corner handles: slightly larger hit areas.
+.cmd-list-rh-ne {
+  right: -4px;
+  top: -4px;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.cmd-list-rh-nw {
+  left: -4px;
+  top: -4px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.cmd-list-rh-se {
+  right: -4px;
+  bottom: -4px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.cmd-list-rh-sw {
+  left: -4px;
+  bottom: -4px;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.cmd-list-modal-drag {
+  user-select: none;
+
+  .modal-header {
+    cursor: move;
+
+    h3 {
+      cursor: move;
+    }
+  }
+}
+
+.cmd-list-menu {
+  z-index: 2100;
+}
+
+.cmd-list-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2200;
+  padding: 8px 16px;
+  background: rgba($accent, 0.95);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 12.5px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }

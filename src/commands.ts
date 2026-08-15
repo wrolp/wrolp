@@ -5,6 +5,7 @@ import type {
   SessionSummary,
   SessionEventDto,
   CommandSetDto,
+  CommandSnippetDto,
   AiPromptTemplate,
   FileContent,
   TargetRef,
@@ -358,6 +359,20 @@ export async function saveCommandSet(cmdSet: CommandSetDto): Promise<string> {
 
 export async function deleteCommandSet(id: string): Promise<void> {
   await invoke<void>('delete_command_set', { id })
+}
+
+// ===== Command Snippets (floating command list) =====
+
+export async function listCommandSnippets(): Promise<CommandSnippetDto[]> {
+  return await invoke<CommandSnippetDto[]>('list_command_snippets')
+}
+
+export async function saveCommandSnippet(snippet: CommandSnippetDto): Promise<string> {
+  return await invoke<string>('save_command_snippet', { snippet })
+}
+
+export async function deleteCommandSnippet(id: string): Promise<void> {
+  await invoke<void>('delete_command_snippet', { id })
 }
 
 // ===== AI Prompt Templates =====

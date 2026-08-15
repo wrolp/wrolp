@@ -2988,6 +2988,37 @@ pub async fn delete_command_set(
   db::delete_command_set(&conn, &id)
 }
 
+// ==================== Command Snippets (floating command list) ====================
+
+#[tauri::command]
+pub async fn list_command_snippets(
+  state: tauri::State<'_, AppState>,
+) -> Result<Vec<db::CommandSnippetDto>, String> {
+  eprintln!("[command_snippets] list called");
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  let result = db::list_command_snippets(&conn);
+  eprintln!("[command_snippets] list result: {:?}", result.as_ref().map(|v| v.len()));
+  result
+}
+
+#[tauri::command]
+pub async fn save_command_snippet(
+  state: tauri::State<'_, AppState>,
+  snippet: db::CommandSnippetDto,
+) -> Result<String, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::save_command_snippet(&conn, &snippet)
+}
+
+#[tauri::command]
+pub async fn delete_command_snippet(
+  state: tauri::State<'_, AppState>,
+  id: String,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::delete_command_snippet(&conn, &id)
+}
+
 // ==================== AI Prompt Templates ====================
 
 #[tauri::command]

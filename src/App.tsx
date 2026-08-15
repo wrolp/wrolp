@@ -15,6 +15,7 @@ import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
+import { CommandListPanel } from './components/CommandListPanel'
 import { Icon } from './components/Icon'
 import FloatingWindow from './components/FloatingWindow'
 import type { FileTreeHandle } from './components/FilePanel'
@@ -57,6 +58,8 @@ import {
   loadLayout,
   saveLayout,
   sendInput,
+  localSendInput,
+  saveCommandSnippet,
   getAppVersion,
   openConfigDir,
   loadAiConfig,
@@ -87,10 +90,42 @@ let cachedConnections: ConnectionConfig[] = []
 // Auto-incrementing tab id counter
 let nextTabId = 1
 
+/** Top-level error boundary: render the error instead of silently freezing the
+ *  whole window when a child throws during render. */
+export class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  componentDidCatch(error: Error) {
+    console.error('[ErrorBoundary]', error)
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 24, fontFamily: 'monospace', fontSize: 13, color: '#f88' }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Renderer error</div>
+          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {String(this.state.error?.stack || this.state.error)}
+          </pre>
+          <button onClick={() => this.setState({ error: null })} style={{ marginTop: 12 }}>
+            Reload UI
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function App() {
   const { t, lang, setLang } = useI18n()
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
+  const [commandListOpen, setCommandListOpen] = useState(false)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('default')
@@ -880,6 +915,18 @@ export default function App() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [activeTabId, tabs])
 
+  // Ctrl+Shift+P toggles the floating command list (command snippets).
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+        e.preventDefault()
+        setCommandListOpen((prev) => !prev)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   // Load persisted workspace layout on startup (merged onto defaults).
   useEffect(() => {
     let cancelled = false
@@ -1581,6 +1628,38 @@ export default function App() {
   useEffect(() => {
     handleReconnectRef.current = handleReconnect
   }, [handleReconnect])
+
+  // Save selected text as a command snippet, then open the floating command
+  // list so the user immediately sees the new entry.
+  const handleAddCommandSnippet = useCallback((text: string) => {
+    const trimmed = text.trim()
+    if (trimmed.length === 0) return
+    saveCommandSnippet({
+      id: `snip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      command: trimmed,
+      alias: null,
+      favorite: false,
+      hidden: false,
+      sortOrder: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }).catch((e) => console.error('save_command_snippet failed:', e))
+    setCommandListOpen(true)
+  }, [])
+
+  // Send a command snippet's text into the active terminal WITHOUT executing it
+  // (no trailing newline), then return focus to the terminal.
+  const handleSendSnippetToTerminal = useCallback(
+    (command: string) => {
+      const tab = tabs.find((t) => t.tabId === activeTabId)
+      if (!tab || activeTabId == null) return
+      const isLocal = tab.tabType === 'localShell'
+      const send = isLocal ? localSendInput : sendInput
+      send(activeTabId, command).catch((e) => console.error('send snippet failed:', e))
+      focusTerminal(activeTabId)
+    },
+    [tabs, activeTabId],
+  )
 
   // Compute tab display label (number tabs sharing the same connection)
   const getTabLabel = useCallback(
@@ -2412,6 +2491,7 @@ export default function App() {
               onAskAi={(selectedText) => {
                 handleOpenAiChat(selectedText, tab.tabId)
               }}
+              onAddCommandSnippet={handleAddCommandSnippet}
               onOpenFile={openInEditor}
             />
           </div>
@@ -3813,6 +3893,7 @@ export default function App() {
                       floating={false}
                       onToggleFloat={() => setAiFloatingTabId(tid)}
                       onClose={() => setShowAiByTab((prev) => ({ ...prev, [tid]: false }))}
+                      onAddCommandSnippet={handleAddCommandSnippet}
                       initialContext={aiContextText}
                       onContextConsumed={() => setAiContextText(null)}
                       inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
@@ -4377,7 +4458,11 @@ export default function App() {
   return (
     <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
       {/* Custom titlebar */}
-      <Titlebar onSettings={handleOpenSettings} onAiChat={() => handleOpenAiChat()} />
+      <Titlebar
+        onSettings={handleOpenSettings}
+        onAiChat={() => handleOpenAiChat()}
+        onCommandList={() => setCommandListOpen((prev) => !prev)}
+      />
 
       <div className="main-content">
         {layout.sidebar.side === 'left' && sidebarEl}
@@ -4543,6 +4628,7 @@ export default function App() {
                       floating={false}
                       onToggleFloat={() => setAiFloatingTabId(activeTerminalTab.tabId)}
                       onClose={() => closeTab(activeTerminalTab.tabId)}
+                      onAddCommandSnippet={handleAddCommandSnippet}
                       initialContext={aiContextText}
                       onContextConsumed={() => setAiContextText(null)}
                       inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
@@ -4720,6 +4806,7 @@ export default function App() {
                       onOpenSettings={handleOpenAiSettings}
                       defaultReadOnly={aiConfig?.readOnly ?? false}
                       defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
+                      onAddCommandSnippet={handleAddCommandSnippet}
                     />
                   </div>
                   {resizeHandles.map((h) => (
@@ -4906,6 +4993,14 @@ export default function App() {
           </span>
         </div>
       )}
+
+      {/* Floating command list (command snippets) */}
+      <CommandListPanel
+        open={commandListOpen}
+        onClose={() => setCommandListOpen(false)}
+        activeTabId={activeTabId}
+        onSendToTerminal={handleSendSnippetToTerminal}
+      />
     </div>
   )
 }

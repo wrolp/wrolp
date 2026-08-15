@@ -34,6 +34,20 @@ CREATE TABLE IF NOT EXISTS command_sets (
   updated_at    TEXT NOT NULL
 );
 
+-- Single-command snippets for the floating command list. Clicking one sends
+-- the text to the terminal WITHOUT executing it; `favorite` pins it as a
+-- common command, `hidden` hides it from the default list.
+CREATE TABLE IF NOT EXISTS command_snippets (
+  id         TEXT PRIMARY KEY,
+  command    TEXT NOT NULL,
+  alias      TEXT,
+  favorite   INTEGER DEFAULT 0,
+  hidden     INTEGER DEFAULT 0,
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ai_prompt_templates (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,

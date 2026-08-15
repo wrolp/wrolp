@@ -172,6 +172,8 @@ interface AiChatPanelProps {
   onInputHeightChange?: (height: number) => void
   /** Open the Settings tab (AI section) — used when no endpoint is configured. */
   onOpenSettings?: () => void
+  /** Save selected text as a command snippet (floating command list). */
+  onAddCommandSnippet?: (text: string) => void
   /** Default AI read-only mode, taken from the global AI setting. The panel can
    *  toggle away from it at runtime. */
   defaultReadOnly?: boolean
@@ -243,6 +245,7 @@ export default function AiChatPanel({
   inputHeight,
   onInputHeightChange,
   onOpenSettings,
+  onAddCommandSnippet,
   defaultReadOnly,
   defaultMaxAgentRounds,
 }: AiChatPanelProps) {
@@ -1570,6 +1573,20 @@ export default function AiChatPanel({
             >
               <Icon name="send" size={12} />
               {t('sendToShell')}
+            </button>
+            <button
+              type="button"
+              className="ai-chat-selection-send"
+              title={t('addToCommandList')}
+              onClick={() => {
+                const live = window.getSelection()?.toString().trim() ?? ''
+                const text = (live.length > 0 ? live : selection.text).trim()
+                if (text.length > 0) onAddCommandSnippet?.(text)
+                clearSelection()
+              }}
+            >
+              <Icon name="plus" size={12} />
+              {t('addToCommandList')}
             </button>
           </div>
         )}

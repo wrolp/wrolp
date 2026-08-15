@@ -7,7 +7,7 @@ task
 package-lock.json
 
 CODEBUDDY.md
-dist-ckeck
+dist-check
 
 # Local app data (credentials, recordings, window state)
 *.db

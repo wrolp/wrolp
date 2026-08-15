@@ -406,6 +406,31 @@ const en = {
   general: 'General',
   cmds: 'cmds',
 
+  // Command snippets (floating command list)
+  commandList: 'Command List',
+  addToCommandList: 'Add to command list',
+  addedToCommandList: 'Added to command list',
+  commandListEmpty:
+    'No commands saved yet. Select text in the terminal or AI chat and add it here.',
+  commandListSearch: 'Search commands…',
+  favoriteOnly: 'Favorites only',
+  showHidden: 'Show hidden',
+  favorite: 'Favorite',
+  unfavorite: 'Remove favorite',
+  hideCommand: 'Hide',
+  unhideCommand: 'Unhide',
+  hiddenCommand: 'Hidden',
+  deleteSnippetConfirm: 'Delete this command?',
+  snippetAlias: 'Alias (optional)',
+  snippetCommand: 'Command',
+  snippetAliasPlaceholder: 'e.g. Check disk usage',
+  snippetCommandPlaceholder: 'e.g. df -h',
+  saveSnippet: 'Save',
+  editCommandList: 'Edit Command',
+  addCommand: 'Add command',
+  commandListHint: 'Click a command to send it to the terminal (press Enter to run).',
+  cmdListOpacity: 'Panel opacity',
+
   // Host analysis
   analyzeHost: 'Analyze Host',
   analyzing: 'Analyzing…',

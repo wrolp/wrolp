@@ -39,6 +39,21 @@ pub struct CommandSetDto {
   pub updated_at: String,
 }
 
+/// A single command snippet for the floating command list. Clicking it sends
+/// the command text to the terminal WITHOUT executing it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandSnippetDto {
+  pub id: String,
+  pub command: String,
+  pub alias: Option<String>,
+  pub favorite: bool,
+  pub hidden: bool,
+  pub sort_order: i64,
+  pub created_at: String,
+  pub updated_at: String,
+}
+
 // ==================== In-memory recording event ====================
 
 #[derive(Debug, Clone)]
@@ -327,6 +342,80 @@ pub fn save_command_set(conn: &Connection, cmd_set: &CommandSetDto) -> Result<St
 pub fn delete_command_set(conn: &Connection, id: &str) -> Result<(), String> {
   conn
     .execute("DELETE FROM command_sets WHERE id = ?1", params![id])
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// ==================== Command Snippet Queries ====================
+
+fn map_snippet_row(row: &rusqlite::Row) -> rusqlite::Result<CommandSnippetDto> {
+  Ok(CommandSnippetDto {
+    id: row.get(0)?,
+    command: row.get(1)?,
+    alias: row.get(2)?,
+    favorite: row.get::<_, i64>(3)? != 0,
+    hidden: row.get::<_, i64>(4)? != 0,
+    sort_order: row.get(5)?,
+    created_at: row.get(6)?,
+    updated_at: row.get(7)?,
+  })
+}
+
+pub fn list_command_snippets(conn: &Connection) -> Result<Vec<CommandSnippetDto>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT id, command, alias, favorite, hidden, sort_order, created_at, updated_at \
+       FROM command_snippets ORDER BY favorite DESC, sort_order ASC, updated_at DESC",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map([], map_snippet_row)
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Result<String, String> {
+  let updated = conn
+    .execute(
+      "UPDATE command_snippets SET command = ?1, alias = ?2, favorite = ?3, hidden = ?4, \
+       sort_order = ?5, updated_at = ?6 WHERE id = ?7",
+      params![
+        snip.command,
+        snip.alias,
+        snip.favorite as i64,
+        snip.hidden as i64,
+        snip.sort_order,
+        snip.updated_at,
+        snip.id
+      ],
+    )
+    .map_err(|e| e.to_string())?;
+  if updated == 0 {
+    conn
+      .execute(
+        "INSERT INTO command_snippets (id, command, alias, favorite, hidden, sort_order, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+          snip.id,
+          snip.command,
+          snip.alias,
+          snip.favorite as i64,
+          snip.hidden as i64,
+          snip.sort_order,
+          snip.created_at,
+          snip.updated_at
+        ],
+      )
+      .map_err(|e| e.to_string())?;
+  }
+  Ok(snip.id.clone())
+}
+
+pub fn delete_command_snippet(conn: &Connection, id: &str) -> Result<(), String> {
+  conn
+    .execute("DELETE FROM command_snippets WHERE id = ?1", params![id])
     .map_err(|e| e.to_string())?;
   Ok(())
 }
