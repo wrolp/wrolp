@@ -2,12 +2,16 @@
  * Terminal output syntax highlighting for `cat` / `head` / `tail` file views.
  *
  * A plain `cat foo.py` prints uncolored text (no `bat`/`pygmentize` on the
- * remote host). This module reuses Monaco's Monarch tokenizer (already bundled
- * for the file editor — no new dependency) and maps its token types to 24-bit
- * ANSI SGR color codes, so highlighted text can be written straight into
- * xterm.js via `term.write(...)`.
+ * remote host). This module uses a small built-in, regex-driven tokenizer
+ * (no dependency) and maps token types to 24-bit ANSI SGR color codes, so
+ * highlighted text can be written straight into xterm.js via `term.write(...)`.
+ *
+ * NOTE: we intentionally do NOT use Monaco's `editor.tokenize`. Since
+ * monaco-editor 0.52 the built-in languages (json/js/python/yaml…) register an
+ * asynchronous worker-based tokenizer, so the synchronous `tokenize` API
+ * returns empty tokens for them — the old approach silently produced NO
+ * highlighting at all. Our own tokenizer is synchronous and always works.
  */
-import * as monaco from 'monaco-editor'
 import { detectLanguage } from '../editor/languages'
 
 const RESET = '\x1b[0m'
@@ -129,7 +133,289 @@ export function parsePrintCommand(rawCmd: string): PrintCommandMatch | null {
 
 // ---- token → color mapping (VS Code Dark+ palette, matches the terminal theme) ----
 
-/** Map a Monarch token type to a 24-bit foreground color, or null for default. */
+// ---- built-in tokenizers ----
+
+interface TokenRule {
+  /** Sticky (anchored at current position) regex; first match wins. */
+  regex: RegExp
+  type: string
+}
+
+type LineTokenizer = (line: string) => RawToken[]
+
+/** Scan `line` with sticky rules; unmatched characters become plain tokens. */
+function scan(line: string, rules: TokenRule[]): RawToken[] {
+  const tokens: RawToken[] = []
+  let pos = 0
+  const len = line.length
+  while (pos < len) {
+    let advanced = false
+    for (const rule of rules) {
+      rule.regex.lastIndex = pos
+      const m = rule.regex.exec(line)
+      if (m && m.index === pos && m[0].length > 0) {
+        tokens.push({ offset: pos, type: rule.type })
+        pos += m[0].length
+        advanced = true
+        break
+      }
+    }
+    if (!advanced) pos++ // plain character
+  }
+  return tokens
+}
+
+const s = (re: RegExp | string, type: string): TokenRule => ({
+  regex: new RegExp(re instanceof RegExp ? re.source : re, 'y'),
+  type,
+})
+const COMMENT = (re: RegExp | string): TokenRule => s(re, 'comment')
+const STRING = (): TokenRule => s(/"((?:\\.|[^"\\])*)"/, 'string')
+const SQ_STRING = (): TokenRule => s(/'[^']*'/, 'string')
+const NUMBER = (): TokenRule => s(/-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/, 'number')
+const KEYWORDS = (words: string[]): TokenRule => s(`\\b(?:${words.join('|')})\\b`, 'keyword')
+
+/** One JSON line (keys, strings, numbers, booleans, punctuation). */
+const tokenizeJson: LineTokenizer = (line) =>
+  scan(line, [
+    s(/[{}[\]]/, 'delimiter.bracket'),
+    s(/"((?:\\.|[^"\\])*)"(?=\s*:)/, 'key'),
+    STRING(),
+    s(/\b(?:true|false|null)\b/, 'keyword'),
+    NUMBER(),
+  ])
+
+/** YAML: comments, keys before `:`, quoted scalars, booleans, numbers. */
+const tokenizeYaml: LineTokenizer = (line) =>
+  scan(line, [
+    COMMENT(/#.*/),
+    s(/[A-Za-z_][\w.-]*(?=\s*:)/, 'key'),
+    STRING(),
+    SQ_STRING(),
+    s(/\b(?:true|false|null|yes|no|on|off|True|False|None|Yes|No|On|Off)\b/, 'keyword'),
+    NUMBER(),
+  ])
+
+/** INI / properties / env: comments, `key=value` key, quoted value, numbers. */
+const tokenizeIni: LineTokenizer = (line) =>
+  scan(line, [
+    COMMENT(/[;#].*/),
+    s(/\[[^\]]*\]/, 'type'),
+    s(/[A-Za-z0-9_.-]+(?=\s*[=:])/, 'key'),
+    STRING(),
+    NUMBER(),
+  ])
+
+/** Shell script: comments, quoted strings, common keywords, numbers, variables. */
+const tokenizeShellLang: LineTokenizer = (line) =>
+  scan(line, [
+    COMMENT(/#.*/),
+    STRING(),
+    SQ_STRING(),
+    s(/\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/, 'variable'),
+    KEYWORDS([
+      'if',
+      'then',
+      'else',
+      'elif',
+      'fi',
+      'for',
+      'while',
+      'until',
+      'do',
+      'done',
+      'case',
+      'esac',
+      'in',
+      'function',
+      'return',
+      'exit',
+      'echo',
+      'cd',
+      'export',
+      'local',
+      'read',
+      'set',
+      'shift',
+      'source',
+      'alias',
+      'unset',
+      'declare',
+    ]),
+    NUMBER(),
+  ])
+
+/** Python: comments, strings (incl. docstrings), numbers, keywords. */
+const tokenizePython: LineTokenizer = (line) =>
+  scan(line, [
+    COMMENT(/#.*/),
+    s(/"""[\s\S]*?"""|'''[\s\S]*?'''/, 'string'),
+    STRING(),
+    SQ_STRING(),
+    KEYWORDS([
+      'def',
+      'class',
+      'return',
+      'import',
+      'from',
+      'as',
+      'if',
+      'elif',
+      'else',
+      'for',
+      'while',
+      'in',
+      'not',
+      'and',
+      'or',
+      'None',
+      'True',
+      'False',
+      'try',
+      'except',
+      'finally',
+      'with',
+      'yield',
+      'lambda',
+      'global',
+      'nonlocal',
+      'pass',
+      'break',
+      'continue',
+      'raise',
+      'assert',
+      'del',
+    ]),
+    NUMBER(),
+  ])
+
+/** C-like family (js/ts/go/rust/java/c/cpp/csharp/php): comments, strings, numbers, keywords. */
+const C_LIKE_KEYWORDS = [
+  'function',
+  'const',
+  'let',
+  'var',
+  'return',
+  'if',
+  'else',
+  'for',
+  'while',
+  'do',
+  'switch',
+  'case',
+  'break',
+  'continue',
+  'default',
+  'class',
+  'interface',
+  'extends',
+  'implements',
+  'new',
+  'this',
+  'super',
+  'typeof',
+  'instanceof',
+  'import',
+  'export',
+  'from',
+  'as',
+  'try',
+  'catch',
+  'finally',
+  'throw',
+  'void',
+  'public',
+  'private',
+  'protected',
+  'static',
+  'readonly',
+  'abstract',
+  'enum',
+  'struct',
+  'trait',
+  'impl',
+  'fn',
+  'let',
+  'mut',
+  'package',
+  'namespace',
+  'true',
+  'false',
+  'null',
+  'undefined',
+  'NaN',
+  'async',
+  'await',
+  'yield',
+]
+const tokenizeCLike: LineTokenizer = (line) =>
+  scan(line, [
+    COMMENT(/\/\/.*|\/\*[\s\S]*?\*\//),
+    STRING(),
+    SQ_STRING(),
+    s(/`[^`]*`/, 'string'),
+    KEYWORDS(C_LIKE_KEYWORDS),
+    NUMBER(),
+  ])
+
+/** XML/HTML: tags, attribute names/values. */
+const tokenizeXml: LineTokenizer = (line) =>
+  scan(line, [
+    COMMENT(/<!--[\s\S]*?-->/),
+    s(/<\/?[A-Za-z_][\w-]*/, 'tag'),
+    s(/[A-Za-z_:][\w:.-]*(?==\s*["'])/, 'attribute.name'),
+    STRING(),
+    SQ_STRING(),
+  ])
+
+/** CSS: comments, selectors, property names, values. */
+const tokenizeCss: LineTokenizer = (line) =>
+  scan(line, [
+    COMMENT(/\/\*[\s\S]*?\*\//),
+    s(/[A-Za-z-]+(?=\s*:)/, 'key'),
+    s(/#[0-9a-fA-F]{3,8}\b/, 'constant'),
+    s(/\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms|deg|fr|ch)?\b/, 'number'),
+    STRING(),
+  ])
+
+/** Markdown: headings, emphasis, inline code, links. */
+const tokenizeMarkdown: LineTokenizer = (line) =>
+  scan(line, [
+    s(/^#{1,6}\s+.*$/, 'keyword'),
+    s(/`[^`]*`/, 'string'),
+    s(/\*\*[^*]+\*\*|__[^_]+__/, 'keyword'),
+    s(/\*[^*]+\*|_[^_]+_/, 'function'),
+    s(/\[[^\]]*\]\([^)]*\)/, 'tag'),
+    s(/^[-*+]\s+/, 'keyword'),
+  ])
+
+const LANG_TOKENIZERS: Record<string, LineTokenizer> = {
+  json: tokenizeJson,
+  yaml: tokenizeYaml,
+  ini: tokenizeIni,
+  properties: tokenizeIni,
+  shell: tokenizeShellLang,
+  python: tokenizePython,
+  javascript: tokenizeCLike,
+  typescript: tokenizeCLike,
+  go: tokenizeCLike,
+  rust: tokenizeCLike,
+  java: tokenizeCLike,
+  c: tokenizeCLike,
+  cpp: tokenizeCLike,
+  csharp: tokenizeCLike,
+  php: tokenizeCLike,
+  xml: tokenizeXml,
+  html: tokenizeXml,
+  css: tokenizeCss,
+  scss: tokenizeCss,
+  less: tokenizeCss,
+  markdown: tokenizeMarkdown,
+  sql: tokenizeCLike,
+  lua: tokenizeCLike,
+}
+
+/** Map a token type to a 24-bit foreground color, or null for default. */
 function tokenColor(type: string): string | null {
   if (!type) return null
   const t = type.toLowerCase()
@@ -221,55 +507,15 @@ function detectLanguageFromShebang(text: string): string | null {
   return null
 }
 
-// Monaco registers its built-in languages lazily (the Monarch grammar loads on
-// first use via a dynamic import). Until a grammar is loaded, `tokenize`
-// returns empty tokens. We warm grammars up in the background so the first
-// `cat` already highlights, and self-heal on any later miss.
-const warmingUp = new Set<string>()
-
-function warmupLanguage(lang: string): void {
-  if (warmingUp.has(lang)) return
-  warmingUp.add(lang)
-  monaco.editor
-    .colorize('', lang, {})
-    .catch(() => {})
-    .finally(() => warmingUp.delete(lang))
-}
-
-const COMMON_LANGS = [
-  'python',
-  'javascript',
-  'typescript',
-  'json',
-  'yaml',
-  'shell',
-  'xml',
-  'html',
-  'css',
-  'markdown',
-  'rust',
-  'go',
-  'java',
-  'c',
-  'cpp',
-  'csharp',
-  'php',
-  'ruby',
-  'ini',
-  'sql',
-  'dockerfile',
-  'lua',
-]
-
-/** Warm up the most common languages' Monarch grammars (called once at startup). */
+/** No-op retained for API compatibility (previously warmed Monaco grammars). */
 export function preloadHighlightLanguages(): void {
-  for (const lang of COMMON_LANGS) warmupLanguage(lang)
+  /* built-in tokenizer needs no warm-up */
 }
 
 /**
  * Tokenize `text` for `lang` and return one colored string per line (no
  * trailing newlines, plain text left untouched). Falls back to the input lines
- * when the language has no grammar or tokenization fails.
+ * when the language has no tokenizer or tokenization fails.
  */
 export function highlightLines(text: string, lang: string): string[] {
   let l = lang
@@ -278,24 +524,12 @@ export function highlightLines(text: string, lang: string): string[] {
     if (fromShebang) l = fromShebang
   }
   const lines = text.split('\n')
-  if (!l || l === 'plaintext') return lines
-
-  let tokensByLine: RawToken[][]
-  try {
-    tokensByLine = monaco.editor.tokenize(text, l) as unknown as RawToken[][]
-  } catch {
-    return lines
-  }
-
-  if (!tokensByLine.some((toks) => toks.length > 0)) {
-    // Grammar not loaded yet (lazy) — warm it up for next time, stay plain now.
-    warmupLanguage(l)
-    return lines
-  }
+  const tokenizer = (l && LANG_TOKENIZERS[l]) || null
+  if (!tokenizer) return lines
 
   const out = new Array<string>(lines.length)
   for (let i = 0; i < lines.length; i++) {
-    out[i] = colorizeLine(lines[i], tokensByLine[i] ?? [])
+    out[i] = colorizeLine(lines[i], tokenizer(lines[i]))
   }
   return out
 }
