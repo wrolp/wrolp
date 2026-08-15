@@ -307,6 +307,7 @@ const en = {
   aiChatSugCustom: 'My Templates',
   aiChatSugManage: 'Manage templates',
   aiChatSugAdd: 'Add template',
+  aiChatSugNew: 'New template',
   aiChatSugList: 'My templates',
   aiChatSugNamePlaceholder: 'Template name',
   aiChatSugPromptPlaceholder: 'Prompt sent to the AI…',

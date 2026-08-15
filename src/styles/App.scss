@@ -6857,6 +6857,32 @@ input[type='password']::-ms-clear {
       background: rgba(255, 255, 255, 0.08);
     }
   }
+
+  .ai-chat-template-new {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: 100%;
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: $accent;
+    border: 1px solid $accent-hover;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: $accent-hover;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
 }
 
 .ai-chat-image-chip {

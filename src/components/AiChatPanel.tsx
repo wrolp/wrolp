@@ -1784,6 +1784,18 @@ export default function AiChatPanel({
                         ))}
                       </div>
                     )}
+                    <button
+                      type="button"
+                      className="ai-chat-template-new"
+                      onClick={() => {
+                        setTemplatePickerOpen(false)
+                        openNewTemplate()
+                      }}
+                      disabled={streaming}
+                    >
+                      <Icon name="plus" size={12} />
+                      {t('aiChatSugNew')}
+                    </button>
                   </div>
                 )}
               </div>

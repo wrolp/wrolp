@@ -305,6 +305,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatSugCustom: '我的模板',
   aiChatSugManage: '管理模板',
   aiChatSugAdd: '添加模板',
+  aiChatSugNew: '新建模板',
   aiChatSugList: '我的模板',
   aiChatSugNamePlaceholder: '模板名称',
   aiChatSugPromptPlaceholder: '发送给 AI 的提示词……',
