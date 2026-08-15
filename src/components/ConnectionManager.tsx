@@ -1,8 +1,18 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { ConnectionConfig, LocalTerminalEntry } from '../types'
-import { saveConnection as saveConn, deleteConnection, reorderConnections, renameGroup, deleteGroup, getLocalTerminals, saveLocalTerminals } from '../commands'
+import type { ConnectionConfig, LocalTerminalEntry, TunnelInfo } from '../types'
+import {
+  saveConnection as saveConn,
+  deleteConnection,
+  reorderConnections,
+  renameGroup,
+  deleteGroup,
+  getLocalTerminals,
+  saveLocalTerminals,
+  startTunnel,
+  stopTunnel,
+} from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -26,6 +36,11 @@ interface ConnectionManagerProps {
   onLocalTerminalsChanged?: () => void
   collapsedGroups?: string[]
   onCollapsedGroupsChange?: (value: string[]) => void
+  /** Active SSH tunnels, shown as children of the connection that owns them. */
+  tunnels?: TunnelInfo[]
+  /** Connected tab id per connection (to carry a new tunnel). */
+  tunnelCarrierTabId?: Record<string, number>
+  onTunnelsChanged?: () => void
 }
 
 // Built-in shell presets selectable for a local terminal entry.
@@ -58,6 +73,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onLocalTerminalsChanged,
   collapsedGroups = [],
   onCollapsedGroupsChange,
+  tunnels = [],
+  tunnelCarrierTabId = {},
+  onTunnelsChanged,
 }) => {
   const { t } = useI18n()
   const [showModal, setShowModal] = useState(false)
@@ -81,6 +99,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     y: number
     group: string
   } | null>(null)
+  const [tunnelForm, setTunnelForm] = useState<ConnectionConfig | null>(null)
+  const [tunnelFormError, setTunnelFormError] = useState('')
+  const [tfLocalPort, setTfLocalPort] = useState('')
+  const [tfRemoteHost, setTfRemoteHost] = useState('')
+  const [tfRemotePort, setTfRemotePort] = useState('')
+  const [tfName, setTfName] = useState('')
+  const [tunnelStarting, setTunnelStarting] = useState(false)
 
   // Drag-and-drop state
   const dragDataRef = useRef<{
@@ -224,8 +249,72 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   }
 
   const handleDelete = async (conn: ConnectionConfig) => {
-    setConfirmDelete({ title: t('deleteConnection'), message: t('deleteConnectionConfirm', { name: conn.name }), onConfirm: () => deleteConnection(conn.id).then(onConnectionChange) })
+    setConfirmDelete({
+      title: t('deleteConnection'),
+      message: t('deleteConnectionConfirm', { name: conn.name }),
+      onConfirm: () => deleteConnection(conn.id).then(onConnectionChange),
+    })
     setContextMenu(null)
+  }
+
+  const openTunnelForm = (conn: ConnectionConfig) => {
+    setTunnelFormError('')
+    setTfLocalPort('')
+    setTfRemoteHost('')
+    setTfRemotePort('')
+    setTfName('')
+    setTunnelForm(conn)
+  }
+
+  const handleStartTunnel = async () => {
+    if (!tunnelForm) return
+    const tabId = tunnelCarrierTabId[tunnelForm.id]
+    if (tabId == null) {
+      setTunnelFormError(t('tunnelNoConnectedTab'))
+      return
+    }
+    const localPort = Number(tfLocalPort)
+    const remotePort = Number(tfRemotePort)
+    if (!Number.isInteger(localPort) || localPort <= 0 || localPort > 65535) {
+      setTunnelFormError(t('tunnelBadLocalPort'))
+      return
+    }
+    if (!Number.isInteger(remotePort) || remotePort <= 0 || remotePort > 65535) {
+      setTunnelFormError(t('tunnelBadRemotePort'))
+      return
+    }
+    const remoteHost = tfRemoteHost.trim()
+    if (!remoteHost) {
+      setTunnelFormError(t('tunnelBadRemoteHost'))
+      return
+    }
+    setTunnelStarting(true)
+    setTunnelFormError('')
+    try {
+      await startTunnel({
+        tabId,
+        connectionId: tunnelForm.id,
+        localPort,
+        remoteHost,
+        remotePort,
+        name: tfName.trim() || undefined,
+      })
+      setTunnelForm(null)
+      onTunnelsChanged?.()
+    } catch (e) {
+      setTunnelFormError(String(e))
+    } finally {
+      setTunnelStarting(false)
+    }
+  }
+
+  const handleStopTunnel = async (id: number) => {
+    try {
+      await stopTunnel(id)
+      onTunnelsChanged?.()
+    } catch (e) {
+      console.error('Failed to stop tunnel:', e)
+    }
   }
 
   const handleRenameGroup = async (oldName: string) => {
@@ -251,6 +340,40 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       onConnectionChange()
     }
     setGroupContextMenu(null)
+  }
+
+  /** Tunnels belonging to a connection, rendered as tree children. */
+  const renderTunnels = (connId: string) => {
+    const connTunnels = tunnels.filter((tun) => tun.connectionId === connId)
+    if (connTunnels.length === 0) return null
+    return (
+      <div className="conn-tunnels">
+        {connTunnels.map((tun) => (
+          <div
+            className="conn-tunnel"
+            key={tun.id}
+            title={`${tun.localAddr} → ${tun.remoteHost}:${tun.remotePort}`}
+          >
+            <Icon name="link" size={11} className="conn-tunnel-icon" />
+            <span className="conn-tunnel-local">{tun.localAddr}</span>
+            <span className="conn-tunnel-arrow">→</span>
+            <span className="conn-tunnel-remote">
+              {tun.remoteHost}:{tun.remotePort}
+            </span>
+            <span
+              className="conn-tunnel-stop"
+              title={t('stopTunnel')}
+              onClick={(e) => {
+                e.stopPropagation()
+                void handleStopTunnel(tun.id)
+              }}
+            >
+              ×
+            </span>
+          </div>
+        ))}
+      </div>
+    )
   }
 
   return (
@@ -296,7 +419,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               />
               {connections.length === 0 ? (
                 <div className="empty-state">
-                  <div><Icon name="desktop" /></div>
+                  <div>
+                    <Icon name="desktop" />
+                  </div>
                   <div>{t('noConnectionsYet')}</div>
                   <div style={{ fontSize: '12px', marginTop: '8px' }}>
                     {t('addSshConnectionHint')}
@@ -305,41 +430,41 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               ) : grouped.length === 1 && grouped[0][0] === UNGROUPED ? (
                 // No groups — render flat list
                 grouped[0][1].map((conn) => (
-                  <ConnectionItem
-                    key={conn.id}
-                    conn={conn}
-                    onSelect={onSelectConnection}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      setContextMenu({ x: e.clientX, y: e.clientY, conn })
-                    }}
-                    onDragStart={(e, c) => {
-                      dragDataRef.current = { type: 'connection', id: c.id, group: groupOf(c) }
-                      e.dataTransfer.effectAllowed = 'move'
-                    }}
-                    onDragOver={(e, c) => {
-                      e.preventDefault()
-                      const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                      setDragOverTarget({ key: `conn:${c.id}`, position: pos })
-                    }}
-                    onDragLeave={() => setDragOverTarget(null)}
-                    onDrop={(e, c) => {
-                      e.preventDefault()
-                      const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                      handleDrop('connection', c.id, groupOf(c), pos)
-                    }}
-                    onDragEnd={() => {
-                      dragDataRef.current = null
-                      setDragOverTarget(null)
-                    }}
-                    isDragOver={
-                      dragOverTarget?.key === `conn:${conn.id}`
-                        ? dragOverTarget.position
-                        : null
-                    }
-                    onEdit={(c) => handleEdit(c)}
-                    onDelete={(c) => handleDelete(c)}
-                  />
+                  <React.Fragment key={conn.id}>
+                    <ConnectionItem
+                      conn={conn}
+                      onSelect={onSelectConnection}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        setContextMenu({ x: e.clientX, y: e.clientY, conn })
+                      }}
+                      onDragStart={(e, c) => {
+                        dragDataRef.current = { type: 'connection', id: c.id, group: groupOf(c) }
+                        e.dataTransfer.effectAllowed = 'move'
+                      }}
+                      onDragOver={(e, c) => {
+                        e.preventDefault()
+                        const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                        setDragOverTarget({ key: `conn:${c.id}`, position: pos })
+                      }}
+                      onDragLeave={() => setDragOverTarget(null)}
+                      onDrop={(e, c) => {
+                        e.preventDefault()
+                        const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                        handleDrop('connection', c.id, groupOf(c), pos)
+                      }}
+                      onDragEnd={() => {
+                        dragDataRef.current = null
+                        setDragOverTarget(null)
+                      }}
+                      isDragOver={
+                        dragOverTarget?.key === `conn:${conn.id}` ? dragOverTarget.position : null
+                      }
+                      onEdit={(c) => handleEdit(c)}
+                      onDelete={(c) => handleDelete(c)}
+                    />
+                    {renderTunnels(conn.id)}
+                  </React.Fragment>
                 ))
               ) : (
                 // Grouped rendering
@@ -401,7 +526,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         <span className="conn-group-count">{conns.length}</span>
                         <button
                           className="conn-group-add"
-                          title={t('addConnectionTo', { group: isUngrouped ? t('ungrouped') : key })}
+                          title={t('addConnectionTo', {
+                            group: isUngrouped ? t('ungrouped') : key,
+                          })}
                           onClick={(e) => {
                             e.stopPropagation()
                             setEditing(null)
@@ -414,42 +541,48 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       </div>
                       {!collapsed &&
                         conns.map((conn) => (
-                          <ConnectionItem
-                            key={conn.id}
-                            conn={conn}
-                            indent
-                            onSelect={onSelectConnection}
-                            onContextMenu={(e) => {
-                              e.preventDefault()
-                              setContextMenu({ x: e.clientX, y: e.clientY, conn })
-                            }}
-                            onDragStart={(e, c) => {
-                              dragDataRef.current = { type: 'connection', id: c.id, group: groupOf(c) }
-                              e.dataTransfer.effectAllowed = 'move'
-                            }}
-                            onDragOver={(e, c) => {
-                              e.preventDefault()
-                              const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                              setDragOverTarget({ key: `conn:${c.id}`, position: pos })
-                            }}
-                            onDragLeave={() => setDragOverTarget(null)}
-                            onDrop={(e, c) => {
-                              e.preventDefault()
-                              const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                              handleDrop('connection', c.id, groupOf(c), pos)
-                            }}
-                            onDragEnd={() => {
-                              dragDataRef.current = null
-                              setDragOverTarget(null)
-                            }}
-                            isDragOver={
-                              dragOverTarget?.key === `conn:${conn.id}`
-                                ? dragOverTarget.position
-                                : null
-                            }
-                            onEdit={(c) => handleEdit(c)}
-                            onDelete={(c) => handleDelete(c)}
-                          />
+                          <React.Fragment key={conn.id}>
+                            <ConnectionItem
+                              conn={conn}
+                              indent
+                              onSelect={onSelectConnection}
+                              onContextMenu={(e) => {
+                                e.preventDefault()
+                                setContextMenu({ x: e.clientX, y: e.clientY, conn })
+                              }}
+                              onDragStart={(e, c) => {
+                                dragDataRef.current = {
+                                  type: 'connection',
+                                  id: c.id,
+                                  group: groupOf(c),
+                                }
+                                e.dataTransfer.effectAllowed = 'move'
+                              }}
+                              onDragOver={(e, c) => {
+                                e.preventDefault()
+                                const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                                setDragOverTarget({ key: `conn:${c.id}`, position: pos })
+                              }}
+                              onDragLeave={() => setDragOverTarget(null)}
+                              onDrop={(e, c) => {
+                                e.preventDefault()
+                                const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                                handleDrop('connection', c.id, groupOf(c), pos)
+                              }}
+                              onDragEnd={() => {
+                                dragDataRef.current = null
+                                setDragOverTarget(null)
+                              }}
+                              isDragOver={
+                                dragOverTarget?.key === `conn:${conn.id}`
+                                  ? dragOverTarget.position
+                                  : null
+                              }
+                              onEdit={(c) => handleEdit(c)}
+                              onDelete={(c) => handleDelete(c)}
+                            />
+                            {renderTunnels(conn.id)}
+                          </React.Fragment>
                         ))}
                     </div>
                   )
@@ -475,11 +608,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           connection={editing}
           defaultGroup={defaultGroup}
           existingGroups={Array.from(
-            new Set(
-              connections
-                .map((c) => c.group?.trim())
-                .filter((g): g is string => !!g),
-            ),
+            new Set(connections.map((c) => c.group?.trim()).filter((g): g is string => !!g)),
           )}
           onClose={() => {
             setShowModal(false)
@@ -515,6 +644,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           }}
           onSplitDown={() => {
             onSplitDown(contextMenu.conn)
+            setContextMenu(null)
+          }}
+          onAddTunnel={() => {
+            openTunnelForm(contextMenu.conn)
             setContextMenu(null)
           }}
           onEdit={() => {
@@ -554,6 +687,70 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 }}
               >
                 {t('delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tunnelForm && (
+        <div className="modal-overlay" onClick={() => !tunnelStarting && setTunnelForm(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">
+              {t('addTunnel')} — {tunnelForm.name}
+            </div>
+            <div
+              className="modal-body"
+              style={{ padding: '12px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}
+            >
+              <div className="form-group">
+                <label>{t('tunnelLocalPort')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={tfLocalPort}
+                  onChange={(e) => setTfLocalPort(e.target.value)}
+                  placeholder="8080"
+                />
+              </div>
+              <div className="form-group">
+                <label>{t('tunnelRemoteHost')}</label>
+                <input
+                  value={tfRemoteHost}
+                  onChange={(e) => setTfRemoteHost(e.target.value)}
+                  placeholder="localhost"
+                />
+              </div>
+              <div className="form-group">
+                <label>{t('tunnelRemotePort')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={tfRemotePort}
+                  onChange={(e) => setTfRemotePort(e.target.value)}
+                  placeholder="3306"
+                />
+              </div>
+              <div className="form-group">
+                <label>{t('tunnelName')}</label>
+                <input
+                  value={tfName}
+                  onChange={(e) => setTfName(e.target.value)}
+                  placeholder={t('tunnelNamePlaceholder')}
+                />
+              </div>
+              {tunnelFormError && <div className="form-error">{tunnelFormError}</div>}
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setTunnelForm(null)}>{t('cancel')}</button>
+              <button
+                className="primary"
+                disabled={tunnelStarting}
+                onClick={() => void handleStartTunnel()}
+              >
+                {tunnelStarting ? t('startingTunnel') : t('startTunnel')}
               </button>
             </div>
           </div>
@@ -656,7 +853,12 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
       return
     }
     // Name is optional; fall back to the last path segment of the directory.
-    const fallbackName = cwd.trim().replace(/[\\/]+$/, '').split(/[\\/]/).pop() || cwd.trim()
+    const fallbackName =
+      cwd
+        .trim()
+        .replace(/[\\/]+$/, '')
+        .split(/[\\/]/)
+        .pop() || cwd.trim()
     const finalName = name.trim() || fallbackName
     const current = await getLocalTerminals().catch(() => entries)
     let next: LocalTerminalEntry[]
@@ -667,7 +869,12 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
     } else {
       next = [
         ...current,
-        { id: `lt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, name: finalName, cwd: cwd.trim(), shell },
+        {
+          id: `lt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          name: finalName,
+          cwd: cwd.trim(),
+          shell,
+        },
       ]
     }
     await persist(next)
@@ -708,7 +915,9 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
           {/* Default entry: opens a local terminal in the default directory/shell. */}
           <div
             className="conn-item local-term-item local-term-default"
-            onClick={() => onOpen?.({ id: '__default__', name: t('openLocalShell'), cwd: '', shell: '' })}
+            onClick={() =>
+              onOpen?.({ id: '__default__', name: t('openLocalShell'), cwd: '', shell: '' })
+            }
             title={t('openLocalShell')}
           >
             <span className="conn-item-icon">
@@ -936,7 +1145,9 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
       onDrop={(e) => onDrop(e, conn)}
       onDragEnd={onDragEnd}
     >
-      <span className="conn-icon"><Icon name="link" /></span>
+      <span className="conn-icon">
+        <Icon name="link" />
+      </span>
       <div className="conn-info">
         <div className="conn-name">{conn.name}</div>
         {conn.description ? (
@@ -1038,7 +1249,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
       port,
       username: finalUsername,
       password: authType === 'password' ? password : undefined,
-      keyPath: authType === 'key' ? (keyPath.trim() || '~/.ssh/id_rsa') : undefined,
+      keyPath: authType === 'key' ? keyPath.trim() || '~/.ssh/id_rsa' : undefined,
       passphrase: authType === 'key' ? passphrase || undefined : undefined,
       group: group.trim() || undefined,
       description: description.trim() || undefined,
@@ -1077,7 +1288,11 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </div>
           <div className="form-group">
             <label>{t('connectionName')}</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('myServer')} />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('myServer')}
+            />
           </div>
           <div className="form-group">
             <label>{t('username')}</label>
@@ -1088,7 +1303,9 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             />
           </div>
           <div className="form-group">
-            <label>{t('group')} ({t('default')})</label>
+            <label>
+              {t('group')} ({t('default')})
+            </label>
             <select
               className="form-select"
               value={groupMode === 'new' ? '__new__' : group}
@@ -1179,11 +1396,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                     placeholder="~/.ssh/id_rsa (default)"
                     style={{ flex: 1 }}
                   />
-                  <button
-                    type="button"
-                    onClick={handleBrowseKey}
-                    className="btn-browse"
-                  >
+                  <button type="button" onClick={handleBrowseKey} className="btn-browse">
                     {t('browse')}
                   </button>
                 </div>
@@ -1230,6 +1443,7 @@ interface ContextMenuProps {
   y: number
   onSplitRight?: () => void
   onSplitDown?: () => void
+  onAddTunnel?: () => void
   onEdit: () => void
   onDelete: () => void
   onClose: () => void
@@ -1240,6 +1454,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   y,
   onSplitRight,
   onSplitDown,
+  onAddTunnel,
   onEdit,
   onDelete,
   onClose,
@@ -1271,6 +1486,11 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
         </div>
       )}
       {(onSplitRight || onSplitDown) && <div className="context-menu-divider" />}
+      {onAddTunnel && (
+        <div className="context-menu-item" onClick={onAddTunnel}>
+          <Icon name="link" /> {t('addTunnel')}
+        </div>
+      )}
       <div className="context-menu-item" onClick={onEdit}>
         <Icon name="edit" /> {t('edit')}
       </div>

@@ -76,8 +76,16 @@ import {
   renameWorkspace,
   switchWorkspace,
   listConnections,
+  listTunnels,
 } from './commands'
-import type { AppVersion, AiConfig, AiEndpointProfile, ToolCallEvent, WorkspaceInfo } from './types'
+import type {
+  AppVersion,
+  AiConfig,
+  AiEndpointProfile,
+  ToolCallEvent,
+  TunnelInfo,
+  WorkspaceInfo,
+} from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
 import { detectLanguage } from './editor/languages'
@@ -130,6 +138,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('default')
   const [localTerminals, setLocalTerminals] = useState<LocalTerminalEntry[]>([])
+  const [tunnels, setTunnels] = useState<TunnelInfo[]>([])
   const [tabContextMenu, setTabContextMenu] = useState<{
     x: number
     y: number
@@ -1178,6 +1187,32 @@ export default function App() {
       console.error('Failed to load workspaces:', err)
     }
   }
+
+  // Keep the tunnel list in sync: refresh on mount, whenever the backend
+  // reports a change, and whenever any connection drops (its tunnels die too).
+  const loadTunnels = useCallback(async () => {
+    try {
+      setTunnels(await listTunnels())
+    } catch (err) {
+      console.error('Failed to load tunnels:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadTunnels()
+    let unlistenTunnelChanged: (() => void) | null = null
+    let unlistenConnClosed: (() => void) | null = null
+    void listen('tunnel-changed', () => void loadTunnels()).then((un) => {
+      unlistenTunnelChanged = un
+    })
+    void listen('connection-closed', () => void loadTunnels()).then((un) => {
+      unlistenConnClosed = un
+    })
+    return () => {
+      unlistenTunnelChanged?.()
+      unlistenConnClosed?.()
+    }
+  }, [loadTunnels])
 
   // Open new tab (create tab only, connect later)
   // Open a connection as a NEW top-level tab (workspace). Each workspace owns
@@ -2442,6 +2477,17 @@ export default function App() {
   const settingsActive = activeTerminalTab?.tabType === 'settings'
   const aiChatActive = activeTerminalTab?.tabType === 'aiChat'
   const settingsOverlayRef = useRef<HTMLDivElement>(null)
+
+  // Map connection id → a connected terminal tab (the tunnel carrier). First
+  // tab found per connection that is a connected SSH terminal.
+  const tunnelCarrierTabId = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const tab of tabs) {
+      if (tab.tabType !== 'terminal' || tab.status !== 'connected') continue
+      if (tab.connectionId && !(tab.connectionId in map)) map[tab.connectionId] = tab.tabId
+    }
+    return map
+  }, [tabs])
 
   const renderTerminalForTab = (tab: TabInfo, isFocused: boolean, leafId?: string) => {
     const connectConfig = tab.connectionId
@@ -4287,6 +4333,9 @@ export default function App() {
               }
               collapsedGroups={collapsedGroups}
               onCollapsedGroupsChange={handleCollapsedGroupsChange}
+              tunnels={tunnels}
+              tunnelCarrierTabId={tunnelCarrierTabId}
+              onTunnelsChanged={loadTunnels}
             />
           </div>
         )}

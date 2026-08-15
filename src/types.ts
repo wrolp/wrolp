@@ -129,6 +129,30 @@ export interface DirDownloadSummary {
   skipped: number
 }
 
+/** An active SSH port-forwarding tunnel (`ssh -L`), carried by a connected tab. */
+export interface TunnelInfo {
+  id: number
+  tabId: number
+  connectionId: string | null
+  localAddr: string
+  remoteHost: string
+  remotePort: number
+  name: string | null
+  bytes: number
+  active: boolean
+}
+
+/** Arguments for starting a new tunnel. */
+export interface StartTunnelArgs {
+  tabId: number
+  connectionId?: string | null
+  localAddr?: string
+  localPort: number
+  remoteHost: string
+  remotePort: number
+  name?: string
+}
+
 export interface FileContent {
   path: string
   content: string

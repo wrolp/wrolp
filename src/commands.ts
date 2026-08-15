@@ -16,6 +16,8 @@ import type {
   LocalTerminalEntry,
   WorkspaceInfo,
   DirDownloadSummary,
+  TunnelInfo,
+  StartTunnelArgs,
 } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
@@ -373,6 +375,20 @@ export async function saveCommandSnippet(snippet: CommandSnippetDto): Promise<st
 
 export async function deleteCommandSnippet(id: string): Promise<void> {
   await invoke<void>('delete_command_snippet', { id })
+}
+
+// ===== SSH Tunnels (local port forwarding) =====
+
+export async function listTunnels(): Promise<TunnelInfo[]> {
+  return await invoke<TunnelInfo[]>('list_tunnels')
+}
+
+export async function startTunnel(args: StartTunnelArgs): Promise<number> {
+  return await invoke<number>('start_tunnel', { args })
+}
+
+export async function stopTunnel(id: number): Promise<void> {
+  await invoke<void>('stop_tunnel', { id })
 }
 
 // ===== AI Prompt Templates =====

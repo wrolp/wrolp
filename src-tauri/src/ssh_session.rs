@@ -529,6 +529,10 @@ pub struct AppState {
   pub local_shell_dirs: StdMutex<Vec<LocalShellDir>>,
   /// Saved local terminal entries (user-defined local shells with a cwd + shell)
   pub local_terminals: StdMutex<Vec<LocalTerminalEntry>>,
+  /// Active port-forwarding tunnels: id → runtime (acceptor task + metadata).
+  pub tunnels: StdMutex<HashMap<u32, TunnelRuntime>>,
+  /// Monotonic tunnel id counter.
+  pub next_tunnel_id: AtomicU64,
 }
 
 /// A user-defined local terminal: opens a local shell in `cwd` using `shell`.
@@ -541,6 +545,41 @@ pub struct LocalTerminalEntry {
   pub name: String,
   pub cwd: String,
   pub shell: String,
+}
+
+/// One active SSH local port-forwarding tunnel (`ssh -L`). Lives only while
+/// its carrier SSH session (a connected tab) is alive; the accept-loop task is
+/// aborted on `stop_tunnel` or when that session disconnects.
+pub struct TunnelRuntime {
+  pub id: u32,
+  /// The connected tab whose SSH session carries this tunnel.
+  pub tab_id: u32,
+  /// Connection id the tab belongs to (for the sidebar tree display).
+  pub connection_id: Option<String>,
+  /// Local listen address, e.g. "127.0.0.1:8080".
+  pub local_addr: String,
+  pub remote_host: String,
+  pub remote_port: u32,
+  pub name: Option<String>,
+  /// Bytes forwarded (best-effort counter, updated by the accept loop).
+  pub bytes: u64,
+  pub started_at: i64,
+  pub abort: tokio::task::AbortHandle,
+}
+
+/// Lightweight tunnel info returned to the frontend (no AbortHandle).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelInfo {
+  pub id: u32,
+  pub tab_id: u32,
+  pub connection_id: Option<String>,
+  pub local_addr: String,
+  pub remote_host: String,
+  pub remote_port: u32,
+  pub name: Option<String>,
+  pub bytes: u64,
+  pub active: bool,
 }
 
 /// A recorded local-shell working directory (for the "recent directories" list).
@@ -577,6 +616,8 @@ impl AppState {
       local_shells: StdMutex::new(HashMap::new()),
       local_shell_dirs: StdMutex::new(Vec::new()),
       local_terminals: StdMutex::new(get_initial_local_terminals()),
+      tunnels: StdMutex::new(HashMap::new()),
+      next_tunnel_id: AtomicU64::new(1),
     }
   }
 }

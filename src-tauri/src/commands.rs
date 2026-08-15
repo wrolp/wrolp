@@ -1,10 +1,10 @@
 use super::ssh_session::{
   ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
   FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SshError, SshHandler, SshSession,
-  SwitchedUser, TargetRef, TransferControl,
+  SwitchedUser, TargetRef, TransferControl, TunnelInfo,
 };
 use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
-use crate::remote_fs::{build_fs, delete_dir_recursive};
+use crate::remote_fs::{build_fs, delete_dir_recursive, get_jump_handle};
 use encoding_rs::{Encoding, UTF_8};
 use russh::client::{self, Handler};
 use russh::ChannelId;
@@ -760,6 +760,10 @@ pub async fn connect(
                   "tabId": tid,
                 }),
               );
+              // Any tunnels carried by this SSH session are dead now — abort
+              // their accept loops so local listeners close immediately.
+              cleanup_tunnels_for_tab(&app_state, tid);
+              let _ = app_handle.emit("tunnel-changed", serde_json::json!({}));
             } else {
               eprintln!(
                 "[russh] session_id changed for tab={}, skipping stale event",
@@ -5175,4 +5179,153 @@ async fn execute_one_tool(
 fn shell_quote_arg(s: &str) -> String {
   let escaped = s.replace('\'', "'\\''");
   format!("'{}'", escaped)
+}
+
+// ==================== SSH Tunnels (local port forwarding) ====================
+
+/// Arguments for starting a new local port-forwarding tunnel.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartTunnelArgs {
+  /// The connected tab whose SSH session carries the tunnel.
+  pub tab_id: u32,
+  /// Connection id (for the sidebar tree display).
+  pub connection_id: Option<String>,
+  /// Local bind host; defaults to "127.0.0.1".
+  pub local_addr: Option<String>,
+  pub local_port: u16,
+  pub remote_host: String,
+  pub remote_port: u16,
+  pub name: Option<String>,
+}
+
+#[tauri::command]
+pub async fn start_tunnel(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  args: StartTunnelArgs,
+) -> Result<u32, String> {
+  // Validate the carrier session and grab its shared handle.
+  let handle = get_jump_handle(&state, args.tab_id)?;
+
+  let local_addr_str = args.local_addr.clone().unwrap_or_else(|| "127.0.0.1".to_string());
+  let local_sock: std::net::SocketAddr = format!("{}:{}", local_addr_str, args.local_port)
+    .parse()
+    .map_err(|e| format!("Invalid local address: {}", e))?;
+  let listener = tokio::net::TcpListener::bind(local_sock)
+    .await
+    .map_err(|e| format!("Cannot bind {}: {}", local_sock, e))?;
+
+  let id = state.next_tunnel_id.fetch_add(1, Ordering::Relaxed) as u32;
+  let tab_id = args.tab_id;
+  let connection_id = args.connection_id.clone();
+  let remote_host = args.remote_host.clone();
+  let remote_port = args.remote_port as u32;
+  let name = args.name.clone();
+  let started_at = chrono::Utc::now().timestamp();
+  let local_addr_str2 = local_sock.to_string();
+
+  // The accept loop: every inbound local connection opens a direct-tcpip
+  // channel to remote_host:remote_port over the shared SSH session and pipes
+  // bytes both ways. Tunnel bytes never touch the terminal output buffer.
+  let accept_task = tokio::spawn(async move {
+    let _listener = listener;
+    loop {
+      let (mut sock, _) = match _listener.accept().await {
+        Ok(pair) => pair,
+        Err(_) => break,
+      };
+      let handle = handle.clone();
+      let (rh, rp) = (remote_host.clone(), remote_port);
+      tokio::spawn(async move {
+        let channel = match handle
+          .channel_open_direct_tcpip(&rh, rp, "127.0.0.1", 0)
+          .await
+        {
+          Ok(c) => c,
+          Err(_) => return,
+        };
+        let mut stream = channel.into_stream();
+        let _ = tokio::io::copy_bidirectional(&mut sock, &mut stream).await;
+      });
+    }
+  });
+
+  // Register the runtime so stop_tunnel / disconnect cleanup can abort it.
+  {
+    let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+    tunnels.insert(
+      id,
+      super::ssh_session::TunnelRuntime {
+        id,
+        tab_id,
+        connection_id,
+        local_addr: local_addr_str2,
+        remote_host: args.remote_host,
+        remote_port,
+        name,
+        bytes: 0,
+        started_at,
+        abort: accept_task.abort_handle(),
+      },
+    );
+  }
+
+  let _ = app.emit("tunnel-changed", serde_json::json!({}));
+  Ok(id)
+}
+
+/// Snapshot of all active tunnels (for the sidebar tree display).
+#[tauri::command]
+pub async fn list_tunnels(state: tauri::State<'_, AppState>) -> Result<Vec<TunnelInfo>, String> {
+  let tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+  let mut out: Vec<TunnelInfo> = tunnels
+    .iter()
+    .map(|(id, t)| TunnelInfo {
+      id: *id,
+      tab_id: t.tab_id,
+      connection_id: t.connection_id.clone(),
+      local_addr: t.local_addr.clone(),
+      remote_host: t.remote_host.clone(),
+      remote_port: t.remote_port,
+      name: t.name.clone(),
+      bytes: t.bytes,
+      active: true,
+    })
+    .collect();
+  out.sort_by_key(|t| t.id);
+  Ok(out)
+}
+
+/// Stop a tunnel: abort its accept task and drop the listener.
+#[tauri::command]
+pub async fn stop_tunnel(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  id: u32,
+) -> Result<(), String> {
+  let abort = {
+    let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+    tunnels.remove(&id).map(|t| t.abort)
+  };
+  if let Some(abort) = abort {
+    abort.abort();
+  }
+  let _ = app.emit("tunnel-changed", serde_json::json!({}));
+  Ok(())
+}
+
+/// Abort every tunnel carried by `tab_id`'s SSH session (called on disconnect).
+pub fn cleanup_tunnels_for_tab(state: &AppState, tab_id: u32) {
+  if let Ok(mut tunnels) = state.tunnels.lock() {
+    let aborts: Vec<_> = tunnels
+      .iter()
+      .filter(|(_, t)| t.tab_id == tab_id)
+      .map(|(id, t)| (*id, t.abort.clone()))
+      .collect();
+    for (id, abort) in aborts {
+      abort.abort();
+      tunnels.remove(&id);
+    }
+  }
 }
