@@ -50,6 +50,14 @@ export const focusTerminal = (tabId: number): void => {
   if (term) term.focus()
 }
 
+/** Text the user has already typed on the current input line (prompt
+ *  stripped), for the terminal owned by `tabId`. Empty if none / unknown. */
+export const getTerminalInputText = (tabId: number): string => {
+  const term = latestTerminalByTab.get(tabId)
+  if (!term) return ''
+  return stripPrompt(getCurrentCommandLine(term))
+}
+
 // Preserves terminal scrollback across transient re-mounts (float pop-out / dock
 // back). React tears down the xterm instance when its portal container changes,
 // so we serialize the full buffer (ANSI colors included, via @xterm/addon-serialize)
@@ -1850,14 +1858,27 @@ function getCurrentCommandLine(term: Terminal): string {
 // leading shell prompt (plain text) and the command that follows.
 function splitPromptCommand(line: string): { prompt: string; command: string } {
   const noAnsi = line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-  const markers = ['$ ', '# ', '% ', '> ', '❯ ']
+  // Markers in both "with trailing space" and bare forms: PowerShell / cmd
+  // prompts end in `>` (often WITHOUT a trailing space — `PS C:\path>`),
+  // bash/zsh use `$ ` / `# ` / `% ` / `❯ ` (usually WITH a space). Taking the
+  // rightmost match keeps user-typed `>`/`$` inside an actual command intact
+  // enough for the "is there already input?" check: a bare prompt yields an
+  // empty command, a prompt + typed text yields the text.
+  const markers = ['$ ', '# ', '% ', '> ', '❯ ', '$', '#', '%', '>', '❯']
   let idx = -1
+  let matched = ''
   for (const m of markers) {
     const pos = noAnsi.lastIndexOf(m)
-    if (pos > idx) idx = pos
+    if (pos > idx) {
+      idx = pos
+      matched = m
+    }
   }
   if (idx >= 0) {
-    return { prompt: noAnsi.slice(0, idx + 2), command: noAnsi.slice(idx + 2).trimEnd() }
+    return {
+      prompt: noAnsi.slice(0, idx + matched.length),
+      command: noAnsi.slice(idx + matched.length).trimEnd(),
+    }
   }
   return { prompt: '', command: noAnsi.trim() }
 }

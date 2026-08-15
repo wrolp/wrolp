@@ -9,7 +9,7 @@ import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
 import { WorkspaceSelector } from './components/WorkspaceSelector'
 import { ConnectionManager } from './components/ConnectionManager'
-import { TerminalComponent, focusTerminal } from './components/Terminal'
+import { TerminalComponent, focusTerminal, getTerminalInputText } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
@@ -1648,14 +1648,18 @@ export default function App() {
   }, [])
 
   // Send a command snippet's text into the active terminal WITHOUT executing it
-  // (no trailing newline), then return focus to the terminal.
+  // (no trailing newline), then return focus to the terminal. If the user has
+  // already typed a partial command on the input line, join them with ` && `
+  // so the snippet continues the existing pipeline instead of overwriting it.
   const handleSendSnippetToTerminal = useCallback(
     (command: string) => {
       const tab = tabs.find((t) => t.tabId === activeTabId)
       if (!tab || activeTabId == null) return
+      const existing = getTerminalInputText(activeTabId)
+      const joined = existing.trim().length > 0 ? ` && ${command}` : command
       const isLocal = tab.tabType === 'localShell'
       const send = isLocal ? localSendInput : sendInput
-      send(activeTabId, command).catch((e) => console.error('send snippet failed:', e))
+      send(activeTabId, joined).catch((e) => console.error('send snippet failed:', e))
       focusTerminal(activeTabId)
     },
     [tabs, activeTabId],
