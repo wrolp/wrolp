@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { CommandSnippetDto } from '../types'
 import { listCommandSnippets, saveCommandSnippet, deleteCommandSnippet } from '../commands'
+import { focusTerminal } from './Terminal'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
@@ -139,6 +140,11 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     // Keep the panel open so the user can fire several commands in a row; it
     // only closes via the explicit close button / Esc.
     onSendToTerminal(s.command)
+    // The panel stays open, so return focus to the terminal explicitly (the
+    // parent already calls focusTerminal, but the panel's search input can
+    // steal it back once React re-renders).
+    const tid = activeTabId
+    if (tid != null) requestAnimationFrame(() => focusTerminal(tid))
   }
 
   const updateSnippet = async (s: CommandSnippetDto) => {
