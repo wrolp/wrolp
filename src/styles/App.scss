@@ -7259,6 +7259,10 @@ input[type='password']::-ms-clear {
   border-radius: 10px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
   overflow: hidden;
+  // Container query so the header toggle labels adapt to the *panel's* width
+  // (the panel is resizable), not the viewport.
+  container-type: inline-size;
+  container-name: cmdlist;
 }
 
 .cmd-list-header {
@@ -7291,6 +7295,8 @@ input[type='password']::-ms-clear {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  flex-shrink: 1;
   font-size: 11px;
   color: $text-dim;
   cursor: pointer;
@@ -7299,10 +7305,28 @@ input[type='password']::-ms-clear {
   input {
     accent-color: $accent;
     cursor: pointer;
+    flex-shrink: 0;
   }
 
   svg {
     color: $accent;
+    flex-shrink: 0;
+  }
+}
+
+// Toggle label text: ellipsize when the header gets tight, hide entirely when
+// there's no room (icon-only). Driven by the panel's container width.
+.cmd-list-toggle-text {
+  display: inline-block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container cmdlist (max-width: 460px) {
+  .cmd-list-toggle-text {
+    display: none;
   }
 }
 

@@ -5,6 +5,46 @@ import { focusTerminal } from './Terminal'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
+/** Persisted window prefs (position, size, opacity, filter toggles). */
+interface CmdListPrefs {
+  pos: { x: number; y: number } | null
+  size: { w: number; h: number } | null
+  opacity: number
+  favoriteOnly: boolean
+  showHidden: boolean
+}
+
+const CMDLIST_PREFS_KEY = 'wrolp.cmdListPrefs'
+
+function defaultPrefs(): CmdListPrefs {
+  return { pos: null, size: null, opacity: 1, favoriteOnly: false, showHidden: false }
+}
+
+function loadCmdListPrefs(): CmdListPrefs {
+  try {
+    const raw = localStorage.getItem(CMDLIST_PREFS_KEY)
+    if (!raw) return defaultPrefs()
+    const parsed = JSON.parse(raw) as Partial<CmdListPrefs>
+    return {
+      pos: parsed.pos ?? null,
+      size: parsed.size ?? null,
+      opacity: typeof parsed.opacity === 'number' ? parsed.opacity : 1,
+      favoriteOnly: parsed.favoriteOnly ?? false,
+      showHidden: parsed.showHidden ?? false,
+    }
+  } catch {
+    return defaultPrefs()
+  }
+}
+
+function saveCmdListPrefs(p: CmdListPrefs) {
+  try {
+    localStorage.setItem(CMDLIST_PREFS_KEY, JSON.stringify(p))
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
 interface CommandListPanelProps {
   open: boolean
   onClose: () => void
@@ -30,8 +70,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const [snippets, setSnippets] = useState<CommandSnippetDto[]>([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
-  const [favoriteOnly, setFavoriteOnly] = useState(false)
-  const [showHidden, setShowHidden] = useState(false)
+  const [favoriteOnly, setFavoriteOnly] = useState(() => loadCmdListPrefs().favoriteOnly)
+  const [showHidden, setShowHidden] = useState(() => loadCmdListPrefs().showHidden)
   const [menu, setMenu] = useState<{ x: number; y: number; snippet: CommandSnippetDto } | null>(
     null,
   )
@@ -87,13 +127,13 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     return () => clearTimeout(id)
   }, [toast])
 
-  // Floating position (drag) + size (resize) + opacity. Reset to defaults each
-  // time the panel opens so a re-opened panel never appears off-screen.
+  // Floating position (drag) + size (resize) + opacity + filters, persisted to
+  // localStorage so the panel re-opens where/how the user left it.
   // NOTE: these MUST live above the `if (!open) return null` guard — React
   // requires every hook to run on every render, regardless of `open`.
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
-  const [panelOpacity, setPanelOpacity] = useState(1)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(() => loadCmdListPrefs().pos)
+  const [size, setSize] = useState<{ w: number; h: number } | null>(() => loadCmdListPrefs().size)
+  const [panelOpacity, setPanelOpacity] = useState(() => loadCmdListPrefs().opacity)
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(
     null,
   )
@@ -116,12 +156,16 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
 
   useEffect(() => {
     if (open) {
-      setPos(null)
-      setSize(null)
       dragRef.current = null
       resizeRef.current = null
     }
   }, [open])
+
+  // Persist window prefs whenever they change (also on close since the panel
+  // stays mounted and `open` just hides it).
+  useEffect(() => {
+    saveCmdListPrefs({ pos, size, opacity: panelOpacity, favoriteOnly, showHidden })
+  }, [pos, size, panelOpacity, favoriteOnly, showHidden])
 
   if (!open) return null
 
@@ -367,7 +411,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                 checked={favoriteOnly}
                 onChange={(e) => setFavoriteOnly(e.target.checked)}
               />
-              <Icon name="pin" size={11} /> {t('favoriteOnly')}
+              <Icon name="pin" size={11} />
+              <span className="cmd-list-toggle-text">{t('favoriteOnly')}</span>
             </label>
             <label className="cmd-list-toggle" title={t('showHidden')}>
               <input
@@ -375,7 +420,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                 checked={showHidden}
                 onChange={(e) => setShowHidden(e.target.checked)}
               />
-              <Icon name="eye" size={11} /> {t('showHidden')}
+              <Icon name="eye" size={11} />
+              <span className="cmd-list-toggle-text">{t('showHidden')}</span>
             </label>
           </div>
           <div className="cmd-list-header-actions">
