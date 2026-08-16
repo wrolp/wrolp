@@ -5464,6 +5464,10 @@ pub async fn start_tunnel(
   let listener = tokio::net::TcpListener::bind(local_sock)
     .await
     .map_err(|e| format!("Cannot bind {}: {}", local_sock, e))?;
+  eprintln!(
+    "[tunnel] tab={} bound {} -> {}:{} (listening)",
+    args.tab_id, local_sock, args.remote_host, args.remote_port
+  );
 
   let id = state.next_tunnel_id.fetch_add(1, Ordering::Relaxed) as u32;
   let tab_id = args.tab_id;
@@ -5474,6 +5478,9 @@ pub async fn start_tunnel(
   let name = args.name.clone();
   let started_at = chrono::Utc::now().timestamp();
   let local_addr_str2 = local_sock.to_string();
+  let runtime_local_addr = local_addr_str2.clone();
+  let app2 = app.clone();
+  let tid2 = id;
 
   // The accept loop: every inbound local connection opens a direct-tcpip
   // channel to remote_host:remote_port over the shared SSH session and pipes
@@ -5485,18 +5492,54 @@ pub async fn start_tunnel(
         Ok(pair) => pair,
         Err(_) => break,
       };
+      eprintln!("[tunnel] accepted local connection on {}", local_addr_str2);
       let handle = handle.clone();
+      let app3 = app2.clone();
+      let la = local_addr_str2.clone();
       let (rh, rp) = (remote_host.clone(), remote_port);
       tokio::spawn(async move {
         let channel = match handle
           .channel_open_direct_tcpip(&rh, rp, "127.0.0.1", 0)
           .await
         {
-          Ok(c) => c,
-          Err(_) => return,
+          Ok(c) => {
+            eprintln!("[tunnel] direct-tcpip channel opened -> {}:{}", rh, rp);
+            c
+          }
+          Err(e) => {
+            eprintln!(
+              "[tunnel] direct-tcpip open FAILED -> {}:{} : {}",
+              rh, rp, e
+            );
+            let err_str = e.to_string();
+            // AdministrativelyProhibited means the server forbids this
+            // forward outright (AllowTcpForwarding no / PermitOpen limits).
+            // Every later connection would fail identically, so auto-stop
+            // the tunnel and surface a fix-it hint instead of leaving a
+            // dead listener bound.
+            let fatal = err_str.contains("AdministrativelyProhibited");
+            let _ = app3.emit(
+              "tunnel-error",
+              serde_json::json!({
+                "localAddr": la,
+                "remoteHost": rh,
+                "remotePort": rp,
+                "error": err_str,
+                "fatal": fatal,
+              }),
+            );
+            if fatal {
+              if let Some(st) = app3.try_state::<AppState>() {
+                stop_tunnel_runtime(&st, tid2);
+              }
+              let _ = app3.emit("tunnel-changed", serde_json::json!({}));
+            }
+            return;
+          }
         };
         let mut stream = channel.into_stream();
         let _ = tokio::io::copy_bidirectional(&mut sock, &mut stream).await;
+        eprintln!("[tunnel] connection to {}:{} closed", rh, rp);
       });
     }
   });
@@ -5511,7 +5554,7 @@ pub async fn start_tunnel(
         tab_id,
         connection_id,
         config_id,
-        local_addr: local_addr_str2,
+        local_addr: runtime_local_addr,
         remote_host: args.remote_host,
         remote_port,
         name,
@@ -5672,6 +5715,16 @@ pub fn cleanup_tunnels_for_tab(state: &AppState, tab_id: u32) {
     for (id, abort) in aborts {
       abort.abort();
       tunnels.remove(&id);
+    }
+  }
+}
+
+/// Abort a single tunnel runtime by id (auto-stop when the server refuses
+/// forwarding, e.g. AdministrativelyProhibited).
+pub fn stop_tunnel_runtime(state: &AppState, id: u32) {
+  if let Ok(mut tunnels) = state.tunnels.lock() {
+    if let Some(t) = tunnels.remove(&id) {
+      t.abort.abort();
     }
   }
 }

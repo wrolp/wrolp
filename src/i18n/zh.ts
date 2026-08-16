@@ -117,6 +117,11 @@ const zh: Partial<Record<TranslationKey, string>> = {
   saveTunnel: '保存隧道',
   saving: '保存中…',
   tunnelNoConnectedTab: '该连接没有已连接的终端会话，请先连接。',
+  tunnelStartFailed: '隧道「{name}」启动失败：{err}',
+  tunnelForwardFailed: '隧道转发 {host}:{port} 失败：{err}',
+  tunnelStoppedTitle: '隧道已停止',
+  tunnelStoppedMessage:
+    '服务器禁止 TCP 转发（{host}:{port}），隧道已自动停止。\n\n解决方法：\n1. 在服务器 sshd 配置中设置 AllowTcpForwarding yes（或 local）\n2. 如配置了 PermitOpen，请确保包含 {host}:{port}\n3. 重启 sshd（systemctl restart sshd）\n\n修改后重新启动隧道即可。',
   tunnelBadLocalPort: '请输入有效的本地端口（1-65535）。',
   tunnelBadRemotePort: '请输入有效的远程端口（1-65535）。',
   tunnelBadRemoteHost: '请输入远程主机地址。',

@@ -39,7 +39,7 @@ export function ConfirmDialog({
           <h3>{title}</h3>
         </div>
         <div className="modal-body">
-          <p>{message}</p>
+          <p style={{ whiteSpace: 'pre-line' }}>{message}</p>
         </div>
         <div className="modal-footer">
           <button className="btn-cancel" onClick={onCancel}>

@@ -116,6 +116,11 @@ const en = {
   saveTunnel: 'Save Tunnel',
   saving: 'Saving…',
   tunnelNoConnectedTab: 'This connection has no connected terminal. Connect first.',
+  tunnelStartFailed: 'Tunnel "{name}" failed to start: {err}',
+  tunnelForwardFailed: 'Tunnel forward to {host}:{port} failed: {err}',
+  tunnelStoppedTitle: 'Tunnel Stopped',
+  tunnelStoppedMessage:
+    'The server forbids TCP forwarding to {host}:{port}, so the tunnel was stopped automatically.\n\nTo fix it:\n1. Set AllowTcpForwarding yes (or local) in the server sshd config\n2. If PermitOpen is set, make sure {host}:{port} is allowed\n3. Restart sshd (systemctl restart sshd)\n\nThen start the tunnel again.',
   tunnelBadLocalPort: 'Enter a valid local port (1-65535).',
   tunnelBadRemotePort: 'Enter a valid remote port (1-65535).',
   tunnelBadRemoteHost: 'Enter a remote host.',

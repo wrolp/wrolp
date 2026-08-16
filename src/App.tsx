@@ -531,6 +531,9 @@ export default function App() {
   // Editor tab whose close was intercepted because it has unsaved changes.
   // While set, a confirm dialog asks whether to save before closing.
   const [pendingCloseEditorKey, setPendingCloseEditorKey] = useState<string | null>(null)
+  // Set when a tunnel was auto-stopped because the server refused TCP
+  // forwarding (AdministrativelyProhibited); shows a fix-it dialog.
+  const [tunnelFatalInfo, setTunnelFatalInfo] = useState<{ host: string; port: string } | null>(null)
   // Which view occupies the shell pane area, per SSH session (tabId):
   // 'terminal' or the key of the active editor tab (editor replaces the
   // terminal area). Isolated per session so files opened in one tab don't
@@ -1209,17 +1212,44 @@ export default function App() {
     void loadTunnels()
     let unlistenTunnelChanged: (() => void) | null = null
     let unlistenConnClosed: (() => void) | null = null
+    let unlistenTunnelError: (() => void) | null = null
     void listen('tunnel-changed', () => void loadTunnels()).then((un) => {
       unlistenTunnelChanged = un
     })
     void listen('connection-closed', () => void loadTunnels()).then((un) => {
       unlistenConnClosed = un
     })
+    // Runtime forward failures (e.g. sshd refuses the direct-tcpip channel)
+    // surface as an error toast instead of only showing up in backend logs.
+    void listen<{
+      localAddr: string
+      remoteHost: string
+      remotePort: number
+      error: string
+      fatal?: boolean
+    }>(
+      'tunnel-error',
+      (event) => {
+        const p = event.payload
+        setToast({
+          kind: 'error',
+          text: t('tunnelForwardFailed', { host: p.remoteHost, port: String(p.remotePort), err: p.error }),
+        })
+        // Fatal: the server refuses forwarding (AdministrativelyProhibited)
+        // and the backend already auto-stopped the tunnel. Show a fix-it hint.
+        if (p.fatal) {
+          setTunnelFatalInfo({ host: p.remoteHost, port: String(p.remotePort) })
+        }
+      },
+    ).then((un) => {
+      unlistenTunnelError = un
+    })
     return () => {
       unlistenTunnelChanged?.()
       unlistenConnClosed?.()
+      unlistenTunnelError?.()
     }
-  }, [loadTunnels])
+  }, [loadTunnels, setToast, t])
 
   // Open new tab (create tab only, connect later)
   // Open a connection as a NEW top-level tab (workspace). Each workspace owns
@@ -2552,7 +2582,14 @@ export default function App() {
           name: config.name,
         })
           .then(() => loadTunnels())
-          .catch((err) => console.error('Failed to start tunnel:', err))
+          .catch((err) => {
+            const msg = String(err)
+            console.error('Failed to start tunnel:', msg)
+            setToast({
+              kind: 'error',
+              text: t('tunnelStartFailed', { name: config.name ?? `${config.localPort}`, err: msg }),
+            })
+          })
       }
       const carrier = tunnelCarrierTabId[connId]
       if (carrier != null) {
@@ -2565,7 +2602,7 @@ export default function App() {
       const pending = pendingTunnelStartsRef.current
       pending[connId] = [...(pending[connId] ?? []), config]
     },
-    [tunnelCarrierTabId, connections, openTab, loadTunnels],
+    [tunnelCarrierTabId, connections, openTab, loadTunnels, setToast, t],
   )
 
   // Delete a saved tunnel definition (backend also stops it if running).
@@ -2643,7 +2680,17 @@ export default function App() {
                         name: cfg.name,
                       })
                         .then(() => loadTunnels())
-                        .catch((err) => console.error('Failed to start tunnel:', err))
+                        .catch((err) => {
+                          const msg = String(err)
+                          console.error('Failed to start tunnel:', msg)
+                          setToast({
+                            kind: 'error',
+                            text: t('tunnelStartFailed', {
+                              name: cfg.name ?? `${cfg.localPort}`,
+                              err: msg,
+                            }),
+                          })
+                        })
                     }
                   }
                 }
@@ -5180,6 +5227,20 @@ export default function App() {
           onSave={() => void confirmCloseSave()}
           onConfirm={confirmCloseDiscard}
           onCancel={confirmCloseCancel}
+        />
+      )}
+
+      {/* Tunnel auto-stopped because the server refused forwarding */}
+      {tunnelFatalInfo && (
+        <ConfirmDialog
+          title={t('tunnelStoppedTitle')}
+          message={t('tunnelStoppedMessage', {
+            host: tunnelFatalInfo.host,
+            port: tunnelFatalInfo.port,
+          })}
+          confirmLabel={t('ok')}
+          onConfirm={() => setTunnelFatalInfo(null)}
+          onCancel={() => setTunnelFatalInfo(null)}
         />
       )}
     </div>
