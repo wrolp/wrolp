@@ -1943,11 +1943,9 @@ export default function App() {
       let editorKey: string | undefined = force?.editorKey
       let dockerLogTabId: number | undefined = force?.dockerLogTabId
       let title = getTabLabel(tab)
-      // Docker log / file editor overlays only ever render on the FOCUSED pane
-      // (renderPane gates them behind `isFocused`). A non-focused pane always
-      // shows its plain terminal, even though `shellView` is per-session — so
-      // only treat this leaf as the overlay when it is the focused one (or when
-      // no focus is recorded yet, i.e. a single-pane workspace).
+      // Docker log / file editor overlays follow the pane's own per-session
+      // `shellView` (not focus), matching renderPane. A leaf whose sv points at
+      // a docker-log view or an editor tab is treated as that overlay.
       if (force?.kind) {
         if (force.kind === 'dockerLog' && force.dockerLogTabId != null) {
           const dl = dockerLogTabsRef.current.find((d) => d.tabId === force.dockerLogTabId)
@@ -1957,21 +1955,18 @@ export default function App() {
           if (et) title = et.name
         }
       } else {
-        const focusedId = focusedLeafByRootRef.current[rootId]
-        const showsOverlay = focusedId === leafId || focusedId == null || focusedId === ''
-        if (showsOverlay && sv.startsWith('dockerlog:')) {
+        if (sv.startsWith('dockerlog:')) {
           const dlId = Number(sv.slice('dockerlog:'.length))
           const dl = dockerLogTabsRef.current.find((d) => d.tabId === dlId)
-          // The log view is shown on the focused leaf; `jumpTabId` may point at
-          // the workspace root tab while the leaf is an embedded split tab, so
-          // accept the match when this leaf is the focused pane.
-          if (dl && (dl.jumpTabId === tabId || focusedId === leafId)) {
+          // The log view is shown on the pane whose session owns it; `jumpTabId`
+          // points at the workspace root tab while the leaf may be an embedded
+          // split tab, so accept the match when sv says this leaf shows it.
+          if (dl && dl.jumpTabId === tabId) {
             kind = 'dockerLog'
             dockerLogTabId = dl.tabId
             title = `${t('dockerLogs')}: ${dl.containerName ?? dlId}`
           }
         } else if (
-          showsOverlay &&
           editorTabsRef.current.some((e) => e.key === sv && e.sshTabId === tabId)
         ) {
           kind = 'editor'
@@ -3600,10 +3595,11 @@ export default function App() {
     const sessionActiveEditorKey = leaf.tabId != null ? (activeEditorKey[leaf.tabId] ?? null) : null
     const dropPos = paneDrag.target === leaf.id ? paneDrag.position : null
     // A non-floated overlay (file editor / docker log) replaces the terminal
-    // surface of the focused pane — the whole terminal column (including its
-    // status bar) is hidden so the overlay gets the full pane width.
+    // surface of ITS OWN pane — the whole terminal column (including its status
+    // bar) is hidden so the overlay gets the full pane width. Whether a pane
+    // shows an overlay is decided by its per-session `shellView` (sv), not by
+    // focus, so switching to another split pane keeps the editor open here.
     const overlayVisible =
-      isFocused &&
       sv !== 'terminal' &&
       (sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) &&
       !isOverlayFloated(sv)
@@ -3718,12 +3714,11 @@ export default function App() {
             </button>
           )}
           {/* Open files and docker logs live on the same pane-header panel as
-              the AI button (only on the focused pane so splits don't duplicate).
-              Each pane shows only the files/logs that belong to ITS OWN SSH
-              session (leaf.tabId) — files opened in one workspace tab never
-              appear in another. */}
-          {(isFocused || focusedLeafIdForRoot == null) &&
-            (sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) && (
+              the AI button. Each pane shows only the files/logs that belong to
+              ITS OWN SSH session (leaf.tabId) — files opened in one workspace
+              tab never appear in another. The tabs follow the pane itself (not
+              focus) so switching splits keeps the editor's tab bar visible. */}
+          {(sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) && (
               <div className="term-pane-file-tabs">
                 <div
                   className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
@@ -4124,12 +4119,13 @@ export default function App() {
                 </div>
               )
             })()}
-          {/* File editor replaces the terminal surface of the focused pane
-              (the pane header with the AI button and file tabs stays). Only the
-              current session's files are shown. Skipped when the overlay is
-              popped out to a floating window — it renders only there. */}
-          {isFocused &&
-            sv !== 'terminal' &&
+          {/* File editor replaces the terminal surface of the pane that owns the
+              open session (the pane header with the AI button and file tabs
+              stays). Only the current session's files are shown. Skipped when
+              the overlay is popped out to a floating window — it renders only
+              there. Rendering follows the pane's own shellView (not focus), so
+              switching to another split pane keeps this editor open. */}
+          {sv !== 'terminal' &&
             sessionEditorTabs.length > 0 &&
             sessionEditorTabs.some((et) => et.key === sv) &&
             !isOverlayFloated(sv) && (
@@ -4168,11 +4164,10 @@ export default function App() {
                 />
               </div>
             )}
-          {/* Docker log view replaces the terminal surface of the focused pane
+          {/* Docker log view replaces the terminal surface of its owning pane
               (like an open file). Skipped when floated — renders only in the
-              floating window. */}
-          {isFocused &&
-            sessionDockerLogTabs.some((dt) => sv === `dockerlog:${dt.tabId}`) &&
+              floating window. Follows the pane's own shellView, not focus. */}
+          {sessionDockerLogTabs.some((dt) => sv === `dockerlog:${dt.tabId}`) &&
             (() => {
               const dl = sessionDockerLogTabs.find((dt) => sv === `dockerlog:${dt.tabId}`)
               if (!dl || isOverlayFloated(dl.tabId)) return null
