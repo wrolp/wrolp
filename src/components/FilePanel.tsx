@@ -17,6 +17,7 @@ import {
   fsUploadFile,
   fsUploadFileStream,
   getClipboardFiles,
+  listLocalDrives,
   fsDownloadFile,
   fsDownloadDirectory,
   fsDeleteFile,
@@ -297,6 +298,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const [tree, setTree] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Local drive letters (Windows) offered by the location dropdown, plus the
+  // current selection of that dropdown (reset after each jump).
+  const [drives, setDrives] = useState<string[]>([])
+  const [jumpOpen, setJumpOpen] = useState(false)
+  const [jumpPos, setJumpPos] = useState<{ x: number; y: number } | null>(null)
+  const jumpBtnRef = useRef<HTMLButtonElement>(null)
   const [selPaths, setSelPaths] = useState<Set<string>>(new Set())
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -406,6 +413,22 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }, [target, currentPath, tree])
 
   useImperativeHandle(ref, () => ({ refresh }), [refresh])
+
+  // Load the local drive list once for the location dropdown (Windows only;
+  // returns empty on other platforms).
+  useEffect(() => {
+    let active = true
+    listLocalDrives()
+      .then((d) => {
+        if (active) setDrives(d)
+      })
+      .catch(() => {
+        if (active) setDrives([])
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     if (isConnected) {
@@ -536,6 +559,21 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     document.addEventListener('click', handler)
     return () => document.removeEventListener('click', handler)
   }, [contextMenu])
+
+  // Close the location dropdown on outside click / Escape.
+  useEffect(() => {
+    if (!jumpOpen) return
+    const onDocClick = () => setJumpOpen(false)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setJumpOpen(false)
+    }
+    document.addEventListener('click', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('click', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [jumpOpen])
 
   useLayoutEffect(() => {
     if (!contextMenu || !contextMenuRef.current) return
@@ -1407,23 +1445,68 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             </span>
           </div>
           <div className="file-path-bar">
-            <span
-              className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
-              onClick={currentPath === rootPath ? undefined : navigateUp}
-              title={t('parentDir')}
+          <div className="file-path-jump-wrap">
+            <button
+              ref={jumpBtnRef}
+              className={`file-path-jump${jumpOpen ? ' open' : ''}`}
+              title={t('jumpTo')}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!jumpOpen && jumpBtnRef.current) {
+                  const r = jumpBtnRef.current.getBoundingClientRect()
+                  setJumpPos({ x: r.left, y: r.bottom + 4 })
+                }
+                setJumpOpen((o) => !o)
+              }}
             >
-              <Icon name="arrowUp" />
-            </span>
-            <span className="file-path-home" onClick={goHome} title={t('home')}>
-              <Icon name="home" />
-            </span>
-            <span
-              className="file-path-pin"
-              onClick={() => setRoot(currentPath)}
-              title={t('setAsRoot')}
-            >
-              <Icon name="pin" />
-            </span>
+              <Icon name="chevronDown" size={12} />
+            </button>
+            {jumpOpen && jumpPos && (
+              <div className="file-path-jump-menu" style={{ left: jumpPos.x, top: jumpPos.y }}>
+                <div className="file-path-jump-group">
+                  <div className="file-path-jump-label">{t('home')}</div>
+                  <div
+                    className="file-path-jump-item"
+                    onClick={() => {
+                      setJumpOpen(false)
+                      goHome()
+                    }}
+                  >
+                    <Icon name="home" size={12} />
+                    {t('home')}
+                  </div>
+                  <div
+                    className="file-path-jump-item"
+                    onClick={() => {
+                      setJumpOpen(false)
+                      loadRootDir('/', true)
+                    }}
+                  >
+                    <Icon name="folderOpen" size={12} />
+                    {t('rootDir')} (/)
+                  </div>
+                </div>
+                {fileMode === 'local' && drives.length > 0 && (
+                  <div className="file-path-jump-group">
+                    <div className="file-path-jump-label">{t('localDrives')}</div>
+                    {drives.map((d) => (
+                      <div
+                        key={d}
+                        className="file-path-jump-item"
+                        onClick={() => {
+                          setJumpOpen(false)
+                          loadRootDir(d, true)
+                        }}
+                      >
+                        <Icon name="desktop" size={12} />
+                        {d}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
             {editingPath ? (
               <input
                 className="file-path-input"
@@ -1440,10 +1523,30 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 {pathDisplay}
               </span>
             )}
-            {rootPath !== '.' && (
-              <span className="file-path-root" title={`Root directory: ${rootPath}`}>
-                <Icon name="pin" /> {rootPath}
-              </span>
+            <span
+              className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
+              onClick={currentPath === rootPath ? undefined : navigateUp}
+              title={t('parentDir')}
+            >
+              <Icon name="arrowUp" />
+            </span>
+            {/* Set-as-root is temporarily disabled — the location dropdown covers
+                home / root / local drive jumps. */}
+            {false && (
+              <>
+                <span
+                  className="file-path-pin"
+                  onClick={() => setRoot(currentPath)}
+                  title={t('setAsRoot')}
+                >
+                  <Icon name="pin" />
+                </span>
+                {rootPath !== '.' && (
+                  <span className="file-path-root" title={`Root directory: ${rootPath}`}>
+                    <Icon name="pin" /> {rootPath}
+                  </span>
+                )}
+              </>
             )}
           </div>
 
@@ -1764,11 +1867,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               <Icon name="folderOpen" /> Enter directory
             </div>
           )}
+          {/* Set-as-root temporarily disabled.
           {contextMenu.node && contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => setRoot(contextMenu.node!.path)}>
               <Icon name="pin" /> Set as root
             </div>
           )}
+          */}
           {contextMenu.node && <div className="context-menu-divider" />}
           <div className="context-menu-item" onClick={() => newFile(contextMenu.node)}>
             <Icon name="file" /> New File

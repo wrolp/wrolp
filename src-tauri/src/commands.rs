@@ -5615,3 +5615,38 @@ pub fn get_clipboard_files() -> Vec<String> {
     Vec::new()
   }
 }
+
+/// Lists the local drive letters ("C:/", "D:/", ...) so the file panel's
+/// location dropdown can offer Windows drives when browsing the local machine.
+#[cfg(target_os = "windows")]
+fn list_local_drives_impl() -> Vec<String> {
+  #[link(name = "kernel32")]
+  unsafe extern "system" {
+    fn GetLogicalDrives() -> u32;
+  }
+  let mut drives = Vec::new();
+  unsafe {
+    let mask = GetLogicalDrives();
+    for i in 0..26 {
+      if mask & (1u32 << i) != 0 {
+        let letter = (b'A' + i as u8) as char;
+        drives.push(format!("{}:/", letter));
+      }
+    }
+  }
+  drives
+}
+
+/// Local drive letters for the file panel's location dropdown (Windows only;
+/// empty on other platforms).
+#[tauri::command]
+pub fn list_local_drives() -> Vec<String> {
+  #[cfg(target_os = "windows")]
+  {
+    list_local_drives_impl()
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    Vec::new()
+  }
+}

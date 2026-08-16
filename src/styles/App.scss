@@ -2839,6 +2839,73 @@ input[type='password']::-ms-clear {
     color: $text-muted;
     overflow: hidden;
 
+    .file-path-jump-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .file-path-jump {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      flex-shrink: 0;
+      background: $bg-input;
+      border: 1px solid $border;
+      border-radius: 3px;
+      color: $text-primary;
+      cursor: pointer;
+      outline: none;
+
+      &:hover,
+      &.open {
+        border-color: $accent-hover;
+        background: $bg-hover;
+      }
+    }
+
+    .file-path-jump-menu {
+      position: fixed;
+      width: 180px;
+      background: $bg-secondary;
+      border: 1px solid $border;
+      border-radius: 6px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      z-index: 2000;
+      padding: 4px 0;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+
+    .file-path-jump-group {
+      padding: 2px 0;
+    }
+
+    .file-path-jump-label {
+      padding: 4px 12px 2px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: $text-muted;
+    }
+
+    .file-path-jump-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      color: $text-primary;
+      white-space: nowrap;
+
+      &:hover {
+        background: #094771;
+      }
+    }
+
     .file-path-up,
     .file-path-home,
     .file-path-pin {
@@ -2851,6 +2918,11 @@ input[type='password']::-ms-clear {
       &:hover {
         background: $bg-hover;
       }
+    }
+
+    // Parent button sits at the right edge of the path bar.
+    .file-path-up {
+      margin-left: auto;
     }
 
     .file-path-up.disabled {

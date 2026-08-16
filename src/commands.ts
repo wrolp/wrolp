@@ -537,6 +537,14 @@ export async function getClipboardFiles(): Promise<string[]> {
   return invoke<string[]>('get_clipboard_files')
 }
 
+/**
+ * Returns local drive letters ("C:/", "D:/", ...) for the file panel's
+ * location dropdown when browsing the local machine (Windows only).
+ */
+export async function listLocalDrives(): Promise<string[]> {
+  return invoke<string[]>('list_local_drives')
+}
+
 export async function fsFileExists(target: TargetRef, path: string): Promise<boolean> {
   return isSession(target)
     ? fileExists(target.tabId, path)
