@@ -67,7 +67,7 @@ async function runConcurrent<T>(
 
 interface TransferProgress {
   tabId: number
-  op: 'upload' | 'download' | 'directory'
+  op: 'upload' | 'download' | 'directory' | 'delete'
   filename: string
   transferred: number
   total: number
@@ -87,7 +87,7 @@ interface TransferRow {
   /** Stable unique key: op + full path (local path for upload, remote path for download). */
   key: string
   filename: string
-  op: 'upload' | 'download' | 'directory'
+  op: 'upload' | 'download' | 'directory' | 'delete'
   status: 'queued' | 'active' | 'done' | 'error' | 'cancelled'
   transferred: number
   total: number
@@ -635,6 +635,37 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         })
         return
       }
+      if (p.op === 'delete') {
+        // A recursive directory delete streams one event per removed file; the
+        // row is keyed by the remote directory path and shows the aggregate
+        // file count as progress.
+        const dirName = p.dirName ?? ''
+        setTransferRows((prev) => {
+          if (dirName.length === 0) return prev
+          const candidates = prev.filter(
+            (r) =>
+              r.op === 'delete' &&
+              r.status !== 'done' &&
+              r.status !== 'error' &&
+              (r.key === `delete:${dirName}` || r.key.endsWith(`/${dirName}`)),
+          )
+          const target =
+            candidates.find((r) => r.status === 'active') ??
+            (candidates.length === 1 ? candidates[0] : null)
+          if (!target) return prev
+          return prev.map((r) =>
+            r.key === target.key
+              ? {
+                  ...r,
+                  transferred: p.doneFiles ?? r.transferred,
+                  total: p.totalFiles ?? r.total,
+                  status: 'active',
+                }
+              : r,
+          )
+        })
+        return
+      }
       const bytesPerSec = p.transferred / elapsed
       setTransferRows((prev) => {
         const target = findTarget(prev, p.op, p.filename)
@@ -1102,6 +1133,42 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     if (!deleteTarget) return
     const node = deleteTarget
     setDeleteTarget(null)
+    if (node.isDir && sessionTabId != null) {
+      // Recursive directory delete: show a per-file progress row (only the
+      // main session streams `transfer-progress` delete events).
+      setPaused(false)
+      const key = `delete:${node.path}`
+      setTransferRows((prev) =>
+        mergeRows(prev, [
+          {
+            key,
+            filename: node.name + '/',
+            op: 'delete',
+            status: 'active',
+            transferred: 0,
+            total: 0,
+            speed: '',
+          },
+        ]),
+      )
+      try {
+        await fsDeleteFile(target, node.path, true)
+        setTransferRows((prev) =>
+          prev.map((r) => (r.key === key ? { ...r, status: 'done' } : r)),
+        )
+        refresh()
+      } catch (e) {
+        const cancelled = cancelledKeysRef.current.has(key)
+        setTransferRows((prev) =>
+          prev.map((r) =>
+            r.key === key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
+          ),
+        )
+        if (!cancelled) setError(String(e))
+        refresh()
+      }
+      return
+    }
     try {
       await fsDeleteFile(target, node.path, node.isDir)
       refresh()
@@ -1812,15 +1879,18 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                     ? t('transfers')
                     : t('transfersComplete')}
                 </span>
-                {sessionTabId != null && (
-                  <button
-                    className="file-pause-btn"
-                    onClick={togglePause}
-                    title={paused ? 'Resume' : 'Pause'}
-                  >
-                    {paused ? <Icon name="play" /> : <Icon name="pause" />}
-                  </button>
-                )}
+                {sessionTabId != null &&
+                  transferRows.some(
+                    (r) => r.op !== 'delete' && (r.status === 'active' || r.status === 'queued'),
+                  ) && (
+                    <button
+                      className="file-pause-btn"
+                      onClick={togglePause}
+                      title={paused ? 'Resume' : 'Pause'}
+                    >
+                      {paused ? <Icon name="play" /> : <Icon name="pause" />}
+                    </button>
+                  )}
               </div>
               <div className="file-transfers-body-wrap">
                 <div
@@ -1863,7 +1933,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                           {row.total > 0 && (
                             <span>
                               {' '}
-                              {formatSize(row.transferred)} / {formatSize(row.total)} · {row.speed}
+                              {row.op === 'delete'
+                                ? t('deleteProgress', {
+                                    done: row.transferred,
+                                    total: row.total,
+                                  })
+                                : `${formatSize(row.transferred)} / ${formatSize(row.total)} · ${row.speed}`}
                             </span>
                           )}
                         </div>

@@ -396,13 +396,83 @@ use std::path::Path;
 
 /// Recursively delete a directory (and all its contents) through a `RemoteFs`.
 /// Symlinks are removed as files (never followed), so cycles are impossible.
-pub async fn delete_dir_recursive(fs: &dyn RemoteFs, path: &str) -> Result<(), String> {
+/// `on_progress` is called after each file is removed with
+/// (done_files, total_files, done_bytes, total_bytes); totals come from a
+/// preliminary count walk so callers can render a percentage. Returning an
+/// `Err` from the callback aborts the deletion (e.g. user cancel).
+pub async fn delete_dir_recursive(
+  fs: &dyn RemoteFs,
+  path: &str,
+  on_progress: &mut (dyn FnMut(u64, u64, u64, u64) -> Result<(), String> + Send),
+) -> Result<(), String> {
+  // Pre-count files/bytes so progress can show a percentage.
+  let mut total_files = 0u64;
+  let mut total_bytes = 0u64;
+  count_dir_entries(fs, path, &mut total_files, &mut total_bytes).await?;
+
+  let mut done_files = 0u64;
+  let mut done_bytes = 0u64;
+  delete_dir_inner(
+    fs,
+    path,
+    &mut done_files,
+    &mut done_bytes,
+    total_files,
+    total_bytes,
+    on_progress,
+  )
+  .await?;
+  Ok(())
+}
+
+/// Count files and total bytes under `path`, recursively. Matches the delete
+/// semantics: every non-directory entry (including symlinks) is counted as a
+/// file.
+async fn count_dir_entries(
+  fs: &dyn RemoteFs,
+  path: &str,
+  files: &mut u64,
+  bytes: &mut u64,
+) -> Result<(), String> {
   let entries = fs.list_dir(path).await?;
   for e in entries {
     if e.is_dir {
-      Box::pin(delete_dir_recursive(fs, &e.path)).await?;
+      Box::pin(count_dir_entries(fs, &e.path, files, bytes)).await?;
+    } else {
+      *files += 1;
+      *bytes += e.size;
+    }
+  }
+  Ok(())
+}
+
+async fn delete_dir_inner(
+  fs: &dyn RemoteFs,
+  path: &str,
+  done_files: &mut u64,
+  done_bytes: &mut u64,
+  total_files: u64,
+  total_bytes: u64,
+  on_progress: &mut (dyn FnMut(u64, u64, u64, u64) -> Result<(), String> + Send),
+) -> Result<(), String> {
+  let entries = fs.list_dir(path).await?;
+  for e in entries {
+    if e.is_dir {
+      Box::pin(delete_dir_inner(
+        fs,
+        &e.path,
+        done_files,
+        done_bytes,
+        total_files,
+        total_bytes,
+        &mut *on_progress,
+      ))
+      .await?;
     } else {
       fs.remove_file(&e.path).await?;
+      *done_files += 1;
+      *done_bytes += e.size;
+      on_progress(*done_files, total_files, *done_bytes, total_bytes)?;
     }
   }
   fs.remove_dir(path).await?;

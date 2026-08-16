@@ -2475,9 +2475,59 @@ pub async fn delete_file(
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
   if is_dir {
-    // Recursively delete a non-empty directory over the same session.
+    // Set up pause/cancel control so the directory delete can be aborted.
+    let control = Arc::new(TransferControl {
+      paused: AtomicBool::new(false),
+      cancelled: AtomicBool::new(false),
+      notify: tokio::sync::Notify::new(),
+    });
+    {
+      let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+      controls.entry(tab_id).or_default().push(control.clone());
+    }
+    let _cleanup = TransferGuard {
+      state_ptr: &*state as *const AppState,
+      tab_id,
+      control: control.clone(),
+    };
+
     let fs = crate::remote_fs::SftpFs::new(sftp);
-    delete_dir_recursive(&fs, &path).await?;
+    let dir_name = std::path::Path::new(&path)
+      .file_name()
+      .map(|n| n.to_string_lossy().to_string())
+      .unwrap_or_else(|| path.trim_end_matches('/').rsplit('/').next().unwrap_or("delete").to_string());
+    let start = std::time::Instant::now();
+
+    // Recursively delete with per-file progress events (op `delete`). The
+    // callback aborts the loop when the user cancels.
+    let mut on_progress = |done_files: u64,
+                           total_files: u64,
+                           done_bytes: u64,
+                           total_bytes: u64|
+     -> Result<(), String> {
+      if control.cancelled.load(Ordering::SeqCst) {
+        return Err("Transfer cancelled".to_string());
+      }
+      let _ = app.emit(
+        "transfer-progress",
+        serde_json::json!({
+          "tabId": tab_id,
+          "op": "delete",
+          "dirName": dir_name,
+          "filename": "",
+          "relativePath": "",
+          "transferred": done_files,
+          "total": total_files,
+          "doneFiles": done_files,
+          "totalFiles": total_files,
+          "doneBytes": done_bytes,
+          "totalBytes": total_bytes,
+          "elapsed": start.elapsed().as_millis()
+        }),
+      );
+      Ok(())
+    };
+    delete_dir_recursive(&fs, &path, &mut on_progress).await?;
   } else {
     sftp
       .remove_file(&path)
@@ -2551,7 +2601,10 @@ pub async fn target_delete_file(
 ) -> Result<bool, String> {
   let fs = build_fs(&app, &state, &target).await?;
   if is_dir {
-    delete_dir_recursive(fs.as_ref(), &path).await?;
+    // No per-file progress UI for jump/docker/local targets (the panel only
+    // routes `transfer-progress` for the main session), so pass a no-op
+    // callback. Returns Err aborts the deletion.
+    delete_dir_recursive(fs.as_ref(), &path, &mut |_d, _t, _b, _tb| Ok(())).await?;
   } else {
     fs.remove_file(&path).await?;
   }

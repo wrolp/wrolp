@@ -169,6 +169,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   disableShellSync: '禁用终端同步',
   sftpAs: 'SFTP 用户：{user}',
   rootDirectory: '根目录：{path}',
+  deleteProgress: '已删除 {done} / {total} 个文件',
   noContainers: '无容器（或 docker 不可用）',
 
   // Bottom panel

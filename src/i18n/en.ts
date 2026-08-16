@@ -168,6 +168,7 @@ const en = {
   disableShellSync: 'Disable shell sync',
   sftpAs: 'SFTP as: {user}',
   rootDirectory: 'Root directory: {path}',
+  deleteProgress: '{done} / {total} files',
   noContainers: 'No containers (or docker not available)',
 
   // Bottom panel
