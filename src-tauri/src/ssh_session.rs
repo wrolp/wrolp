@@ -50,6 +50,10 @@ pub struct ConnectionConfig {
   pub passphrase: Option<String>,
   #[serde(default)]
   pub description: Option<String>,
+  /// Directory the terminal starts in after connecting (and the directory the
+  /// file panel opens to). Sent as `cd <dir>` once the shell is ready.
+  #[serde(default)]
+  pub startup_dir: Option<String>,
   #[serde(default)]
   pub group: Option<String>,
   /// Workspace this connection belongs to. Populated automatically on save
@@ -113,6 +117,10 @@ pub struct PersistedConnection {
   pub description: Option<String>,
   #[serde(default)]
   pub group: Option<String>,
+  /// Directory the terminal starts in after connecting (also the file panel
+  /// start directory). Sent as `cd <dir>` once the shell is ready.
+  #[serde(default)]
+  pub startup_dir: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub workspace_id: Option<String>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -163,6 +171,7 @@ impl PersistedConnection {
       passphrase_enc,
       description: c.description.clone(),
       group: c.group.clone(),
+      startup_dir: c.startup_dir.clone(),
       workspace_id: c.workspace_id.clone(),
       tunnels: c.tunnels.clone(),
     })
@@ -191,6 +200,7 @@ impl ConnectionConfig {
       passphrase,
       description: p.description.clone(),
       group: p.group.clone(),
+      startup_dir: p.startup_dir.clone(),
       workspace_id: p.workspace_id.clone(),
       tunnels: p.tunnels.clone(),
     })

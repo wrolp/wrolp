@@ -76,6 +76,7 @@ import {
   renameWorkspace,
   switchWorkspace,
   listConnections,
+  saveConnection,
   listTunnels,
   startTunnel,
   removeTunnel,
@@ -348,7 +349,9 @@ export default function App() {
         // (e.g. when the pane is floated/restored and reconnects).
         postConnectCmd: dockerContainer
           ? `docker exec -it ${dockerContainer} /bin/bash || docker exec -it ${dockerContainer} /bin/sh\r`
-          : undefined,
+          : conn.startupDir
+            ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
+            : undefined,
       }
       setTabs((prev) => [...prev, newTab])
       const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
@@ -1266,6 +1269,11 @@ export default function App() {
         host: `${conn.host}:${conn.port}`,
         status: 'connecting',
         tabType: 'terminal',
+        // When the connection defines a startup directory, cd into it once the
+        // shell is ready (same mechanism as docker-shell panes).
+        postConnectCmd: conn.startupDir
+          ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
+          : undefined,
       }
       setTabs((prev) => [...prev, newTab])
       const leafId = newLeafId()
@@ -2225,6 +2233,28 @@ export default function App() {
   const handleConnectionChange = useCallback(() => {
     loadConnections()
   }, [])
+
+  // Set the focused SSH connection's startup directory (triggered from the file
+  // panel). `dir === '.'` means home, which clears the startup directory.
+  const handleSetStartupDir = useCallback(
+    async (dir: string) => {
+      const ftabId = focusedLeafTabId ?? activeTabId ?? 0
+      const ftab = tabs.find((t) => t.tabId === ftabId)
+      const conn = ftab?.connectionId
+        ? connections.find((c) => c.id === ftab.connectionId)
+        : undefined
+      if (!conn) return
+      const dirLabel = dir === '.' ? '~ (home)' : dir
+      try {
+        await saveConnection({ ...conn, startupDir: dir === '.' ? undefined : dir })
+        setToast({ kind: 'success', text: t('startupDirSet', { dir: dirLabel }) })
+        loadConnections()
+      } catch (err) {
+        setToast({ kind: 'error', text: `Failed to set startup directory: ${err}` })
+      }
+    },
+    [focusedLeafTabId, activeTabId, tabs, connections, setToast, t],
+  )
 
   // Workspace handlers
   const handleWorkspaceSwitch = useCallback(async (workspaceId: string) => {
@@ -4548,7 +4578,18 @@ export default function App() {
                         ? '/'
                         : fileTarget?.kind === 'local'
                           ? (tabs.find((t) => t.tabId === fileTarget.tabId)?.localShellCwd ?? '/')
-                          : '.'
+                          : // Session target: open the file panel at the connection's
+                            // startup directory (same directory the terminal cd's
+                            // into on connect), falling back to home.
+                            (() => {
+                              const sTabId =
+                                fileTarget?.kind === 'session' ? fileTarget.tabId : ftabId
+                              const sTab = tabs.find((t) => t.tabId === sTabId)
+                              const sConn = sTab?.connectionId
+                                ? connections.find((c) => c.id === sTab.connectionId)
+                                : undefined
+                              return sConn?.startupDir || '.'
+                            })()
                     }
                     targetRef={fileTarget ?? undefined}
                     fileMode={fileMode}
@@ -4580,6 +4621,7 @@ export default function App() {
                         // ignore localStorage errors
                       }
                     }}
+                    onSetStartupDir={handleSetStartupDir}
                     onEditFile={openInEditor}
                   />
                 )

@@ -8,6 +8,9 @@ export interface ConnectionConfig {
   keyPath?: string
   passphrase?: string
   description?: string
+  /** Directory the terminal starts in after connecting (also the directory the
+   *  file panel opens to). Sent as `cd <dir>` once the shell is ready. */
+  startupDir?: string
   group?: string
   /** Workspace this connection belongs to (set by backend on save). */
   workspaceId?: string

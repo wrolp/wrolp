@@ -91,6 +91,12 @@ interface FilePanelProps {
   onToggleExpanded?: () => void
   syncEnabled?: boolean
   onToggleSync?: () => void
+  /**
+   * Called when the user sets the current browsed directory as the SSH
+   * connection's startup directory (main session target only). Receives the
+   * normalized absolute path ('.' means home).
+   */
+  onSetStartupDir?: (dir: string) => void
   onEditFile?: (target: TargetRef, path: string) => void
   /** Label of the currently connected server (host:port), shown in the header. */
   serverLabel?: string
@@ -213,6 +219,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     onToggleExpanded,
     syncEnabled = false,
     onToggleSync,
+    onSetStartupDir,
     onEditFile,
     targetRef,
     fileMode = 'ssh',
@@ -1656,6 +1663,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 {pathDisplay}
               </span>
             )}
+            {/* Set the current browsed directory as the SSH connection's startup
+                directory (main session only; pin icon next to the path). */}
+            {sessionTabId != null && onSetStartupDir && (
+              <span
+                className="file-path-pin"
+                onClick={() => onSetStartupDir(normalizePath(currentPath))}
+                title={t('setAsStartupDir')}
+              >
+                <Icon name="pin" />
+              </span>
+            )}
             <span
               className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
               onClick={currentPath === rootPath ? undefined : navigateUp}
@@ -1663,24 +1681,6 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             >
               <Icon name="arrowUp" />
             </span>
-            {/* Set-as-root is temporarily disabled — the location dropdown covers
-                home / root / local drive jumps. */}
-            {false && (
-              <>
-                <span
-                  className="file-path-pin"
-                  onClick={() => setRoot(currentPath)}
-                  title={t('setAsRoot')}
-                >
-                  <Icon name="pin" />
-                </span>
-                {rootPath !== '.' && (
-                  <span className="file-path-root" title={`Root directory: ${rootPath}`}>
-                    <Icon name="pin" /> {rootPath}
-                  </span>
-                )}
-              </>
-            )}
           </div>
 
           {showSwitchUser && (

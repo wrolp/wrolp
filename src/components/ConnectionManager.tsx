@@ -1309,6 +1309,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [showPassphrase, setShowPassphrase] = useState(false)
   const [group, setGroup] = useState(connection?.group || defaultGroup)
   const [description, setDescription] = useState(connection?.description || '')
+  const [startupDir, setStartupDir] = useState(connection?.startupDir || '')
   const [groupMode, setGroupMode] = useState<'select' | 'new'>(
     group && !existingGroups.includes(group) ? 'new' : 'select',
   )
@@ -1344,6 +1345,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
       passphrase: authType === 'key' ? passphrase || undefined : undefined,
       group: group.trim() || undefined,
       description: description.trim() || undefined,
+      startupDir: startupDir.trim() || undefined,
     }
     onSave(config)
   }
@@ -1434,6 +1436,15 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t('notes')}
+            />
+          </div>
+          <div className="form-group">
+            <label>{t('startupDir')}</label>
+            <input
+              value={startupDir}
+              onChange={(e) => setStartupDir(e.target.value)}
+              placeholder={t('startupDirPlaceholder')}
+              spellCheck={false}
             />
           </div>
 
