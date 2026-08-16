@@ -1954,6 +1954,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           style={contextMenuStyle}
           onClick={(e) => e.stopPropagation()}
         >
+          {contextMenu.node && contextMenu.node.isDir && (
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                setContextMenu(null)
+                loadRootDir(contextMenu.node!.path, true)
+              }}
+            >
+              <Icon name="folderOpen" /> Enter directory
+            </div>
+          )}
           {contextMenu.node && !contextMenu.node.isDir && (
             <div className="context-menu-item" onClick={() => handleEdit(contextMenu.node!)}>
               <Icon name="edit" /> Open
@@ -1967,17 +1978,6 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           {selectedFiles.length > 1 && (
             <div className="context-menu-item" onClick={() => downloadFiles(selectedFiles)}>
               <Icon name="download" /> Download {selectedFiles.length} files
-            </div>
-          )}
-          {contextMenu.node && contextMenu.node.isDir && (
-            <div
-              className="context-menu-item"
-              onClick={() => {
-                setContextMenu(null)
-                loadRootDir(contextMenu.node!.path, true)
-              }}
-            >
-              <Icon name="folderOpen" /> Enter directory
             </div>
           )}
           {/* Set-as-root temporarily disabled.
