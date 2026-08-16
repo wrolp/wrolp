@@ -1924,6 +1924,44 @@ body.resizing-v {
   scrollbar-width: none;
 }
 
+// Clickable hover card shown over a clickable `ls`/`dir` entry in the terminal
+// (like VSCode's "Enter folder" / "Open file" terminal link tooltip). It is
+// clickable and triggers the same action as ctrl+clicking the link itself.
+.term-link-tooltip {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  color: $text-primary;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 2000;
+  cursor: pointer;
+  user-select: none;
+  // Anchored to the top-left of the entry name; rendered above the name.
+  transform: translateY(-100%);
+
+  &.below {
+    transform: translateY(0);
+  }
+
+  .term-link-tooltip-label {
+    color: #4da3ff;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .term-link-tooltip-hint {
+    color: $text-muted;
+  }
+}
+
 // Relative wrapper so the overlay scrollbar can be positioned absolutely
 // over the right edge of the xterm container.
 .term-scrollbar-wrapper {

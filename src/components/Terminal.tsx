@@ -387,6 +387,52 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const connectedRef = useRef(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement | null>(null)
+  // Clickable hover card shown over a clickable `ls`/`dir` entry, like VSCode's
+  // terminal link tooltip ("Enter folder" / "Open file" + modifier hint). The
+  // card itself is clickable and triggers the same action as the link. It is
+  // anchored to the top-left of the entry name (not the mouse) and appears
+  // after a short delay.
+  const [linkTooltip, setLinkTooltip] = useState<{
+    x: number
+    y: number
+    below?: boolean
+    entry: LsClickableEntry
+  } | null>(null)
+  // Delay hiding the card after leaving the link, so the mouse can reach the
+  // card and click it (the card floats above the link).
+  const linkTooltipHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Delay showing the card until the mouse has hovered the link for 500ms.
+  const linkTooltipShowTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The entry whose card is currently displayed (prevents re-arming the 500ms
+  // delay on repeat hover callbacks for the same link).
+  const linkTooltipEntryRef = useRef<LsClickableEntry | null>(null)
+
+  // Compute the screen position of a link's top-left corner. `bufferRow` is the
+  // 0-based buffer row and `col` the 0-based column where the link text starts.
+  const computeLinkAnchor = (
+    term: Terminal,
+    bufferRow: number,
+    col: number,
+  ): { x: number; y: number; cellH: number } | null => {
+    const rect = term.element?.getBoundingClientRect()
+    if (!rect) return null
+    const core = (term as unknown as {
+      _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } }
+    })._core
+    let cellW = core?._renderService?.dimensions?.css?.cell?.width
+    let cellH = core?._renderService?.dimensions?.css?.cell?.height
+    if (!cellW || !cellH) {
+      cellW = rect.width / Math.max(1, term.cols)
+      cellH = rect.height / Math.max(1, term.rows)
+    }
+    const baseY = term.buffer.active.baseY
+    const rowInViewport = bufferRow - baseY
+    return {
+      x: rect.left + col * cellW,
+      y: rect.top + rowInViewport * cellH,
+      cellH,
+    }
+  }
 
   // ---- custom overlay scrollbar (B13: terminal needs a visible scrollbar) ----
   const [scrollThumb, setScrollThumb] = useState({ h: 0, t: 0, show: false })
@@ -1220,6 +1266,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           if (localStart < 0 || localEnd <= localStart || localStart >= cols) continue
 
           seen.add(entry)
+          // Top-left of the link text in buffer coordinates (for anchoring the
+          // hover card above the entry name, independent of the mouse).
+          const linkTopBufferRow = firstRow + occStartRow
+          const linkLeftCol = startGlobalCol % cols
           links.push({
             range: {
               start: { x: localStart + 1, y: bufferLineNumber },
@@ -1227,13 +1277,41 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             },
             text: entry.name,
             decorations: { pointerCursor: true, underline: true },
-            activate: () => {
-              // Keep links clickable after a click — a click is not a "new
-              // command" from the buffer's perspective (cd is sent straight
-              // via sendInput, not through onData). Links are cleared at the
-              // right moments: next Enter-submitted command, clear, disconnect,
-              // reconnect, AI command, and unmount.
-              onLsEntryClick(entry)
+            hover: () => {
+              // Card appears after a 500ms delay, anchored to the top-left of
+              // the entry name (like VSCode) instead of following the mouse.
+              if (linkTooltipEntryRef.current === entry) return
+              if (linkTooltipShowTimer.current) clearTimeout(linkTooltipShowTimer.current)
+              linkTooltipShowTimer.current = setTimeout(() => {
+                linkTooltipShowTimer.current = null
+                const pos = computeLinkAnchor(term, linkTopBufferRow, linkLeftCol)
+                if (!pos) return
+                linkTooltipEntryRef.current = entry
+                if (pos.y < 70) {
+                  // Too close to the top edge — show below the name instead.
+                  setLinkTooltip({ x: pos.x, y: pos.y + pos.cellH, below: true, entry })
+                } else {
+                  // Overlap the top of the entry name by 2px.
+                  setLinkTooltip({ x: pos.x, y: pos.y - 2, entry })
+                }
+              }, 800)
+            },
+            leave: () => {
+              if (linkTooltipShowTimer.current) {
+                clearTimeout(linkTooltipShowTimer.current)
+                linkTooltipShowTimer.current = null
+              }
+              linkTooltipEntryRef.current = null
+              // Delay hiding so the mouse can move up onto the card and click it.
+              if (linkTooltipHideTimer.current) clearTimeout(linkTooltipHideTimer.current)
+              linkTooltipHideTimer.current = setTimeout(() => setLinkTooltip(null), 300)
+            },
+            activate: (event) => {
+              // Follow the link only when Ctrl (Linux/Windows) or Cmd (macOS) is
+              // held, matching VSCode's terminal link behavior.
+              if (event.ctrlKey || event.metaKey) {
+                onLsEntryClick(entry)
+              }
             },
           })
         }
@@ -1526,6 +1604,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       resetLsCapture()
       clearLsLinks()
       lsLinkProviderDisposable.dispose()
+      if (linkTooltipShowTimer.current) clearTimeout(linkTooltipShowTimer.current)
+      if (linkTooltipHideTimer.current) clearTimeout(linkTooltipHideTimer.current)
+      linkTooltipEntryRef.current = null
+      setLinkTooltip(null)
       unlistenAiMark?.()
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
@@ -1923,6 +2005,38 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             </>
           )}
           {aiBadge.state === 'error' && <>✗ {aiBadge.error || t('aiTermError')}</>}
+        </div>
+      )}
+      {linkTooltip && (
+        <div
+          className={`term-link-tooltip${linkTooltip.below ? ' below' : ''}`}
+          style={{ left: linkTooltip.x, top: linkTooltip.y }}
+          onMouseEnter={() => {
+            // Mouse is on the card — cancel the delayed hide.
+            if (linkTooltipHideTimer.current) {
+              clearTimeout(linkTooltipHideTimer.current)
+              linkTooltipHideTimer.current = null
+            }
+          }}
+          onMouseLeave={() => {
+            if (linkTooltipHideTimer.current) {
+              clearTimeout(linkTooltipHideTimer.current)
+              linkTooltipHideTimer.current = null
+            }
+            setLinkTooltip(null)
+          }}
+          onClick={(e) => {
+            e.stopPropagation()
+            setLinkTooltip(null)
+            onLsEntryClick(linkTooltip.entry)
+          }}
+        >
+          <span className="term-link-tooltip-label">
+            {linkTooltip.entry.kind === 'dir' ? 'Enter folder' : 'Open file'}
+          </span>
+          <span className="term-link-tooltip-hint">
+            ({/mac|iphone|ipad/i.test(navigator.userAgent) ? 'cmd' : 'ctrl'} + click)
+          </span>
         </div>
       )}
       {ctxMenu && (
