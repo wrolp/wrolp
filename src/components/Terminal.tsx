@@ -535,19 +535,47 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const line = buf.getLine(y)
       if (!line) return false
       const text = line.translateToString(true)
-      const end = entry.col + entry.name.length
-      if (text.slice(entry.col, end) !== entry.name) return false
-      const after = text[end]
-      // Boundary: EOL / whitespace / symlink arrow / an `ls -F` type indicator
-      // (`/ @ * = |`) — the indicator trails the name on screen but isn't part
-      // of entry.name (parseMultiLine strips it), so it must count as a valid
-      // boundary or `dir/` won't match the `dir` entry.
-      return (
-        after === undefined ||
-        /\s/.test(after) ||
-        text.slice(end, end + 4) === ' -> ' ||
-        /[@*=|/]/.test(after)
-      )
+      const len = entry.name.length
+      // Mirror the link provider: the name begins on its "home" visual row at
+      // `entry.col % cols` (the raw column for an unwrapped line). Accept either
+      // the full name or, when the wrap splits it, just the visible leading
+      // chunk.
+      const cols = term.cols
+      const homeCol = cols > 0 ? entry.col % cols : entry.col
+      const visOnHome = cols > 0 ? Math.min(len, cols - homeCol) : len
+      const wrapped = cols > 0 && entry.col >= cols
+      if (visOnHome === len) {
+        if (text.slice(homeCol, homeCol + len) !== entry.name) return false
+      } else if (visOnHome > 0) {
+        if (text.slice(homeCol, homeCol + visOnHome) !== entry.name.slice(0, visOnHome)) return false
+      } else {
+        return false
+      }
+      // Before-boundary: skip for wrapped entries (the char before is wrapped
+      // remainder text); for non-wrapped entries require whitespace/row-start so
+      // a shorter name doesn't match inside a longer neighbor.
+      if (!wrapped) {
+        const before = homeCol > 0 ? text[homeCol - 1] : undefined
+        if (before !== undefined && !/\s/.test(before)) return false
+      }
+      if (visOnHome === len) {
+        const end = homeCol + len
+        const after = text[end]
+        // Boundary: EOL / whitespace / symlink arrow / an `ls -F` type indicator
+        // (`/ @ * = |`) — the indicator trails the name on screen but isn't part
+        // of entry.name (parseMultiLine strips it), so it must count as a valid
+        // boundary or `dir/` won't match the `dir` entry.
+        if (
+          !(
+            after === undefined ||
+            /\s/.test(after) ||
+            text.slice(end, end + 4) === ' -> ' ||
+            /[@*=|/]/.test(after)
+          )
+        )
+          return false
+      }
+      return true
     }
     if (nameAt(expectedRow)) return expectedRow
     // The expected row can drift when the buffer scrolled between submit and
@@ -1067,35 +1095,135 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           callback([])
           return
         }
-        const text = line.translateToString(true)
         const allEntries: LsClickableEntry[] = []
         for (const arr of entries.values()) allEntries.push(...arr)
         const links: ILink[] = []
         const seen = new Set<LsClickableEntry>()
+        const cols = term.cols
+        if (cols <= 0) {
+          callback([])
+          return
+        }
+        // A long `ls -l` line is wrapped by xterm across several visual rows of
+        // width `cols`. The name may therefore be split across rows (e.g.
+        // `longfile…` at the end of one row, `…name` at the start of the next),
+        // and CJK / wide characters make a naive character-count mapping
+        // between `entry.col` and xterm columns incorrect. We rebuild the full
+        // logical line directly from the buffer, then map the name occurrence
+        // back to the hovered visual row using each character's real xterm cell
+        // column.
+        // Walk up while the line at `firstRow` itself is marked `isWrapped`
+        // (`isWrapped` means "this line is a continuation of the line above").
+        let firstRow = bufferLineNumber - 1
+        while (firstRow > 0) {
+          const cur = buf.getLine(firstRow)
+          if (cur && cur.isWrapped) firstRow--
+          else break
+        }
+        const hoveredRowIdx = bufferLineNumber - 1 - firstRow
+
+        // Reconstruct the logical line and a map from each logical character to
+        // its global (0-based) xterm column. Reading cells directly handles
+        // wide characters exactly as xterm renders them.
+        //
+        // NOTE on `isWrapped` semantics: a row with `isWrapped === true` is a
+        // *continuation* of the row above, so the logical line's FIRST row
+        // always has `isWrapped === false`. To walk down through the rest of
+        // the logical line we must therefore check the NEXT row's `isWrapped`
+        // (it continues the current row), never the current row's — checking
+        // the current row breaks immediately after the first row, leaving the
+        // wrapped remainder of the name out of `logicalText` and breaking
+        // every wrapped `ls` link.
+        type LogicalChar = { ch: string; globalCol: number }
+        const logicalChars: LogicalChar[] = []
+        let scanRow = firstRow
+        while (true) {
+          const l = buf.getLine(scanRow)
+          if (!l) break
+          const rowBase = (scanRow - firstRow) * cols
+          for (let x = 0; x < l.length; x++) {
+            const cell = l.getCell(x)
+            if (!cell) continue
+            const w = cell.getWidth()
+            if (w === 0) continue // wide-char padding cell
+            const ch = cell.getChars()
+            if (ch === '') continue
+            logicalChars.push({ ch, globalCol: rowBase + x })
+          }
+          const next = buf.getLine(scanRow + 1)
+          if (!next || !next.isWrapped) break
+          scanRow++
+        }
+        if (logicalChars.length === 0) {
+          callback([])
+          return
+        }
+        const logicalText = logicalChars.map((c) => c.ch).join('')
+        const endOfLineGlobalCol = (scanRow - firstRow + 1) * cols
+
         for (const entry of allEntries) {
           if (entry.name.length === 0 || seen.has(entry)) continue
-          const end = entry.col + entry.name.length
-          if (text.slice(entry.col, end) !== entry.name) continue
-          // Name boundary: the next char must be EOL / whitespace / the start of
-          // a ` -> ` symlink arrow. Without this, a shorter entry like
-          // `password-platform` (17 chars) wrongly matches on the row of its
-          // longer neighbor `password-platform-dev` — the slice matches the
-          // first 17 chars even though the real token on that row is 22 chars.
-          const after = text[end]
-          // Boundary: EOL / whitespace / symlink arrow / `ls -F` indicator
-          // (`/ @ * = |`), which trails the name on screen but isn't part of
-          // entry.name (parseMultiLine strips it for `multiF` listings).
+
+          // Find the occurrence of the name nearest to the parsed column.
+          // `entry.col` is a character offset in the (unwrapped) source text,
+          // which matches `logicalText` because both are derived from the same
+          // terminal output. Multiple matches are disambiguated by proximity.
+          let bestIdx = -1
+          let bestDist = Infinity
+          let searchPos = 0
+          while (true) {
+            const idx = logicalText.indexOf(entry.name, searchPos)
+            if (idx === -1) break
+            const dist = Math.abs(idx - entry.col)
+            if (dist < bestDist) {
+              bestDist = dist
+              bestIdx = idx
+            }
+            searchPos = idx + 1
+          }
+          if (bestIdx === -1) continue
+          const idx = bestIdx
+          const len = entry.name.length
+
+          // Boundary check so `bar` doesn't match inside `foobar`.
+          const before = idx > 0 ? logicalChars[idx - 1].ch : undefined
+          if (before !== undefined && !/\s/.test(before)) continue
+          const afterChar = idx + len < logicalChars.length ? logicalChars[idx + len].ch : undefined
+          const afterSlice = logicalChars
+            .slice(idx + len, idx + len + 4)
+            .map((c) => c.ch)
+            .join('')
           const boundaryOk =
-            after === undefined ||
-            /\s/.test(after) ||
-            text.slice(end, end + 4) === ' -> ' ||
-            /[@*=|/]/.test(after)
+            afterChar === undefined ||
+            /\s/.test(afterChar) ||
+            afterSlice === ' -> ' ||
+            /[@*=|/]/.test(afterChar)
           if (!boundaryOk) continue
+
+          // Global column range of this occurrence (end is exclusive).
+          const startGlobalCol = logicalChars[idx].globalCol
+          const endGlobalCol =
+            idx + len < logicalChars.length ? logicalChars[idx + len].globalCol : endOfLineGlobalCol
+
+          // Which visual rows does the occurrence span?
+          const occStartRow = Math.floor(startGlobalCol / cols)
+          const occEndRow = Math.floor((endGlobalCol - 1) / cols)
+          if (hoveredRowIdx < occStartRow || hoveredRowIdx > occEndRow) continue
+
+          // Clip to the hovered row.
+          const rowStartGlobalCol = hoveredRowIdx * cols
+          const rowEndGlobalCol = (hoveredRowIdx + 1) * cols
+          const linkStartGlobalCol = Math.max(startGlobalCol, rowStartGlobalCol)
+          const linkEndGlobalCol = Math.min(endGlobalCol, rowEndGlobalCol)
+          const localStart = linkStartGlobalCol - rowStartGlobalCol
+          const localEnd = linkEndGlobalCol - rowStartGlobalCol
+          if (localStart < 0 || localEnd <= localStart || localStart >= cols) continue
+
           seen.add(entry)
           links.push({
             range: {
-              start: { x: entry.col + 1, y: bufferLineNumber },
-              end: { x: entry.col + entry.name.length + 1, y: bufferLineNumber },
+              start: { x: localStart + 1, y: bufferLineNumber },
+              end: { x: localEnd + 1, y: bufferLineNumber },
             },
             text: entry.name,
             decorations: { pointerCursor: true, underline: true },
