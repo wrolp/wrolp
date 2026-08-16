@@ -117,9 +117,12 @@ export interface FileTreeHandle {
 /* ---------- helpers ---------- */
 
 function getParentDir(p: string): string {
-  const trimmed = p.replace(/\/$/, '')
+  const trimmed = p.replace(/\/+$/, '')
+  // Windows drive root like "C:" or "C:/" has no parent — return itself.
+  if (/^[A-Za-z]:$/.test(trimmed)) return trimmed + '/'
   const i = trimmed.lastIndexOf('/')
-  return i <= 0 ? '/' : trimmed.slice(0, i + 1)
+  if (i <= 0) return '/'
+  return trimmed.slice(0, i + 1)
 }
 
 function join(p: string, name: string): string {
@@ -136,9 +139,11 @@ function isWithinRoot(path: string, root: string): boolean {
   return p === r || p.startsWith(r)
 }
 
-// Normalize: drop a single trailing slash (keep '/' itself).
+// Normalize: drop a single trailing slash (keep '/' itself and drive roots
+// like "C:/" — "C:" alone is not an absolute path on Windows).
 function normalizePath(p: string): string {
   if (p === '/' || p === '.') return p
+  if (/^[A-Za-z]:\/$/.test(p)) return p
   return p.endsWith('/') ? p.slice(0, -1) : p
 }
 
@@ -1156,9 +1161,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const navigateUp = () => {
     if (currentPath === rootPath) return
     if (currentPath === '/' || currentPath === '.') return
-    const parts = currentPath.replace(/\/$/, '').split('/')
-    parts.pop()
-    const parent = parts.join('/') || '/'
+    const parent = normalizePath(getParentDir(currentPath))
+    // Windows drive root (e.g. "D:/") has no parent — stay put.
+    if (parent === currentPath) return
     loadRootDir(parent, true)
   }
   const setRoot = (path: string) => {
