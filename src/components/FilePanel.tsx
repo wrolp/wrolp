@@ -194,6 +194,16 @@ const formatSpeed = (bytesPerSec: number): string => {
 
 /* ---------- component ---------- */
 
+// Per-target browse state, kept at module scope (NOT inside the component):
+// the Files panel is unmounted whenever the focused tab isn't connected
+// (App.tsx `showFilePanel = filesTab?.status === 'connected'`), so a component-
+// level ref would be wiped on every tab switch and the directory the user left
+// would be lost. Module-level persistence survives remounts.
+const filePanelBrowseCache: Record<
+  string,
+  { currentPath: string; rootPath: string }
+> = {}
+
 export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function FilePanel(
   {
     tabId,
@@ -304,6 +314,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const [tree, setTree] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Guards the browse-state write against target switches: on the render right
+  // after `targetKey` changes, `currentPath` is still the PREVIOUS target's
+  // value (the reset effect below sets it later), so writing it would corrupt
+  // the new target's cached path. We remember the last target and skip that
+  // one write; the follow-up render (after the reset applied) persists correctly.
+  const lastTargetKeyRef = useRef(targetKey)
   // Local drive letters (Windows) offered by the location dropdown, plus the
   // current selection of that dropdown (reset after each jump).
   const [drives, setDrives] = useState<string[]>([])
@@ -444,11 +460,15 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   useEffect(() => {
     if (isConnected) {
-      // Reset to the target's home directory so that switching to a different
-      // split pane / connection shows that connection's correct root rather
-      // than a stale path carried over from the previous connection.
-      setCurrentPath(defaultPath)
-      setRootPath(defaultPath)
+      // Restore the directory the user left when they last browsed this
+      // filesystem (targetKey), so switching to another terminal and back does
+      // not reset the file list to home. A fresh/unvisited target falls back to
+      // the target's home directory.
+      const cached = filePanelBrowseCache[targetKey]
+      const startPath = cached ? cached.currentPath : defaultPath
+      const startRoot = cached ? cached.rootPath : defaultPath
+      setCurrentPath(startPath)
+      setRootPath(startRoot)
       // Non-session targets (jump/docker) can be addressed through a freshly
       // opened SSH session whose handle is not ready yet; retry the first list
       // until it succeeds so the panel fills in instead of showing an error.
@@ -457,7 +477,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       let timer: ReturnType<typeof setTimeout> | undefined
       const attemptLoad = async () => {
         if (cancelled) return
-        const ok = await loadRootDir(defaultPath)
+        const ok = await loadRootDir(startPath)
         if (cancelled) return
         if (!ok && attempt < 30) {
           attempt++
@@ -476,6 +496,20 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       }
     }
   }, [isConnected, sessionTabId, targetKey, defaultPath])
+
+  // Persist the browse state per target so switching back restores it. Runs
+  // whenever the user navigates (currentPath/rootPath change). On the render
+  // right after a target switch, currentPath is still the PREVIOUS target's
+  // value — skip that write (guard below) so the new target's cached path is
+  // never seeded with a stale path from the old target.
+  useEffect(() => {
+    if (!isConnected) return
+    if (lastTargetKeyRef.current !== targetKey) {
+      lastTargetKeyRef.current = targetKey
+      return
+    }
+    filePanelBrowseCache[targetKey] = { currentPath, rootPath }
+  }, [isConnected, currentPath, rootPath, targetKey])
 
   // Shell → FilePanel sync (main session only)
   useEffect(() => {
