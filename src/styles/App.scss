@@ -3265,6 +3265,33 @@ input[type='password']::-ms-clear {
 
   .file-transfer-row {
     padding: 3px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    .file-transfer-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .file-transfer-cancel {
+      flex: none;
+      width: 16px;
+      height: 16px;
+      line-height: 1;
+      padding: 0;
+      border: none;
+      border-radius: 3px;
+      background: none;
+      color: $text-dim;
+      font-size: 11px;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(244, 71, 71, 0.15);
+        color: #f44747;
+      }
+    }
 
     .file-transfer-name {
       font-size: 11px;
@@ -3301,12 +3328,24 @@ input[type='password']::-ms-clear {
       color: #f44747;
     }
 
+    .file-transfer-cancelled {
+      color: $text-dim;
+    }
+
     &.error .file-transfer-name {
       color: #f44747;
     }
 
     &.done .file-transfer-fill {
       background: #4caf50;
+    }
+
+    &.cancelled {
+      opacity: 0.55;
+    }
+
+    &.cancelled .file-transfer-fill {
+      background: $text-dim;
     }
   }
 

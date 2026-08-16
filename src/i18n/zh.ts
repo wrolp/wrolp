@@ -178,6 +178,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   transfersComplete: '传输完成',
   dragToResize: '拖动调整高度',
   failed: '失败',
+  cancelled: '已取消',
+  cancelTransfer: '取消传输',
 
   // Settings: general
   settingsGeneral: '通用',

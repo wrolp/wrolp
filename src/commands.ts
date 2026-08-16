@@ -269,6 +269,10 @@ export async function resumeTransfer(tabId: number): Promise<void> {
   await invoke('resume_transfer', { tabId })
 }
 
+export async function cancelTransfer(tabId: number): Promise<void> {
+  await invoke('cancel_transfer', { tabId })
+}
+
 // ===== SFTP User Switching =====
 
 export async function switchSftpUser(

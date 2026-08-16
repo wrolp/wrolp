@@ -467,9 +467,10 @@ pub struct FileMeta {
   pub modified: String,
 }
 
-/// Per-tab transfer pause/resume control
+/// Per-tab transfer pause/resume/cancel control
 pub struct TransferControl {
   pub paused: AtomicBool,
+  pub cancelled: AtomicBool,
   pub notify: tokio::sync::Notify,
 }
 

@@ -177,6 +177,8 @@ const en = {
   transfersComplete: 'Transfers complete',
   dragToResize: 'Drag to resize',
   failed: 'Failed',
+  cancelled: 'Cancelled',
+  cancelTransfer: 'Cancel transfer',
 
   // Settings: general
   settingsGeneral: 'General',

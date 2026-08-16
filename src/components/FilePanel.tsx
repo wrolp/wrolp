@@ -26,6 +26,7 @@ import {
   fsWriteFileContent,
   pauseTransfer,
   resumeTransfer,
+  cancelTransfer,
   switchSftpUser,
   revertSftpUser,
   getSftpUser,
@@ -63,7 +64,7 @@ interface TransferRow {
   key: string
   filename: string
   op: 'upload' | 'download' | 'directory'
-  status: 'queued' | 'active' | 'done' | 'error'
+  status: 'queued' | 'active' | 'done' | 'error' | 'cancelled'
   transferred: number
   total: number
   speed: string
@@ -328,6 +329,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // download batches populate this list so the user sees one row per file
   // (filename + progress bar + speed) instead of a single shared progress bar.
   const [transferRows, setTransferRows] = useState<TransferRow[]>([])
+  // Keys of rows the user cancelled. The sequential transfer loops consult it
+  // to skip cancelled queued files and to mark an aborted in-flight file as
+  // 'cancelled' instead of 'error'.
+  const cancelledKeysRef = useRef<Set<string>>(new Set())
   // Height of the transfer list panel; user can drag the handle on its top edge.
   const [transfersPanelHeight, setTransfersPanelHeight] = useState(140)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -655,6 +660,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
    */
   const mergeRows = (prev: TransferRow[], next: TransferRow[]): TransferRow[] => {
     const nextKeys = new Set(next.map((r) => r.key))
+    // A fresh batch supersedes any previous cancel state for those keys.
+    for (const k of nextKeys) cancelledKeysRef.current.delete(k)
     return [...prev.filter((r) => !nextKeys.has(r.key)), ...next]
   }
 
@@ -683,6 +690,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       })
       setTransferRows((prev) => mergeRows(prev, rows))
       for (let i = 0; i < paths.length; i++) {
+        // Skip files the user cancelled while they were still queued.
+        if (cancelledKeysRef.current.has(rows[i].key)) continue
         const localPath = paths[i]
         const fileName = rows[i].filename
         const remotePath = join(targetDir, fileName)
@@ -697,9 +706,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             ),
           )
         } catch (e) {
+          const cancelled = cancelledKeysRef.current.has(rows[i].key)
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)),
+            prev.map((r) =>
+              r.key === rows[i].key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
+            ),
           )
+          if (cancelled) continue
           setError(`Upload ${fileName} failed: ${e}`)
           break
         }
@@ -789,6 +802,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       // empty directories are preserved and nested uploads always have parents.
       for (const d of dirs) {
         const mkKey = `mkdir:${d}`
+        if (cancelledKeysRef.current.has(mkKey)) continue
         setTransferRows((prev) =>
           prev.map((r) => (r.key === mkKey ? { ...r, status: 'active' } : r)),
         )
@@ -809,6 +823,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       for (const f of files) {
         const remotePath = join(targetDir, f.relPath)
         const key = `upload:${f.relPath}`
+        if (cancelledKeysRef.current.has(key)) continue
         setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'active' } : r)))
         try {
           // Stream the file in ~64KB chunks. Loading it fully into a byte array
@@ -823,9 +838,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             prev.map((r) => (r.key === key ? { ...r, status: 'done', transferred: r.total } : r)),
           )
         } catch (e) {
+          const cancelled = cancelledKeysRef.current.has(key)
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === key ? { ...r, status: 'error' } : r)),
+            prev.map((r) =>
+              r.key === key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
+            ),
           )
+          if (cancelled) continue
           setError(`Upload ${f.relPath} failed: ${e}`)
           break
         }
@@ -1052,10 +1071,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             ),
           )
         } catch (e) {
+          const key = `directory:${node.path}`
+          const cancelled = cancelledKeysRef.current.has(key)
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === `directory:${node.path}` ? { ...r, status: 'error' } : r)),
+            prev.map((r) =>
+              r.key === key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
+            ),
           )
-          setError(String(e))
+          if (!cancelled) setError(String(e))
         }
       } catch (e) {
         setError(String(e))
@@ -1089,10 +1112,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             ),
           )
         } catch (e) {
+          const key = `download:${node.path}`
+          const cancelled = cancelledKeysRef.current.has(key)
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === `download:${node.path}` ? { ...r, status: 'error' } : r)),
+            prev.map((r) =>
+              r.key === key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
+            ),
           )
-          setError(String(e))
+          if (!cancelled) setError(String(e))
         }
       }
     } catch (e) {
@@ -1143,6 +1170,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     setTransferRows((prev) => mergeRows(prev, rows))
     for (let i = 0; i < items.length; i++) {
       const { file, localPath } = items[i]
+      // Skip files the user cancelled while they were still queued.
+      if (cancelledKeysRef.current.has(rows[i].key)) continue
       setTransferRows((prev) =>
         prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)),
       )
@@ -1154,9 +1183,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           ),
         )
       } catch (e) {
+        const cancelled = cancelledKeysRef.current.has(rows[i].key)
         setTransferRows((prev) =>
-          prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'error' } : r)),
+          prev.map((r) =>
+            r.key === rows[i].key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
+          ),
         )
+        if (cancelled) continue
         setError(`Download ${file.name} failed: ${e}`)
       }
     }
@@ -1251,6 +1284,23 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       setPaused(true)
       await pauseTransfer(sessionTabId)
     }
+  }
+
+  /** Cancel a transfer row: abort the in-flight transfer in the backend (if
+      this is the active row) and stop any queued loop from starting it. */
+  const cancelTransferRow = async (row: TransferRow) => {
+    cancelledKeysRef.current.add(row.key)
+    if (row.status === 'active' && sessionTabId != null) {
+      try {
+        await cancelTransfer(sessionTabId)
+      } catch {
+        /* ignore — the loop will mark the row as cancelled/error itself */
+      }
+    }
+    setPaused(false)
+    setTransferRows((prev) =>
+      prev.map((r) => (r.key === row.key ? { ...r, status: 'cancelled', speed: '' } : r)),
+    )
   }
 
   /* ---- scrollbar ---- */
@@ -1699,37 +1749,51 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 >
                   {transferRows.map((row) => (
                     <div key={row.key} className={`file-transfer-row ${row.status}`}>
-                      <div className="file-transfer-name" title={row.filename}>
-                        {row.filename}
+                      <div className="file-transfer-info">
+                        <div className="file-transfer-name" title={row.filename}>
+                          {row.filename}
+                        </div>
+                        <div className="file-transfer-bar">
+                          <div
+                            className="file-transfer-fill"
+                            style={
+                              row.total > 0
+                                ? {
+                                    width: `${Math.min(100, (row.transferred / row.total) * 100)}%`,
+                                    animation: 'none',
+                                  }
+                                : row.status === 'active'
+                                  ? undefined
+                                  : undefined
+                            }
+                          />
+                        </div>
+                        <div className="file-transfer-meta">
+                          {row.status === 'error' && (
+                            <span className="file-transfer-error">✗ {t('failed')}</span>
+                          )}
+                          {row.status === 'cancelled' && (
+                            <span className="file-transfer-cancelled">✕ {t('cancelled')}</span>
+                          )}
+                          {row.status === 'done' && <span>✓</span>}
+                          {row.status === 'queued' && <span>· · ·</span>}
+                          {row.total > 0 && (
+                            <span>
+                              {' '}
+                              {formatSize(row.transferred)} / {formatSize(row.total)} · {row.speed}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="file-transfer-bar">
-                        <div
-                          className="file-transfer-fill"
-                          style={
-                            row.total > 0
-                              ? {
-                                  width: `${Math.min(100, (row.transferred / row.total) * 100)}%`,
-                                  animation: 'none',
-                                }
-                              : row.status === 'active'
-                                ? undefined
-                                : undefined
-                          }
-                        />
-                      </div>
-                      <div className="file-transfer-meta">
-                        {row.status === 'error' && (
-                          <span className="file-transfer-error">✗ {t('failed')}</span>
-                        )}
-                        {row.status === 'done' && <span>✓</span>}
-                        {row.status === 'queued' && <span>· · ·</span>}
-                        {row.total > 0 && (
-                          <span>
-                            {' '}
-                            {formatSize(row.transferred)} / {formatSize(row.total)} · {row.speed}
-                          </span>
-                        )}
-                      </div>
+                      {(row.status === 'active' || row.status === 'queued') && (
+                        <button
+                          className="file-transfer-cancel"
+                          title={t('cancelTransfer')}
+                          onClick={() => cancelTransferRow(row)}
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -19,11 +19,15 @@ use tauri::Manager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
-/// Wait if the transfer for this tab is paused. Returns immediately if not paused.
-async fn check_pause(control: &TransferControl) {
+/// Wait if the transfer for this tab is paused. Returns immediately if not
+/// paused, or an error if the transfer has been cancelled by the user.
+async fn check_pause(control: &TransferControl) -> Result<(), String> {
   loop {
+    if control.cancelled.load(Ordering::SeqCst) {
+      return Err("Transfer cancelled".to_string());
+    }
     if !control.paused.load(Ordering::SeqCst) {
-      return;
+      return Ok(());
     }
     control.notify.notified().await;
   }
@@ -1757,6 +1761,7 @@ pub async fn download_file(
   // Set up pause control
   let control = Arc::new(TransferControl {
     paused: AtomicBool::new(false),
+    cancelled: AtomicBool::new(false),
     notify: tokio::sync::Notify::new(),
   });
   {
@@ -1796,7 +1801,7 @@ pub async fn download_file(
 
   loop {
     // Check for pause before each chunk
-    check_pause(&control).await;
+    check_pause(&control).await?;
 
     let n = file
       .read(&mut buf)
@@ -1881,6 +1886,7 @@ pub async fn download_directory(
   // Set up pause control
   let control = Arc::new(TransferControl {
     paused: AtomicBool::new(false),
+    cancelled: AtomicBool::new(false),
     notify: tokio::sync::Notify::new(),
   });
   {
@@ -1921,7 +1927,7 @@ pub async fn download_directory(
   let start = std::time::Instant::now();
 
   for (remote_path, rel, size) in &files {
-    check_pause(&control).await;
+    check_pause(&control).await?;
 
     let mut file = sftp
       .open(remote_path)
@@ -1938,7 +1944,7 @@ pub async fn download_directory(
     let mut buf = vec![0u8; 65536];
     let mut offset = 0u64;
     loop {
-      check_pause(&control).await;
+      check_pause(&control).await?;
       let n = file
         .read(&mut buf)
         .await
@@ -1994,6 +2000,7 @@ pub async fn upload_file(
   // Set up pause control
   let control = Arc::new(TransferControl {
     paused: AtomicBool::new(false),
+    cancelled: AtomicBool::new(false),
     notify: tokio::sync::Notify::new(),
   });
   {
@@ -2042,7 +2049,7 @@ pub async fn upload_file(
   let mut written: u64 = 0;
 
   loop {
-    check_pause(&control).await;
+    check_pause(&control).await?;
     let n = local
       .read(&mut buf)
       .await
@@ -2149,6 +2156,7 @@ pub async fn upload_file_bytes(
   // Set up pause control
   let control = Arc::new(TransferControl {
     paused: AtomicBool::new(false),
+    cancelled: AtomicBool::new(false),
     notify: tokio::sync::Notify::new(),
   });
   {
@@ -2186,7 +2194,7 @@ pub async fn upload_file_bytes(
   let mut written: u64 = 0;
 
   for chunk in file_data.chunks(chunk_size) {
-    check_pause(&control).await;
+    check_pause(&control).await?;
     file
       .write_all(chunk)
       .await
@@ -2234,6 +2242,7 @@ pub async fn upload_start(
   // Set up pause control (kept registered until `upload_end`).
   let control = Arc::new(TransferControl {
     paused: AtomicBool::new(false),
+    cancelled: AtomicBool::new(false),
     notify: tokio::sync::Notify::new(),
   });
   {
@@ -2316,6 +2325,7 @@ pub async fn target_upload_start(
         started: std::time::Instant::now(),
         control: Arc::new(TransferControl {
           paused: AtomicBool::new(false),
+          cancelled: AtomicBool::new(false),
           notify: tokio::sync::Notify::new(),
         }),
       },
@@ -2340,7 +2350,7 @@ pub async fn upload_chunk(
       .ok_or("Upload session not found (already finished or expired)")?
   };
 
-  check_pause(&sess.control).await;
+  check_pause(&sess.control).await?;
 
   let result = async {
     sess.file
@@ -2866,6 +2876,18 @@ pub async fn resume_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> 
   let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
   if let Some(ctrl) = controls.get(&tab_id) {
     ctrl.paused.store(false, Ordering::SeqCst);
+    ctrl.notify.notify_one();
+  }
+  Ok(())
+}
+
+/// Cancel the in-flight transfer for a tab. The transfer loop checks the flag
+/// before each chunk and aborts (also wakes a paused loop so it can bail out).
+#[tauri::command]
+pub async fn cancel_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<(), String> {
+  let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+  if let Some(ctrl) = controls.get(&tab_id) {
+    ctrl.cancelled.store(true, Ordering::SeqCst);
     ctrl.notify.notify_one();
   }
   Ok(())
