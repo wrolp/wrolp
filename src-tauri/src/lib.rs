@@ -191,6 +191,8 @@ pub fn run() {
       commands::upload_file,
       commands::upload_file_bytes,
       commands::upload_start,
+      commands::upload_batch_start,
+      commands::upload_batch_end,
       commands::target_upload_start,
       commands::upload_chunk,
       commands::upload_end,

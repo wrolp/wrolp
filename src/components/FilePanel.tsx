@@ -33,6 +33,8 @@ import {
   sendInput,
   pollWorkingDir,
   listDockerContainers,
+  uploadBatchStart,
+  uploadBatchEnd,
 } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
@@ -40,7 +42,7 @@ import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
 /** How many file transfers run at once for a multi-file upload batch. */
-const UPLOAD_CONCURRENCY = 4
+const UPLOAD_CONCURRENCY = 8
 
 /**
  * Run `worker` over `items` with at most `limit` tasks in flight at once.
@@ -878,58 +880,141 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       setError('')
       setPaused(false)
-      const rows: TransferRow[] = [
-        ...dirs.map((d) => ({
-          key: `mkdir:${d}`,
-          filename: `${d}/`,
-          op: 'upload' as const,
-          status: 'queued' as const,
-          transferred: 0,
-          total: 0,
-          speed: '',
-        })),
-        ...files.map((f) => ({
-          key: `upload:${f.relPath}`,
-          filename: f.relPath,
-          op: 'upload' as const,
-          status: 'queued' as const,
-          transferred: 0,
-          total: 0,
-          speed: '',
-        })),
-      ]
-      setTransferRows((prev) => mergeRows(prev, rows))
 
-      // Create remote directories first. DFS pre-order lists parents before
-      // children; parallelize each depth level so siblings go together while a
-      // child never races its own parent (mkdir -p isn't guaranteed).
-      const byDepth: string[][] = []
-      for (const d of dirs) {
-        const depth = d.split('/').length
-        ;(byDepth[depth] ??= []).push(d)
-      }
-      for (const layer of byDepth) {
-        if (!layer) continue
-        await runConcurrent(layer, UPLOAD_CONCURRENCY, async (d) => {
-          const mkKey = `mkdir:${d}`
-          if (cancelledKeysRef.current.has(mkKey)) return
+      // Directory upload: collapse the whole tree into ONE aggregate progress
+      // row instead of a row per file + per subdirectory. Total is the sum of
+      // all file sizes; the bar advances as each file's chunked upload streams
+      // in (the backend `transfer-progress` events for op 'upload' carry only
+      // basenames, so they won't match this row — the `onProgress` deltas are
+      // the source of truth).
+      if (dirs.length > 0) {
+        const totalBytes = files.reduce((sum, f) => sum + f.file.size, 0)
+        const topNames = new Set(dirs.map((d) => d.split('/')[0]))
+        const dirName = topNames.size === 1 ? [...topNames][0]! : 'upload'
+        const aggKey = `upload-dir:${dirName}`
+        setTransferRows((prev) =>
+          mergeRows(prev, [
+            {
+              key: aggKey,
+              filename: dirName + '/',
+              op: 'upload',
+              status: 'active',
+              transferred: 0,
+              total: totalBytes,
+              speed: '',
+            },
+          ]),
+        )
+
+        // Create remote directories first (silently — no per-dir rows).
+        const byDepth: string[][] = []
+        for (const d of dirs) {
+          const depth = d.split('/').length
+          ;(byDepth[depth] ??= []).push(d)
+        }
+        for (const layer of byDepth) {
+          if (!layer) continue
+          await runConcurrent(layer, UPLOAD_CONCURRENCY, async (d) => {
+            try {
+              await fsCreateDirectory(target, join(targetDir, d))
+            } catch {
+              // Directory likely already exists — fine.
+            }
+          })
+        }
+
+        // Upload every file, folding each file's progress into the aggregate
+        // row. JS runs each callback to completion, so the shared counters are
+        // safe even though files stream concurrently.
+        const lastReported: Record<string, number> = {}
+        let doneBytes = 0
+        let firstError: string | null = null
+        const aggStart = Date.now()
+        const updateAgg = () => {
+          const elapsed = (Date.now() - aggStart) / 1000
+          const speed = elapsed > 0 ? formatSpeed(doneBytes / elapsed) : ''
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === mkKey ? { ...r, status: 'active' } : r)),
+            prev.map((r) => (r.key === aggKey ? { ...r, transferred: doneBytes, speed } : r)),
           )
+        }
+        // Reuse ONE SFTP connection across the whole batch (main session only)
+        // — this avoids a full SSH+SFTP handshake per file, which dominates the
+        // time for directories with many small files.
+        let batchId: number | undefined
+        if (sessionTabId != null) {
           try {
-            await fsCreateDirectory(target, join(targetDir, d))
-            setTransferRows((prev) =>
-              prev.map((r) => (r.key === mkKey ? { ...r, status: 'done' } : r)),
-            )
+            batchId = await uploadBatchStart(sessionTabId)
           } catch {
-            // Directory likely already exists — treat as done so the row isn't
-            // stuck in "uploading" forever.
-            setTransferRows((prev) =>
-              prev.map((r) => (r.key === mkKey ? { ...r, status: 'done' } : r)),
-            )
+            // Fall back to per-file connections if the batch couldn't open.
+            batchId = undefined
           }
-        })
+        }
+        try {
+          await runConcurrent(files, UPLOAD_CONCURRENCY, async (f) => {
+            if (cancelledKeysRef.current.has(aggKey)) return
+            try {
+              await fsUploadFileStream(
+                target,
+                join(targetDir, f.relPath),
+                f.file,
+                (transferred) => {
+                  const delta = transferred - (lastReported[f.relPath] ?? 0)
+                  lastReported[f.relPath] = transferred
+                  if (delta > 0) {
+                    doneBytes += delta
+                    updateAgg()
+                  }
+                },
+                batchId,
+              )
+              const delta = f.file.size - (lastReported[f.relPath] ?? 0)
+              lastReported[f.relPath] = f.file.size
+              if (delta > 0) {
+                doneBytes += delta
+                updateAgg()
+              }
+            } catch (e) {
+              const cancelled = cancelledKeysRef.current.has(aggKey)
+              if (!cancelled && !firstError) firstError = `Upload ${f.relPath} failed: ${e}`
+            }
+          })
+        } finally {
+          if (batchId != null) {
+            try {
+              await uploadBatchEnd(batchId)
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        const cancelled = cancelledKeysRef.current.has(aggKey)
+        setTransferRows((prev) =>
+          prev.map((r) =>
+            r.key === aggKey
+              ? {
+                  ...r,
+                  status: cancelled ? 'cancelled' : firstError ? 'error' : 'done',
+                  transferred: doneBytes,
+                }
+              : r,
+          ),
+        )
+        if (firstError) setError(firstError)
+        setPaused(false)
+        refresh()
+        return
       }
+
+      const rows: TransferRow[] = files.map((f) => ({
+        key: `upload:${f.relPath}`,
+        filename: f.relPath,
+        op: 'upload' as const,
+        status: 'queued' as const,
+        transferred: 0,
+        total: 0,
+        speed: '',
+      }))
+      setTransferRows((prev) => mergeRows(prev, rows))
 
       // Upload the files themselves, several at a time. Each file streams in
       // ~256KB chunks (browser reads are buffered up inside fsUploadFileStream);

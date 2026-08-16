@@ -2238,6 +2238,40 @@ pub async fn upload_file_bytes(
 
 /// Begin a streaming upload on the tab's SSH session. Creates the remote file
 /// (and parent dirs) and returns an `upload_id` for `upload_chunk`/`upload_end`.
+/// Open a shared SFTP connection for a directory-upload batch. All files in the
+/// batch reuse this one connection (via `batch_id` on `upload_start`) instead
+/// of performing a full SSH+SFTP handshake per file. Call `upload_batch_end`
+/// once the batch finishes (or fails) to drop the session.
+#[tauri::command]
+pub async fn upload_batch_start(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+) -> Result<u64, String> {
+  let sftp = Arc::new(open_sftp_session(&state, &app, tab_id).await?);
+  let batch_id = state.next_upload_batch_id.fetch_add(1, Ordering::SeqCst);
+  state
+    .upload_batch_sessions
+    .lock()
+    .map_err(|e| e.to_string())?
+    .insert(batch_id, sftp);
+  Ok(batch_id)
+}
+
+/// Close a directory-upload batch session opened by `upload_batch_start`.
+#[tauri::command]
+pub async fn upload_batch_end(
+  state: tauri::State<'_, AppState>,
+  batch_id: u64,
+) -> Result<(), String> {
+  state
+    .upload_batch_sessions
+    .lock()
+    .map_err(|e| e.to_string())?
+    .remove(&batch_id);
+  Ok(())
+}
+
 #[tauri::command]
 pub async fn upload_start(
   app: tauri::AppHandle,
@@ -2245,6 +2279,7 @@ pub async fn upload_start(
   tab_id: u32,
   remote_path: String,
   total: u64,
+  batch_id: Option<u64>,
 ) -> Result<u64, String> {
   // Set up pause control (kept registered until `upload_end`).
   let control = Arc::new(TransferControl {
@@ -2257,21 +2292,31 @@ pub async fn upload_start(
     controls.entry(tab_id).or_default().push(control.clone());
   }
 
-  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+  // Reuse the batch's shared SFTP connection when one is open (directory
+  // upload), avoiding a full SSH+SFTP handshake per file.
+  let sftp = match batch_id {
+    Some(bid) => state
+      .upload_batch_sessions
+      .lock()
+      .map_err(|e| e.to_string())?
+      .get(&bid)
+      .cloned()
+      .ok_or_else(|| format!("Upload batch {} not found", bid))?,
+    None => Arc::new(open_sftp_session(&state, &app, tab_id).await?),
+  };
 
   let filename = std::path::Path::new(&remote_path)
     .file_name()
     .map(|n| n.to_string_lossy().to_string())
     .unwrap_or_else(|| remote_path.clone());
 
-  let resolved_path = resolve_sftp_path(&sftp, &remote_path).await?;
-  ensure_parent_dir(&sftp, &resolved_path).await?;
+  let resolved_path = resolve_sftp_path(&*sftp, &remote_path).await?;
+  ensure_parent_dir(&*sftp, &resolved_path).await?;
 
   let file = sftp
     .create(&resolved_path)
     .await
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
-
   let upload_id = state.next_upload_id.fetch_add(1, Ordering::SeqCst);
   state
     .upload_sessions

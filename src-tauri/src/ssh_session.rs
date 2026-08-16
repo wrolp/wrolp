@@ -570,6 +570,14 @@ pub struct AppState {
   pub upload_sessions: StdMutex<HashMap<u64, UploadSession>>,
   /// Monotonic upload id counter.
   pub next_upload_id: AtomicU64,
+  /// Shared SFTP sessions for directory-upload batches: batch_id → session.
+  /// A directory upload reuses ONE connection across all its files instead of
+  /// opening a fresh SSH+SFTP handshake per file (the previous behaviour).
+  /// The session is registered by `upload_batch_start` and dropped by
+  /// `upload_batch_end`; each file's `upload_start` clones the `Arc` handle.
+  pub upload_batch_sessions: StdMutex<HashMap<u64, Arc<russh_sftp::client::SftpSession>>>,
+  /// Monotonic upload-batch id counter.
+  pub next_upload_batch_id: AtomicU64,
   /// Monotonic connection counter — bumped per new connect() call
   pub next_session_id: AtomicU64,
   /// SQLite database for session recording and command sets
@@ -688,6 +696,8 @@ impl AppState {
       next_tunnel_id: AtomicU64::new(1),
       upload_sessions: StdMutex::new(HashMap::new()),
       next_upload_id: AtomicU64::new(1),
+      upload_batch_sessions: StdMutex::new(HashMap::new()),
+      next_upload_batch_id: AtomicU64::new(1),
     }
   }
 }

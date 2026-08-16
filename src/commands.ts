@@ -184,6 +184,18 @@ export async function uploadFile(
   return await invoke<boolean>('upload_file', { tabId, localPath, remotePath })
 }
 
+/// Open a shared SFTP connection for a directory-upload batch. All files in the
+/// batch reuse this one connection (pass the returned id as `batchId` to
+/// `fsUploadFileStream`) instead of performing an SSH handshake per file.
+export async function uploadBatchStart(tabId: number): Promise<number> {
+  return await invoke<number>('upload_batch_start', { tabId })
+}
+
+/// Close a directory-upload batch session opened by `uploadBatchStart`.
+export async function uploadBatchEnd(batchId: number): Promise<void> {
+  await invoke('upload_batch_end', { batchId })
+}
+
 /// Upload file as raw bytes (for HTML5 drag-drop where we have file data, not paths)
 export async function uploadFileBytes(
   tabId: number,
@@ -531,12 +543,14 @@ export async function fsUploadFileStream(
   remotePath: string,
   file: File,
   onProgress?: (transferred: number, total: number) => void,
+  batchId?: number,
 ): Promise<void> {
   const uploadId = isSession(target)
     ? await invoke<number>('upload_start', {
         tabId: target.tabId,
         remotePath,
         total: file.size,
+        batchId,
       })
     : await invoke<number>('target_upload_start', {
         target,
@@ -547,7 +561,7 @@ export async function fsUploadFileStream(
     const reader = file.stream().getReader()
     let transferred = 0
     let pending: Uint8Array | null = null
-    const CHUNK = 256 * 1024 // ~256KB per invoke: 4x fewer IPC round-trips
+    const CHUNK = 1024 * 1024 // ~1MB per invoke: fewer IPC round-trips per byte
     const send = async (data: Uint8Array) => {
       const chunk = Array.from(data)
       await invoke('upload_chunk', { uploadId, chunk })
