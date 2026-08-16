@@ -77,6 +77,8 @@ import {
   switchWorkspace,
   listConnections,
   listTunnels,
+  startTunnel,
+  removeTunnel,
 } from './commands'
 import type {
   AppVersion,
@@ -84,6 +86,7 @@ import type {
   AiEndpointProfile,
   ToolCallEvent,
   TunnelInfo,
+  TunnelConfig,
   WorkspaceInfo,
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
@@ -2527,6 +2530,58 @@ export default function App() {
     return map
   }, [tabs])
 
+  // Saved tunnel definitions waiting for their connection to come online.
+  // Populated when a tunnel is started while the connection has no connected
+  // tab; drained once that tab reports status 'connected'.
+  const pendingTunnelStartsRef = useRef<Record<string, TunnelConfig[]>>({})
+
+  // Start a saved tunnel definition. If the connection already has a connected
+  // terminal tab it is reused; otherwise a new tab is opened and the tunnel
+  // starts automatically once that tab connects.
+  const handleStartTunnel = useCallback(
+    (connId: string, config: TunnelConfig) => {
+      const start = (tabId: number) => {
+        void startTunnel({
+          tabId,
+          connectionId: connId,
+          configId: config.id,
+          localAddr: config.localAddr,
+          localPort: config.localPort,
+          remoteHost: config.remoteHost,
+          remotePort: config.remotePort,
+          name: config.name,
+        })
+          .then(() => loadTunnels())
+          .catch((err) => console.error('Failed to start tunnel:', err))
+      }
+      const carrier = tunnelCarrierTabId[connId]
+      if (carrier != null) {
+        start(carrier)
+        return
+      }
+      const conn = connections.find((c) => c.id === connId)
+      if (!conn) return
+      openTab(conn)
+      const pending = pendingTunnelStartsRef.current
+      pending[connId] = [...(pending[connId] ?? []), config]
+    },
+    [tunnelCarrierTabId, connections, openTab, loadTunnels],
+  )
+
+  // Delete a saved tunnel definition (backend also stops it if running).
+  const handleRemoveTunnel = useCallback(
+    async (connId: string, tunnelId: string) => {
+      try {
+        await removeTunnel(connId, tunnelId)
+        loadTunnels()
+        handleConnectionChange()
+      } catch (err) {
+        console.error('Failed to remove tunnel:', err)
+      }
+    },
+    [loadTunnels, handleConnectionChange],
+  )
+
   const renderTerminalForTab = (tab: TabInfo, isFocused: boolean, leafId?: string) => {
     const connectConfig = tab.connectionId
       ? (() => {
@@ -2571,6 +2626,26 @@ export default function App() {
                 )
                 if (status === 'connected') {
                   refreshRecordingState(tab.tabId)
+                  // Start any tunnels queued for this connection while it was offline.
+                  const connId = tab.connectionId ?? ''
+                  const pending = pendingTunnelStartsRef.current[connId]
+                  if (pending && pending.length > 0) {
+                    pendingTunnelStartsRef.current[connId] = []
+                    for (const cfg of pending) {
+                      void startTunnel({
+                        tabId: tab.tabId,
+                        connectionId: tab.connectionId,
+                        configId: cfg.id,
+                        localAddr: cfg.localAddr,
+                        localPort: cfg.localPort,
+                        remoteHost: cfg.remoteHost,
+                        remotePort: cfg.remotePort,
+                        name: cfg.name,
+                      })
+                        .then(() => loadTunnels())
+                        .catch((err) => console.error('Failed to start tunnel:', err))
+                    }
+                  }
                 }
               }}
               onSizeChange={(cols, rows) => {
@@ -4372,7 +4447,8 @@ export default function App() {
               collapsedGroups={collapsedGroups}
               onCollapsedGroupsChange={handleCollapsedGroupsChange}
               tunnels={tunnels}
-              tunnelCarrierTabId={tunnelCarrierTabId}
+              onStartTunnel={handleStartTunnel}
+              onRemoveTunnel={handleRemoveTunnel}
               onTunnelsChanged={loadTunnels}
             />
           </div>

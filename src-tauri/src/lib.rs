@@ -270,6 +270,9 @@ pub fn run() {
       commands::start_tunnel,
       commands::stop_tunnel,
       commands::list_tunnels,
+      commands::add_tunnel,
+      commands::update_tunnel,
+      commands::remove_tunnel,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

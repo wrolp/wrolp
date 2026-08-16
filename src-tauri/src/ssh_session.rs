@@ -56,6 +56,28 @@ pub struct ConnectionConfig {
   /// from the active workspace; never rendered in the frontend edit form.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub workspace_id: Option<String>,
+  /// Saved SSH tunnel definitions attached to this connection. These are
+  /// persistent config; they start/stop on demand and do not require the
+  /// connection to be currently open.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub tunnels: Vec<TunnelConfig>,
+}
+
+/// A saved SSH local-port-forwarding tunnel definition attached to a
+/// connection. Pure config — no live runtime state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelConfig {
+  /// Stable id (uuid) used to match a definition to its running tunnel.
+  pub id: String,
+  #[serde(default)]
+  pub name: Option<String>,
+  /// Local bind host; defaults to "127.0.0.1".
+  #[serde(default)]
+  pub local_addr: Option<String>,
+  pub local_port: u16,
+  pub remote_host: String,
+  pub remote_port: u16,
 }
 
 fn default_port() -> u16 {
@@ -93,6 +115,8 @@ pub struct PersistedConnection {
   pub group: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub workspace_id: Option<String>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub tunnels: Vec<TunnelConfig>,
 }
 
 /// Envelope written to `connections.json`. Version history:
@@ -140,6 +164,7 @@ impl PersistedConnection {
       description: c.description.clone(),
       group: c.group.clone(),
       workspace_id: c.workspace_id.clone(),
+      tunnels: c.tunnels.clone(),
     })
   }
 }
@@ -167,6 +192,7 @@ impl ConnectionConfig {
       description: p.description.clone(),
       group: p.group.clone(),
       workspace_id: p.workspace_id.clone(),
+      tunnels: p.tunnels.clone(),
     })
   }
 }
@@ -583,6 +609,8 @@ pub struct TunnelRuntime {
   pub tab_id: u32,
   /// Connection id the tab belongs to (for the sidebar tree display).
   pub connection_id: Option<String>,
+  /// Saved tunnel-definition id this runtime was started from (if any).
+  pub config_id: Option<String>,
   /// Local listen address, e.g. "127.0.0.1:8080".
   pub local_addr: String,
   pub remote_host: String,
@@ -601,6 +629,7 @@ pub struct TunnelInfo {
   pub id: u32,
   pub tab_id: u32,
   pub connection_id: Option<String>,
+  pub config_id: Option<String>,
   pub local_addr: String,
   pub remote_host: String,
   pub remote_port: u32,

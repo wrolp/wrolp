@@ -5438,6 +5438,8 @@ pub struct StartTunnelArgs {
   pub tab_id: u32,
   /// Connection id (for the sidebar tree display).
   pub connection_id: Option<String>,
+  /// Saved tunnel-definition id this tunnel was started from (if any).
+  pub config_id: Option<String>,
   /// Local bind host; defaults to "127.0.0.1".
   pub local_addr: Option<String>,
   pub local_port: u16,
@@ -5466,6 +5468,7 @@ pub async fn start_tunnel(
   let id = state.next_tunnel_id.fetch_add(1, Ordering::Relaxed) as u32;
   let tab_id = args.tab_id;
   let connection_id = args.connection_id.clone();
+  let config_id = args.config_id.clone();
   let remote_host = args.remote_host.clone();
   let remote_port = args.remote_port as u32;
   let name = args.name.clone();
@@ -5507,6 +5510,7 @@ pub async fn start_tunnel(
         id,
         tab_id,
         connection_id,
+        config_id,
         local_addr: local_addr_str2,
         remote_host: args.remote_host,
         remote_port,
@@ -5532,6 +5536,7 @@ pub async fn list_tunnels(state: tauri::State<'_, AppState>) -> Result<Vec<Tunne
       id: *id,
       tab_id: t.tab_id,
       connection_id: t.connection_id.clone(),
+      config_id: t.config_id.clone(),
       local_addr: t.local_addr.clone(),
       remote_host: t.remote_host.clone(),
       remote_port: t.remote_port,
@@ -5559,6 +5564,100 @@ pub async fn stop_tunnel(
     abort.abort();
   }
   let _ = app.emit("tunnel-changed", serde_json::json!({}));
+  Ok(())
+}
+
+/// Add a tunnel *definition* to a connection (persisted, not started).
+#[tauri::command]
+pub async fn add_tunnel(
+  state: tauri::State<'_, AppState>,
+  connection_id: String,
+  config: super::ssh_session::TunnelConfig,
+) -> Result<(), String> {
+  {
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    let found = connections.iter_mut().find(|c| c.id == connection_id);
+    match found {
+      Some(c) => c.tunnels.push(config),
+      None => return Err("Connection not found".to_string()),
+    }
+  }
+  persist_connections(&state).await?;
+  Ok(())
+}
+
+/// Remove a saved tunnel definition from a connection. If a matching tunnel is
+/// currently running it is stopped too.
+#[tauri::command]
+pub async fn remove_tunnel(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  connection_id: String,
+  tunnel_id: String,
+) -> Result<(), String> {
+  {
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    let found = connections.iter_mut().find(|c| c.id == connection_id);
+    match found {
+      Some(c) => c.tunnels.retain(|t| t.id != tunnel_id),
+      None => return Err("Connection not found".to_string()),
+    }
+  }
+  // Stop any running tunnel started from this definition.
+  let abort = {
+    let mut tunnels = state.tunnels.lock().map_err(|e| e.to_string())?;
+    let mut aborts: Vec<tokio::task::AbortHandle> = Vec::new();
+    tunnels.retain(|_, t| {
+      if t.connection_id.as_deref() == Some(connection_id.as_str())
+        && t.config_id.as_deref() == Some(tunnel_id.as_str())
+      {
+        aborts.push(t.abort.clone());
+        false
+      } else {
+        true
+      }
+    });
+    aborts
+  };
+  for a in abort {
+    a.abort();
+  }
+  let _ = app.emit("tunnel-changed", serde_json::json!({}));
+  persist_connections(&state).await?;
+  Ok(())
+}
+
+/// Update a saved tunnel definition on a connection (persisted, not restarted).
+/// A running tunnel started from this definition keeps its current settings
+/// until the user stops and starts it again.
+#[tauri::command]
+pub async fn update_tunnel(
+  state: tauri::State<'_, AppState>,
+  connection_id: String,
+  tunnel_id: String,
+  config: super::ssh_session::TunnelConfig,
+) -> Result<(), String> {
+  {
+    let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
+    let found = connections.iter_mut().find(|c| c.id == connection_id);
+    match found {
+      Some(c) => {
+        let tun = c.tunnels.iter_mut().find(|t| t.id == tunnel_id);
+        match tun {
+          Some(t) => {
+            t.name = config.name;
+            t.local_addr = config.local_addr;
+            t.local_port = config.local_port;
+            t.remote_host = config.remote_host;
+            t.remote_port = config.remote_port;
+          }
+          None => return Err("Tunnel not found".to_string()),
+        }
+      }
+      None => return Err("Connection not found".to_string()),
+    }
+  }
+  persist_connections(&state).await?;
   Ok(())
 }
 

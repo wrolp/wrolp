@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { ConnectionConfig, LocalTerminalEntry, TunnelInfo } from '../types'
+import type { ConnectionConfig, LocalTerminalEntry, TunnelConfig, TunnelInfo } from '../types'
 import {
   saveConnection as saveConn,
   deleteConnection,
@@ -10,7 +10,8 @@ import {
   deleteGroup,
   getLocalTerminals,
   saveLocalTerminals,
-  startTunnel,
+  addTunnel,
+  updateTunnel,
   stopTunnel,
 } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
@@ -36,10 +37,12 @@ interface ConnectionManagerProps {
   onLocalTerminalsChanged?: () => void
   collapsedGroups?: string[]
   onCollapsedGroupsChange?: (value: string[]) => void
-  /** Active SSH tunnels, shown as children of the connection that owns them. */
+  /** Active SSH tunnels, used to mark saved definitions as running. */
   tunnels?: TunnelInfo[]
-  /** Connected tab id per connection (to carry a new tunnel). */
-  tunnelCarrierTabId?: Record<string, number>
+  /** Start a saved tunnel definition (opens/auto-connects a tab if needed). */
+  onStartTunnel?: (connectionId: string, config: import('../types').TunnelConfig) => void
+  /** Delete a saved tunnel definition (backend also stops it if running). */
+  onRemoveTunnel?: (connectionId: string, tunnelId: string) => void
   onTunnelsChanged?: () => void
 }
 
@@ -74,7 +77,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   collapsedGroups = [],
   onCollapsedGroupsChange,
   tunnels = [],
-  tunnelCarrierTabId = {},
+  onStartTunnel,
+  onRemoveTunnel,
   onTunnelsChanged,
 }) => {
   const { t } = useI18n()
@@ -100,6 +104,11 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     group: string
   } | null>(null)
   const [tunnelForm, setTunnelForm] = useState<ConnectionConfig | null>(null)
+  // When set, the tunnel form edits the definition with this id instead of adding a new one.
+  const [tunnelEditTarget, setTunnelEditTarget] = useState<{
+    connId: string
+    tunnelId: string
+  } | null>(null)
   const [tunnelFormError, setTunnelFormError] = useState('')
   const [tfLocalPort, setTfLocalPort] = useState('')
   const [tfRemoteHost, setTfRemoteHost] = useState('')
@@ -263,16 +272,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTfRemoteHost('')
     setTfRemotePort('')
     setTfName('')
+    setTunnelEditTarget(null)
     setTunnelForm(conn)
   }
 
-  const handleStartTunnel = async () => {
+  const openTunnelEditForm = (conn: ConnectionConfig, def: TunnelConfig) => {
+    setTunnelFormError('')
+    setTfLocalPort(String(def.localPort))
+    setTfRemoteHost(def.remoteHost)
+    setTfRemotePort(String(def.remotePort))
+    setTfName(def.name ?? '')
+    setTunnelEditTarget({ connId: conn.id, tunnelId: def.id })
+    setTunnelForm(conn)
+  }
+
+  // Save a new tunnel definition under the connection. It is not started here;
+  // clicking the definition node in the tree starts it on demand.
+  const handleSaveTunnel = async () => {
     if (!tunnelForm) return
-    const tabId = tunnelCarrierTabId[tunnelForm.id]
-    if (tabId == null) {
-      setTunnelFormError(t('tunnelNoConnectedTab'))
-      return
-    }
     const localPort = Number(tfLocalPort)
     const remotePort = Number(tfRemotePort)
     if (!Number.isInteger(localPort) || localPort <= 0 || localPort > 65535) {
@@ -291,16 +308,28 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setTunnelStarting(true)
     setTunnelFormError('')
     try {
-      await startTunnel({
-        tabId,
-        connectionId: tunnelForm.id,
-        localPort,
-        remoteHost,
-        remotePort,
-        name: tfName.trim() || undefined,
-      })
+      if (tunnelEditTarget) {
+        await updateTunnel(tunnelEditTarget.connId, tunnelEditTarget.tunnelId, {
+          id: tunnelEditTarget.tunnelId,
+          name: tfName.trim() || undefined,
+          localAddr: undefined,
+          localPort,
+          remoteHost,
+          remotePort,
+        })
+      } else {
+        await addTunnel(tunnelForm.id, {
+          id: uuidv4(),
+          name: tfName.trim() || undefined,
+          localAddr: undefined,
+          localPort,
+          remoteHost,
+          remotePort,
+        })
+      }
       setTunnelForm(null)
-      onTunnelsChanged?.()
+      setTunnelEditTarget(null)
+      onConnectionChange()
     } catch (e) {
       setTunnelFormError(String(e))
     } finally {
@@ -314,6 +343,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       onTunnelsChanged?.()
     } catch (e) {
       console.error('Failed to stop tunnel:', e)
+    }
+  }
+
+  const handleRemoveTunnel = async (connId: string, tunnelId: string) => {
+    try {
+      await onRemoveTunnel?.(connId, tunnelId)
+    } catch (e) {
+      console.error('Failed to remove tunnel:', e)
     }
   }
 
@@ -342,36 +379,90 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     setGroupContextMenu(null)
   }
 
-  /** Tunnels belonging to a connection, rendered as tree children. */
-  const renderTunnels = (connId: string) => {
-    const connTunnels = tunnels.filter((tun) => tun.connectionId === connId)
-    if (connTunnels.length === 0) return null
+  /** Saved tunnel definitions of a connection, rendered as tree children.
+   *  Clicking a node toggles it: start when inactive, stop when running. */
+  const renderTunnels = (conn: ConnectionConfig) => {
+    const defs = conn.tunnels ?? []
+    if (defs.length === 0) return null
     return (
       <div className="conn-tunnels">
-        {connTunnels.map((tun) => (
-          <div
-            className="conn-tunnel"
-            key={tun.id}
-            title={`${tun.localAddr} → ${tun.remoteHost}:${tun.remotePort}`}
-          >
-            <Icon name="link" size={11} className="conn-tunnel-icon" />
-            <span className="conn-tunnel-local">{tun.localAddr}</span>
-            <span className="conn-tunnel-arrow">→</span>
-            <span className="conn-tunnel-remote">
-              {tun.remoteHost}:{tun.remotePort}
-            </span>
-            <span
-              className="conn-tunnel-stop"
-              title={t('stopTunnel')}
-              onClick={(e) => {
-                e.stopPropagation()
-                void handleStopTunnel(tun.id)
+        {defs.map((def) => {
+          const active = tunnels.find(
+            (tun) => tun.connectionId === conn.id && tun.configId === def.id,
+          )
+          const localAddr = active?.localAddr ?? `${def.localAddr ?? '127.0.0.1'}:${def.localPort}`
+          return (
+            <div
+              className={`conn-tunnel${active ? ' active' : ''}`}
+              key={def.id}
+              title={
+                active
+                  ? `${t('stopTunnel')} — ${localAddr} → ${def.remoteHost}:${def.remotePort}`
+                  : `${t('startTunnel')} — ${localAddr} → ${def.remoteHost}:${def.remotePort}`
+              }
+              onClick={() => {
+                if (active) {
+                  void handleStopTunnel(active.id)
+                } else {
+                  onStartTunnel?.(conn.id, def)
+                }
               }}
             >
-              ×
-            </span>
-          </div>
-        ))}
+              <Icon name="link" size={11} className="conn-tunnel-icon" />
+              {def.name && <span className="conn-tunnel-name">{def.name}</span>}
+              <span className="conn-tunnel-local">{localAddr}</span>
+              <span className="conn-tunnel-arrow">→</span>
+              <span className="conn-tunnel-remote">
+                {def.remoteHost}:{def.remotePort}
+              </span>
+              {/* Open/close toggle button */}
+              {active ? (
+                <span
+                  className="conn-tunnel-toggle active"
+                  title={t('stopTunnel')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void handleStopTunnel(active.id)
+                  }}
+                >
+                  <Icon name="pause" size={10} />
+                </span>
+              ) : (
+                <span
+                  className="conn-tunnel-toggle"
+                  title={t('startTunnel')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onStartTunnel?.(conn.id, def)
+                  }}
+                >
+                  <Icon name="play" size={10} />
+                </span>
+              )}
+              {/* Edit definition button */}
+              <span
+                className="conn-tunnel-edit"
+                title={t('editTunnel')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openTunnelEditForm(conn, def)
+                }}
+              >
+                <Icon name="edit" size={10} />
+              </span>
+              <span
+                className="conn-tunnel-del"
+                title={t('deleteTunnel')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void handleRemoveTunnel(conn.id, def.id)
+                }}
+              >
+                <Icon name="trash" size={10} />
+              </span>
+            </div>
+          )
+        })}
       </div>
     )
   }
@@ -463,7 +554,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       onEdit={(c) => handleEdit(c)}
                       onDelete={(c) => handleDelete(c)}
                     />
-                    {renderTunnels(conn.id)}
+                    {renderTunnels(conn)}
                   </React.Fragment>
                 ))
               ) : (
@@ -581,7 +672,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                               onEdit={(c) => handleEdit(c)}
                               onDelete={(c) => handleDelete(c)}
                             />
-                            {renderTunnels(conn.id)}
+                            {renderTunnels(conn)}
                           </React.Fragment>
                         ))}
                     </div>
@@ -697,7 +788,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         <div className="modal-overlay" onClick={() => !tunnelStarting && setTunnelForm(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-title">
-              {t('addTunnel')} — {tunnelForm.name}
+              {tunnelEditTarget ? t('editTunnel') : t('addTunnel')} — {tunnelForm.name}
             </div>
             <div
               className="modal-body"
@@ -748,9 +839,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               <button
                 className="primary"
                 disabled={tunnelStarting}
-                onClick={() => void handleStartTunnel()}
+                onClick={() => void handleSaveTunnel()}
               >
-                {tunnelStarting ? t('startingTunnel') : t('startTunnel')}
+                {tunnelStarting ? t('saving') : t('saveTunnel')}
               </button>
             </div>
           </div>

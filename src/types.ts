@@ -11,6 +11,20 @@ export interface ConnectionConfig {
   group?: string
   /** Workspace this connection belongs to (set by backend on save). */
   workspaceId?: string
+  /** Saved SSH tunnel definitions attached to this connection (not started). */
+  tunnels?: TunnelConfig[]
+}
+
+/** A saved SSH local-port-forwarding tunnel definition (persisted config). */
+export interface TunnelConfig {
+  /** Stable id (uuid) used to match a definition to its running tunnel. */
+  id: string
+  name?: string
+  /** Local bind host; defaults to "127.0.0.1". */
+  localAddr?: string
+  localPort: number
+  remoteHost: string
+  remotePort: number
 }
 
 /** A named workspace grouping connections. */
@@ -134,6 +148,8 @@ export interface TunnelInfo {
   id: number
   tabId: number
   connectionId: string | null
+  /** Saved tunnel-definition id this tunnel was started from (if any). */
+  configId?: string | null
   localAddr: string
   remoteHost: string
   remotePort: number
@@ -146,6 +162,7 @@ export interface TunnelInfo {
 export interface StartTunnelArgs {
   tabId: number
   connectionId?: string | null
+  configId?: string
   localAddr?: string
   localPort: number
   remoteHost: string

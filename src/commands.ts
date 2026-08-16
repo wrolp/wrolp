@@ -18,6 +18,7 @@ import type {
   DirDownloadSummary,
   TunnelInfo,
   StartTunnelArgs,
+  TunnelConfig,
 } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
@@ -393,6 +394,25 @@ export async function startTunnel(args: StartTunnelArgs): Promise<number> {
 
 export async function stopTunnel(id: number): Promise<void> {
   await invoke<void>('stop_tunnel', { id })
+}
+
+/** Save a tunnel *definition* under a connection (persisted, not started). */
+export async function addTunnel(connectionId: string, config: TunnelConfig): Promise<void> {
+  await invoke<void>('add_tunnel', { connectionId, config })
+}
+
+/** Update a saved tunnel definition on a connection (persisted, not restarted). */
+export async function updateTunnel(
+  connectionId: string,
+  tunnelId: string,
+  config: TunnelConfig,
+): Promise<void> {
+  await invoke<void>('update_tunnel', { connectionId, tunnelId, config })
+}
+
+/** Remove a saved tunnel definition (also stops it if currently running). */
+export async function removeTunnel(connectionId: string, tunnelId: string): Promise<void> {
+  await invoke<void>('remove_tunnel', { connectionId, tunnelId })
 }
 
 // ===== AI Prompt Templates =====

@@ -637,7 +637,7 @@ body.resize-v * {
   padding: 2px 12px 2px 36px;
   font-size: 11px;
   color: $text-muted;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
 
   &:hover {
@@ -648,6 +648,30 @@ body.resize-v * {
     flex-shrink: 0;
     color: $accent-hover;
     opacity: 0.8;
+  }
+
+  .conn-tunnel-name {
+    flex-shrink: 0;
+    max-width: 90px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: $text-dim;
+    font-style: italic;
+  }
+
+  &.active {
+    color: $text-secondary;
+
+    .conn-tunnel-icon {
+      color: #4ec9b0;
+      opacity: 1;
+    }
+
+    .conn-tunnel-local,
+    .conn-tunnel-remote {
+      color: $text-primary;
+    }
   }
 
   .conn-tunnel-local {
@@ -673,7 +697,7 @@ body.resize-v * {
     text-overflow: ellipsis;
   }
 
-  .conn-tunnel-stop {
+  .conn-tunnel-toggle {
     flex-shrink: 0;
     width: 16px;
     height: 16px;
@@ -683,8 +707,51 @@ body.resize-v * {
     border-radius: 3px;
     color: $text-dim;
     cursor: pointer;
-    font-size: 13px;
-    line-height: 1;
+    opacity: 1;
+
+    &:hover {
+      background: rgba(78, 201, 176, 0.2);
+      color: #4ec9b0;
+    }
+
+    &.active {
+      color: #4ec9b0;
+
+      &:hover {
+        background: rgba(210, 70, 70, 0.3);
+        color: #ff7d7d;
+      }
+    }
+  }
+
+  .conn-tunnel-edit {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    color: $text-dim;
+    cursor: pointer;
+    opacity: 0;
+
+    &:hover {
+      background: rgba(86, 156, 214, 0.3);
+      color: #569cd6;
+    }
+  }
+
+  .conn-tunnel-del {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    color: $text-dim;
+    cursor: pointer;
     opacity: 0;
 
     &:hover {
@@ -693,7 +760,8 @@ body.resize-v * {
     }
   }
 
-  &:hover .conn-tunnel-stop {
+  &:hover .conn-tunnel-edit,
+  &:hover .conn-tunnel-del {
     opacity: 1;
   }
 }
