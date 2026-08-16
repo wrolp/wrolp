@@ -528,6 +528,15 @@ export async function fsUploadFileStream(
   }
 }
 
+/**
+ * Returns the list of local file paths copied to the system clipboard
+ * (Windows: files copied with Ctrl+C in Explorer). Used by the file panel's
+ * "Paste" context-menu action.
+ */
+export async function getClipboardFiles(): Promise<string[]> {
+  return invoke<string[]>('get_clipboard_files')
+}
+
 export async function fsFileExists(target: TargetRef, path: string): Promise<boolean> {
   return isSession(target)
     ? fileExists(target.tabId, path)

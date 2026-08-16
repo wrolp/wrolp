@@ -195,6 +195,7 @@ pub fn run() {
       commands::upload_chunk,
       commands::upload_end,
       commands::file_exists,
+      commands::get_clipboard_files,
       commands::create_directory,
       commands::rename_file,
       commands::delete_file,

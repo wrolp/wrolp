@@ -16,6 +16,7 @@ import {
   fsListFiles,
   fsUploadFile,
   fsUploadFileStream,
+  getClipboardFiles,
   fsDownloadFile,
   fsDownloadDirectory,
   fsDeleteFile,
@@ -581,9 +582,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   /* ---- upload ---- */
   const uploadFiles = useCallback(
-    async (paths: string[]) => {
+    async (paths: string[], baseDir?: string) => {
       setError('')
       setPaused(false)
+      // `baseDir` is the directory the files should be uploaded into; when
+      // omitted the currently browsed directory is used.
+      const targetDir = baseDir && baseDir.length > 0 ? baseDir : currentPath
       const rows: TransferRow[] = paths.map((localPath) => {
         const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
         return {
@@ -600,7 +604,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       for (let i = 0; i < paths.length; i++) {
         const localPath = paths[i]
         const fileName = rows[i].filename
-        const remotePath = join(currentPath, fileName)
+        const remotePath = join(targetDir, fileName)
         setTransferRows((prev) =>
           prev.map((r) => (r.key === rows[i].key ? { ...r, status: 'active' } : r)),
         )
@@ -812,6 +816,31 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     } catch (e) {
       setError(String(e))
     }
+  }
+
+  /**
+   * "Paste" context-menu action: uploads the files currently copied to the
+   * system clipboard (Windows Explorer Ctrl+C). A right-click on a directory
+   * pastes into that directory; a right-click on a file or blank area pastes
+   * into the currently browsed directory.
+   */
+  const handlePaste = async (node: TreeNode | null) => {
+    setContextMenu(null)
+    let paths: string[]
+    try {
+      paths = await getClipboardFiles()
+    } catch (e) {
+      setError(String(e))
+      return
+    }
+    if (!paths || paths.length === 0) {
+      setError('Clipboard contains no files. Copy files in Explorer first (Ctrl+C).')
+      return
+    }
+    // Right-clicking a directory pastes into it; right-clicking a non-directory
+    // (file or blank area) pastes into the currently browsed directory.
+    const baseDir = node && node.isDir ? node.path : currentPath
+    await uploadFiles(paths, baseDir)
   }
 
   /* ---- context-menu actions ---- */
@@ -1448,7 +1477,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             onMouseEnter={onFileMouseEnter}
             onMouseLeave={onFileMouseLeave}
           >
-            <div className="file-list" ref={fileListRef} onScroll={onFileScroll}>
+            <div
+              className="file-list"
+              ref={fileListRef}
+              onScroll={onFileScroll}
+              onContextMenu={(e) => {
+                // Right-click on blank space inside the panel: show the context
+                // menu with the currently browsed directory as the target.
+                e.preventDefault()
+                setContextMenu({ x: e.clientX, y: e.clientY, node: null })
+              }}
+            >
               {error && <div className="file-error">{error}</div>}
               {!loading && renderNodes(tree, 0)}
               {!loading && tree.length === 0 && !error && (
@@ -1754,6 +1793,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               <Icon name="upload" /> Upload here
             </div>
           )}
+          <div className="context-menu-divider" />
+          <div className="context-menu-item" onClick={() => handlePaste(contextMenu.node)}>
+            <Icon name="paste" /> Paste
+          </div>
         </div>
       )}
 

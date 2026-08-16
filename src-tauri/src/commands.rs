@@ -5554,3 +5554,64 @@ pub fn cleanup_tunnels_for_tab(state: &AppState, tab_id: u32) {
     }
   }
 }
+
+/// Reads the list of file paths currently copied to the Windows clipboard
+/// (CF_HDROP), i.e. files copied with Ctrl+C in Explorer. Used by the file
+/// panel's "Paste" context-menu action. Returns an empty vec when the clipboard
+/// holds no files or is temporarily locked by another application.
+#[cfg(target_os = "windows")]
+fn read_clipboard_files() -> Vec<String> {
+  use std::ffi::c_void;
+  use std::ptr;
+
+  const CF_HDROP: u32 = 15;
+  const DROP_FILE_LIST: u32 = 0xFFFF_FFFF; // DragQueryFileW ifile == 0xFFFFFFFF => file count
+
+  #[link(name = "user32")]
+  unsafe extern "system" {
+    fn OpenClipboard(h_wnd_new_owner: *mut c_void) -> i32;
+    fn CloseClipboard() -> i32;
+    fn GetClipboardData(u_format: u32) -> *mut c_void;
+  }
+
+  #[link(name = "shell32")]
+  unsafe extern "system" {
+    fn DragQueryFileW(h_drop: *mut c_void, i_file: u32, lpsz_file: *mut u16, cch: u32) -> u32;
+  }
+
+  let mut files = Vec::new();
+  unsafe {
+    if OpenClipboard(ptr::null_mut()) == 0 {
+      // Clipboard locked by another process — nothing we can do right now.
+      return files;
+    }
+    let hdrop = GetClipboardData(CF_HDROP);
+    if !hdrop.is_null() {
+      let count = DragQueryFileW(hdrop, DROP_FILE_LIST, ptr::null_mut(), 0);
+      for i in 0..count {
+        let len = DragQueryFileW(hdrop, i, ptr::null_mut(), 0);
+        let mut buf = vec![0u16; len as usize + 1];
+        let copied = DragQueryFileW(hdrop, i, buf.as_mut_ptr(), buf.len() as u32);
+        buf.truncate(copied as usize);
+        files.push(String::from_utf16_lossy(&buf));
+      }
+    }
+    CloseClipboard();
+  }
+  files
+}
+
+/// Returns the list of local file paths copied to the system clipboard, used
+/// by the file panel's "Paste" context-menu action. Windows-only: reads
+/// CF_HDROP; other platforms return an empty list.
+#[tauri::command]
+pub fn get_clipboard_files() -> Vec<String> {
+  #[cfg(target_os = "windows")]
+  {
+    read_clipboard_files()
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    Vec::new()
+  }
+}
