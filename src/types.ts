@@ -74,6 +74,17 @@ export interface CommandSnippetDto {
   updatedAt: string
 }
 
+/** A single global variable shared by all command-list snippets. Commands
+ *  reference it as `${name}`. A non-empty `defaultValue` is substituted
+ *  directly at send time; an empty one prompts the user to fill it in. */
+export interface GlobalVariable {
+  name: string
+  defaultValue: string
+  description?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface AiPromptTemplate {
   id: string
   name: string

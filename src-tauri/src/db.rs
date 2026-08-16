@@ -54,6 +54,19 @@ pub struct CommandSnippetDto {
   pub updated_at: String,
 }
 
+/// A single global variable shared by all command-list snippets. Commands
+/// reference it as `${name}`. A non-empty `default_value` is substituted
+/// directly at send time; an empty one prompts the user to fill it in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalVariable {
+  pub name: String,
+  pub default_value: String,
+  pub description: Option<String>,
+  pub created_at: String,
+  pub updated_at: String,
+}
+
 // ==================== In-memory recording event ====================
 
 #[derive(Debug, Clone)]
@@ -416,6 +429,64 @@ pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Resu
 pub fn delete_command_snippet(conn: &Connection, id: &str) -> Result<(), String> {
   conn
     .execute("DELETE FROM command_snippets WHERE id = ?1", params![id])
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+// ==================== Global Variable Queries ====================
+
+fn map_global_var_row(row: &rusqlite::Row) -> rusqlite::Result<GlobalVariable> {
+  Ok(GlobalVariable {
+    name: row.get(0)?,
+    default_value: row.get(1)?,
+    description: row.get(2)?,
+    created_at: row.get(3)?,
+    updated_at: row.get(4)?,
+  })
+}
+
+pub fn list_global_variables(conn: &Connection) -> Result<Vec<GlobalVariable>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT name, default_value, description, created_at, updated_at \
+       FROM global_variables ORDER BY name COLLATE NOCASE",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map([], map_global_var_row)
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+pub fn save_global_variable(conn: &Connection, var: &GlobalVariable) -> Result<String, String> {
+  let updated = conn
+    .execute(
+      "UPDATE global_variables SET default_value = ?1, description = ?2, updated_at = ?3 WHERE name = ?4",
+      params![var.default_value, var.description, var.updated_at, var.name],
+    )
+    .map_err(|e| e.to_string())?;
+  if updated == 0 {
+    conn
+      .execute(
+        "INSERT INTO global_variables (name, default_value, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+          var.name,
+          var.default_value,
+          var.description,
+          var.created_at,
+          var.updated_at
+        ],
+      )
+      .map_err(|e| e.to_string())?;
+  }
+  Ok(var.name.clone())
+}
+
+pub fn delete_global_variable(conn: &Connection, name: &str) -> Result<(), String> {
+  conn
+    .execute("DELETE FROM global_variables WHERE name = ?1", params![name])
     .map_err(|e| e.to_string())?;
   Ok(())
 }

@@ -3270,6 +3270,34 @@ pub async fn delete_command_snippet(
   db::delete_command_snippet(&conn, &id)
 }
 
+// ==================== Global Variables (shared by command snippets) ====================
+
+#[tauri::command]
+pub async fn list_global_variables(
+  state: tauri::State<'_, AppState>,
+) -> Result<Vec<db::GlobalVariable>, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::list_global_variables(&conn)
+}
+
+#[tauri::command]
+pub async fn save_global_variable(
+  state: tauri::State<'_, AppState>,
+  var: db::GlobalVariable,
+) -> Result<String, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::save_global_variable(&conn, &var)
+}
+
+#[tauri::command]
+pub async fn delete_global_variable(
+  state: tauri::State<'_, AppState>,
+  name: String,
+) -> Result<(), String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::delete_global_variable(&conn, &name)
+}
+
 // ==================== AI Prompt Templates ====================
 
 #[tauri::command]

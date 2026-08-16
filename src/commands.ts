@@ -6,6 +6,7 @@ import type {
   SessionEventDto,
   CommandSetDto,
   CommandSnippetDto,
+  GlobalVariable,
   AiPromptTemplate,
   FileContent,
   TargetRef,
@@ -380,6 +381,20 @@ export async function saveCommandSnippet(snippet: CommandSnippetDto): Promise<st
 
 export async function deleteCommandSnippet(id: string): Promise<void> {
   await invoke<void>('delete_command_snippet', { id })
+}
+
+// ===== Global Variables (shared by command snippets) =====
+
+export async function listGlobalVariables(): Promise<GlobalVariable[]> {
+  return await invoke<GlobalVariable[]>('list_global_variables')
+}
+
+export async function saveGlobalVariable(v: GlobalVariable): Promise<string> {
+  return await invoke<string>('save_global_variable', { var: v })
+}
+
+export async function deleteGlobalVariable(name: string): Promise<void> {
+  await invoke<void>('delete_global_variable', { name })
 }
 
 // ===== SSH Tunnels (local port forwarding) =====

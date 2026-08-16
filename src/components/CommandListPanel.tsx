@@ -1,9 +1,42 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import type { CommandSnippetDto } from '../types'
-import { listCommandSnippets, saveCommandSnippet, deleteCommandSnippet } from '../commands'
+import type { CommandSnippetDto, GlobalVariable } from '../types'
+import {
+  listCommandSnippets,
+  saveCommandSnippet,
+  deleteCommandSnippet,
+  listGlobalVariables,
+  saveGlobalVariable,
+  deleteGlobalVariable,
+} from '../commands'
 import { focusTerminal } from './Terminal'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
+
+// ===== Variable helpers =====
+
+// Match `${name}` where name follows standard identifier rules. Bare `$VAR`
+// is intentionally not captured so values the user wants the shell itself to
+// expand (e.g. `${PATH}` declared nowhere in the global library) pass through.
+const VAR_REGEX = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
+const VAR_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function extractVariables(command: string): string[] {
+  const seen = new Set<string>()
+  for (const m of command.matchAll(VAR_REGEX)) {
+    seen.add(m[1])
+  }
+  return [...seen]
+}
+
+/** Replace every occurrence of `${name}` with `value` for the provided values. */
+function applyVariables(
+  command: string,
+  values: Record<string, string>,
+): string {
+  return command.replace(VAR_REGEX, (match, name: string) =>
+    name in values ? values[name] : match,
+  )
+}
 
 /** Persisted window prefs (position, size, opacity, filter toggles). */
 interface CmdListPrefs {
@@ -54,11 +87,21 @@ interface CommandListPanelProps {
   onSendToTerminal: (command: string) => void
 }
 
+/** A `${name}` placeholder awaiting a value before the snippet can be sent. */
+interface PendingVar {
+  name: string
+  description?: string
+}
+
 /**
  * Floating command list (command snippets). Select text in the terminal or the
  * AI chat → "Add to command list"; here click a snippet to drop it into the
  * terminal's input line (unexecuted). Supports favorites-only / show-hidden
  * filters plus per-item right-click actions (favorite, hide, edit, delete).
+ *
+ * Snippets may embed `${name}` placeholders resolved against a shared global
+ * variable library (managed via the "Variables" button in the header). When a
+ * referenced variable has no usable value, a fill dialog opens before sending.
  */
 export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   open,
@@ -68,6 +111,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
 }) => {
   const { t } = useI18n()
   const [snippets, setSnippets] = useState<CommandSnippetDto[]>([])
+  const [globalVars, setGlobalVars] = useState<GlobalVariable[]>([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [favoriteOnly, setFavoriteOnly] = useState(() => loadCmdListPrefs().favoriteOnly)
@@ -80,6 +124,13 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const [editingAlias, setEditingAlias] = useState('')
   const [editingCommand, setEditingCommand] = useState('')
   const [toast, setToast] = useState<string | null>(null)
+  const [showVarManager, setShowVarManager] = useState(false)
+  // Snippet awaiting variable values before we can send it.
+  const [filling, setFilling] = useState<{
+    snippet: CommandSnippetDto
+    pending: PendingVar[]
+    values: Record<string, string>
+  } | null>(null)
 
   const reload = useCallback(async () => {
     try {
@@ -90,20 +141,30 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     }
   }, [])
 
+  const loadVars = useCallback(async () => {
+    try {
+      const result = await listGlobalVariables()
+      setGlobalVars(result)
+    } catch (e) {
+      console.error('Failed to load global variables:', e)
+    }
+  }, [])
+
   useEffect(() => {
     if (open) {
       setLoading(true)
       // Guard against a hung backend IPC: never leave the panel stuck on
       // "loading" forever.
       const guard = setTimeout(() => setLoading(false), 5000)
-      reload().finally(() => {
+      Promise.all([reload(), loadVars()]).finally(() => {
         clearTimeout(guard)
         setLoading(false)
       })
       setQuery('')
       setMenu(null)
+      setFilling(null)
     }
-  }, [open, reload])
+  }, [open, reload, loadVars])
 
   // Close the context menu on outside click / Escape.
   useEffect(() => {
@@ -179,16 +240,30 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     return true
   })
 
+  /** Send a snippet, substituting global defaults and prompting for the rest. */
   const send = (s: CommandSnippetDto) => {
     setMenu(null)
-    // Keep the panel open so the user can fire several commands in a row; it
-    // only closes via the explicit close button / Esc.
-    onSendToTerminal(s.command)
-    // The panel stays open, so return focus to the terminal explicitly (the
-    // parent already calls focusTerminal, but the panel's search input can
-    // steal it back once React re-renders).
-    const tid = activeTabId
-    if (tid != null) requestAnimationFrame(() => focusTerminal(tid))
+    const names = extractVariables(s.command)
+    const defs = new Map(globalVars.map((v) => [v.name, v]))
+
+    const pending: PendingVar[] = names
+      .filter((n) => !defs.has(n) || defs.get(n)!.defaultValue.length === 0)
+      .map((n) => ({ name: n, description: defs.get(n)?.description }))
+
+    if (pending.length === 0) {
+      const values: Record<string, string> = {}
+      for (const n of names) values[n] = defs.get(n)?.defaultValue ?? ''
+      onSendToTerminal(applyVariables(s.command, values))
+      const tid = activeTabId
+      if (tid != null) requestAnimationFrame(() => focusTerminal(tid))
+      return
+    }
+
+    // Prefill values from global defaults (all empty here since non-empty
+    // defaults were filtered out above — but keep it explicit).
+    const initial: Record<string, string> = {}
+    for (const p of pending) initial[p.name] = defs.get(p.name)?.defaultValue ?? ''
+    setFilling({ snippet: s, pending, values: initial })
   }
 
   const updateSnippet = async (s: CommandSnippetDto) => {
@@ -425,6 +500,13 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             </label>
           </div>
           <div className="cmd-list-header-actions">
+            <button
+              className="cmd-list-var-btn"
+              onClick={() => setShowVarManager(true)}
+              title={t('cmdVarManager')}
+            >
+              <Icon name="link" size={13} />
+            </button>
             <button className="cmd-list-add-btn" onClick={startAdd} title={t('addCommand')}>
               <Icon name="plus" size={13} />
             </button>
@@ -468,6 +550,11 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                 <div className="cmd-list-item-text">
                   {s.alias && <span className="cmd-list-alias">{s.alias}</span>}
                   <span className="cmd-list-command">{truncate(s.command)}</span>
+                  {extractVariables(s.command).length > 0 && (
+                    <span className="cmd-list-var-badge" title={t('cmdVarManager')}>
+                      {'$'}{extractVariables(s.command).length}
+                    </span>
+                  )}
                 </div>
                 {s.hidden && <Icon name="eyeOff" size={11} className="cmd-list-hidden-icon" />}
                 <div className="cmd-list-item-actions" onClick={(e) => e.stopPropagation()}>
@@ -599,6 +686,42 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             </div>
           </div>
         )}
+
+        {filling && (
+          <SnippetFillDialog
+            snippet={filling.snippet}
+            pending={filling.pending}
+            values={filling.values}
+            onChangeValue={(name, v) =>
+              setFilling((cur) => (cur ? { ...cur, values: { ...cur.values, [name]: v } } : cur))
+            }
+            onClose={() => setFilling(null)}
+            onSubmit={() => {
+              if (!filling) return
+              // Merge global defaults with what the user filled in the dialog.
+              const full: Record<string, string> = {}
+              for (const v of globalVars) full[v.name] = v.defaultValue
+              for (const [k, v] of Object.entries(filling.values)) full[k] = v
+              const resolved = applyVariables(filling.snippet.command, full)
+              const tid = activeTabId
+              setFilling(null)
+              onSendToTerminal(resolved)
+              if (tid != null) requestAnimationFrame(() => focusTerminal(tid))
+            }}
+          />
+        )}
+
+        {showVarManager && (
+          <VariableManagerDialog
+            initial={globalVars}
+            onClose={() => setShowVarManager(false)}
+            onSaved={() => {
+              setShowVarManager(false)
+              void loadVars()
+            }}
+          />
+        )}
+
         <div className="cmd-list-resize cmd-list-rh-n" onMouseDown={startResize('n')} />
         <div className="cmd-list-resize cmd-list-rh-s" onMouseDown={startResize('s')} />
         <div className="cmd-list-resize cmd-list-rh-e" onMouseDown={startResize('e')} />
@@ -610,6 +733,236 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       </div>
 
       {toast && <div className="cmd-list-toast">{toast}</div>}
+    </div>
+  )
+}
+
+// ===== Variable fill dialog =====
+
+interface SnippetFillDialogProps {
+  snippet: CommandSnippetDto
+  pending: PendingVar[]
+  values: Record<string, string>
+  onChangeValue: (name: string, value: string) => void
+  onClose: () => void
+  onSubmit: () => void
+}
+
+const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
+  snippet,
+  pending,
+  values,
+  onChangeValue,
+  onClose,
+  onSubmit,
+}) => {
+  const { t } = useI18n()
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal snip-fill-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{t('snippetFillVarsTitle')}</h3>
+          <span
+            onClick={onClose}
+            style={{ cursor: 'pointer', fontSize: 18, color: '#888' }}
+            title={t('close')}
+          >
+            ✕
+          </span>
+        </div>
+        <div className="modal-body">
+          <div className="snip-fill-desc">{t('snippetFillVarsDesc')}</div>
+          <div className="snip-fill-command-preview">{snippet.command}</div>
+          {pending.map((v) => (
+            <div key={v.name} className="form-group">
+              <label>{v.name}</label>
+              <input
+                value={values[v.name] ?? ''}
+                onChange={(e) => onChangeValue(v.name, e.target.value)}
+                placeholder={v.description ?? ''}
+                autoFocus={pending[0]?.name === v.name}
+                spellCheck={false}
+              />
+              {v.description && <div className="snip-fill-hint">{v.description}</div>}
+            </div>
+          ))}
+        </div>
+        <div className="modal-footer">
+          <button className="btn-cancel" onClick={onClose}>
+            {t('cancel')}
+          </button>
+          <button className="btn-primary" onClick={onSubmit}>
+            {t('snippetSend')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ===== Global variable manager dialog =====
+
+interface VarRow {
+  origName: string | null
+  name: string
+  defaultValue: string
+  description: string
+}
+
+interface VariableManagerDialogProps {
+  initial: GlobalVariable[]
+  onClose: () => void
+  onSaved: () => void
+}
+
+/**
+ * Unified library of global variables shared by all command-list snippets.
+ * Rows are edited inline; saving validates names, upserts each variable and
+ * deletes any whose name was changed or row removed.
+ */
+const VariableManagerDialog: React.FC<VariableManagerDialogProps> = ({
+  initial,
+  onClose,
+  onSaved,
+}) => {
+  const { t } = useI18n()
+  const [rows, setRows] = useState<VarRow[]>(() =>
+    initial.map((v) => ({
+      origName: v.name,
+      name: v.name,
+      defaultValue: v.defaultValue,
+      description: v.description ?? '',
+    })),
+  )
+  const [saving, setSaving] = useState(false)
+
+  const updateRow = (idx: number, patch: Partial<VarRow>) => {
+    setRows((cur) => cur.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  }
+
+  const addRow = () => {
+    setRows((cur) => [
+      ...cur,
+      { origName: null, name: '', defaultValue: '', description: '' },
+    ])
+  }
+
+  const removeRow = (idx: number) => {
+    setRows((cur) => cur.filter((_, i) => i !== idx))
+  }
+
+  const handleSave = async () => {
+    const cleaned: VarRow[] = []
+    const seenNames = new Set<string>()
+    for (const r of rows) {
+      const n = r.name.trim()
+      if (!n && !r.defaultValue && !r.description.trim()) continue // empty draft row
+      if (!VAR_NAME_REGEX.test(n)) {
+        alert(t('cmdVarNameInvalid'))
+        return
+      }
+      if (seenNames.has(n)) {
+        alert(t('cmdVarDuplicate', { name: n }))
+        return
+      }
+      seenNames.add(n)
+      cleaned.push({ ...r, name: n })
+    }
+
+    setSaving(true)
+    try {
+      const now = new Date().toISOString()
+      const origByName = new Map(initial.map((v) => [v.name, v]))
+      const keptNames = new Set(cleaned.map((r) => r.name))
+
+      // Delete variables whose row was removed or renamed.
+      for (const v of initial) {
+        if (!keptNames.has(v.name)) {
+          await deleteGlobalVariable(v.name).catch((e) =>
+            console.error('delete_global_variable failed:', e),
+          )
+        }
+      }
+
+      // Upsert the remaining rows.
+      for (const r of cleaned) {
+        const existing = origByName.get(r.origName ?? '') ?? origByName.get(r.name)
+        await saveGlobalVariable({
+          name: r.name,
+          defaultValue: r.defaultValue,
+          description: r.description.trim() ? r.description.trim() : undefined,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        })
+      }
+      onSaved()
+    } catch (e) {
+      console.error('Failed to save global variables:', e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal cmd-var-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{t('cmdVarManager')}</h3>
+          <span
+            onClick={onClose}
+            style={{ cursor: 'pointer', fontSize: 18, color: '#888' }}
+            title={t('close')}
+          >
+            ✕
+          </span>
+        </div>
+        <div className="modal-body">
+          {rows.length === 0 && <div className="snip-vars-empty">{t('cmdVarEmpty')}</div>}
+          {rows.map((r, idx) => (
+            <div key={idx} className="snip-var-row">
+              <input
+                className="snip-var-name"
+                value={r.name}
+                onChange={(e) => updateRow(idx, { name: e.target.value })}
+                placeholder={t('cmdVarName')}
+                spellCheck={false}
+              />
+              <input
+                className="snip-var-default"
+                value={r.defaultValue}
+                onChange={(e) => updateRow(idx, { defaultValue: e.target.value })}
+                placeholder={t('cmdVarDefault')}
+                spellCheck={false}
+              />
+              <input
+                className="snip-var-desc"
+                value={r.description}
+                onChange={(e) => updateRow(idx, { description: e.target.value })}
+                placeholder={t('cmdVarDescription')}
+              />
+              <button
+                type="button"
+                className="snip-var-remove"
+                onClick={() => removeRow(idx)}
+                title={t('cmdVarRemove')}
+              >
+                <Icon name="trash" size={12} />
+              </button>
+            </div>
+          ))}
+          <button type="button" className="snip-var-add" onClick={addRow}>
+            <Icon name="plus" size={12} /> {t('cmdVarAdd')}
+          </button>
+        </div>
+        <div className="modal-footer">
+          <button className="btn-cancel" onClick={onClose}>
+            {t('cancel')}
+          </button>
+          <button className="btn-primary" onClick={() => void handleSave()} disabled={saving}>
+            {saving ? t('loading') : t('cmdVarSave')}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

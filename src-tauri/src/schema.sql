@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS command_snippets (
   updated_at TEXT NOT NULL
 );
 
+-- Global variables shared by all command-list snippets. Commands reference them
+-- as `${name}`; a variable with a non-empty default is substituted directly when
+-- sending, otherwise the user fills it in a dialog.
+CREATE TABLE IF NOT EXISTS global_variables (
+  name          TEXT PRIMARY KEY,
+  default_value TEXT NOT NULL DEFAULT '',
+  description   TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ai_prompt_templates (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,

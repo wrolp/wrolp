@@ -463,6 +463,26 @@ const en = {
   addCommand: 'Add command',
   commandListHint: 'Click a command to send it to the terminal (press Enter to run).',
   cmdListOpacity: 'Panel opacity',
+  snippetFillVarsTitle: 'Fill Variables',
+  snippetFillVarsDesc:
+    'Provide values for the variables in this command before sending.',
+  snippetSend: 'Send',
+  snippetFillVarsRequired: 'Please provide a value for "{name}"',
+  // Global variables (shared library for command snippets)
+  cmdVarManager: 'Variables',
+  cmdVarName: 'Name',
+  cmdVarNamePlaceholder: 'e.g. user',
+  cmdVarDefault: 'Default value',
+  cmdVarDefaultPlaceholder: 'Optional pre-filled value',
+  cmdVarDescription: 'Description (optional)',
+  cmdVarDescriptionPlaceholder: 'Hint shown when filling the variable',
+  cmdVarAdd: 'Add variable',
+  cmdVarRemove: 'Remove',
+  cmdVarSave: 'Save',
+  cmdVarDuplicate: 'Duplicate variable name: {name}',
+  cmdVarNameInvalid:
+    'Variable name must start with a letter or underscore and contain only letters, digits, and underscores',
+  cmdVarEmpty: 'No variables yet.',
 
   // Host analysis
   analyzeHost: 'Analyze Host',
