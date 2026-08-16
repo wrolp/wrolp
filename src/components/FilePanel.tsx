@@ -15,7 +15,7 @@ import { targetLabel } from '../types'
 import {
   fsListFiles,
   fsUploadFile,
-  fsUploadFileBytes,
+  fsUploadFileStream,
   fsDownloadFile,
   fsDownloadDirectory,
   fsDeleteFile,
@@ -726,9 +726,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         const key = `upload:${f.relPath}`
         setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'active' } : r)))
         try {
-          const buf = await f.file.arrayBuffer()
-          const bytes = Array.from(new Uint8Array(buf))
-          await fsUploadFileBytes(target, remotePath, bytes)
+          // Stream the file in ~64KB chunks. Loading it fully into a byte array
+          // and shipping it through the Tauri JSON IPC is what made large
+          // drag&drop uploads fail (memory + WebView message size limits).
+          await fsUploadFileStream(target, remotePath, f.file, (transferred) => {
+            setTransferRows((prev) =>
+              prev.map((r) => (r.key === key ? { ...r, transferred } : r)),
+            )
+          })
           setTransferRows((prev) =>
             prev.map((r) => (r.key === key ? { ...r, status: 'done', transferred: r.total } : r)),
           )

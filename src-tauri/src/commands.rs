@@ -1,10 +1,10 @@
 use super::ssh_session::{
   ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
   FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SshError, SshHandler, SshSession,
-  SwitchedUser, TargetRef, TransferControl, TunnelInfo,
+  SwitchedUser, TargetRef, TransferControl, TunnelInfo, UploadSession,
 };
 use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
-use crate::remote_fs::{build_fs, delete_dir_recursive, get_jump_handle};
+use crate::remote_fs::{build_fs, build_sftp, delete_dir_recursive, get_jump_handle};
 use encoding_rs::{Encoding, UTF_8};
 use russh::client::{self, Handler};
 use russh::ChannelId;
@@ -2015,43 +2015,20 @@ pub async fn upload_file(
   // Resolve relative paths to absolute paths
   let resolved_path = resolve_sftp_path(&sftp, &remote_path).await?;
 
-  // Read local file
-  let data = tokio::fs::read(&local_path)
+  // Open the local file and stream it in 64KB chunks — a large file is never
+  // fully buffered in memory (previously `tokio::fs::read` loaded it whole,
+  // which OOMs / hangs on multi-GB uploads).
+  let mut local = tokio::fs::File::open(&local_path)
     .await
-    .map_err(|e| format!("Failed to read local file: {}", e))?;
-  let total = data.len() as u64;
+    .map_err(|e| format!("Failed to open local file: {}", e))?;
+  let total = local
+    .metadata()
+    .await
+    .map_err(|e| format!("Failed to stat local file: {}", e))?
+    .len();
 
   // Ensure parent directory exists on remote (using mkdir -p via SFTP)
-  if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
-    let parent_str = parent.to_string_lossy().to_string();
-
-    if !parent_str.is_empty() && parent_str != "/" {
-      // Try to create directory (ignore error if already exists)
-      match sftp.metadata(&parent_str).await {
-        Err(_) => {
-          // Directory doesn't exist, try creating it
-          let _ = sftp.create_dir(&parent_str).await;
-
-          // Also try the individual path components
-          let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
-          let mut build = String::new();
-          for part in &parts {
-            if part.is_empty() {
-              continue;
-            }
-            if build.is_empty() {
-              build.push('/');
-            } else {
-              build.push('/');
-            }
-            build.push_str(part);
-            let _ = sftp.create_dir(&build).await;
-          }
-        }
-        Ok(_) => {}
-      }
-    }
-  }
+  ensure_parent_dir(&sftp, &resolved_path).await?;
 
   // Write in chunks with progress
   let mut file = sftp
@@ -2059,18 +2036,25 @@ pub async fn upload_file(
     .await
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
-  use tokio::io::AsyncWriteExt;
   let start = std::time::Instant::now();
   let chunk_size: usize = 65536;
+  let mut buf = vec![0u8; chunk_size];
   let mut written: u64 = 0;
 
-  for chunk in data.chunks(chunk_size) {
+  loop {
     check_pause(&control).await;
+    let n = local
+      .read(&mut buf)
+      .await
+      .map_err(|e| format!("Failed to read local file: {}", e))?;
+    if n == 0 {
+      break;
+    }
     file
-      .write_all(chunk)
+      .write_all(&buf[..n])
       .await
       .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
-    written += chunk.len() as u64;
+    written += n as u64;
 
     let elapsed = start.elapsed().as_millis();
     let _ = app.emit(
@@ -2123,6 +2107,36 @@ async fn resolve_sftp_path(
   Ok(result)
 }
 
+/// Recursively create the parent directory of `resolved_path` on the remote
+/// (SFTP `mkdir -p`, best-effort: "already exists" errors are ignored).
+async fn ensure_parent_dir(
+  sftp: &russh_sftp::client::SftpSession,
+  resolved_path: &str,
+) -> Result<(), String> {
+  if let Some(parent) = std::path::Path::new(resolved_path).parent() {
+    let parent_str = parent.to_string_lossy().to_string();
+    if !parent_str.is_empty() && parent_str != "/" {
+      match sftp.metadata(&parent_str).await {
+        Err(_) => {
+          let _ = sftp.create_dir(&parent_str).await;
+          let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
+          let mut build = String::new();
+          for part in &parts {
+            if part.is_empty() {
+              continue;
+            }
+            build.push('/');
+            build.push_str(part);
+            let _ = sftp.create_dir(&build).await;
+          }
+        }
+        Ok(_) => {}
+      }
+    }
+  }
+  Ok(())
+}
+
 /// Upload file content as raw bytes (for HTML5 drag-drop where we have File data, not paths)
 #[tauri::command]
 pub async fn upload_file_bytes(
@@ -2159,27 +2173,7 @@ pub async fn upload_file_bytes(
   let resolved_path = resolve_sftp_path(&sftp, &remote_path).await?;
 
   // Ensure parent directory exists on remote
-  if let Some(parent) = std::path::Path::new(&resolved_path).parent() {
-    let parent_str = parent.to_string_lossy().to_string();
-    if !parent_str.is_empty() && parent_str != "/" {
-      match sftp.metadata(&parent_str).await {
-        Err(_) => {
-          let _ = sftp.create_dir(&parent_str).await;
-          let parts: Vec<&str> = parent_str.trim_start_matches('/').split('/').collect();
-          let mut build = String::new();
-          for part in &parts {
-            if part.is_empty() {
-              continue;
-            }
-            build.push('/');
-            build.push_str(part);
-            let _ = sftp.create_dir(&build).await;
-          }
-        }
-        Ok(_) => {}
-      }
-    }
-  }
+  ensure_parent_dir(&sftp, &resolved_path).await?;
 
   // Write in chunks with progress
   let mut file = sftp
@@ -2187,7 +2181,6 @@ pub async fn upload_file_bytes(
     .await
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
-  use tokio::io::AsyncWriteExt;
   let start = std::time::Instant::now();
   let chunk_size: usize = 65536;
   let mut written: u64 = 0;
@@ -2215,6 +2208,195 @@ pub async fn upload_file_bytes(
   }
 
   Ok(true)
+}
+
+// ==================== Chunked (streaming) upload ====================
+//
+// HTML5 drag & drop hands the frontend a `File` object with no filesystem
+// path, and the old code shipped the WHOLE file through the Tauri JSON IPC as
+// `Array.from(new Uint8Array(buf))` — a `number[]` of every byte. For large
+// files the JSON serialization blows up memory and the WebView2 postMessage
+// payload, so uploads simply fail. These commands instead keep the remote
+// file handle open in `AppState.upload_sessions` while the frontend streams
+// the file in small (~64KB) chunks: one small invoke per chunk, no giant IPC
+// payload, no full-file buffering.
+
+/// Begin a streaming upload on the tab's SSH session. Creates the remote file
+/// (and parent dirs) and returns an `upload_id` for `upload_chunk`/`upload_end`.
+#[tauri::command]
+pub async fn upload_start(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  remote_path: String,
+  total: u64,
+) -> Result<u64, String> {
+  // Set up pause control (kept registered until `upload_end`).
+  let control = Arc::new(TransferControl {
+    paused: AtomicBool::new(false),
+    notify: tokio::sync::Notify::new(),
+  });
+  {
+    let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+    controls.insert(tab_id, control.clone());
+  }
+
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+
+  let filename = std::path::Path::new(&remote_path)
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| remote_path.clone());
+
+  let resolved_path = resolve_sftp_path(&sftp, &remote_path).await?;
+  ensure_parent_dir(&sftp, &resolved_path).await?;
+
+  let file = sftp
+    .create(&resolved_path)
+    .await
+    .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
+
+  let upload_id = state.next_upload_id.fetch_add(1, Ordering::SeqCst);
+  state
+    .upload_sessions
+    .lock()
+    .map_err(|e| e.to_string())?
+    .insert(
+      upload_id,
+      UploadSession {
+        file,
+        filename,
+        total,
+        written: 0,
+        tab_id: Some(tab_id),
+        started: std::time::Instant::now(),
+        control,
+      },
+    );
+  Ok(upload_id)
+}
+
+/// Begin a streaming upload on an arbitrary target (ProxyJump / Docker-ssh).
+/// The target path is used as-is (same semantics as `target_upload_file_bytes`).
+#[tauri::command]
+pub async fn target_upload_start(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  remote_path: String,
+  total: u64,
+) -> Result<u64, String> {
+  let sftp = build_sftp(&app, &state, &target).await?;
+
+  let filename = std::path::Path::new(&remote_path)
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| remote_path.clone());
+
+  ensure_parent_dir(&sftp, &remote_path).await?;
+
+  let file = sftp
+    .create(&remote_path)
+    .await
+    .map_err(|e| format!("Failed to create remote file '{}': {}", remote_path, e))?;
+
+  let upload_id = state.next_upload_id.fetch_add(1, Ordering::SeqCst);
+  state
+    .upload_sessions
+    .lock()
+    .map_err(|e| e.to_string())?
+    .insert(
+      upload_id,
+      UploadSession {
+        file,
+        filename,
+        total,
+        written: 0,
+        tab_id: None,
+        started: std::time::Instant::now(),
+        control: Arc::new(TransferControl {
+          paused: AtomicBool::new(false),
+          notify: tokio::sync::Notify::new(),
+        }),
+      },
+    );
+  Ok(upload_id)
+}
+
+/// Append one chunk to a streaming upload. The remote handle is taken out of
+/// the session table for the duration of the write (so a paused upload blocks
+/// only itself, not other commands) and put back afterwards.
+#[tauri::command]
+pub async fn upload_chunk(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  upload_id: u64,
+  chunk: Vec<u8>,
+) -> Result<(), String> {
+  let mut sess = {
+    let mut sessions = state.upload_sessions.lock().map_err(|e| e.to_string())?;
+    sessions
+      .remove(&upload_id)
+      .ok_or("Upload session not found (already finished or expired)")?
+  };
+
+  check_pause(&sess.control).await;
+
+  let result = async {
+    sess.file
+      .write_all(&chunk)
+      .await
+      .map_err(|e| format!("Failed to write chunk: {}", e))?;
+    sess.written += chunk.len() as u64;
+    if let Some(tab_id) = sess.tab_id {
+      let _ = app.emit(
+        "transfer-progress",
+        serde_json::json!({
+          "tabId": tab_id,
+          "op": "upload",
+          "filename": &sess.filename,
+          "transferred": sess.written,
+          "total": sess.total,
+          "elapsed": sess.started.elapsed().as_millis()
+        }),
+      );
+    }
+    Ok::<(), String>(())
+  }
+  .await;
+
+  // Put the handle back even on error so `upload_end` can close it cleanly.
+  {
+    let mut sessions = state.upload_sessions.lock().map_err(|e| e.to_string())?;
+    sessions.insert(upload_id, sess);
+  }
+  result
+}
+
+/// Finish a streaming upload: close the remote handle and release pause state.
+#[tauri::command]
+pub async fn upload_end(
+  state: tauri::State<'_, AppState>,
+  upload_id: u64,
+) -> Result<(), String> {
+  let sess = {
+    let mut sessions = state.upload_sessions.lock().map_err(|e| e.to_string())?;
+    sessions.remove(&upload_id)
+  };
+  if let Some(sess) = sess {
+    // Release the pause control we registered in `upload_start`, but only if
+    // it is still ours — another transfer on the same tab may have replaced it.
+    if let Some(tab) = sess.tab_id {
+      let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+      if let Some(cur) = controls.get(&tab) {
+        if Arc::ptr_eq(cur, &sess.control) {
+          controls.remove(&tab);
+        }
+      }
+    }
+    // sess (and its remote file handle) drops here.
+  }
+  Ok(())
 }
 
 #[tauri::command]
@@ -2553,12 +2735,55 @@ pub async fn target_upload_file(
   local_path: String,
   remote_path: String,
 ) -> Result<bool, String> {
-  let fs = build_fs(&app, &state, &target).await?;
-  let data = tokio::fs::read(&local_path)
+  // SFTP-backed targets stream the file in 64KB chunks so large files never
+  // load fully into memory. Non-SFTP targets (Docker exec / local) keep the
+  // single-shot `write_file` path.
+  match build_sftp(&app, &state, &target).await {
+    Ok(sftp) => {
+      stream_upload_file(&sftp, &local_path, &remote_path).await?;
+      Ok(true)
+    }
+    Err(_) => {
+      let fs = build_fs(&app, &state, &target).await?;
+      let data = tokio::fs::read(&local_path)
+        .await
+        .map_err(|e| format!("Failed to read local file: {}", e))?;
+      fs.write_file(&remote_path, &data).await?;
+      Ok(true)
+    }
+  }
+}
+
+/// Stream a local file into `remote_path` over an SFTP session in 64KB chunks
+/// (no full-file buffering). Parent directories are created as needed.
+async fn stream_upload_file(
+  sftp: &russh_sftp::client::SftpSession,
+  local_path: &str,
+  remote_path: &str,
+) -> Result<(), String> {
+  let mut local = tokio::fs::File::open(local_path)
     .await
-    .map_err(|e| format!("Failed to read local file: {}", e))?;
-  fs.write_file(&remote_path, &data).await?;
-  Ok(true)
+    .map_err(|e| format!("Failed to open local file: {}", e))?;
+  ensure_parent_dir(sftp, remote_path).await?;
+  let mut file = sftp
+    .create(remote_path)
+    .await
+    .map_err(|e| format!("Failed to create remote file '{}': {}", remote_path, e))?;
+  let mut buf = vec![0u8; 65536];
+  loop {
+    let n = local
+      .read(&mut buf)
+      .await
+      .map_err(|e| format!("Failed to read local file: {}", e))?;
+    if n == 0 {
+      break;
+    }
+    file
+      .write_all(&buf[..n])
+      .await
+      .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
+  }
+  Ok(())
 }
 
 #[tauri::command]

@@ -473,6 +473,28 @@ pub struct TransferControl {
   pub notify: tokio::sync::Notify,
 }
 
+/// One in-flight chunked (streaming) upload. The remote file handle stays
+/// open across several `upload_chunk` invokes so a large file is never held
+/// in memory (nor shipped through the Tauri JSON IPC as one giant payload).
+/// Dropping the session (upload_end / error) closes the SFTP handle.
+pub struct UploadSession {
+  /// Open remote file handle; implements `AsyncWrite`.
+  pub file: russh_sftp::client::fs::File,
+  /// Display name used in `transfer-progress` events.
+  pub filename: String,
+  /// Total bytes expected (from the local file size).
+  pub total: u64,
+  /// Bytes written so far.
+  pub written: u64,
+  /// Upload start instant (for `transfer-progress` elapsed reporting).
+  pub started: std::time::Instant,
+  /// Optional tab id — when present, pause/resume (`pause_transfer`) applies
+  /// to this upload and progress events carry the tab id.
+  pub tab_id: Option<u32>,
+  /// Pause control shared with the frontend pause button.
+  pub control: Arc<TransferControl>,
+}
+
 /// Active session recording — accumulates events in memory, flushed to SQLite periodically
 pub struct ActiveRecording {
   pub session_id: String,
@@ -505,6 +527,10 @@ pub struct AppState {
   pub next_ai_term_seq: AtomicU64,
   /// Transfer pause controls: tab_id → control
   pub transfer_controls: StdMutex<HashMap<u32, Arc<TransferControl>>>,
+  /// In-flight chunked upload sessions: upload_id → session (remote file handle).
+  pub upload_sessions: StdMutex<HashMap<u64, UploadSession>>,
+  /// Monotonic upload id counter.
+  pub next_upload_id: AtomicU64,
   /// Monotonic connection counter — bumped per new connect() call
   pub next_session_id: AtomicU64,
   /// SQLite database for session recording and command sets
@@ -618,6 +644,8 @@ impl AppState {
       local_terminals: StdMutex::new(get_initial_local_terminals()),
       tunnels: StdMutex::new(HashMap::new()),
       next_tunnel_id: AtomicU64::new(1),
+      upload_sessions: StdMutex::new(HashMap::new()),
+      next_upload_id: AtomicU64::new(1),
     }
   }
 }

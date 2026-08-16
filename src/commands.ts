@@ -478,6 +478,56 @@ export async function fsUploadFileBytes(
     : invoke<boolean>('target_upload_file_bytes', { target, remotePath, fileData })
 }
 
+/**
+ * Stream an HTML5 `File` (drag & drop) to the remote target in small chunks.
+ * The whole file is never serialized through the Tauri JSON IPC at once —
+ * the old `Array.from(await file.arrayBuffer())` produced a `number[]` of
+ * every byte, which blew up memory and the WebView IPC payload for large
+ * files. Here the frontend reads the file in ~64KB pieces and each chunk is
+ * sent via its own small `upload_chunk` invoke; the remote handle is kept
+ * open on the Rust side between chunks.
+ */
+export async function fsUploadFileStream(
+  target: TargetRef,
+  remotePath: string,
+  file: File,
+  onProgress?: (transferred: number, total: number) => void,
+): Promise<void> {
+  const uploadId = isSession(target)
+    ? await invoke<number>('upload_start', {
+        tabId: target.tabId,
+        remotePath,
+        total: file.size,
+      })
+    : await invoke<number>('target_upload_start', {
+        target,
+        remotePath,
+        total: file.size,
+      })
+  try {
+    const reader = file.stream().getReader()
+    let transferred = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      const chunk = Array.from(value) // ~64KB → a few thousand numbers, trivial
+      await invoke('upload_chunk', { uploadId, chunk })
+      transferred += chunk.length
+      onProgress?.(transferred, file.size)
+    }
+    await invoke('upload_end', { uploadId })
+  } catch (err) {
+    // Always close the remote handle so a failed upload never leaks an open file.
+    try {
+      await invoke('upload_end', { uploadId })
+    } catch {
+      /* ignore */
+    }
+    throw err
+  }
+}
+
 export async function fsFileExists(target: TargetRef, path: string): Promise<boolean> {
   return isSession(target)
     ? fileExists(target.tabId, path)

@@ -197,16 +197,17 @@ pub(crate) fn get_jump_handle(
 }
 
 /// Build the [`RemoteFs`] implementation for a target.
-pub async fn build_fs(
+/// Open a raw SFTP session for the given target, without wrapping it in a
+/// `RemoteFs` trait object. Fails for non-SFTP targets (Docker exec, local).
+/// Used by the streaming/chunked upload path, which needs the low-level file
+/// handle to keep it open across multiple `upload_chunk` invokes.
+pub async fn build_sftp(
   app: &tauri::AppHandle,
   state: &tauri::State<'_, AppState>,
   target: &TargetRef,
-) -> Result<Box<dyn RemoteFs>, String> {
+) -> Result<SftpSession, String> {
   match target {
-    TargetRef::Session { tab_id } => {
-      let sftp = open_session_sftp(state, app, *tab_id).await?;
-      Ok(Box::new(SftpFs::new(sftp)))
-    }
+    TargetRef::Session { tab_id } => open_session_sftp(state, app, *tab_id).await,
     TargetRef::JumpRemote {
       jump_tab_id,
       host,
@@ -220,9 +221,23 @@ pub async fn build_fs(
       auth,
     } => {
       let jump = get_jump_handle(state, *jump_tab_id)?;
-      let sftp = open_jump_sftp(app, &jump, host, *port, auth, *jump_tab_id).await?;
-      Ok(Box::new(SftpFs::new(sftp)))
+      open_jump_sftp(app, &jump, host, *port, auth, *jump_tab_id).await
     }
+    TargetRef::Docker { .. } => {
+      Err("Target is a Docker exec target and does not support SFTP streaming upload".into())
+    }
+    TargetRef::Local { .. } => {
+      Err("Target is a local target and does not support SFTP streaming upload".into())
+    }
+  }
+}
+
+pub async fn build_fs(
+  app: &tauri::AppHandle,
+  state: &tauri::State<'_, AppState>,
+  target: &TargetRef,
+) -> Result<Box<dyn RemoteFs>, String> {
+  match target {
     TargetRef::Docker {
       jump_tab_id,
       container,
@@ -236,6 +251,10 @@ pub async fn build_fs(
       )))
     }
     TargetRef::Local { .. } => Ok(Box::new(crate::local_fs::LocalFs::new())),
+    _ => {
+      let sftp = build_sftp(app, state, target).await?;
+      Ok(Box::new(SftpFs::new(sftp)))
+    }
   }
 }
 
