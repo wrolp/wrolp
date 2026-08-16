@@ -546,15 +546,34 @@ export async function fsUploadFileStream(
   try {
     const reader = file.stream().getReader()
     let transferred = 0
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value) continue
-      const chunk = Array.from(value) // ~64KB → a few thousand numbers, trivial
+    let pending: Uint8Array | null = null
+    const CHUNK = 256 * 1024 // ~256KB per invoke: 4x fewer IPC round-trips
+    const send = async (data: Uint8Array) => {
+      const chunk = Array.from(data)
       await invoke('upload_chunk', { uploadId, chunk })
       transferred += chunk.length
       onProgress?.(transferred, file.size)
     }
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      // Buffer the browser's default ~64KB stream chunks into larger pieces
+      // before crossing the IPC boundary (fewer round-trips per byte).
+      if (!pending) {
+        pending = value
+      } else {
+        const merged: Uint8Array = new Uint8Array(pending.length + value.length)
+        merged.set(pending)
+        merged.set(value, pending.length)
+        pending = merged
+      }
+      if (pending && pending.length >= CHUNK) {
+        await send(pending.slice(0, CHUNK))
+        pending = pending.length > CHUNK ? pending.slice(CHUNK) : null
+      }
+    }
+    if (pending && pending.length > 0) await send(pending)
     await invoke('upload_end', { uploadId })
   } catch (err) {
     // Always close the remote handle so a failed upload never leaks an open file.

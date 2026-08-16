@@ -562,8 +562,10 @@ pub struct AppState {
   pub ai_captures: StdMutex<HashMap<u32, String>>,
   /// Monotonic counter pairing `ai-term-mark` begin/end events per tab.
   pub next_ai_term_seq: AtomicU64,
-  /// Transfer pause controls: tab_id → control
-  pub transfer_controls: StdMutex<HashMap<u32, Arc<TransferControl>>>,
+  /// Transfer pause controls: tab_id → in-flight controls. A directory upload
+  /// runs several transfers concurrently, so each tab can hold many controls;
+  /// pause/resume/cancel fan out to all of them.
+  pub transfer_controls: StdMutex<HashMap<u32, Vec<Arc<TransferControl>>>>,
   /// In-flight chunked upload sessions: upload_id → session (remote file handle).
   pub upload_sessions: StdMutex<HashMap<u64, UploadSession>>,
   /// Monotonic upload id counter.

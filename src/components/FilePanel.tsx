@@ -39,6 +39,30 @@ import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
+/** How many file transfers run at once for a multi-file upload batch. */
+const UPLOAD_CONCURRENCY = 4
+
+/**
+ * Run `worker` over `items` with at most `limit` tasks in flight at once.
+ * Workers pull from a shared index, so a slow file doesn't stall the batch.
+ */
+async function runConcurrent<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return
+  let next = 0
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      await worker(items[i], i)
+    }
+  })
+  await Promise.all(runners)
+}
+
 /* ---------- types ---------- */
 
 interface TransferProgress {
@@ -555,11 +579,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       const elapsed = p.elapsed > 0 ? p.elapsed / 1000 : 0.001
 
       // Backend events carry only the *basename* (e.g. `a.txt`) while rows are
-      // keyed by unique full paths, so match candidates by basename/suffix,
-      // preferring the row currently in flight (transfers run sequentially, so
-      // at most one row per op is active at a time), then falling back to the
-      // sole candidate (single-file transfers). Done/error rows are skipped so
-      // late events can't resurrect a finished row.
+      // keyed by unique full paths, so match candidates by basename/suffix.
+      // Uploads now run concurrently, so several rows may be in flight with the
+      // same basename: prefer the active row whose transferred count still
+      // trails the event (per-row progress is monotonic), then the sole
+      // candidate. Done/error rows are skipped so late events can't resurrect
+      // a finished row.
       const findTarget = (rows: TransferRow[], op: TransferRow['op'], base: string) => {
         if (base.length === 0) return null
         const candidates = rows.filter(
@@ -569,7 +594,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             r.status !== 'error' &&
             (r.filename === base || r.filename.endsWith(`/${base}`)),
         )
-        return candidates.find((r) => r.status === 'active') ?? (candidates.length === 1 ? candidates[0] : null)
+        return (
+          candidates.find((r) => r.status === 'active' && r.transferred < p.transferred) ??
+          candidates.find((r) => r.status === 'active') ??
+          (candidates.length === 1 ? candidates[0] : null)
+        )
       }
 
       if (p.op === 'directory') {
@@ -730,10 +759,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         }
       })
       setTransferRows((prev) => mergeRows(prev, rows))
-      for (let i = 0; i < paths.length; i++) {
+      // Each file opens its own SFTP session on the backend; uploading several
+      // in parallel lets the SSH handshakes overlap and keeps the pipe full.
+      let firstError: string | null = null
+      await runConcurrent(paths, UPLOAD_CONCURRENCY, async (localPath, i) => {
         // Skip files the user cancelled while they were still queued.
-        if (cancelledKeysRef.current.has(rows[i].key)) continue
-        const localPath = paths[i]
+        if (cancelledKeysRef.current.has(rows[i].key)) return
         const fileName = rows[i].filename
         const remotePath = join(targetDir, fileName)
         setTransferRows((prev) =>
@@ -753,11 +784,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               r.key === rows[i].key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
             ),
           )
-          if (cancelled) continue
-          setError(`Upload ${fileName} failed: ${e}`)
-          break
+          if (!cancelled && !firstError) firstError = `Upload ${fileName} failed: ${e}`
         }
-      }
+      })
+      if (firstError) setError(firstError)
       setPaused(false)
       refresh()
     },
@@ -839,37 +869,47 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       ]
       setTransferRows((prev) => mergeRows(prev, rows))
 
-      // Create remote directories first (DFS pre-order = shallow → deep), so
-      // empty directories are preserved and nested uploads always have parents.
+      // Create remote directories first. DFS pre-order lists parents before
+      // children; parallelize each depth level so siblings go together while a
+      // child never races its own parent (mkdir -p isn't guaranteed).
+      const byDepth: string[][] = []
       for (const d of dirs) {
-        const mkKey = `mkdir:${d}`
-        if (cancelledKeysRef.current.has(mkKey)) continue
-        setTransferRows((prev) =>
-          prev.map((r) => (r.key === mkKey ? { ...r, status: 'active' } : r)),
-        )
-        try {
-          await fsCreateDirectory(target, join(targetDir, d))
+        const depth = d.split('/').length
+        ;(byDepth[depth] ??= []).push(d)
+      }
+      for (const layer of byDepth) {
+        if (!layer) continue
+        await runConcurrent(layer, UPLOAD_CONCURRENCY, async (d) => {
+          const mkKey = `mkdir:${d}`
+          if (cancelledKeysRef.current.has(mkKey)) return
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === mkKey ? { ...r, status: 'done' } : r)),
+            prev.map((r) => (r.key === mkKey ? { ...r, status: 'active' } : r)),
           )
-        } catch {
-          // Directory likely already exists — treat as done so the row isn't
-          // stuck in "uploading" forever.
-          setTransferRows((prev) =>
-            prev.map((r) => (r.key === mkKey ? { ...r, status: 'done' } : r)),
-          )
-        }
+          try {
+            await fsCreateDirectory(target, join(targetDir, d))
+            setTransferRows((prev) =>
+              prev.map((r) => (r.key === mkKey ? { ...r, status: 'done' } : r)),
+            )
+          } catch {
+            // Directory likely already exists — treat as done so the row isn't
+            // stuck in "uploading" forever.
+            setTransferRows((prev) =>
+              prev.map((r) => (r.key === mkKey ? { ...r, status: 'done' } : r)),
+            )
+          }
+        })
       }
 
-      for (const f of files) {
+      // Upload the files themselves, several at a time. Each file streams in
+      // ~256KB chunks (browser reads are buffered up inside fsUploadFileStream);
+      // the whole file is never serialized through the Tauri JSON IPC at once.
+      let firstError: string | null = null
+      await runConcurrent(files, UPLOAD_CONCURRENCY, async (f) => {
         const remotePath = join(targetDir, f.relPath)
         const key = `upload:${f.relPath}`
-        if (cancelledKeysRef.current.has(key)) continue
+        if (cancelledKeysRef.current.has(key)) return
         setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'active' } : r)))
         try {
-          // Stream the file in ~64KB chunks. Loading it fully into a byte array
-          // and shipping it through the Tauri JSON IPC is what made large
-          // drag&drop uploads fail (memory + WebView message size limits).
           await fsUploadFileStream(target, remotePath, f.file, (transferred) => {
             setTransferRows((prev) =>
               prev.map((r) => (r.key === key ? { ...r, transferred } : r)),
@@ -885,11 +925,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               r.key === key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
             ),
           )
-          if (cancelled) continue
-          setError(`Upload ${f.relPath} failed: ${e}`)
-          break
+          if (!cancelled && !firstError) firstError = `Upload ${f.relPath} failed: ${e}`
         }
-      }
+      })
+      if (firstError) setError(firstError)
       setPaused(false)
       refresh()
     },
@@ -1332,6 +1371,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const cancelTransferRow = async (row: TransferRow) => {
     cancelledKeysRef.current.add(row.key)
     if (row.status === 'active' && sessionTabId != null) {
+      // The backend aborts every in-flight transfer for the tab, so mark the
+      // other active rows as cancelled too — otherwise they'd surface as
+      // spurious errors.
+      for (const r of transferRows) {
+        if (r.status === 'active') cancelledKeysRef.current.add(r.key)
+      }
       try {
         await cancelTransfer(sessionTabId)
       } catch {
@@ -1340,7 +1385,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     }
     setPaused(false)
     setTransferRows((prev) =>
-      prev.map((r) => (r.key === row.key ? { ...r, status: 'cancelled', speed: '' } : r)),
+      prev.map((r) =>
+        r.key === row.key || (row.status === 'active' && r.status === 'active')
+          ? { ...r, status: 'cancelled', speed: '' }
+          : r,
+      ),
     )
   }
 

@@ -37,6 +37,7 @@ async fn check_pause(control: &TransferControl) -> Result<(), String> {
 struct TransferGuard {
   state_ptr: *const AppState,
   tab_id: u32,
+  control: Arc<TransferControl>,
 }
 // Safety: AppState is managed by Tauri and lives for the app lifetime
 unsafe impl Send for TransferGuard {}
@@ -46,7 +47,9 @@ impl Drop for TransferGuard {
     // Safety: state_ptr is valid because Tauri state outlives commands
     let state = unsafe { &*self.state_ptr };
     if let Ok(mut controls) = state.transfer_controls.lock() {
-      controls.remove(&self.tab_id);
+      if let Some(list) = controls.get_mut(&self.tab_id) {
+        list.retain(|c| !Arc::ptr_eq(c, &self.control));
+      }
     }
   }
 }
@@ -1766,12 +1769,13 @@ pub async fn download_file(
   });
   {
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-    controls.insert(tab_id, control.clone());
+    controls.entry(tab_id).or_default().push(control.clone());
   }
   // Clean up control on exit
   let _cleanup = TransferGuard {
     state_ptr: &*state as *const AppState,
     tab_id,
+    control: control.clone(),
   };
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
@@ -1891,11 +1895,12 @@ pub async fn download_directory(
   });
   {
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-    controls.insert(tab_id, control.clone());
+    controls.entry(tab_id).or_default().push(control.clone());
   }
   let _cleanup = TransferGuard {
     state_ptr: &*state as *const AppState,
     tab_id,
+    control: control.clone(),
   };
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
@@ -2005,11 +2010,12 @@ pub async fn upload_file(
   });
   {
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-    controls.insert(tab_id, control.clone());
+    controls.entry(tab_id).or_default().push(control.clone());
   }
   let _cleanup = TransferGuard {
     state_ptr: &*state as *const AppState,
     tab_id,
+    control: control.clone(),
   };
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
@@ -2044,7 +2050,7 @@ pub async fn upload_file(
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
   let start = std::time::Instant::now();
-  let chunk_size: usize = 65536;
+  let chunk_size: usize = 262144;
   let mut buf = vec![0u8; chunk_size];
   let mut written: u64 = 0;
 
@@ -2161,11 +2167,12 @@ pub async fn upload_file_bytes(
   });
   {
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-    controls.insert(tab_id, control.clone());
+    controls.entry(tab_id).or_default().push(control.clone());
   }
   let _cleanup = TransferGuard {
     state_ptr: &*state as *const AppState,
     tab_id,
+    control: control.clone(),
   };
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
@@ -2190,7 +2197,7 @@ pub async fn upload_file_bytes(
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
   let start = std::time::Instant::now();
-  let chunk_size: usize = 65536;
+  let chunk_size: usize = 262144;
   let mut written: u64 = 0;
 
   for chunk in file_data.chunks(chunk_size) {
@@ -2247,7 +2254,7 @@ pub async fn upload_start(
   });
   {
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-    controls.insert(tab_id, control.clone());
+    controls.entry(tab_id).or_default().push(control.clone());
   }
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
@@ -2398,10 +2405,8 @@ pub async fn upload_end(
     // it is still ours — another transfer on the same tab may have replaced it.
     if let Some(tab) = sess.tab_id {
       let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-      if let Some(cur) = controls.get(&tab) {
-        if Arc::ptr_eq(cur, &sess.control) {
-          controls.remove(&tab);
-        }
+      if let Some(list) = controls.get_mut(&tab) {
+        list.retain(|c| !Arc::ptr_eq(c, &sess.control));
       }
     }
     // sess (and its remote file handle) drops here.
@@ -2865,8 +2870,10 @@ pub async fn get_sftp_user(
 #[tauri::command]
 pub async fn pause_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<(), String> {
   let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-  if let Some(ctrl) = controls.get(&tab_id) {
-    ctrl.paused.store(true, Ordering::SeqCst);
+  if let Some(list) = controls.get(&tab_id) {
+    for ctrl in list {
+      ctrl.paused.store(true, Ordering::SeqCst);
+    }
   }
   Ok(())
 }
@@ -2874,9 +2881,11 @@ pub async fn pause_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> R
 #[tauri::command]
 pub async fn resume_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<(), String> {
   let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-  if let Some(ctrl) = controls.get(&tab_id) {
-    ctrl.paused.store(false, Ordering::SeqCst);
-    ctrl.notify.notify_one();
+  if let Some(list) = controls.get(&tab_id) {
+    for ctrl in list {
+      ctrl.paused.store(false, Ordering::SeqCst);
+      ctrl.notify.notify_one();
+    }
   }
   Ok(())
 }
@@ -2886,9 +2895,11 @@ pub async fn resume_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> 
 #[tauri::command]
 pub async fn cancel_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<(), String> {
   let controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
-  if let Some(ctrl) = controls.get(&tab_id) {
-    ctrl.cancelled.store(true, Ordering::SeqCst);
-    ctrl.notify.notify_one();
+  if let Some(list) = controls.get(&tab_id) {
+    for ctrl in list {
+      ctrl.cancelled.store(true, Ordering::SeqCst);
+      ctrl.notify.notify_one();
+    }
   }
   Ok(())
 }
