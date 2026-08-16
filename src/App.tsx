@@ -1753,22 +1753,25 @@ export default function App() {
     setCommandListOpen(true)
   }, [])
 
-  // Send a command snippet's text into the active terminal WITHOUT executing it
-  // (no trailing newline), then return focus to the terminal. If the user has
-  // already typed a partial command on the input line, join them with ` && `
-  // so the snippet continues the existing pipeline instead of overwriting it.
+  // Send a command snippet's text into the currently focused terminal WITHOUT
+  // executing it (no trailing newline), then return focus to the terminal. If
+  // the user has already typed a partial command on the input line, join them
+  // with ` && ` so the snippet continues the existing pipeline instead of
+  // overwriting it. `focusedLeafTabId` is the pane the user last clicked (the
+  // root workspace tab when not split), not necessarily `activeTabId`.
   const handleSendSnippetToTerminal = useCallback(
     (command: string) => {
-      const tab = tabs.find((t) => t.tabId === activeTabId)
-      if (!tab || activeTabId == null) return
-      const existing = getTerminalInputText(activeTabId)
+      const tabId = focusedLeafTabId
+      const tab = tabId != null ? tabs.find((t) => t.tabId === tabId) : undefined
+      if (!tab || tabId == null) return
+      const existing = getTerminalInputText(tabId)
       const joined = existing.trim().length > 0 ? ` && ${command}` : command
       const isLocal = tab.tabType === 'localShell'
       const send = isLocal ? localSendInput : sendInput
-      send(activeTabId, joined).catch((e) => console.error('send snippet failed:', e))
-      focusTerminal(activeTabId)
+      send(tabId, joined).catch((e) => console.error('send snippet failed:', e))
+      focusTerminal(tabId)
     },
-    [tabs, activeTabId],
+    [tabs, focusedLeafTabId],
   )
 
   // Compute tab display label (number tabs sharing the same connection)
@@ -5212,7 +5215,7 @@ export default function App() {
       <CommandListPanel
         open={commandListOpen}
         onClose={() => setCommandListOpen(false)}
-        activeTabId={activeTabId}
+        activeTabId={focusedLeafTabId}
         onSendToTerminal={handleSendSnippetToTerminal}
       />
 
