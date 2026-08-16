@@ -59,7 +59,7 @@ interface TransferProgress {
 
 /** One row in the multi-file transfer progress list. */
 interface TransferRow {
-  /** Stable unique key: `up:`/`down:` + filename. */
+  /** Stable unique key: op + full path (local path for upload, remote path for download). */
   key: string
   filename: string
   op: 'upload' | 'download' | 'directory'
@@ -507,14 +507,46 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       const p = event.payload
       if (p.tabId !== sessionTabId) return
       const elapsed = p.elapsed > 0 ? p.elapsed / 1000 : 0.001
+
+      // Backend events carry only the *basename* (e.g. `a.txt`) while rows are
+      // keyed by unique full paths, so match candidates by basename/suffix,
+      // preferring the row currently in flight (transfers run sequentially, so
+      // at most one row per op is active at a time), then falling back to the
+      // sole candidate (single-file transfers). Done/error rows are skipped so
+      // late events can't resurrect a finished row.
+      const findTarget = (rows: TransferRow[], op: TransferRow['op'], base: string) => {
+        if (base.length === 0) return null
+        const candidates = rows.filter(
+          (r) =>
+            r.op === op &&
+            r.status !== 'done' &&
+            r.status !== 'error' &&
+            (r.filename === base || r.filename.endsWith(`/${base}`)),
+        )
+        return candidates.find((r) => r.status === 'active') ?? (candidates.length === 1 ? candidates[0] : null)
+      }
+
       if (p.op === 'directory') {
         // A directory download streams many files; the row is keyed by the
-        // base directory and shows aggregate bytes + the current relative path.
-        const key = `directory:${p.dirName ?? ''}`
+        // remote directory path and shows aggregate bytes + the current
+        // relative path.
+        const dirName = p.dirName ?? ''
         const bytesPerSec = (p.doneBytes ?? 0) / elapsed
-        setTransferRows((prev) =>
-          prev.map((r) =>
-            r.key === key
+        setTransferRows((prev) => {
+          if (dirName.length === 0) return prev
+          const candidates = prev.filter(
+            (r) =>
+              r.op === 'directory' &&
+              r.status !== 'done' &&
+              r.status !== 'error' &&
+              (r.key === `directory:${dirName}` || r.key.endsWith(`/${dirName}`)),
+          )
+          const target =
+            candidates.find((r) => r.status === 'active') ??
+            (candidates.length === 1 ? candidates[0] : null)
+          if (!target) return prev
+          return prev.map((r) =>
+            r.key === target.key
               ? {
                   ...r,
                   filename: p.relativePath || p.filename,
@@ -524,25 +556,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                   status: 'active',
                 }
               : r,
-          ),
-        )
+          )
+        })
         return
       }
       const bytesPerSec = p.transferred / elapsed
-      const key = `${p.op}:${p.filename}`
-      setTransferRows((prev) =>
-        prev.map((r) => {
-          // Directory-drop uploads are keyed by the relative path (e.g.
-          // `upload:sub/dir/a.txt`) while the backend emits only the basename
-          // (`a.txt`); fall back to a basename suffix match on the active row.
-          const matchKey = r.key === key
-          const matchSuffix =
-            !matchKey &&
-            r.op === 'upload' &&
-            r.status === 'active' &&
-            p.filename.length > 0 &&
-            r.filename.endsWith(`/${p.filename}`)
-          return matchKey || matchSuffix
+      setTransferRows((prev) => {
+        const target = findTarget(prev, p.op, p.filename)
+        if (!target) return prev
+        return prev.map((r) =>
+          r.key === target.key
             ? {
                 ...r,
                 transferred: p.transferred,
@@ -550,9 +573,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 speed: formatSpeed(bytesPerSec),
                 status: 'active',
               }
-            : r
-        }),
-      )
+            : r,
+        )
+      })
     })
     return () => {
       unlisten.then((fn) => fn())
@@ -625,6 +648,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     [target],
   )
 
+  /* ---- transfer list helpers ---- */
+  /**
+   * Append new transfer rows while keeping in-flight ones. Rows whose key
+   * already exists are replaced (avoids duplicate React keys).
+   */
+  const mergeRows = (prev: TransferRow[], next: TransferRow[]): TransferRow[] => {
+    const nextKeys = new Set(next.map((r) => r.key))
+    return [...prev.filter((r) => !nextKeys.has(r.key)), ...next]
+  }
+
   /* ---- upload ---- */
   const uploadFiles = useCallback(
     async (paths: string[], baseDir?: string) => {
@@ -634,9 +667,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       // omitted the currently browsed directory is used.
       const targetDir = baseDir && baseDir.length > 0 ? baseDir : currentPath
       const rows: TransferRow[] = paths.map((localPath) => {
-        const fileName = localPath.replace(/\\/g, '/').split('/').pop() || 'uploaded_file'
+        // Key by the normalized full local path so same-named files from
+        // different folders each get their own row (React keys must be unique).
+        const normalizedPath = localPath.replace(/\\/g, '/')
+        const fileName = normalizedPath.split('/').pop() || 'uploaded_file'
         return {
-          key: `upload:${fileName}`,
+          key: `upload:${normalizedPath}`,
           filename: fileName,
           op: 'upload',
           status: 'queued',
@@ -645,7 +681,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           speed: '',
         }
       })
-      setTransferRows(rows)
+      setTransferRows((prev) => mergeRows(prev, rows))
       for (let i = 0; i < paths.length; i++) {
         const localPath = paths[i]
         const fileName = rows[i].filename
@@ -747,7 +783,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           speed: '',
         })),
       ]
-      setTransferRows(rows)
+      setTransferRows((prev) => mergeRows(prev, rows))
 
       // Create remote directories first (DFS pre-order = shallow → deep), so
       // empty directories are preserved and nested uploads always have parents.
@@ -988,22 +1024,24 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         })
         if (!folder) return
         setPaused(false)
-        setTransferRows([
-          {
-            key: `directory:${node.name}`,
-            filename: node.name + '/',
-            op: 'directory',
-            status: 'queued',
-            transferred: 0,
-            total: 0,
-            speed: '',
-          },
-        ])
+        setTransferRows((prev) =>
+          mergeRows(prev, [
+            {
+              key: `directory:${node.path}`,
+              filename: node.name + '/',
+              op: 'directory',
+              status: 'queued',
+              transferred: 0,
+              total: 0,
+              speed: '',
+            },
+          ]),
+        )
         try {
           const summary = await fsDownloadDirectory(target, node.path, folder as string)
           setTransferRows((prev) =>
             prev.map((r) =>
-              r.key === `directory:${node.name}`
+              r.key === `directory:${node.path}`
                 ? {
                     ...r,
                     status: 'done',
@@ -1015,7 +1053,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           )
         } catch (e) {
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === `directory:${node.name}` ? { ...r, status: 'error' } : r)),
+            prev.map((r) => (r.key === `directory:${node.path}` ? { ...r, status: 'error' } : r)),
           )
           setError(String(e))
         }
@@ -1028,29 +1066,31 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       const filePath = await save({ title: 'Save file as', defaultPath: node.name })
       if (filePath) {
         setPaused(false)
-        setTransferRows([
-          {
-            key: `download:${node.name}`,
-            filename: node.name,
-            op: 'download',
-            status: 'queued',
-            transferred: 0,
-            total: 0,
-            speed: '',
-          },
-        ])
+        setTransferRows((prev) =>
+          mergeRows(prev, [
+            {
+              key: `download:${node.path}`,
+              filename: node.name,
+              op: 'download',
+              status: 'queued',
+              transferred: 0,
+              total: 0,
+              speed: '',
+            },
+          ]),
+        )
         try {
           await fsDownloadFile(target, node.path, filePath as string)
           setTransferRows((prev) =>
             prev.map((r) =>
-              r.key === `download:${node.name}`
+              r.key === `download:${node.path}`
                 ? { ...r, status: 'done', transferred: r.total }
                 : r,
             ),
           )
         } catch (e) {
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === `download:${node.name}` ? { ...r, status: 'error' } : r)),
+            prev.map((r) => (r.key === `download:${node.path}` ? { ...r, status: 'error' } : r)),
           )
           setError(String(e))
         }
@@ -1090,7 +1130,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     setError('')
     setPaused(false)
     const rows: TransferRow[] = items.map(({ file }) => ({
-      key: `download:${file.name}`,
+      // Key by the remote path so same-named files from different directories
+      // each get their own row.
+      key: `download:${file.path}`,
       filename: file.name,
       op: 'download',
       status: 'queued',
@@ -1098,7 +1140,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       total: 0,
       speed: '',
     }))
-    setTransferRows(rows)
+    setTransferRows((prev) => mergeRows(prev, rows))
     for (let i = 0; i < items.length; i++) {
       const { file, localPath } = items[i]
       setTransferRows((prev) =>
