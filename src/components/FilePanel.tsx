@@ -1420,10 +1420,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             </button>
             <button
               title={t('newItem')}
-              onClick={() => {
-                const btn = document.activeElement as HTMLElement
-                const r = btn?.getBoundingClientRect()
-                setContextMenu({ x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4, node: null })
+              onClick={(e) => {
+                e.stopPropagation()
+                const r = e.currentTarget.getBoundingClientRect()
+                setContextMenu({ x: r.left, y: r.bottom + 4, node: null })
               }}
             >
               <Icon name="plus" />
