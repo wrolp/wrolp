@@ -389,7 +389,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       if (prevMap) {
         for (const n of nodes) {
           const old = prevMap.get(n.path)
-          if (old && old.isDir && old.loaded) {
+          // Only re-expand directories the user had expanded; keep collapsed
+          // ones collapsed (and don't re-load their children).
+          if (old && old.isDir && old.expanded && old.loaded) {
             n.expanded = true
             n.loaded = true
             const childMap = new Map<string, TreeNode>()
