@@ -6,6 +6,9 @@ interface ConfirmDialogProps {
   confirmLabel?: string
   cancelLabel?: string
   danger?: boolean
+  /** Optional primary action button (shown left of the confirm button). */
+  saveLabel?: string
+  onSave?: () => void
   onConfirm: () => void
   onCancel: () => void
 }
@@ -16,6 +19,8 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   danger = false,
+  saveLabel,
+  onSave,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -40,6 +45,11 @@ export function ConfirmDialog({
           <button className="btn-cancel" onClick={onCancel}>
             {cancelLabel}
           </button>
+          {onSave && (
+            <button className="btn-primary" onClick={onSave}>
+              {saveLabel}
+            </button>
+          )}
           <button
             className={danger ? 'btn-danger' : 'btn-primary'}
             onClick={onConfirm}

@@ -179,6 +179,10 @@ const en = {
   failed: 'Failed',
   cancelled: 'Cancelled',
   cancelTransfer: 'Cancel transfer',
+  unsavedChanges: 'Unsaved Changes',
+  closeEditorConfirmMessage: 'The file has unsaved changes. Do you want to save it before closing?',
+  saveAndClose: 'Save & Close',
+  discardAndClose: "Don't Save",
 
   // Settings: general
   settingsGeneral: 'General',

@@ -180,6 +180,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   failed: '失败',
   cancelled: '已取消',
   cancelTransfer: '取消传输',
+  unsavedChanges: '未保存的更改',
+  closeEditorConfirmMessage: '文件有未保存的更改，关闭前是否保存？',
+  saveAndClose: '保存并关闭',
+  discardAndClose: '不保存',
 
   // Settings: general
   settingsGeneral: '通用',

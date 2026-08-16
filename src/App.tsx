@@ -88,6 +88,7 @@ import type {
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { detectLanguage } from './editor/languages'
 import { useI18n, LANG_LABELS } from './i18n'
 import './styles/App.scss'
@@ -524,6 +525,9 @@ export default function App() {
   const editorTabsRef = useRef(editorTabs)
   editorTabsRef.current = editorTabs
   const [activeEditorKey, setActiveEditorKey] = useState<Record<number, string>>({})
+  // Editor tab whose close was intercepted because it has unsaved changes.
+  // While set, a confirm dialog asks whether to save before closing.
+  const [pendingCloseEditorKey, setPendingCloseEditorKey] = useState<string | null>(null)
   // Which view occupies the shell pane area, per SSH session (tabId):
   // 'terminal' or the key of the active editor tab (editor replaces the
   // terminal area). Isolated per session so files opened in one tab don't
@@ -1540,6 +1544,19 @@ export default function App() {
     })
   }, [])
 
+  // Close an editor tab, first asking whether to save if it has unsaved changes.
+  const requestCloseEditorTab = useCallback(
+    (key: string) => {
+      const target = editorTabsRef.current.find((t) => t.key === key)
+      if (target && target.isDirty) {
+        setPendingCloseEditorKey(key)
+      } else {
+        closeEditorTab(key)
+      }
+    },
+    [closeEditorTab],
+  )
+
   // Close a docker log view tab (it lives on the pane header like a file).
   // The DockerLogViewer unmount effect stops its own stream.
   const closeDockerLogTab = useCallback((tabId: number) => {
@@ -1568,9 +1585,9 @@ export default function App() {
     t.targetRef ?? { kind: 'session', tabId: t.sshTabId }
 
   const handleSaveEditorTab = useCallback(
-    async (key: string) => {
+    async (key: string): Promise<boolean> => {
       const target = editorTabs.find((t) => t.key === key)
-      if (!target || target.isBinary || target.isTooLarge) return
+      if (!target || target.isBinary || target.isTooLarge) return false
       setEditorTabs((prev) =>
         prev.map((t) => (t.key === key ? { ...t, saving: true, error: undefined } : t)),
       )
@@ -1591,14 +1608,35 @@ export default function App() {
         )
         // Refresh file tree after save
         fileTreeRef.current?.refresh()
+        return true
       } catch (e) {
         setEditorTabs((prev) =>
           prev.map((t) => (t.key === key ? { ...t, saving: false, error: String(e) } : t)),
         )
+        return false
       }
     },
     [editorTabs],
   )
+
+  const confirmCloseSave = useCallback(async () => {
+    const key = pendingCloseEditorKey
+    setPendingCloseEditorKey(null)
+    if (!key) return
+    const ok = await handleSaveEditorTab(key)
+    if (ok) closeEditorTab(key)
+  }, [pendingCloseEditorKey, handleSaveEditorTab, closeEditorTab])
+
+  const confirmCloseDiscard = useCallback(() => {
+    const key = pendingCloseEditorKey
+    setPendingCloseEditorKey(null)
+    if (!key) return
+    closeEditorTab(key)
+  }, [pendingCloseEditorKey, closeEditorTab])
+
+  const confirmCloseCancel = useCallback(() => {
+    setPendingCloseEditorKey(null)
+  }, [])
 
   const changeEditorTabLanguage = useCallback((key: string, language: string) => {
     setEditorTabs((prev) => prev.map((t) => (t.key === key ? { ...t, language } : t)))
@@ -2426,7 +2464,7 @@ export default function App() {
               setShellViewFor(item.tabId, key)
             }
           }}
-          onClose={closeEditorTab}
+          onClose={requestCloseEditorTab}
           onContentChange={handleEditorContentChange}
           onSave={handleSaveEditorTab}
           onChangeLanguage={changeEditorTabLanguage}
@@ -3606,7 +3644,7 @@ export default function App() {
                         className="term-pane-file-tab-close"
                         onClick={(e) => {
                           e.stopPropagation()
-                          closeEditorTab(et.key)
+                          requestCloseEditorTab(et.key)
                         }}
                       >
                         ×
@@ -3995,7 +4033,7 @@ export default function App() {
                       setShellViewFor(leaf.tabId, key)
                     }
                   }}
-                  onClose={closeEditorTab}
+                  onClose={requestCloseEditorTab}
                   onContentChange={handleEditorContentChange}
                   onSave={handleSaveEditorTab}
                   onChangeLanguage={changeEditorTabLanguage}
@@ -5054,6 +5092,20 @@ export default function App() {
         activeTabId={activeTabId}
         onSendToTerminal={handleSendSnippetToTerminal}
       />
+
+      {/* Ask before closing an editor tab with unsaved changes */}
+      {pendingCloseEditorKey && (
+        <ConfirmDialog
+          title={t('unsavedChanges')}
+          message={t('closeEditorConfirmMessage')}
+          saveLabel={t('saveAndClose')}
+          confirmLabel={t('discardAndClose')}
+          danger
+          onSave={() => void confirmCloseSave()}
+          onConfirm={confirmCloseDiscard}
+          onCancel={confirmCloseCancel}
+        />
+      )}
     </div>
   )
 }
