@@ -68,6 +68,7 @@ import {
   decryptApiKey,
   listAiModels,
   restartDockerContainer,
+  stopDockerContainer,
   localClose,
   getLocalTerminals,
   listWorkspaces,
@@ -497,6 +498,26 @@ export default function App() {
         setToast({
           kind: 'error',
           text: t('dockerRestartFailed', { name: container.name, err: msg }),
+        })
+      }
+    },
+    [activeTabId, t],
+  )
+
+  // Stop a Docker container
+  const handleStopContainer = useCallback(
+    async (container: ContainerInfo) => {
+      if (activeTabId == null) return
+      setToast({ kind: 'progress', text: t('dockerStopping', { name: container.name }) })
+      try {
+        await stopDockerContainer(activeTabId, container.name)
+        setToast({ kind: 'success', text: t('dockerStopped', { name: container.name }) })
+      } catch (e) {
+        const msg = String(e)
+        console.error(`Docker stop failed: ${msg}`)
+        setToast({
+          kind: 'error',
+          text: t('dockerStopFailed', { name: container.name, err: msg }),
         })
       }
     },
@@ -4680,6 +4701,7 @@ export default function App() {
                     onAnalyzeContainer={handleAnalyzeContainer}
                     onViewLogs={handleViewContainerLogs}
                     onRestartContainer={handleRestartContainer}
+                    onStopContainer={handleStopContainer}
                   />
                 </div>
               )}

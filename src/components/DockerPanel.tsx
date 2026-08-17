@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ContainerInfo } from '../types'
-import { listDockerContainers, restartDockerContainer } from '../commands'
+import { listDockerContainers, restartDockerContainer, stopDockerContainer } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
@@ -20,6 +20,8 @@ interface DockerPanelProps {
   onViewLogs?: (container: ContainerInfo) => void
   /** Restart a running container. */
   onRestartContainer?: (container: ContainerInfo) => void
+  /** Stop a running container. */
+  onStopContainer?: (container: ContainerInfo) => void
   /** Label of the host machine whose containers are listed (shown in header). */
   serverLabel?: string
 }
@@ -39,6 +41,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onAnalyzeContainer,
   onViewLogs,
   onRestartContainer,
+  onStopContainer,
   serverLabel,
 }) => {
   const { t } = useI18n()
@@ -130,6 +133,20 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     setCtxMenu(null)
   }, [ctxMenu, jumpTabId, load, onRestartContainer])
 
+  const handleStop = useCallback(() => {
+    if (!ctxMenu) return
+    const container = ctxMenu.container
+    if (onStopContainer) {
+      onStopContainer(container)
+    } else {
+      // Fallback: stop directly and refresh the list
+      stopDockerContainer(jumpTabId, container.name)
+        .then(() => load())
+        .catch((e) => setError(String(e)))
+    }
+    setCtxMenu(null)
+  }, [ctxMenu, jumpTabId, load, onStopContainer])
+
   return (
     <div className="docker-panel">
       <div className="docker-panel-header">
@@ -201,6 +218,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
             <Icon name="refresh" size={14} />
             {t('dockerRestart')}
           </div>
+          {ctxMenu.container.state === 'running' && (
+            <div className="context-menu-item ctx-danger" onClick={handleStop}>
+              <Icon name="stop" size={14} />
+              {t('dockerStop')}
+            </div>
+          )}
           {onViewLogs && (
             <div className="context-menu-item" onClick={handleViewLogs}>
               <Icon name="file" size={14} />

@@ -23,6 +23,7 @@ export type IconName =
   | 'user'
   | 'play'
   | 'pause'
+  | 'stop'
   | 'stepBack'
   | 'trash'
   | 'edit'
@@ -146,6 +147,7 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
     </>
   ),
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" />,
   stepBack: (
     <>
       <polygon points="19 20 9 12 19 4 19 20" fill="currentColor" stroke="none" />

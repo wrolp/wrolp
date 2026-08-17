@@ -2687,6 +2687,14 @@ input[type='password']::-ms-clear {
     &:hover {
       background: #094771;
     }
+
+    &.ctx-danger {
+      color: #f06b6b;
+
+      &:hover {
+        background: rgba(240, 107, 107, 0.15);
+      }
+    }
   }
 }
 

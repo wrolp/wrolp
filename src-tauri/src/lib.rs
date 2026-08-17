@@ -257,6 +257,7 @@ pub fn run() {
       commands::analyze_docker_container,
       commands::docker_container_logs,
       commands::restart_docker_container,
+      commands::stop_docker_container,
       commands::docker_logs_stream_start,
       commands::poll_docker_logs,
       commands::stop_docker_logs_stream,

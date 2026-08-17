@@ -365,6 +365,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   dockerRestart: '重启',
   dockerRestarting: '正在重启容器 “{name}” ...',
   dockerRestarted: '容器 “{name}” 已重启',
+  dockerStopping: '正在停止容器 “{name}” ...',
+  dockerStopped: '容器 “{name}” 已停止',
+  dockerStopFailed: '停止容器 “{name}” 失败：{err}',
   // Local terminal
   localTerminal: '本地终端',
   openLocalShell: '打开本地终端',

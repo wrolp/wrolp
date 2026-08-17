@@ -367,6 +367,9 @@ const en = {
   dockerRestart: 'Restart',
   dockerRestarting: 'Restarting container "{name}" ...',
   dockerRestarted: 'Container "{name}" restarted',
+  dockerStopping: 'Stopping container "{name}" ...',
+  dockerStopped: 'Container "{name}" stopped',
+  dockerStopFailed: 'Failed to stop container "{name}": {err}',
   // Local terminal
   localTerminal: 'Local Terminal',
   openLocalShell: 'Open Local Terminal',
