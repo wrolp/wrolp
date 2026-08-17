@@ -157,6 +157,15 @@ export interface DirDownloadSummary {
   skipped: number
 }
 
+/** Summary returned by `upload_local_dir` / `target_upload_local_dir`. */
+export interface DirUploadSummary {
+  totalFiles: number
+  doneFiles: number
+  totalBytes: number
+  doneBytes: number
+  skipped: number
+}
+
 /** An active SSH port-forwarding tunnel (`ssh -L`), carried by a connected tab. */
 export interface TunnelInfo {
   id: number

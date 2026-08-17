@@ -143,6 +143,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   restoreOriginalUser: '恢复原始用户',
   switchSftpUser: '切换 SFTP 用户',
   uploadFile: '上传',
+  uploadFolder: '上传文件夹',
+  selectUploadFolder: '选择要上传的文件夹',
   selectDownloadFolder: '选择下载文件夹',
   newItem: '新建项',
   parentDir: '上级',

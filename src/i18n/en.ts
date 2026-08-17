@@ -142,6 +142,8 @@ const en = {
   restoreOriginalUser: 'Restore original user',
   switchSftpUser: 'Switch SFTP user',
   uploadFile: 'Upload',
+  uploadFolder: 'Upload folder',
+  selectUploadFolder: 'Select folder to upload',
   selectDownloadFolder: 'Select download folder',
   newItem: 'New item',
   parentDir: 'Parent',

@@ -17,6 +17,7 @@ import type {
   LocalTerminalEntry,
   WorkspaceInfo,
   DirDownloadSummary,
+  DirUploadSummary,
   TunnelInfo,
   StartTunnelArgs,
   TunnelConfig,
@@ -182,18 +183,6 @@ export async function uploadFile(
   remotePath: string,
 ): Promise<boolean> {
   return await invoke<boolean>('upload_file', { tabId, localPath, remotePath })
-}
-
-/// Open a shared SFTP connection for a directory-upload batch. All files in the
-/// batch reuse this one connection (pass the returned id as `batchId` to
-/// `fsUploadFileStream`) instead of performing an SSH handshake per file.
-export async function uploadBatchStart(tabId: number): Promise<number> {
-  return await invoke<number>('upload_batch_start', { tabId })
-}
-
-/// Close a directory-upload batch session opened by `uploadBatchStart`.
-export async function uploadBatchEnd(batchId: number): Promise<void> {
-  await invoke('upload_batch_end', { batchId })
 }
 
 /// Upload file as raw bytes (for HTML5 drag-drop where we have file data, not paths)
@@ -519,6 +508,23 @@ export async function fsUploadFile(
     : invoke<boolean>('target_upload_file', { target, localPath, remotePath })
 }
 
+/// Upload a local directory (or single file) into a remote directory. The Rust
+/// side scans the local tree once with walkdir and streams every file over a
+/// shared SFTP connection — no per-chunk IPC from the frontend.
+export async function fsUploadLocalDir(
+  target: TargetRef,
+  localDir: string,
+  remoteDir: string,
+): Promise<DirUploadSummary> {
+  return isSession(target)
+    ? invoke<DirUploadSummary>('upload_local_dir', {
+        tabId: target.tabId,
+        localDir,
+        remoteDir,
+      })
+    : invoke<DirUploadSummary>('target_upload_local_dir', { target, localDir, remoteDir })
+}
+
 export async function fsUploadFileBytes(
   target: TargetRef,
   remotePath: string,
@@ -527,98 +533,6 @@ export async function fsUploadFileBytes(
   return isSession(target)
     ? uploadFileBytes(target.tabId, remotePath, fileData)
     : invoke<boolean>('target_upload_file_bytes', { target, remotePath, fileData })
-}
-
-/**
- * Encode a byte buffer as a base64 string. Chunked so very large buffers (e.g.
- * multi-MB upload chunks) don't blow the `String.fromCharCode.apply` argument
- * limit. Used by `fsUploadFileStream` to ship upload data as a single JSON
- * string instead of a huge array of numbers (the previous CPU hot spot).
- */
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  const CHUNK = 0x8000 // 32KB per `apply` call — safe on all engines
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
-    binary += String.fromCharCode.apply(null, Array.from(slice))
-  }
-  return btoa(binary)
-}
-
-/**
- * Stream an HTML5 `File` (drag & drop) to the remote target in chunks.
- * The whole file is never serialized through the Tauri JSON IPC at once —
- * the old `Array.from(await file.arrayBuffer())` produced a `number[]` of
- * every byte, which blew up memory and the WebView IPC payload for large
- * files. Here the frontend reads the file in the browser's default ~64KB
- * stream pieces, buffers them up to a few MB, and sends each buffered chunk
- * via its own `upload_chunk` invoke; the remote handle is kept open on the
- * Rust side between chunks.
- */
-export async function fsUploadFileStream(
-  target: TargetRef,
-  remotePath: string,
-  file: File,
-  onProgress?: (transferred: number, total: number) => void,
-  batchId?: number,
-): Promise<void> {
-  const uploadId = isSession(target)
-    ? await invoke<number>('upload_start', {
-        tabId: target.tabId,
-        remotePath,
-        total: file.size,
-        batchId,
-      })
-    : await invoke<number>('target_upload_start', {
-        target,
-        remotePath,
-        total: file.size,
-      })
-  try {
-    const reader = file.stream().getReader()
-    let transferred = 0
-    let pending: Uint8Array | null = null
-    const CHUNK = 4 * 1024 * 1024 // ~4MB per invoke: fewer IPC round-trips per byte
-    const send = async (data: Uint8Array) => {
-      // base64, not a JSON number array: serializing every byte as a JSON
-      // number made the WebView's JSON.stringify AND Rust's serde_json parse
-      // the dominant CPU cost of directory uploads. A base64 string is one
-      // JSON token, cheap on both sides.
-      const chunkB64 = bytesToBase64(data)
-      await invoke('upload_chunk', { uploadId, chunkB64 })
-      transferred += data.length
-      onProgress?.(transferred, file.size)
-    }
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value) continue
-      // Buffer the browser's default ~64KB stream chunks into larger pieces
-      // before crossing the IPC boundary (fewer round-trips per byte).
-      if (!pending) {
-        pending = value
-      } else {
-        const merged: Uint8Array = new Uint8Array(pending.length + value.length)
-        merged.set(pending)
-        merged.set(value, pending.length)
-        pending = merged
-      }
-      if (pending && pending.length >= CHUNK) {
-        await send(pending.slice(0, CHUNK))
-        pending = pending.length > CHUNK ? pending.slice(CHUNK) : null
-      }
-    }
-    if (pending && pending.length > 0) await send(pending)
-    await invoke('upload_end', { uploadId })
-  } catch (err) {
-    // Always close the remote handle so a failed upload never leaks an open file.
-    try {
-      await invoke('upload_end', { uploadId })
-    } catch {
-      /* ignore */
-    }
-    throw err
-  }
 }
 
 /**

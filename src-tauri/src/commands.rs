@@ -1,10 +1,10 @@
 use super::ssh_session::{
   ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
-  FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SshError, SshHandler, SshSession,
-  SwitchedUser, TargetRef, TransferControl, TunnelInfo, UploadSession,
+  DirUploadSummary, FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SshError, SshHandler,
+  SshSession, SwitchedUser, TargetRef, TransferControl, TunnelInfo, UploadSession,
 };
 use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
-use crate::remote_fs::{build_fs, build_sftp, delete_dir_recursive, get_jump_handle};
+use crate::remote_fs::{build_fs, build_sftp, delete_dir_recursive, get_jump_handle, RemoteFs};
 use encoding_rs::{Encoding, UTF_8};
 use russh::client::{self, Handler};
 use russh::ChannelId;
@@ -18,6 +18,7 @@ use tauri::Emitter;
 use tauri::Manager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
+use walkdir::WalkDir;
 
 /// Wait if the transfer for this tab is paused. Returns immediately if not
 /// paused, or an error if the transfer has been cancelled by the user.
@@ -2928,6 +2929,304 @@ async fn stream_upload_file(
       .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
   }
   Ok(())
+}
+
+// ==================== Local directory upload (walkdir) ====================
+//
+// Directory (or drag-dropped path) uploads scan the LOCAL filesystem on the
+// Rust side with `walkdir` and stream every file directly over a single SFTP
+// connection — no per-chunk IPC from the frontend (the previous HTML5
+// drag-drop path shipped base64 chunks across the Tauri boundary).
+
+/// Recursively walk `local_dir` and stream every file over a single SFTP
+/// session. `local_dir` may be a single file (uploaded to
+/// `remote_parent/<basename>`) or a directory (uploaded to
+/// `remote_parent/<dirname>/...`). Symlinks are skipped (counted in the
+/// summary). `on_progress` is invoked after each chunk with
+/// (relative_path, done_bytes, total_bytes, done_files, total_files);
+/// returning `Err` aborts the upload (e.g. user cancel). `control`, when
+/// present, is checked before each chunk for pause/cancel.
+async fn stream_upload_local_dir(
+  sftp: &russh_sftp::client::SftpSession,
+  local_dir: &str,
+  remote_parent: &str,
+  control: Option<&TransferControl>,
+  on_progress: &mut (dyn FnMut(&str, u64, u64, u64, u64) -> Result<(), String> + Send),
+) -> Result<DirUploadSummary, String> {
+  let local_root = std::path::Path::new(local_dir);
+  let is_dir = local_root.is_dir();
+  let dir_name = local_root
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| "upload".to_string());
+  let remote_root = if is_dir {
+    format!("{}/{}", remote_parent.trim_end_matches('/'), dir_name)
+  } else {
+    remote_parent.trim_end_matches('/').to_string()
+  };
+
+  // One walkdir pass: collect relative dir paths and (abs, rel, size) files.
+  // WalkDir yields pre-order (parents before children), which is the order
+  // remote directories must be created in.
+  let mut dirs = Vec::new();
+  let mut files = Vec::new();
+  let mut skipped = 0usize;
+  for entry in WalkDir::new(local_dir).follow_links(false) {
+    let entry = entry.map_err(|e| format!("Failed to scan '{}': {}", local_dir, e))?;
+    if entry.file_type().is_symlink() {
+      skipped += 1;
+      continue;
+    }
+    let rel = entry
+      .path()
+      .strip_prefix(local_dir)
+      .unwrap_or(entry.path())
+      .to_string_lossy()
+      .replace('\\', "/");
+    if entry.file_type().is_dir() {
+      if !rel.is_empty() {
+        dirs.push(rel);
+      }
+    } else {
+      // A single file passed directly has an empty relative path; fall back to
+      // its basename so it uploads as `<remote_parent>/<basename>`.
+      let file_rel = if rel.is_empty() {
+        entry.file_name().to_string_lossy().to_string()
+      } else {
+        rel
+      };
+      let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+      files.push((entry.path().to_string_lossy().to_string(), file_rel, size));
+    }
+  }
+
+  if is_dir {
+    for d in &dirs {
+      let remote_dir_path = format!("{}/{}", remote_root, d);
+      if sftp.metadata(&remote_dir_path).await.is_err() {
+        let _ = sftp.create_dir(&remote_dir_path).await;
+      }
+    }
+  }
+
+  let total_files = files.len();
+  let total_bytes: u64 = files.iter().map(|(_, _, s)| s).sum();
+  let mut done_bytes = 0u64;
+  let mut done_files = 0usize;
+
+  for (local_abs, rel, _size) in &files {
+    let remote_path = format!("{}/{}", remote_root, rel);
+    let mut local = tokio::fs::File::open(local_abs)
+      .await
+      .map_err(|e| format!("Failed to open local file '{}': {}", local_abs, e))?;
+    let mut file = sftp
+      .create(&remote_path)
+      .await
+      .map_err(|e| format!("Failed to create remote file '{}': {}", remote_path, e))?;
+    let mut buf = vec![0u8; 262144];
+    loop {
+      if let Some(c) = control {
+        check_pause(c).await?;
+      }
+      let n = local
+        .read(&mut buf)
+        .await
+        .map_err(|e| format!("Failed to read local file '{}': {}", local_abs, e))?;
+      if n == 0 {
+        break;
+      }
+      file
+        .write_all(&buf[..n])
+        .await
+        .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
+      done_bytes += n as u64;
+      on_progress(rel, done_bytes, total_bytes, done_files as u64, total_files as u64)?;
+    }
+    done_files += 1;
+    on_progress(rel, done_bytes, total_bytes, done_files as u64, total_files as u64)?;
+  }
+
+  Ok(DirUploadSummary {
+    total_files,
+    done_files,
+    total_bytes,
+    done_bytes,
+    skipped,
+  })
+}
+
+/// Upload a local directory (or single file) into `remote_dir` on the tab's
+/// session. The local directory keeps its own name (`<remote_dir>/<dirname>/...`);
+/// a single local file is uploaded to `<remote_dir>/<basename>`. Scans once
+/// with walkdir and streams over one shared SFTP connection. Emits
+/// `transfer-progress` events (op "upload-dir") and supports pause/cancel.
+#[tauri::command]
+pub async fn upload_local_dir(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  local_dir: String,
+  remote_dir: String,
+) -> Result<DirUploadSummary, String> {
+  // Set up pause control (registered until this command returns).
+  let control = Arc::new(TransferControl {
+    paused: AtomicBool::new(false),
+    cancelled: AtomicBool::new(false),
+    notify: tokio::sync::Notify::new(),
+  });
+  {
+    let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
+    controls.entry(tab_id).or_default().push(control.clone());
+  }
+  let _cleanup = TransferGuard {
+    state_ptr: &*state as *const AppState,
+    tab_id,
+    control: control.clone(),
+  };
+
+  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+  let remote_parent = resolve_sftp_path(&sftp, &remote_dir).await?;
+  let dir_key = local_dir.replace('\\', "/");
+  let start = std::time::Instant::now();
+  let mut on_progress =
+    move |rel: &str, done_bytes: u64, total_bytes: u64, done_files: u64, total_files: u64| {
+      let _ = app.emit(
+        "transfer-progress",
+        serde_json::json!({
+          "tabId": tab_id,
+          "op": "upload-dir",
+          "dirName": dir_key,
+          "relativePath": rel,
+          "doneFiles": done_files,
+          "totalFiles": total_files,
+          "doneBytes": done_bytes,
+          "totalBytes": total_bytes,
+          "elapsed": start.elapsed().as_millis()
+        }),
+      );
+      Ok(())
+    };
+  stream_upload_local_dir(&sftp, &local_dir, &remote_parent, Some(&control), &mut on_progress).await
+}
+
+/// Same as `upload_local_dir` but for an arbitrary target (ProxyJump remote /
+/// Docker-ssh). SFTP-backed targets use the shared-streaming path; Docker exec
+/// / local targets fall back to per-file `RemoteFs` writes.
+#[tauri::command]
+pub async fn target_upload_local_dir(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  local_dir: String,
+  remote_dir: String,
+) -> Result<DirUploadSummary, String> {
+  let tab_id = match &target {
+    TargetRef::Session { tab_id } | TargetRef::Local { tab_id } => *tab_id,
+    TargetRef::JumpRemote { jump_tab_id, .. }
+    | TargetRef::DockerSsh { jump_tab_id, .. }
+    | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
+  };
+  let dir_key = local_dir.replace('\\', "/");
+  let start = std::time::Instant::now();
+  match build_sftp(&app, &state, &target).await {
+    Ok(sftp) => {
+      let mut on_progress =
+        move |rel: &str, done_bytes: u64, total_bytes: u64, done_files: u64, total_files: u64| {
+          let _ = app.emit(
+            "transfer-progress",
+            serde_json::json!({
+              "tabId": tab_id,
+              "op": "upload-dir",
+              "dirName": dir_key,
+              "relativePath": rel,
+              "doneFiles": done_files,
+              "totalFiles": total_files,
+              "doneBytes": done_bytes,
+              "totalBytes": total_bytes,
+              "elapsed": start.elapsed().as_millis()
+            }),
+          );
+          Ok(())
+        };
+      stream_upload_local_dir(&sftp, &local_dir, &remote_dir, None, &mut on_progress).await
+    }
+    Err(_) => {
+      // Non-SFTP target (Docker exec / local): one-shot per-file uploads.
+      let fs = build_fs(&app, &state, &target).await?;
+      upload_local_dir_via_fs(fs.as_ref(), &local_dir, &remote_dir).await
+    }
+  }
+}
+
+/// Fallback directory upload through a generic `RemoteFs` (no shared SFTP
+/// handle): walk the local tree with walkdir and upload each file in one shot.
+async fn upload_local_dir_via_fs(
+  fs: &dyn RemoteFs,
+  local_dir: &str,
+  remote_parent: &str,
+) -> Result<DirUploadSummary, String> {
+  let local_root = std::path::Path::new(local_dir);
+  let is_dir = local_root.is_dir();
+  let dir_name = local_root
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| "upload".to_string());
+  let remote_root = if is_dir {
+    format!("{}/{}", remote_parent.trim_end_matches('/'), dir_name)
+  } else {
+    remote_parent.trim_end_matches('/').to_string()
+  };
+
+  let mut dirs = Vec::new();
+  let mut files = Vec::new();
+  let mut skipped = 0usize;
+  for entry in WalkDir::new(local_dir).follow_links(false) {
+    let entry = entry.map_err(|e| format!("Failed to scan '{}': {}", local_dir, e))?;
+    if entry.file_type().is_symlink() {
+      skipped += 1;
+      continue;
+    }
+    let rel = entry
+      .path()
+      .strip_prefix(local_dir)
+      .unwrap_or(entry.path())
+      .to_string_lossy()
+      .replace('\\', "/");
+    if entry.file_type().is_dir() {
+      if !rel.is_empty() {
+        dirs.push(rel);
+      }
+    } else {
+      // Single-file fallback: empty relative path → use the basename.
+      let file_rel = if rel.is_empty() {
+        entry.file_name().to_string_lossy().to_string()
+      } else {
+        rel
+      };
+      files.push((entry.path().to_string_lossy().to_string(), file_rel));
+    }
+  }
+
+  for d in &dirs {
+    let _ = fs.create_dir(&format!("{}/{}", remote_root, d)).await;
+  }
+  let mut done_bytes = 0u64;
+  for (abs, rel) in &files {
+    let data = tokio::fs::read(abs)
+      .await
+      .map_err(|e| format!("Failed to read local file '{}': {}", abs, e))?;
+    let remote = format!("{}/{}", remote_root, rel);
+    fs.write_file(&remote, &data).await?;
+    done_bytes += data.len() as u64;
+  }
+
+  Ok(DirUploadSummary {
+    total_files: files.len(),
+    done_files: files.len(),
+    total_bytes: done_bytes,
+    done_bytes,
+    skipped,
+  })
 }
 
 #[tauri::command]

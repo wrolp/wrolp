@@ -11,6 +11,7 @@ export type IconName =
   | 'link'
   | 'folder'
   | 'folderOpen'
+  | 'folderUp'
   | 'file'
   | 'arrowUp'
   | 'home'
@@ -70,6 +71,13 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />,
+  folderUp: (
+    <>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+      <path d="M12 20v-5" />
+      <polyline points="8.5 11.5 12 8 15.5 11.5" />
+    </>
+  ),
   folderOpen: (
     <>
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1H3V7z" />

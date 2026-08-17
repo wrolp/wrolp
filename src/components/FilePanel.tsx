@@ -15,7 +15,7 @@ import { targetLabel } from '../types'
 import {
   fsListFiles,
   fsUploadFile,
-  fsUploadFileStream,
+  fsUploadLocalDir,
   getClipboardFiles,
   listLocalDrives,
   fsDownloadFile,
@@ -33,10 +33,9 @@ import {
   sendInput,
   pollWorkingDir,
   listDockerContainers,
-  uploadBatchStart,
-  uploadBatchEnd,
 } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -69,7 +68,7 @@ async function runConcurrent<T>(
 
 interface TransferProgress {
   tabId: number
-  op: 'upload' | 'download' | 'directory' | 'delete'
+  op: 'upload' | 'download' | 'directory' | 'delete' | 'upload-dir'
   filename: string
   transferred: number
   total: number
@@ -678,9 +677,45 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         })
         return
       }
+      if (p.op === 'upload-dir') {
+        // A local-directory upload streams many files on the Rust side; the
+        // row is keyed by the full normalized local path (the event's
+        // `dirName`) and shows aggregate bytes + the current relative path.
+        const dirName = p.dirName ?? ''
+        const bytesPerSec = (p.doneBytes ?? 0) / elapsed
+        setTransferRows((prev) => {
+          if (dirName.length === 0) return prev
+          const candidates = prev.filter(
+            (r) =>
+              r.op === 'upload' &&
+              r.status !== 'done' &&
+              r.status !== 'error' &&
+              r.key === `upload-dir:${dirName}`,
+          )
+          const target =
+            candidates.find((r) => r.status === 'active') ??
+            (candidates.length === 1 ? candidates[0] : null)
+          if (!target) return prev
+          return prev.map((r) =>
+            r.key === target.key
+              ? {
+                  ...r,
+                  filename: p.relativePath || r.filename,
+                  transferred: p.doneBytes ?? r.transferred,
+                  total: p.totalBytes ?? r.total,
+                  speed: formatSpeed(bytesPerSec),
+                  status: 'active',
+                }
+              : r,
+          )
+        })
+        return
+      }
       const bytesPerSec = p.transferred / elapsed
       setTransferRows((prev) => {
-        const target = findTarget(prev, p.op, p.filename)
+        // `upload-dir` is handled above; the cast is safe because of the early
+        // return (TS doesn't narrow `p.op` into this callback).
+        const target = findTarget(prev, p.op as TransferRow['op'], p.filename)
         if (!target) return prev
         return prev.map((r) =>
           r.key === target.key
@@ -837,212 +872,53 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     [target, currentPath, refresh],
   )
 
-  /** A file resolved from a dropped entry, with its path relative to the drop root. */
-  const handleDropUpload = useCallback(
-    async (itemList: DataTransferItemList | null, baseDir?: string) => {
-      if (!itemList || itemList.length === 0) return
-      // `baseDir` is the directory the item was dropped *on*; blank-area drops
-      // fall back to the currently browsed directory.
-      const targetDir = baseDir && baseDir.length > 0 ? baseDir : currentPath
-      // Use the File System Access API so dropped *directories* are enumerated
-      // recursively instead of the browser flattening them into a file list.
-      const entries: FileSystemEntry[] = []
-      for (let i = 0; i < itemList.length; i++) {
-        const entry = itemList[i].webkitGetAsEntry?.()
-        if (entry) entries.push(entry)
-      }
-      if (entries.length === 0) return
-
-      interface DroppedFile {
-        relPath: string
-        file: File
-      }
-      const files: DroppedFile[] = []
-      const dirs: string[] = []
-
-      const readEntries = (reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> =>
-        new Promise((resolve, reject) => {
-          reader.readEntries(
-            (batch) => resolve(batch),
-            (err) => reject(err),
-          )
-        })
-      const readFileEntry = (entry: FileSystemFileEntry): Promise<File | null> =>
-        new Promise((resolve) => entry.file(resolve, () => resolve(null)))
-
-      const walkEntry = async (entry: FileSystemEntry, base: string): Promise<void> => {
-        const rel = base ? `${base}/${entry.name}` : entry.name
-        if (entry.isFile) {
-          const file = await readFileEntry(entry as FileSystemFileEntry)
-          if (file) files.push({ relPath: rel, file })
-        } else if (entry.isDirectory) {
-          dirs.push(rel)
-          const reader = (entry as FileSystemDirectoryEntry).createReader()
-          // `readEntries` returns batches (usually 100); keep draining until empty.
-          for (;;) {
-            const batch = await readEntries(reader)
-            if (batch.length === 0) break
-            for (const child of batch) await walkEntry(child, rel)
-          }
-        }
-      }
-      for (const e of entries) await walkEntry(e, '')
-
+  /**
+   * Upload one or more local files/folders (real filesystem paths from the
+   * native picker, clipboard paste, or Tauri drag-drop) into `baseDir` (or the
+   * currently browsed directory). Each path gets ONE aggregate progress row
+   * and is uploaded by the Rust backend, which walks directories once with
+   * walkdir and streams every file over a shared SFTP connection — no
+   * per-chunk IPC.
+   */
+  const uploadLocalPaths = useCallback(
+    async (localPaths: string[], baseDir?: string) => {
       setError('')
       setPaused(false)
-
-      // Directory upload: collapse the whole tree into ONE aggregate progress
-      // row instead of a row per file + per subdirectory. Total is the sum of
-      // all file sizes; the bar advances as each file's chunked upload streams
-      // in (the backend `transfer-progress` events for op 'upload' carry only
-      // basenames, so they won't match this row — the `onProgress` deltas are
-      // the source of truth).
-      if (dirs.length > 0) {
-        const totalBytes = files.reduce((sum, f) => sum + f.file.size, 0)
-        const topNames = new Set(dirs.map((d) => d.split('/')[0]))
-        const dirName = topNames.size === 1 ? [...topNames][0]! : 'upload'
-        const aggKey = `upload-dir:${dirName}`
-        setTransferRows((prev) =>
-          mergeRows(prev, [
-            {
-              key: aggKey,
-              filename: dirName + '/',
-              op: 'upload',
-              status: 'active',
-              transferred: 0,
-              total: totalBytes,
-              speed: '',
-            },
-          ]),
-        )
-
-        // Create remote directories first (silently — no per-dir rows).
-        const byDepth: string[][] = []
-        for (const d of dirs) {
-          const depth = d.split('/').length
-          ;(byDepth[depth] ??= []).push(d)
+      const targetDir = baseDir && baseDir.length > 0 ? baseDir : currentPath
+      const rows: TransferRow[] = localPaths.map((localPath) => {
+        const normalizedPath = localPath.replace(/\\/g, '/')
+        const name = normalizedPath.split('/').pop() || 'upload'
+        return {
+          key: `upload-dir:${normalizedPath}`,
+          filename: name + '/',
+          op: 'upload',
+          status: 'queued',
+          transferred: 0,
+          total: 0,
+          speed: '',
         }
-        for (const layer of byDepth) {
-          if (!layer) continue
-          await runConcurrent(layer, UPLOAD_CONCURRENCY, async (d) => {
-            try {
-              await fsCreateDirectory(target, join(targetDir, d))
-            } catch {
-              // Directory likely already exists — fine.
-            }
-          })
-        }
-
-        // Upload every file, folding each file's progress into the aggregate
-        // row. JS runs each callback to completion, so the shared counters are
-        // safe even though files stream concurrently.
-        const lastReported: Record<string, number> = {}
-        let doneBytes = 0
-        let firstError: string | null = null
-        const aggStart = Date.now()
-        const updateAgg = () => {
-          const elapsed = (Date.now() - aggStart) / 1000
-          const speed = elapsed > 0 ? formatSpeed(doneBytes / elapsed) : ''
-          setTransferRows((prev) =>
-            prev.map((r) => (r.key === aggKey ? { ...r, transferred: doneBytes, speed } : r)),
-          )
-        }
-        // Reuse ONE SFTP connection across the whole batch (main session only)
-        // — this avoids a full SSH+SFTP handshake per file, which dominates the
-        // time for directories with many small files.
-        let batchId: number | undefined
-        if (sessionTabId != null) {
-          try {
-            batchId = await uploadBatchStart(sessionTabId)
-          } catch {
-            // Fall back to per-file connections if the batch couldn't open.
-            batchId = undefined
-          }
-        }
-        try {
-          await runConcurrent(files, UPLOAD_CONCURRENCY, async (f) => {
-            if (cancelledKeysRef.current.has(aggKey)) return
-            try {
-              await fsUploadFileStream(
-                target,
-                join(targetDir, f.relPath),
-                f.file,
-                (transferred) => {
-                  const delta = transferred - (lastReported[f.relPath] ?? 0)
-                  lastReported[f.relPath] = transferred
-                  if (delta > 0) {
-                    doneBytes += delta
-                    updateAgg()
-                  }
-                },
-                batchId,
-              )
-              const delta = f.file.size - (lastReported[f.relPath] ?? 0)
-              lastReported[f.relPath] = f.file.size
-              if (delta > 0) {
-                doneBytes += delta
-                updateAgg()
-              }
-            } catch (e) {
-              const cancelled = cancelledKeysRef.current.has(aggKey)
-              if (!cancelled && !firstError) firstError = `Upload ${f.relPath} failed: ${e}`
-            }
-          })
-        } finally {
-          if (batchId != null) {
-            try {
-              await uploadBatchEnd(batchId)
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-        const cancelled = cancelledKeysRef.current.has(aggKey)
-        setTransferRows((prev) =>
-          prev.map((r) =>
-            r.key === aggKey
-              ? {
-                  ...r,
-                  status: cancelled ? 'cancelled' : firstError ? 'error' : 'done',
-                  transferred: doneBytes,
-                }
-              : r,
-          ),
-        )
-        if (firstError) setError(firstError)
-        setPaused(false)
-        refresh()
-        return
-      }
-
-      const rows: TransferRow[] = files.map((f) => ({
-        key: `upload:${f.relPath}`,
-        filename: f.relPath,
-        op: 'upload' as const,
-        status: 'queued' as const,
-        transferred: 0,
-        total: 0,
-        speed: '',
-      }))
+      })
       setTransferRows((prev) => mergeRows(prev, rows))
-
-      // Upload the files themselves, several at a time. Each file streams in
-      // a few-MB chunks (browser reads are buffered up inside fsUploadFileStream);
-      // the whole file is never serialized through the Tauri JSON IPC at once.
       let firstError: string | null = null
-      await runConcurrent(files, UPLOAD_CONCURRENCY, async (f) => {
-        const remotePath = join(targetDir, f.relPath)
-        const key = `upload:${f.relPath}`
+      await runConcurrent(localPaths, UPLOAD_CONCURRENCY, async (localPath, i) => {
+        const key = rows[i].key
         if (cancelledKeysRef.current.has(key)) return
-        setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'active' } : r)))
+        setTransferRows((prev) =>
+          prev.map((r) => (r.key === key ? { ...r, status: 'active' } : r)),
+        )
         try {
-          await fsUploadFileStream(target, remotePath, f.file, (transferred) => {
-            setTransferRows((prev) =>
-              prev.map((r) => (r.key === key ? { ...r, transferred } : r)),
-            )
-          })
+          const summary = await fsUploadLocalDir(target, localPath, targetDir)
           setTransferRows((prev) =>
-            prev.map((r) => (r.key === key ? { ...r, status: 'done', transferred: r.total } : r)),
+            prev.map((r) =>
+              r.key === key
+                ? {
+                    ...r,
+                    status: 'done',
+                    transferred: summary.doneBytes,
+                    total: summary.totalBytes,
+                  }
+                : r,
+            ),
           )
         } catch (e) {
           const cancelled = cancelledKeysRef.current.has(key)
@@ -1051,7 +927,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               r.key === key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
             ),
           )
-          if (!cancelled && !firstError) firstError = `Upload ${f.relPath} failed: ${e}`
+          if (!cancelled && !firstError) firstError = `Upload ${rows[i].filename} failed: ${e}`
         }
       })
       if (firstError) setError(firstError)
@@ -1061,56 +937,61 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     [target, currentPath, refresh],
   )
 
-  // HTML5 drag-drop
+
+  // Tauri native drag-drop: `dragDropEnabled` is on, so OS file drags deliver
+  // real filesystem paths (HTML5 DOM drop only exposes `File` blobs). Dropped
+  // paths go through `uploadLocalPaths` — directories are scanned with walkdir
+  // and streamed on the Rust side instead of per-chunk IPC.
   useEffect(() => {
-    const panel = panelRef.current
-    if (!panel) return
-    const onDragOver = (e: DragEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-      setDragOver(true)
-      // Highlight the directory row currently under the cursor. The row's React
-      // handlers can't run here: this native listener stops propagation, so the
-      // event never reaches React's delegated root listener.
-      const row = (e.target as HTMLElement | null)?.closest?.('[data-dir-path]')
-      setDropTargetPath(row?.getAttribute('data-dir-path') ?? null)
-    }
-    const onDragLeave = (e: DragEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      if (!panel.contains(e.relatedTarget as Node)) {
-        setDragOver(false)
-        setDropTargetPath(null)
-      }
-    }
-    const onDrop = (e: DragEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      setDragOver(false)
-      setDropTargetPath(null)
-      // If the drop landed on a directory row, upload into that directory
-      // (read from the row's data attribute); otherwise fall back to the
-      // currently browsed directory. This runs in the panel's native listener,
-      // which fires before React's delegated handlers, so it must be the single
-      // place that decides the target.
-      const row = (e.target as HTMLElement | null)?.closest?.('[data-dir-path]')
-      const baseDir = row?.getAttribute('data-dir-path') ?? undefined
-      // Pass the item list (not just `.files`) so directories survive the drop
-      // and can be enumerated recursively by the entry API.
-      if (e.dataTransfer?.items && e.dataTransfer.items.length > 0) {
-        handleDropUpload(e.dataTransfer.items, baseDir)
-      }
-    }
-    panel.addEventListener('dragover', onDragOver)
-    panel.addEventListener('dragleave', onDragLeave)
-    panel.addEventListener('drop', onDrop)
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    // Drag-drop `position` is physical pixels relative to the window; convert
+    // to CSS coordinates for DOM hit-testing.
+    const elemAt = (x: number, y: number): Element | null =>
+      document.elementFromPoint(x / window.devicePixelRatio, y / window.devicePixelRatio)
+    const rowAt = (el: Element | null): string | null =>
+      el?.closest?.('[data-dir-path]')?.getAttribute('data-dir-path') ?? null
+
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload
+        switch (payload.type) {
+          case 'enter':
+          case 'over': {
+            // Highlight only while the cursor is over the panel, and mark the
+            // directory row underneath (so drops land inside the right folder).
+            const el = elemAt(payload.position.x, payload.position.y)
+            const inPanel = panelRef.current?.contains(el) ?? false
+            setDragOver(inPanel)
+            setDropTargetPath(inPanel ? rowAt(el) : null)
+            break
+          }
+          case 'drop': {
+            setDragOver(false)
+            setDropTargetPath(null)
+            if (payload.paths.length === 0) return
+            // Ignore drops outside the panel (e.g. onto the terminal area).
+            const el = elemAt(payload.position.x, payload.position.y)
+            if (!panelRef.current?.contains(el)) return
+            const baseDir = rowAt(el) ?? undefined
+            uploadLocalPaths(payload.paths, baseDir)
+            break
+          }
+          case 'leave':
+            setDragOver(false)
+            setDropTargetPath(null)
+            break
+        }
+      })
+      .then((fn) => {
+        if (disposed) fn()
+        else unlisten = fn
+      })
     return () => {
-      panel.removeEventListener('dragover', onDragOver)
-      panel.removeEventListener('dragleave', onDragLeave)
-      panel.removeEventListener('drop', onDrop)
+      disposed = true
+      unlisten?.()
     }
-  }, [handleDropUpload])
+  }, [uploadLocalPaths])
 
   const handleUpload = async () => {
     setContextMenu(null)
@@ -1119,6 +1000,18 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       if (!selected) return
       const paths = Array.isArray(selected) ? selected : [selected]
       if (paths.length > 0) await uploadFiles(paths)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  /** Pick a local folder and upload its whole tree (walkdir scan on the Rust side). */
+  const handleUploadFolder = async () => {
+    setContextMenu(null)
+    try {
+      const folder = await open({ directory: true, title: t('selectUploadFolder') })
+      if (!folder) return
+      await uploadLocalPaths([folder])
     } catch (e) {
       setError(String(e))
     }
@@ -1769,6 +1662,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             <button title={t('uploadFile')} onClick={handleUpload}>
               <Icon name="upload" />
             </button>
+            <button title={t('uploadFolder')} onClick={handleUploadFolder}>
+              <Icon name="folderUp" />
+            </button>
             <button
               title={t('newItem')}
               onClick={(e) => {
@@ -2262,6 +2158,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           {!contextMenu.node && (
             <div className="context-menu-item" onClick={handleUpload}>
               <Icon name="upload" /> Upload here
+            </div>
+          )}
+          {!contextMenu.node && (
+            <div className="context-menu-item" onClick={handleUploadFolder}>
+              <Icon name="folderUp" /> Upload folder here
             </div>
           )}
           <div className="context-menu-divider" />

@@ -274,6 +274,19 @@ pub struct DirDownloadSummary {
   pub skipped: usize,
 }
 
+/// Summary of a recursive local-directory upload (`upload_local_dir` /
+/// `target_upload_local_dir`). `skipped` counts symlinks that were
+/// intentionally not followed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirUploadSummary {
+  pub total_files: usize,
+  pub done_files: usize,
+  pub total_bytes: u64,
+  pub done_bytes: u64,
+  pub skipped: usize,
+}
+
 /// Custom error type — moved here so ssh_session types can reference it
 #[derive(Debug)]
 pub struct SshError(pub String);
