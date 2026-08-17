@@ -748,11 +748,7 @@ pub async fn connect(
         };
         if let Some(rec) = rec_to_finalize {
           if let Ok(conn) = app_state.db.lock() {
-            let _ = db::insert_events(&conn, &rec.session_id, &rec.events);
-            let ended_at = chrono::Utc::now().to_rfc3339();
-            let duration = rec.started_at.elapsed().as_secs() as i64;
-            let db_count = db::count_session_events(&conn, &rec.session_id).unwrap_or(0);
-            let _ = db::finalize_session(&conn, &rec.session_id, &ended_at, duration, db_count);
+            finalize_recording(&conn, &rec);
           }
         }
       }
@@ -826,11 +822,7 @@ pub async fn connect(
     };
     if let Some(old_rec) = old_recording {
       if let Ok(conn) = state.db.lock() {
-        let _ = db::insert_events(&conn, &old_rec.session_id, &old_rec.events);
-        let ended_at = chrono::Utc::now().to_rfc3339();
-        let duration = old_rec.started_at.elapsed().as_secs() as i64;
-        let db_count = db::count_session_events(&conn, &old_rec.session_id).unwrap_or(0);
-        let _ = db::finalize_session(&conn, &old_rec.session_id, &ended_at, duration, db_count);
+        finalize_recording(&conn, &old_rec);
       }
     }
 
@@ -845,16 +837,21 @@ pub async fn connect(
       Err(_) => load_window_config_auto_record(),
     };
 
-    // Insert session record into SQLite
-    if let Ok(conn) = state.db.lock() {
-      let _ = db::create_session(
-        &conn,
-        &session_uuid,
-        &config.id,
-        &config.name,
-        tab_id,
-        &started_at_iso,
-      );
+    // Create in-memory recording buffer. Only persist a session row to SQLite
+    // when recording is actually enabled — otherwise connections that never
+    // started recording would leave empty "sessions" in the list.
+    let db_saved = recording_enabled;
+    if db_saved {
+      if let Ok(conn) = state.db.lock() {
+        let _ = db::create_session(
+          &conn,
+          &session_uuid,
+          &config.id,
+          &config.name,
+          tab_id,
+          &started_at_iso,
+        );
+      }
     }
 
     // Create in-memory recording buffer
@@ -868,6 +865,7 @@ pub async fn connect(
       seq_counter: 0,
       events: Vec::new(),
       recording_enabled,
+      db_saved,
     };
     if let Ok(mut recordings) = state.recordings.lock() {
       recordings.insert(tab_id, recording);
@@ -3555,6 +3553,26 @@ pub fn flush_all_recordings(state: &AppState) {
   }
 }
 
+/// Finalize a single in-memory recording: flush its events, then either
+/// finalize the session row or (if nothing was ever recorded) drop it. Sessions
+/// that were never persisted (`db_saved` is false, i.e. recording was off the
+/// whole time) are skipped entirely so they never appear in the list.
+pub fn finalize_recording(conn: &rusqlite::Connection, rec: &ActiveRecording) {
+  if !rec.db_saved {
+    return;
+  }
+  let _ = db::insert_events(conn, &rec.session_id, &rec.events);
+  let event_count = db::count_session_events(conn, &rec.session_id).unwrap_or(0);
+  if event_count == 0 {
+    // Started but produced no events — discard the empty session row.
+    let _ = db::delete_session(conn, &rec.session_id);
+    return;
+  }
+  let ended_at = chrono::Utc::now().to_rfc3339();
+  let duration = rec.started_at.elapsed().as_secs() as i64;
+  let _ = db::finalize_session(conn, &rec.session_id, &ended_at, duration, event_count);
+}
+
 #[tauri::command]
 pub async fn list_sessions(
   state: tauri::State<'_, AppState>,
@@ -3600,6 +3618,24 @@ pub async fn set_recording_enabled(
   let mut recordings = state.recordings.lock().map_err(|e| e.to_string())?;
   if let Some(rec) = recordings.get_mut(&tab_id) {
     rec.recording_enabled = enabled;
+    // Lazily persist the session row the moment recording is switched on (it
+    // was intentionally not created at connect time when recording was off).
+    if enabled && !rec.db_saved {
+      let started_at_iso = chrono::Utc::now().to_rfc3339();
+      rec.started_at_iso = started_at_iso.clone();
+      rec.started_at = std::time::Instant::now();
+      if let Ok(conn) = state.db.lock() {
+        let _ = db::create_session(
+          &conn,
+          &rec.session_id,
+          &rec.connection_id,
+          &rec.connection_name,
+          tab_id,
+          &started_at_iso,
+        );
+      }
+      rec.db_saved = true;
+    }
     Ok(rec.recording_enabled)
   } else {
     // No in-memory recording entry (e.g. local shell) — nothing to toggle.

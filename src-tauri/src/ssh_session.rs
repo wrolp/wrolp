@@ -556,6 +556,10 @@ pub struct ActiveRecording {
   pub seq_counter: u64,
   pub events: Vec<RecordedEvent>,
   pub recording_enabled: bool,
+  /// Whether the session row has actually been written to SQLite yet. We only
+  /// persist a session once recording is active, so that connections where the
+  /// user never started recording don't leave empty rows behind.
+  pub db_saved: bool,
 }
 
 /// Global application state

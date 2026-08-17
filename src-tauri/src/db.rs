@@ -177,22 +177,28 @@ pub fn list_sessions(
   limit: u32,
 ) -> Result<Vec<SessionSummary>, String> {
   let mut sql = String::from("SELECT id, connection_id, connection_name, started_at, ended_at, duration_seconds, title, event_count FROM sessions");
-  let mut params_vec: Vec<String> = Vec::new();
-  if let Some(cid) = connection_id {
-    sql.push_str(" WHERE connection_id = ?1");
-    params_vec.push(cid.to_string());
+  let mut filters: Vec<String> = Vec::new();
+  if connection_id.is_some() {
+    filters.push("connection_id = ?1".to_string());
+  }
+  // Never show sessions that recorded nothing (e.g. a connection where the
+  // user never started recording).
+  filters.push("event_count > 0".to_string());
+  if !filters.is_empty() {
+    sql.push_str(" WHERE ");
+    sql.push_str(&filters.join(" AND "));
   }
   sql.push_str(" ORDER BY started_at DESC LIMIT ?");
   let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-  let rows = if params_vec.is_empty() {
+  let rows = if let Some(cid) = connection_id {
     stmt
-      .query_map(params![limit as i64], map_session_row)
+      .query_map(params![cid, limit as i64], map_session_row)
       .map_err(|e| e.to_string())?
       .collect::<Result<Vec<_>, _>>()
       .map_err(|e| e.to_string())?
   } else {
     stmt
-      .query_map(params![params_vec[0], limit as i64], map_session_row)
+      .query_map(params![limit as i64], map_session_row)
       .map_err(|e| e.to_string())?
       .collect::<Result<Vec<_>, _>>()
       .map_err(|e| e.to_string())?
