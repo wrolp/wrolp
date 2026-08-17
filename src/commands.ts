@@ -655,6 +655,11 @@ export async function startDockerContainer(tabId: number, containerName: string)
   return await invoke('start_docker_container', { tabId, containerName })
 }
 
+/** Remove a stopped Docker container on the jump host. */
+export async function removeDockerContainer(tabId: number, containerName: string): Promise<void> {
+  return await invoke('remove_docker_container', { tabId, containerName })
+}
+
 export async function dockerLogsStreamStart(
   tabId: number,
   containerName: string,

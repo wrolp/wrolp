@@ -68,6 +68,7 @@ import {
   decryptApiKey,
   listAiModels,
   restartDockerContainer,
+  removeDockerContainer,
   startDockerContainer,
   stopDockerContainer,
   localClose,
@@ -539,6 +540,26 @@ export default function App() {
         setToast({
           kind: 'error',
           text: t('dockerStartFailed', { name: container.name, err: msg }),
+        })
+      }
+    },
+    [activeTabId, t],
+  )
+
+  // Remove a Docker container
+  const handleDeleteContainer = useCallback(
+    async (container: ContainerInfo) => {
+      if (activeTabId == null) return
+      setToast({ kind: 'progress', text: t('dockerDeleting', { name: container.name }) })
+      try {
+        await removeDockerContainer(activeTabId, container.name)
+        setToast({ kind: 'success', text: t('dockerDeleted', { name: container.name }) })
+      } catch (e) {
+        const msg = String(e)
+        console.error(`Docker remove failed: ${msg}`)
+        setToast({
+          kind: 'error',
+          text: t('dockerDeleteFailed', { name: container.name, err: msg }),
         })
       }
     },
@@ -4724,6 +4745,7 @@ export default function App() {
                     onRestartContainer={handleRestartContainer}
                     onStopContainer={handleStopContainer}
                     onStartContainer={handleStartContainer}
+                    onDeleteContainer={handleDeleteContainer}
                   />
                 </div>
               )}

@@ -259,6 +259,7 @@ pub fn run() {
       commands::restart_docker_container,
       commands::stop_docker_container,
       commands::start_docker_container,
+      commands::remove_docker_container,
       commands::docker_logs_stream_start,
       commands::poll_docker_logs,
       commands::stop_docker_logs_stream,

@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import type { ContainerInfo } from '../types'
 import {
   listDockerContainers,
+  removeDockerContainer,
   restartDockerContainer,
   startDockerContainer,
   stopDockerContainer,
 } from '../commands'
 import { Icon } from './Icon'
+import { ConfirmDialog } from './ConfirmDialog'
 import { useI18n } from '../i18n'
 
 interface DockerPanelProps {
@@ -29,6 +31,8 @@ interface DockerPanelProps {
   onStopContainer?: (container: ContainerInfo) => void
   /** Start a stopped container. */
   onStartContainer?: (container: ContainerInfo) => void
+  /** Remove a stopped container. */
+  onDeleteContainer?: (container: ContainerInfo) => Promise<void> | void
   /** Label of the host machine whose containers are listed (shown in header). */
   serverLabel?: string
 }
@@ -50,6 +54,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onRestartContainer,
   onStopContainer,
   onStartContainer,
+  onDeleteContainer,
   serverLabel,
 }) => {
   const { t } = useI18n()
@@ -58,6 +63,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   const [error, setError] = useState('')
   const [showAll, setShowAll] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; container: ContainerInfo } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<ContainerInfo | null>(null)
   const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -168,6 +174,25 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     setCtxMenu(null)
   }, [ctxMenu, jumpTabId, load, onStartContainer])
 
+  const handleDelete = useCallback(() => {
+    if (!ctxMenu) return
+    // Only stopped containers can be removed (docker rm requires a stopped container)
+    if (ctxMenu.container.state === 'running') return
+    setConfirmDelete(ctxMenu.container)
+    setCtxMenu(null)
+  }, [ctxMenu])
+
+  const confirmRemove = useCallback(() => {
+    if (!confirmDelete) return
+    const container = confirmDelete
+    const doRemove = onDeleteContainer
+      ? onDeleteContainer(container)
+      : removeDockerContainer(jumpTabId, container.name)
+          .then(() => load())
+          .catch((e) => setError(String(e)))
+    Promise.resolve(doRemove).finally(() => setConfirmDelete(null))
+  }, [confirmDelete, jumpTabId, load, onDeleteContainer])
+
   const visible = showAll ? containers : containers.filter((c) => c.state === 'running')
 
   return (
@@ -268,10 +293,16 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
               </div>
             </>
           ) : (
-            <div className="context-menu-item" onClick={handleStart}>
-              <Icon name="play" size={14} />
-              {t('dockerStart')}
-            </div>
+            <>
+              <div className="context-menu-item" onClick={handleStart}>
+                <Icon name="play" size={14} />
+                {t('dockerStart')}
+              </div>
+              <div className="context-menu-item ctx-danger" onClick={handleDelete}>
+                <Icon name="trash" size={14} />
+                {t('dockerDelete')}
+              </div>
+            </>
           )}
           {onViewLogs && (
             <div className="context-menu-item" onClick={handleViewLogs}>
@@ -280,6 +311,18 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
             </div>
           )}
         </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          danger
+          title={t('dockerDeleteTitle')}
+          message={t('dockerDeleteConfirm', { name: confirmDelete.name })}
+          confirmLabel={t('delete')}
+          cancelLabel={t('cancel')}
+          onConfirm={confirmRemove}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
     </div>
   )
