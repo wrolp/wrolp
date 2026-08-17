@@ -544,12 +544,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     filePanelBrowseCache[targetKey] = { currentPath, rootPath }
   }, [isConnected, currentPath, rootPath, targetKey])
 
-  // Shell → FilePanel sync (main session only)
+  // Shell → FilePanel sync (main session only). Each tick opens a fresh SSH
+  // connection to run `pwd`, so it only runs while the Files section is
+  // expanded and the window is visible — otherwise it would burn CPU (and a
+  // new SSH handshake every 5s) even when the panel is collapsed or hidden.
   useEffect(() => {
     if (!syncEnabled || !isConnected || sessionTabId == null) return
+    if (!expanded) return
     let active = true
     const poll = async () => {
-      if (!active) return
+      if (!active || document.hidden) return
       try {
         const remotePath = await pollWorkingDir(sessionTabId)
         if (!active || !remotePath) return
@@ -565,11 +569,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     }
     poll()
     const interval = setInterval(poll, 5000)
+    // Resume promptly when the panel/window becomes visible again.
+    const onVisible = () => {
+      if (!document.hidden && active && expanded) void poll()
+    }
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       active = false
       clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [syncEnabled, isConnected, sessionTabId, loadRootDir])
+  }, [syncEnabled, isConnected, sessionTabId, loadRootDir, expanded])
 
   // Transfer progress events (main session only). Each event carries the
   // filename, so we can route it to the matching per-file row in the list.

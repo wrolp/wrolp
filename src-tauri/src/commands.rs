@@ -1381,82 +1381,103 @@ pub async fn poll_working_dir(
   state: tauri::State<'_, AppState>,
   tab_id: u32,
 ) -> Result<Option<String>, String> {
-  let config = {
+  // Reuse the tab's live SSH connection (an exec channel on the existing
+  // handle) instead of opening a fresh connection + auth handshake every call.
+  // The shell-sync feature polls every 5s and the `ls` capture runs it per
+  // command, so a fresh handshake each time is the dominant cost. Falls back
+  // to a fresh connection only if the live handle is unavailable.
+  let handle = {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    sessions
-      .get(&tab_id)
-      .ok_or("Session not found")?
-      .config
-      .clone()
+    sessions.get(&tab_id).and_then(|s| s.session_handle.clone())
   };
 
-  let ssh_config = Arc::new(client::Config::default());
-  let handler = SshHandler {
-    app_handle: app.clone(),
-    tab_id,
-    is_sftp: true,
-    shell_channel_id: None,
-  };
-
-  let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
-    .await
-    .map_err(|e| format!("Connect failed: {}", e))?;
-
-  // Authenticate (reuse original config credentials — cwd should reflect the
-  // logged-in user, not a switched SFTP user)
-  if let Some(ref pw) = config.password {
-    if !handle
-      .authenticate_password(&config.username, pw)
-      .await
-      .map_err(|e| format!("Auth error: {}", e))?
-    {
-      return Err("Authentication failed".into());
+  let path = if let Some(h) = handle {
+    if h.is_closed() {
+      return Err("Session connection is closed".into());
     }
-  } else if let Some(ref key_path) = config.key_path {
-    let resolved = expand_tilde(key_path);
-    let key = load_secret_key(&resolved, config.passphrase.as_deref())
-      .map_err(|e| format!("Failed to load key: {}", e))?;
-    if !handle
-      .authenticate_publickey(&config.username, Arc::new(key))
-      .await
-      .map_err(|e| format!("Key auth error: {}", e))?
-    {
-      return Err("Key authentication failed".into());
-    }
+    crate::host_analysis::exec_on_handle(&h, "pwd").await?
   } else {
-    return Err("No credentials provided".into());
-  }
+    // No live handle (e.g. session not fully connected): fall back to the
+    // previous fresh-connection behaviour.
+    let config = {
+      let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+      sessions
+        .get(&tab_id)
+        .ok_or("Session not found")?
+        .config
+        .clone()
+    };
 
-  // Open a channel and exec `pwd`
-  let mut channel = handle
-    .channel_open_session()
-    .await
-    .map_err(|e| format!("Failed to open channel: {}", e))?;
+    let ssh_config = Arc::new(client::Config::default());
+    let handler = SshHandler {
+      app_handle: app.clone(),
+      tab_id,
+      is_sftp: true,
+      shell_channel_id: None,
+    };
 
-  channel
-    .exec(true, "pwd")
-    .await
-    .map_err(|e| format!("Failed to exec pwd: {}", e))?;
+    let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
+      .await
+      .map_err(|e| format!("Connect failed: {}", e))?;
 
-  let mut output = String::new();
-  while let Some(msg) = channel.wait().await {
-    match msg {
-      russh::ChannelMsg::Data { data } => {
-        output.push_str(&String::from_utf8_lossy(&data));
+    // Authenticate (reuse original config credentials — cwd should reflect the
+    // logged-in user, not a switched SFTP user)
+    if let Some(ref pw) = config.password {
+      if !handle
+        .authenticate_password(&config.username, pw)
+        .await
+        .map_err(|e| format!("Auth error: {}", e))?
+      {
+        return Err("Authentication failed".into());
       }
-      russh::ChannelMsg::ExitStatus { .. } | russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
-        break;
+    } else if let Some(ref key_path) = config.key_path {
+      let resolved = expand_tilde(key_path);
+      let key = load_secret_key(&resolved, config.passphrase.as_deref())
+        .map_err(|e| format!("Failed to load key: {}", e))?;
+      if !handle
+        .authenticate_publickey(&config.username, Arc::new(key))
+        .await
+        .map_err(|e| format!("Key auth error: {}", e))?
+      {
+        return Err("Key authentication failed".into());
       }
-      _ => {}
+    } else {
+      return Err("No credentials provided".into());
     }
-  }
 
-  // Let the handle drop gracefully in the background
-  tauri::async_runtime::spawn(async move {
-    let _h = handle;
-  });
+    // Open a channel and exec `pwd`
+    let mut channel = handle
+      .channel_open_session()
+      .await
+      .map_err(|e| format!("Failed to open channel: {}", e))?;
 
-  let path = output.trim();
+    channel
+      .exec(true, "pwd")
+      .await
+      .map_err(|e| format!("Failed to exec pwd: {}", e))?;
+
+    let mut output = String::new();
+    while let Some(msg) = channel.wait().await {
+      match msg {
+        russh::ChannelMsg::Data { data } => {
+          output.push_str(&String::from_utf8_lossy(&data));
+        }
+        russh::ChannelMsg::ExitStatus { .. } | russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
+          break;
+        }
+        _ => {}
+      }
+    }
+
+    // Let the handle drop gracefully in the background
+    tauri::async_runtime::spawn(async move {
+      let _h = handle;
+    });
+
+    output
+  };
+
+  let path = path.trim();
   if path.is_empty() {
     Ok(None)
   } else {

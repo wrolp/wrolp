@@ -375,6 +375,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const onSizeChangeRef = useRef(onSizeChange)
   const onOpenFileRef = useRef(onOpenFile)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // rAF retry counter for the initial fit-wait loop (capped to avoid a 60 fps
+  // spin when a pane stays 0-sized, e.g. hidden behind a file editor overlay).
+  const layoutWaitFrames = useRef(0)
   const hasRun = useRef(false)
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
   const localShellTypeRef = useRef(localShellType)
@@ -944,17 +947,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }, [tabId])
   useEffect(() => {
     connectConfigRef.current = connectConfig
-  })
-  useEffect(() => {
     localShellTypeRef.current = localShellType
-  })
-  useEffect(() => {
     onStatusChangeRef.current = onStatusChange
-  })
-  useEffect(() => {
     onSizeChangeRef.current = onSizeChange
-  })
-  useEffect(() => {
     onOpenFileRef.current = onOpenFile
   })
 
@@ -1496,12 +1491,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       resizeObserverRef.current.observe(containerRef.current)
     }
 
-    // Poll SSH output (every 100ms), completely bypassing Tauri event system
+    // Poll SSH output (every 100ms), completely bypassing Tauri event system.
+    // The poll is skipped while the window is hidden (minimized / occluded) or
+    // the session is no longer connected — backend buffers the output, and the
+    // next visible/connected tick drains it. This keeps the IPC loop (10 Hz ×
+    // every tab) from burning CPU while the user isn't looking at the window.
     const startPolling = () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current)
       // Do one immediate poll so slow first-output doesn't wait for the first
       // 100 ms interval tick.
       const doPoll = async () => {
+        if (document.hidden || !connectedRef.current) return
         try {
           const chunks = await pollOutput(currentTabId)
           if (chunks.length > 0) {
@@ -1514,6 +1514,35 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       doPoll()
       pollTimerRef.current = setInterval(doPoll, 100)
     }
+
+    // Stop polling (and mark disconnected) when the backend reports the SSH
+    // connection closed, instead of keeping the 10 Hz IPC loop running forever.
+    let unlistenClosed: (() => void) | null = null
+    listen<{ tabId: number }>('connection-closed', (event) => {
+      if (event.payload.tabId !== currentTabId) return
+      connectedRef.current = false
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
+    }).then((un) => {
+      unlistenClosed = un
+    })
+
+    // When the window becomes visible again, drain any output that accumulated
+    // while it was hidden in one immediate poll (next interval tick is up to
+    // 100 ms away — this makes it feel instant).
+    const handleVisibility = () => {
+      if (!document.hidden && connectedRef.current && pollTimerRef.current) {
+        const currentTab = tabIdRef.current
+        pollOutput(currentTab)
+          .then((chunks) => {
+            for (const chunk of chunks) writeOutput(chunk)
+          })
+          .catch(() => {})
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
 
     // Wait for container to get actual layout dimensions, fit to get real cols/rows, then connect SSH with those dimensions
     const doConnect = () => {
@@ -1583,11 +1612,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // pinned to the bottom edge is cleared.
         term.refresh(0, term.rows - 1)
         doConnect()
-      } else {
-        // Container still has zero dimensions, keep waiting
+      } else if (layoutWaitFrames.current < 300) {
+        // Container still has zero dimensions, keep waiting (capped so a
+        // permanently hidden pane can't spin a 60 fps rAF loop forever).
+        layoutWaitFrames.current++
         requestAnimationFrame(waitForLayoutAndFit)
       }
     }
+    layoutWaitFrames.current = 0
     // Use double rAF to ensure flex layout is complete, then enter polling wait for actual dimensions
     requestAnimationFrame(() => {
       requestAnimationFrame(waitForLayoutAndFit)
@@ -1609,6 +1641,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       linkTooltipEntryRef.current = null
       setLinkTooltip(null)
       unlistenAiMark?.()
+      unlistenClosed?.()
+      document.removeEventListener('visibilitychange', handleVisibility)
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current)
         pollTimerRef.current = null
@@ -1708,9 +1742,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           term.rows,
         )
           .then(() => {
+            connectedRef.current = true
             onStatusChangeRef.current('connected')
             if (pollTimerRef.current) clearInterval(pollTimerRef.current)
             pollTimerRef.current = setInterval(async () => {
+              if (document.hidden || !connectedRef.current) return
               try {
                 const chunks = await pollOutput(currentTabId)
                 if (chunks.length > 0) {
@@ -1744,10 +1780,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         false,
       )
         .then(() => {
+          connectedRef.current = true
           onStatusChangeRef.current('connected')
           // Start polling again
           if (pollTimerRef.current) clearInterval(pollTimerRef.current)
           pollTimerRef.current = setInterval(async () => {
+            if (document.hidden || !connectedRef.current) return
             try {
               const chunks = await pollOutput(currentTabId)
               if (chunks.length > 0) {
@@ -1773,10 +1811,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         if (term.cols > 0 && term.rows > 0) {
           fitRef.current?.fit()
           doConnect()
-        } else {
+        } else if (layoutWaitFrames.current < 300) {
+          layoutWaitFrames.current++
           requestAnimationFrame(waitForLayout)
         }
       }
+      layoutWaitFrames.current = 0
       requestAnimationFrame(waitForLayout)
     }
   }, [reconnectTrigger])
