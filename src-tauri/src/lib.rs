@@ -10,6 +10,8 @@ mod local_fs;
 mod remote_fs;
 mod ssh_session;
 mod vault;
+#[cfg(windows)]
+mod webview_drop;
 
 use ssh_session::AppState;
 use tauri::generate_handler;
@@ -149,6 +151,18 @@ pub fn run() {
             }
           }
         }
+        // Drag-and-drop: keep `dragDropEnabled: false` so HTML5 drag events work
+        // in the WebView2 content; a drop's default action navigates to the
+        // dropped file/folder, which we intercept here to recover the real
+        // local path (the file panel then uploads it via the Rust walkdir path).
+        #[cfg(windows)]
+        {
+          let app_handle = app.handle().clone();
+          let _ = window.with_webview(move |platform| {
+            webview_drop::init(&app_handle, platform);
+          });
+        }
+
         // Show the window (visible: false in tauri.conf.json), and make sure
         // it is unminimized and brought to the front.
         let _ = window.unminimize();

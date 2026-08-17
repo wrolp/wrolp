@@ -7,7 +7,7 @@
 
 use russh::client::{self, Handle};
 use russh_keys::load_secret_key;
-use russh_sftp::client::SftpSession;
+use russh_sftp::client::{Config, SftpSession};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -79,7 +79,18 @@ async fn sftp_over_handle(handle: Handle<SshHandler>) -> Result<SftpSession, Str
     .request_subsystem(true, "sftp")
     .await
     .map_err(|e| format!("Failed to request SFTP subsystem: {}", e))?;
-  let sftp = SftpSession::new(channel.into_stream())
+  // Throughput over SFTP is RTT-bound: russh-sftp only pipelines up to
+  // `max_concurrent_writes` in-flight write packets (each capped at the
+  // server-advertised ~32 KiB via limits@openssh.com). Raising the write
+  // concurrency keeps the SSH channel saturated instead of waiting a round
+  // trip per packet. `max_packet_len` is intentionally left at the default
+  // (256 KiB): some servers don't advertise limits and would reject larger
+  // packets, which broke uploads.
+  let sftp_cfg = Config {
+    max_concurrent_writes: 48,
+    ..Default::default()
+  };
+  let sftp = SftpSession::new_with_config(channel.into_stream(), sftp_cfg)
     .await
     .map_err(|e| format!("Failed to start SFTP session: {}", e))?;
 
@@ -456,6 +467,8 @@ async fn delete_dir_inner(
   on_progress: &mut (dyn FnMut(u64, u64, u64, u64) -> Result<(), String> + Send),
 ) -> Result<(), String> {
   let entries = fs.list_dir(path).await?;
+  // Recurse into subdirectories first, collecting files for this directory.
+  let mut files = Vec::new();
   for e in entries {
     if e.is_dir {
       Box::pin(delete_dir_inner(
@@ -469,10 +482,26 @@ async fn delete_dir_inner(
       ))
       .await?;
     } else {
-      fs.remove_file(&e.path).await?;
-      *done_files += 1;
-      *done_bytes += e.size;
-      on_progress(*done_files, total_files, *done_bytes, total_bytes)?;
+      files.push(e);
+    }
+  }
+
+  // Delete the files here with bounded concurrency. SFTP requests are
+  // multiplexed by request id, so issuing several removes at once pipelines
+  // them instead of paying a round trip per file. `join_all` actually polls
+  // every future in the batch, so the removes run concurrently (not awaited
+  // one-by-one, which would be serial again).
+  if !files.is_empty() {
+    const DELETE_CONCURRENCY: usize = 16;
+    for chunk in files.chunks(DELETE_CONCURRENCY) {
+      let tasks: Vec<_> = chunk.iter().map(|f| fs.remove_file(&f.path)).collect();
+      let results = futures_util::future::join_all(tasks).await;
+      for (res, f) in results.into_iter().zip(chunk.iter()) {
+        res?;
+        *done_files += 1;
+        *done_bytes += f.size;
+        on_progress(*done_files, total_files, *done_bytes, total_bytes)?;
+      }
     }
   }
   fs.remove_dir(path).await?;

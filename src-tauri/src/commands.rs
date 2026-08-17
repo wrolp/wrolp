@@ -2072,7 +2072,7 @@ pub async fn upload_file(
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
   let start = std::time::Instant::now();
-  let chunk_size: usize = 262144;
+  let chunk_size: usize = 4 * 1024 * 1024;
   let mut buf = vec![0u8; chunk_size];
   let mut written: u64 = 0;
 
@@ -2219,7 +2219,7 @@ pub async fn upload_file_bytes(
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
   let start = std::time::Instant::now();
-  let chunk_size: usize = 262144;
+  let chunk_size: usize = 4 * 1024 * 1024;
   let mut written: u64 = 0;
 
   for chunk in file_data.chunks(chunk_size) {
@@ -3001,6 +3001,13 @@ async fn stream_upload_local_dir(
   }
 
   if is_dir {
+    // Create the destination directory itself first — SFTP's `create`/`mkdir`
+    // do not create parents implicitly, and the walkdir scan above only
+    // collected *relative* subdirectories (the root's own relative path is
+    // empty), so the top-level `remote_root` would otherwise be missing.
+    if sftp.metadata(&remote_root).await.is_err() {
+      let _ = sftp.create_dir(&remote_root).await;
+    }
     for d in &dirs {
       let remote_dir_path = format!("{}/{}", remote_root, d);
       if sftp.metadata(&remote_dir_path).await.is_err() {
@@ -3014,36 +3021,58 @@ async fn stream_upload_local_dir(
   let mut done_bytes = 0u64;
   let mut done_files = 0usize;
 
-  for (local_abs, rel, _size) in &files {
-    let remote_path = format!("{}/{}", remote_root, rel);
-    let mut local = tokio::fs::File::open(local_abs)
-      .await
-      .map_err(|e| format!("Failed to open local file '{}': {}", local_abs, e))?;
-    let mut file = sftp
-      .create(&remote_path)
-      .await
-      .map_err(|e| format!("Failed to create remote file '{}': {}", remote_path, e))?;
-    let mut buf = vec![0u8; 262144];
-    loop {
-      if let Some(c) = control {
-        check_pause(c).await?;
-      }
-      let n = local
-        .read(&mut buf)
-        .await
-        .map_err(|e| format!("Failed to read local file '{}': {}", local_abs, e))?;
-      if n == 0 {
-        break;
-      }
-      file
-        .write_all(&buf[..n])
-        .await
-        .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
-      done_bytes += n as u64;
-      on_progress(rel, done_bytes, total_bytes, done_files as u64, total_files as u64)?;
+  // Upload files with bounded concurrency so a folder of many files keeps the
+  // SSH pipe full. a945 achieved this by running several `upload_file` calls in
+  // parallel from the frontend; here we keep one shared SFTP session (russh-sftp
+  // multiplexes requests by id, strictly better than one session per file) and
+  // run up to UPLOAD_CONCURRENCY file uploads at once.
+  const UPLOAD_CONCURRENCY: usize = 8;
+  let sftp_ref = &sftp;
+  for chunk in files.chunks(UPLOAD_CONCURRENCY) {
+    let mut tasks = Vec::with_capacity(chunk.len());
+    let mut rels = Vec::with_capacity(chunk.len());
+    for (local_abs, rel, _size) in chunk {
+      rels.push(rel.clone());
+      let remote_path = format!("{}/{}", remote_root, rel);
+      let ctrl = control.clone();
+      tasks.push(async move {
+        if let Some(c) = &ctrl {
+          check_pause(c).await?;
+        }
+        let mut local = tokio::fs::File::open(local_abs)
+          .await
+          .map_err(|e| format!("Failed to open local file '{}': {}", local_abs, e))?;
+        let mut rf = sftp_ref
+          .create(&remote_path)
+          .await
+          .map_err(|e| format!("Failed to create remote file '{}': {}", remote_path, e))?;
+        let mut buf = vec![0u8; 4 * 1024 * 1024];
+        let mut written: u64 = 0;
+        loop {
+          if let Some(c) = &ctrl {
+            check_pause(c).await?;
+          }
+          let n = local
+            .read(&mut buf)
+            .await
+            .map_err(|e| format!("Failed to read local file '{}': {}", local_abs, e))?;
+          if n == 0 {
+            break;
+          }
+          rf.write_all(&buf[..n])
+            .await
+            .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
+          written += n as u64;
+        }
+        Ok::<u64, String>(written)
+      });
     }
-    done_files += 1;
-    on_progress(rel, done_bytes, total_bytes, done_files as u64, total_files as u64)?;
+    for (res, rel) in futures_util::future::join_all(tasks).await.into_iter().zip(rels) {
+      let written = res?;
+      done_bytes += written;
+      done_files += 1;
+      on_progress(&rel, done_bytes, total_bytes, done_files as u64, total_files as u64)?;
+    }
   }
 
   Ok(DirUploadSummary {
@@ -3207,6 +3236,11 @@ async fn upload_local_dir_via_fs(
     }
   }
 
+  if is_dir {
+    // Create the destination directory itself first, mirroring the SFTP path
+    // (the walkdir scan only collects relative subdirectories).
+    let _ = fs.create_dir(&remote_root).await;
+  }
   for d in &dirs {
     let _ = fs.create_dir(&format!("{}/{}", remote_root, d)).await;
   }
@@ -3229,6 +3263,46 @@ async fn upload_local_dir_via_fs(
   })
 }
 
+/// Ensure the parent directory of `remote_path` exists on the target
+/// filesystem, creating intermediate directories as needed. Mirrors the
+/// session-path `ensure_parent_dir` but operates through the unified
+/// [`RemoteFs`] trait so it works for jump/docker/local targets too (their
+/// `write_file` does not auto-create parents).
+async fn ensure_parent_dir_fs(fs: &dyn RemoteFs, remote_path: &str) -> Result<(), String> {
+  let parent = match std::path::Path::new(remote_path).parent() {
+    Some(p) => p.to_string_lossy().replace('\\', "/"),
+    None => return Ok(()),
+  };
+  if parent.is_empty() || parent == "/" || parent == "." {
+    return Ok(());
+  }
+  // Preserve a leading "./" prefix (relative-to-home uploads).
+  let (prefix, stripped) = match parent.strip_prefix("./") {
+    Some(rest) => ("./".to_string(), rest),
+    None => (String::new(), parent.as_str()),
+  };
+  let segments: Vec<&str> = stripped.split('/').filter(|s| !s.is_empty()).collect();
+  let mut acc = prefix;
+  for seg in segments {
+    acc = if acc.is_empty() {
+      seg.to_string()
+    } else if acc == "/" {
+      format!("/{}", seg)
+    } else {
+      format!("{}/{}", acc, seg)
+    };
+    // Create if missing, tolerating an already-existing directory.
+    if fs.metadata(&acc).await.is_err() {
+      if let Err(e) = fs.create_dir(&acc).await {
+        if fs.metadata(&acc).await.is_err() {
+          return Err(e);
+        }
+      }
+    }
+  }
+  Ok(())
+}
+
 #[tauri::command]
 pub async fn target_upload_file_bytes(
   app: tauri::AppHandle,
@@ -3238,6 +3312,7 @@ pub async fn target_upload_file_bytes(
   file_data: Vec<u8>,
 ) -> Result<bool, String> {
   let fs = build_fs(&app, &state, &target).await?;
+  ensure_parent_dir_fs(fs.as_ref(), &remote_path).await?;
   fs.write_file(&remote_path, &file_data).await?;
   Ok(true)
 }

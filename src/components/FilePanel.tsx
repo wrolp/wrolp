@@ -35,7 +35,6 @@ import {
   listDockerContainers,
 } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -230,10 +229,7 @@ const formatSpeed = (bytesPerSec: number): string => {
 // (App.tsx `showFilePanel = filesTab?.status === 'connected'`), so a component-
 // level ref would be wiped on every tab switch and the directory the user left
 // would be lost. Module-level persistence survives remounts.
-const filePanelBrowseCache: Record<
-  string,
-  { currentPath: string; rootPath: string }
-> = {}
+const filePanelBrowseCache: Record<string, { currentPath: string; rootPath: string }> = {}
 
 export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function FilePanel(
   {
@@ -903,9 +899,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       await runConcurrent(localPaths, UPLOAD_CONCURRENCY, async (localPath, i) => {
         const key = rows[i].key
         if (cancelledKeysRef.current.has(key)) return
-        setTransferRows((prev) =>
-          prev.map((r) => (r.key === key ? { ...r, status: 'active' } : r)),
-        )
+        setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'active' } : r)))
         try {
           const summary = await fsUploadLocalDir(target, localPath, targetDir)
           setTransferRows((prev) =>
@@ -937,61 +931,89 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     [target, currentPath, refresh],
   )
 
+  // Drag-drop: `dragDropEnabled: false` keeps WebView2's external drops enabled,
+  // so the panel receives normal HTML5 drag events (used for the cursor and the
+  // target-folder highlight). On drop we deliberately do NOT call preventDefault
+  // on the drop event, so the browser's default action (navigate to the dropped
+  // file/folder) fires `NavigationStarting`/`NewWindowRequested` in Rust, which
+  // cancels it and emits `native-drag-drop` carrying the REAL local path — the
+  // frontend then uploads it via `uploadLocalPaths` (Rust walkdir, one aggregate
+  // progress row per item, exactly like the Upload folder button).
+  const pendingDropRef = useRef<{ x: number; y: number } | null>(null)
+  const rowAt = (el: Element | null): string | null =>
+    el?.closest?.('[data-dir-path]')?.getAttribute('data-dir-path') ?? null
 
-  // Tauri native drag-drop: `dragDropEnabled` is on, so OS file drags deliver
-  // real filesystem paths (HTML5 DOM drop only exposes `File` blobs). Dropped
-  // paths go through `uploadLocalPaths` — directories are scanned with walkdir
-  // and streamed on the Rust side instead of per-chunk IPC.
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    const el = document.elementFromPoint(e.clientX, e.clientY)
+    const inPanel = panelRef.current?.contains(el) ?? false
+    setDragOver(inPanel)
+    setDropTargetPath(inPanel ? rowAt(el) : null)
+  }
+
+  // Clear the drag highlight (panel box + folder drop-target). Safe to call
+  // from any drag-related event; idempotent.
+  const clearDragHighlight = useCallback(() => {
+    setDragOver(false)
+    setDropTargetPath(null)
+  }, [])
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // On leaving the panel for a sibling element, relatedTarget is that
+    // element; when the drag leaves the window entirely, relatedTarget is null.
+    // Only keep the highlight while the pointer is genuinely still inside.
+    const rel = e.relatedTarget as Node | null
+    if (rel === null || !panelRef.current?.contains(rel)) {
+      setDragOver(false)
+      setDropTargetPath(null)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    // Record the drop position for the async Rust event. Do NOT preventDefault:
+    // the browser's default action navigates to the dropped file, which is how
+    // Rust recovers the real local path. Clear the highlight immediately — the
+    // actual upload is triggered asynchronously by the `native-drag-drop` event.
+    const el = document.elementFromPoint(e.clientX, e.clientY)
+    pendingDropRef.current = panelRef.current?.contains(el) ? { x: e.clientX, y: e.clientY } : null
+    clearDragHighlight()
+  }
+
   useEffect(() => {
     let disposed = false
     let unlisten: (() => void) | null = null
-    // Drag-drop `position` is physical pixels relative to the window; convert
-    // to CSS coordinates for DOM hit-testing.
-    const elemAt = (x: number, y: number): Element | null =>
-      document.elementFromPoint(x / window.devicePixelRatio, y / window.devicePixelRatio)
-    const rowAt = (el: Element | null): string | null =>
-      el?.closest?.('[data-dir-path]')?.getAttribute('data-dir-path') ?? null
 
-    getCurrentWebview()
-      .onDragDropEvent((event) => {
-        const payload = event.payload
-        switch (payload.type) {
-          case 'enter':
-          case 'over': {
-            // Highlight only while the cursor is over the panel, and mark the
-            // directory row underneath (so drops land inside the right folder).
-            const el = elemAt(payload.position.x, payload.position.y)
-            const inPanel = panelRef.current?.contains(el) ?? false
-            setDragOver(inPanel)
-            setDropTargetPath(inPanel ? rowAt(el) : null)
-            break
-          }
-          case 'drop': {
-            setDragOver(false)
-            setDropTargetPath(null)
-            if (payload.paths.length === 0) return
-            // Ignore drops outside the panel (e.g. onto the terminal area).
-            const el = elemAt(payload.position.x, payload.position.y)
-            if (!panelRef.current?.contains(el)) return
-            const baseDir = rowAt(el) ?? undefined
-            uploadLocalPaths(payload.paths, baseDir)
-            break
-          }
-          case 'leave':
-            setDragOver(false)
-            setDropTargetPath(null)
-            break
-        }
-      })
-      .then((fn) => {
-        if (disposed) fn()
-        else unlisten = fn
-      })
+    // Safety net: whenever a drag operation ends anywhere in the document
+    // (dropped, cancelled, or released outside the panel), clear the highlight.
+    // This covers native OS drags whose `dragend`/`dragleave` never reach the
+    // panel element.
+    const onDragEnd = () => clearDragHighlight()
+    document.addEventListener('dragend', onDragEnd)
+    document.addEventListener('drop', onDragEnd)
+
+    listen<{ type: string; paths: string[] }>('native-drag-drop', (event) => {
+      const payload = event.payload
+      console.log('[native-drag-drop]', payload.type, payload.paths)
+      if (payload.type !== 'drop' || !payload.paths || payload.paths.length === 0) return
+      // Only upload if the drop was over the panel (position recorded in the
+      // HTML5 drop handler); drops elsewhere are ignored.
+      const pos = pendingDropRef.current
+      pendingDropRef.current = null
+      if (!pos) return
+      const baseDir = rowAt(document.elementFromPoint(pos.x, pos.y)) ?? undefined
+      uploadLocalPaths(payload.paths, baseDir)
+      clearDragHighlight()
+    }).then((fn) => {
+      if (disposed) fn()
+      else unlisten = fn
+    })
     return () => {
       disposed = true
+      document.removeEventListener('dragend', onDragEnd)
+      document.removeEventListener('drop', onDragEnd)
       unlisten?.()
     }
-  }, [uploadLocalPaths])
+  }, [uploadLocalPaths, clearDragHighlight])
 
   const handleUpload = async () => {
     setContextMenu(null)
@@ -1141,9 +1163,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       )
       try {
         await fsDeleteFile(target, node.path, true)
-        setTransferRows((prev) =>
-          prev.map((r) => (r.key === key ? { ...r, status: 'done' } : r)),
-        )
+        setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'done' } : r)))
         refresh()
       } catch (e) {
         const cancelled = cancelledKeysRef.current.has(key)
@@ -1591,7 +1611,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const pathDisplay = currentPath === '.' ? '~ (home)' : currentPath
 
   return (
-    <div ref={panelRef} className={`file-panel${dragOver ? ' drag-over' : ''}`}>
+    <div
+      ref={panelRef}
+      className={`file-panel${dragOver ? ' drag-over' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {/* header */}
       <div className="file-panel-header">
         <span
@@ -1692,68 +1718,68 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             </span>
           </div>
           <div className="file-path-bar">
-          <div className="file-path-jump-wrap">
-            <button
-              ref={jumpBtnRef}
-              className={`file-path-jump${jumpOpen ? ' open' : ''}`}
-              title={t('jumpTo')}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (!jumpOpen && jumpBtnRef.current) {
-                  const r = jumpBtnRef.current.getBoundingClientRect()
-                  setJumpPos({ x: r.left, y: r.bottom + 4 })
-                }
-                setJumpOpen((o) => !o)
-              }}
-            >
-              <Icon name="chevronDown" size={12} />
-            </button>
-            {jumpOpen && jumpPos && (
-              <div className="file-path-jump-menu" style={{ left: jumpPos.x, top: jumpPos.y }}>
-                <div className="file-path-jump-group">
-                  <div className="file-path-jump-label">{t('home')}</div>
-                  <div
-                    className="file-path-jump-item"
-                    onClick={() => {
-                      setJumpOpen(false)
-                      goHome()
-                    }}
-                  >
-                    <Icon name="home" size={12} />
-                    {t('home')}
-                  </div>
-                  <div
-                    className="file-path-jump-item"
-                    onClick={() => {
-                      setJumpOpen(false)
-                      loadRootDir('/', true)
-                    }}
-                  >
-                    <Icon name="folderOpen" size={12} />
-                    {t('rootDir')} (/)
-                  </div>
-                </div>
-                {fileMode === 'local' && drives.length > 0 && (
+            <div className="file-path-jump-wrap">
+              <button
+                ref={jumpBtnRef}
+                className={`file-path-jump${jumpOpen ? ' open' : ''}`}
+                title={t('jumpTo')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!jumpOpen && jumpBtnRef.current) {
+                    const r = jumpBtnRef.current.getBoundingClientRect()
+                    setJumpPos({ x: r.left, y: r.bottom + 4 })
+                  }
+                  setJumpOpen((o) => !o)
+                }}
+              >
+                <Icon name="chevronDown" size={12} />
+              </button>
+              {jumpOpen && jumpPos && (
+                <div className="file-path-jump-menu" style={{ left: jumpPos.x, top: jumpPos.y }}>
                   <div className="file-path-jump-group">
-                    <div className="file-path-jump-label">{t('localDrives')}</div>
-                    {drives.map((d) => (
-                      <div
-                        key={d}
-                        className="file-path-jump-item"
-                        onClick={() => {
-                          setJumpOpen(false)
-                          loadRootDir(d, true)
-                        }}
-                      >
-                        <Icon name="desktop" size={12} />
-                        {d}
-                      </div>
-                    ))}
+                    <div className="file-path-jump-label">{t('home')}</div>
+                    <div
+                      className="file-path-jump-item"
+                      onClick={() => {
+                        setJumpOpen(false)
+                        goHome()
+                      }}
+                    >
+                      <Icon name="home" size={12} />
+                      {t('home')}
+                    </div>
+                    <div
+                      className="file-path-jump-item"
+                      onClick={() => {
+                        setJumpOpen(false)
+                        loadRootDir('/', true)
+                      }}
+                    >
+                      <Icon name="folderOpen" size={12} />
+                      {t('rootDir')} (/)
+                    </div>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
+                  {fileMode === 'local' && drives.length > 0 && (
+                    <div className="file-path-jump-group">
+                      <div className="file-path-jump-label">{t('localDrives')}</div>
+                      {drives.map((d) => (
+                        <div
+                          key={d}
+                          className="file-path-jump-item"
+                          onClick={() => {
+                            setJumpOpen(false)
+                            loadRootDir(d, true)
+                          }}
+                        >
+                          <Icon name="desktop" size={12} />
+                          {d}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             {editingPath ? (
               <input
                 className="file-path-input"
@@ -2072,26 +2098,30 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           </div>
           {dockerError && <div className="file-error">{dockerError}</div>}
           {dockerLoading && <div className="file-empty">{t('loading')}</div>}
-          {!dockerLoading && !dockerError && dockerContainers.filter((c) => c.state === 'running').length === 0 && (
-            <div className="file-empty">{t('noContainers')}</div>
-          )}
-          {dockerContainers.filter((c) => c.state === 'running').map((c) => (
-            <div
-              key={c.id}
-              className="docker-item"
-              onClick={() => handlePickContainer(c)}
-              title={`${c.name}\n${c.image}\n${c.status}`}
-            >
-              <span className="docker-icon">
-                <Icon name="container" />
-              </span>
-              <div className="docker-info">
-                <div className="docker-name">{c.name}</div>
-                <div className="docker-image">{c.image}</div>
+          {!dockerLoading &&
+            !dockerError &&
+            dockerContainers.filter((c) => c.state === 'running').length === 0 && (
+              <div className="file-empty">{t('noContainers')}</div>
+            )}
+          {dockerContainers
+            .filter((c) => c.state === 'running')
+            .map((c) => (
+              <div
+                key={c.id}
+                className="docker-item"
+                onClick={() => handlePickContainer(c)}
+                title={`${c.name}\n${c.image}\n${c.status}`}
+              >
+                <span className="docker-icon">
+                  <Icon name="container" />
+                </span>
+                <div className="docker-info">
+                  <div className="docker-name">{c.name}</div>
+                  <div className="docker-image">{c.image}</div>
+                </div>
+                <span className={`docker-state ${c.state}`}>{c.state}</span>
               </div>
-              <span className={`docker-state ${c.state}`}>{c.state}</span>
-            </div>
-          ))}
+            ))}
         </div>
       )}
 
