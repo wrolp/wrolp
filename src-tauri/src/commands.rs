@@ -2409,13 +2409,23 @@ pub async fn target_upload_start(
 /// Append one chunk to a streaming upload. The remote handle is taken out of
 /// the session table for the duration of the write (so a paused upload blocks
 /// only itself, not other commands) and put back afterwards.
+///
+/// Chunks arrive base64-encoded: sending binary as a JSON array of numbers
+/// (every byte → one JSON number) made both the WebView serialization and the
+/// Rust `serde_json` parse the dominant CPU cost during large directory
+/// uploads. A base64 string is a single JSON token — cheap on both sides.
 #[tauri::command]
 pub async fn upload_chunk(
   app: tauri::AppHandle,
   state: tauri::State<'_, AppState>,
   upload_id: u64,
-  chunk: Vec<u8>,
+  chunk_b64: String,
 ) -> Result<(), String> {
+  use base64::Engine;
+  let chunk = base64::engine::general_purpose::STANDARD
+    .decode(chunk_b64.trim())
+    .map_err(|e| format!("Failed to decode chunk: {}", e))?;
+
   let mut sess = {
     let mut sessions = state.upload_sessions.lock().map_err(|e| e.to_string())?;
     sessions

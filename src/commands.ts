@@ -530,6 +530,22 @@ export async function fsUploadFileBytes(
 }
 
 /**
+ * Encode a byte buffer as a base64 string. Chunked so very large buffers (e.g.
+ * 1MB upload chunks) don't blow the `String.fromCharCode.apply` argument
+ * limit. Used by `fsUploadFileStream` to ship upload data as a single JSON
+ * string instead of a huge array of numbers (the previous CPU hot spot).
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const CHUNK = 0x8000 // 32KB per `apply` call — safe on all engines
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
+    binary += String.fromCharCode.apply(null, Array.from(slice))
+  }
+  return btoa(binary)
+}
+
+/**
  * Stream an HTML5 `File` (drag & drop) to the remote target in small chunks.
  * The whole file is never serialized through the Tauri JSON IPC at once —
  * the old `Array.from(await file.arrayBuffer())` produced a `number[]` of
@@ -563,9 +579,13 @@ export async function fsUploadFileStream(
     let pending: Uint8Array | null = null
     const CHUNK = 1024 * 1024 // ~1MB per invoke: fewer IPC round-trips per byte
     const send = async (data: Uint8Array) => {
-      const chunk = Array.from(data)
-      await invoke('upload_chunk', { uploadId, chunk })
-      transferred += chunk.length
+      // base64, not a JSON number array: serializing every byte as a JSON
+      // number made the WebView's JSON.stringify AND Rust's serde_json parse
+      // the dominant CPU cost of directory uploads. A base64 string is one
+      // JSON token, cheap on both sides.
+      const chunkB64 = bytesToBase64(data)
+      await invoke('upload_chunk', { uploadId, chunkB64 })
+      transferred += data.length
       onProgress?.(transferred, file.size)
     }
     for (;;) {
