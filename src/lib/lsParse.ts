@@ -176,23 +176,98 @@ function parseDirLine(line: string): Omit<LsEntry, 'line'> | null {
 export function extractCwdFromPrompt(prompt: string): string | null {
   const p = prompt.trim()
   if (!p) return null
-  // PowerShell: `PS C:\Users\me>` / `PS /home/me>`
-  if (/^PS\s+.+>$/.test(p)) {
+  // PowerShell: `PS C:\Users\me>` / `PS /home/me>` (may lack a trailing space).
+  if (/^PS\s+.+>\s*$/.test(p)) {
     const inner = p
       .replace(/^PS\s+/, '')
       .replace(/>\s*$/, '')
       .trim()
     return inner || null
   }
-  // cmd.exe: `C:\Users\me>` / `D:\>` (no leading prompt decoration)
-  if (/^[A-Za-z]:\\[^\n]*>$/.test(p)) {
-    return p.replace(/>\s*$/, '').trim() || null
-  }
-  // bash/zsh: `user@host:~/dir$` / `user@host:/abs/path$` / `~/dir#`
-  const m = /^[^$#%]*[:](.+)[$#%]\s*$/.exec(p)
+  // cmd.exe: `C:\Users\me>` / `D:\>` (no leading prompt decoration).
+  const cmd = /^([A-Za-z]:\\[^\n>]*?)>\s*$/.exec(p)
+  if (cmd) return cmd[1] || null
+  // bash/zsh: ends in `$` / `#` / `%` / `❯` (possibly with a trailing space and
+  // any ANSI already stripped upstream). Take everything before the shell symbol.
+  const m = /^(.*)[$#%❯]\s*$/.exec(p)
   if (m) {
-    const dir = m[1].trim()
+    let before = m[1].trim()
+    if (!before) return null
+    // Default bash/RedHat prompt wraps the context in `[...]`:
+    //   [root@localhost lac724]#
+    // Strip the surrounding brackets first, otherwise the cwd (`lac724`) ends up
+    // glued to the closing `]` → `lac724]`.
+    const bracket = /^\[(.*)\]$/.exec(before)
+    if (bracket) before = bracket[1]
+    // Then the cwd is:
+    //  - the text after the LAST `:` when one is present (`user@host:/home/me`, or
+    //    `[root@localhost:/home/me]#`), or
+    //  - the last whitespace-delimited token otherwise (git-bash `… MINGW64 /c/Users/me`,
+    //    or `[root@localhost lac724]#`).
+    const colon = before.lastIndexOf(':')
+    if (colon >= 0) {
+      const dir = before.slice(colon + 1).trim()
+      if (dir) return dir
+    }
+    const tokens = before.split(/\s+/)
+    const dir = tokens[tokens.length - 1]
     return dir || null
   }
   return null
+}
+
+/**
+ * Resolve the working directory after a `cd`-style command, given the currently
+ * tracked cwd. Returns null when the target can't be resolved locally (e.g. `cd`
+ * with no arg, `cd -`, `cd ~`) so the caller keeps the previous value.
+ *
+ * This is what makes `ls` clickable links resolve against the REAL current
+ * directory for local shells: the backend's `LocalShell.cwd` is only the *startup*
+ * directory and is never updated on `cd`, so we track it here instead of trusting
+ * the prompt (which varies per shell) or the stale startup dir.
+ */
+export function resolveCdTarget(arg: string, current: string | null): string | null {
+  const raw = arg.trim().replace(/^["']|["']$/g, '')
+  if (!raw) return null // `cd` with no arg — shell-dependent; keep previous
+  if (raw === '-' || raw === '~' || raw.startsWith('~')) return null // prev dir / home: unknown
+  if (/^[A-Za-z]:[\\/]/.test(raw)) return normalizeLocalPath(raw) // C:\x / C:/x
+  if (raw.startsWith('/')) return normalizeLocalPath(raw) // git-bash /c/x, /usr/x
+  if (raw.startsWith('\\')) return null // UNC/root edge case; skip
+  if (!current) return null // relative target needs a known base
+  const parts: string[] = []
+  for (const p of current.split(/[\\/]+/).filter(Boolean)) {
+    if (/^[A-Za-z]:$/.test(p)) continue // drop Windows drive token before joining
+    parts.push(p)
+  }
+  for (const p of raw.split(/[\\/]+/).filter(Boolean)) {
+    if (p === '.') continue
+    if (p === '..') {
+      if (parts.length) parts.pop()
+      continue
+    }
+    parts.push(p)
+  }
+  const isWin = /^[A-Za-z]:[\\/]/.test(current)
+  const joined = parts.join(isWin ? '\\' : '/')
+  if (isWin) return `${current.slice(0, 2)}\\${joined}`
+  return joined.startsWith('/') ? joined : `/${joined}`
+}
+
+/** Normalize an absolute path, collapsing `.`/`..`, keeping the drive letter. */
+function normalizeLocalPath(p: string): string {
+  const isWin = /^[A-Za-z]:/i.test(p)
+  const drive = isWin ? p.slice(0, 2) : ''
+  const parts: string[] = []
+  for (const q of p.split(/[\\/]+/).filter(Boolean)) {
+    if (isWin && q === drive) continue
+    if (q === '.') continue
+    if (q === '..') {
+      if (parts.length) parts.pop()
+      continue
+    }
+    parts.push(q)
+  }
+  const joined = parts.join(isWin ? '\\' : '/')
+  if (isWin) return `${drive}\\${joined}`
+  return joined.startsWith('/') ? joined : `/${joined}`
 }

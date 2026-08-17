@@ -26,7 +26,7 @@ import {
   highlightTableText,
   isPrintLike,
 } from '../lib/termHighlight'
-import { detectLsCommand, parseLsBlock, extractCwdFromPrompt } from '../lib/lsParse'
+import { detectLsCommand, parseLsBlock, extractCwdFromPrompt, resolveCdTarget } from '../lib/lsParse'
 import type { LsEntry } from '../lib/lsParse'
 import {
   detectTableCommand,
@@ -266,6 +266,8 @@ interface LsCaptureState {
   buf: string
   bytes: number
   timeout: ReturnType<typeof setTimeout> | null
+  /** Raw bytes of an incomplete trailing line (plain `ls`/`dir` coloring only). */
+  pending: string
 }
 
 /**
@@ -338,6 +340,8 @@ interface TerminalComponentProps {
     username: string
     password?: string
     keyPath?: string
+    /** Directory the shell starts in after connecting (sent as `cd <dir>`). */
+    startupDir?: string
   }
   /** When true, run a local PTY-backed shell instead of an SSH connection. */
   isLocal?: boolean
@@ -395,6 +399,105 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const hasRun = useRef(false)
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
   const localShellTypeRef = useRef(localShellType)
+  // Tracks the CURRENT working directory for `ls` link resolution. For local
+  // shells the backend's `LocalShell.cwd` is only the startup dir (never updated
+  // on `cd`); for SSH the prompt only shows a *relative* basename (e.g. "lac724"
+  // for `[root@host lac724]#`). We keep the real (absolute) cwd by querying the
+  // shell's actual directory (see fetchRemoteCwd) and by following `cd` commands.
+  const cwdRef = useRef<string | null>(localCwd ?? null)
+  // Cache of the SSH session's $HOME, fetched from poll_working_dir so a leading
+  // `~` (from the prompt or `ls -l ~/docs`) can be expanded to an absolute path
+  // (SFTP doesn't expand `~`, and the backend `expand_tilde` uses the *local*
+  // machine's home, not the remote one).
+  const homeRef = useRef<string | null>(null)
+  // Most recent prompt-derived cwd (a bare basename on default shells, e.g.
+  // "lac724" for `[root@host lac724]#`). Fallback only when we have no better cwd.
+  const promptCwdRef = useRef<string | null>(null)
+  // --- Hidden shell `pwd` query (SSH) ---------------------------------------
+  // The prompt only shows a relative basename and `poll_working_dir` runs `pwd`
+  // in a *fresh* exec channel (which starts in $HOME, NOT the shell's cwd), so
+  // neither can tell us the real directory. The only reliable source is the
+  // interactive shell itself. We send a marker-wrapped `pwd`, capture the result
+  // from the output stream, and strip the echo+result from the terminal so the
+  // user never sees it.
+  // Begin/end markers for the hidden `pwd` query. They are distinct so the
+  // regex can tell the *result* line (`BEG<path>END`) from the *echoed command*
+  // line (`echo "BEG$(pwd)END"`) — both contain the markers, but only the
+  // result holds an actual filesystem path between them.
+  const cwdQueryBegRef = useRef<string | null>(null)
+  const cwdQueryEndRef = useRef<string | null>(null)
+  const cwdQueryResolveRef = useRef<((v: string | null) => void) | null>(null)
+  const cwdQueryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // A real cwd starts with `/`, `~`, or a Windows drive. The echoed command's
+  // `$(pwd)` text does NOT, so anchoring the capture on this prefix is what
+  // stops us from matching the echoed command line and harvesting `$(pwd)`.
+  const CWD_PATH_PREFIX = '(?:\\/|~|(?:[A-Za-z]:[\\\\/]))'
+  // Strip our hidden `pwd` query from a chunk, resolving the pending cwd promise
+  // with the captured path. Returns the cleaned chunk (may be empty).
+  const stripCwdQuery = (chunk: string): string => {
+    const beg = cwdQueryBegRef.current
+    const end = cwdQueryEndRef.current
+    if (!beg || !end || !chunk.includes(beg) || !chunk.includes(end)) return chunk
+    const escB = escapeRegex(beg)
+    const escE = escapeRegex(end)
+    const m = chunk.match(new RegExp(escB + '(' + CWD_PATH_PREFIX + '[^\n]*?)' + escE))
+    if (m && cwdQueryResolveRef.current) {
+      const r = cwdQueryResolveRef.current
+      cwdQueryResolveRef.current = null
+      if (cwdQueryTimerRef.current) clearTimeout(cwdQueryTimerRef.current)
+      r(m[1])
+    }
+    // Remove every line that contains a marker (the echoed command + the result).
+    return chunk.replace(new RegExp('[^\n]*(?:' + escB + '|' + escE + ')[^\n]*\n?', 'g'), '')
+  }
+  // Ask the interactive shell for its real absolute cwd. Resolves with the path
+  // (or null on timeout/error). The query output is stripped by stripCwdQuery.
+  const fetchRemoteCwd = (): Promise<string | null> => {
+    if (isLocal) return Promise.resolve(null)
+    return new Promise((resolve) => {
+      const rand = Math.random().toString(36).slice(2, 10)
+      const beg = 'wrolpcwdb' + rand
+      const end = 'wrolpcwde' + rand
+      cwdQueryBegRef.current = beg
+      cwdQueryEndRef.current = end
+      cwdQueryResolveRef.current = resolve
+      if (cwdQueryTimerRef.current) clearTimeout(cwdQueryTimerRef.current)
+      cwdQueryTimerRef.current = setTimeout(() => {
+        if (cwdQueryResolveRef.current) {
+          cwdQueryResolveRef.current(null)
+          cwdQueryResolveRef.current = null
+          cwdQueryBegRef.current = null
+          cwdQueryEndRef.current = null
+        }
+      }, 4000)
+      sendInput(tabIdRef.current, `echo "${beg}$(pwd)${end}"\r`)
+    })
+  }
+  // Seed the best-known remote cwd right after connecting: a configured startup
+  // directory is authoritative; otherwise ask the shell for its real cwd.
+  const seedInitialRemoteCwd = () => {
+    if (isLocal) return
+    const sd = connectConfigRef.current?.startupDir
+    if (sd) {
+      cwdRef.current = sd
+      return
+    }
+    fetchRemoteCwd()
+      .then((real) => {
+        if (real) cwdRef.current = real
+      })
+      .catch(() => {})
+  }
+  // Best-known remote cwd when no `cd`-tracked absolute path exists yet. A
+  // configured startup directory is authoritative (the shell `cd`s into it on
+  // connect). Otherwise fall back to the (relative) prompt name — never guess
+  // by prepending $HOME, since the dir need not live under $HOME.
+  const seedRemoteCwd = (prompt: string | null): string | null => {
+    const sd = connectConfigRef.current?.startupDir
+    if (sd) return sd
+    return prompt ?? null
+  }
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
   // B16: last successfully-sent geometry, used to skip redundant resize sends.
   const lastColsRef = useRef(0)
@@ -876,6 +979,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     lsCaptureRef.current = null
     let text = ls.buf
     if (promptEnd) text = text.slice(0, text.length - promptEnd.length)
+    // Flush any leftover trailing partial line (plain ls/dir coloring): it never
+    // got a newline, so colorize it now before the capture is torn down.
+    if (ls.pending && ls.format !== 'long') {
+      term.write(highlightTableText(ls.pending, ls.format).join('\n'))
+      ls.pending = ''
+    }
     const entries = parseLsBlock(text, ls.format)
     const baseDirPromise = lsBaseDirPromiseRef.current
     if (entries.length > 0 && baseDirPromise) {
@@ -884,12 +993,26 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }
 
   const writeLsChunk = (term: Terminal, ls: LsCaptureState, chunk: string) => {
-    term.write(chunk)
     ls.buf += stripAnsi(chunk)
     ls.bytes += chunk.length
     if (ls.bytes > LS_MAX_BYTES) {
       resetLsCapture()
       return
+    }
+    // Long format: passthrough (only clickable links are added on finalize).
+    // Plain `ls`/`dir` (multi/dir): colorize complete lines as they arrive, like
+    // the old `startCaptureIfLsPlain` path did — but keep the buffer so rows still
+    // become clickable. The trailing partial line waits for the next chunk.
+    if (ls.format === 'long') {
+      term.write(chunk)
+    } else {
+      ls.pending += chunk
+      const nl = ls.pending.lastIndexOf('\n')
+      if (nl >= 0) {
+        const complete = ls.pending.slice(0, nl + 1)
+        ls.pending = ls.pending.slice(nl + 1)
+        term.write(highlightTableText(complete, ls.format).join('\n'))
+      }
     }
     if (ls.prompt && ls.buf.endsWith(ls.prompt)) {
       finalizeLsCapture(term, ls, ls.prompt)
@@ -905,10 +1028,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const startLsCaptureIfMatch = (cmd: string, prompt: string) => {
     const format = detectLsCommand(cmd)
     if (!format) return
-    // Plain multi-column listings (`ls` / `ls -F` / `dir`) are colorized inline
-    // by `startCaptureIfLsPlain` (via `highlightTableText`) instead, so only the
-    // long form (`ls -l` / `ll`) uses the clickable-link capture here.
-    if (format !== 'long') return
+    // All ls/dir forms are clickable here. Plain multi-column listings (`ls` /
+    // `ls -F` / `dir`) are colorized inline by writeLsChunk (via highlightTableText)
+    // while buffering, so they keep their original color AND gain clickable links.
     resetCapture()
     resetLsCapture()
     const term = termRef.current
@@ -923,17 +1045,36 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // the prompt or from `ls -l ~/docs`) can be expanded to an absolute path
     // (SFTP doesn't expand `~`, and the backend `expand_tilde` uses the *local*
     // machine's home, not the remote one).
-    // Local: cwd from the prompt, falling back to the shell's start dir.
+    // Local: track the cwd via `cd` commands (the backend's LocalShell.cwd is
+    // only the *startup* dir and is never updated on `cd`), so links resolve
+    // against the real current directory. The prompt is a fallback only.
     const targetArg = extractLsTargetArg(cmd)
     const promptCwd = extractCwdFromPrompt(prompt || '')
+    promptCwdRef.current = promptCwd
+    // $HOME (via poll_working_dir) is only used to expand a leading `~`. The real
+    // cwd comes from the shell itself: `cwdRef` (seeded at connect / on every
+    // `cd`), or a hidden `pwd` query when we have nothing tracked yet.
     const homePromise: Promise<string | null> = isLocal
       ? Promise.resolve(null)
       : pollWorkingDir(tabIdRef.current).catch(() => null)
-    lsBaseDirPromiseRef.current = homePromise.then((home) => {
-      const cwd = isLocal ? (promptCwd ?? localCwd ?? null) : (promptCwd ?? home)
-      const base = resolveLsBaseDir(cwd, targetArg)
-      return isLocal ? base : expandTilde(base, home)
-    })
+    const cwdPromise: Promise<string | null> = isLocal
+      ? Promise.resolve(cwdRef.current ?? promptCwd ?? localCwd ?? null)
+      : (async () => {
+          if (cwdRef.current) return cwdRef.current
+          const real = await fetchRemoteCwd()
+          if (real) {
+            cwdRef.current = real
+            return real
+          }
+          return seedRemoteCwd(promptCwd)
+        })()
+    lsBaseDirPromiseRef.current = Promise.all([homePromise, cwdPromise]).then(
+      ([home, cwd]) => {
+        if (!isLocal) homeRef.current = home ?? null
+        const base = resolveLsBaseDir(cwd, targetArg)
+        return isLocal ? base : expandTilde(base, home)
+      },
+    )
     const buf = term.buffer.active
     lsCaptureRef.current = {
       format,
@@ -942,6 +1083,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       buf: '',
       bytes: 0,
       timeout: null,
+      pending: '',
     }
   }
 
@@ -1073,6 +1215,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const writeOutput = (chunk: string) => {
     const term = termRef.current
     if (!term) return
+    // Strip our hidden `pwd` query (the echoed command + its result) so the
+    // terminal never shows it; the resolved cwd is captured separately.
+    chunk = stripCwdQuery(chunk)
     const ai = aiMarkRef.current
     if (ai) {
       writeAiChunk(ai, chunk)
@@ -1238,6 +1383,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     tabIdRef.current = tabId
   }, [tabId])
+  // On reconnect the shell restarts in its start dir, so drop the tracked cwd
+  // (it would otherwise stay stale at the pre-reconnect directory).
+  useEffect(() => {
+    cwdRef.current = localCwd ?? null
+    homeRef.current = null
+  }, [reconnectTrigger])
   useEffect(() => {
     connectConfigRef.current = connectConfig
     localShellTypeRef.current = localShellType
@@ -1685,6 +1836,31 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // capture can end precisely when the next prompt arrives.
         if (/^[\r\n]+$/.test(data)) {
           const { prompt, command } = splitPromptCommand(getCurrentCommandLine(term))
+          // Track directory changes (local AND ssh) by following cd/Set-Location.
+          // The backend never updates LocalShell.cwd on `cd`, and SSH prompts only
+          // show a *relative* cwd, so we keep the real (absolute) cwd here for `ls`
+          // link resolution. SSH is seeded from $HOME on the first `cd`.
+          if (command) {
+            const t0 = command.trim().split(/\s+/)[0]?.toLowerCase()
+            if (t0 === 'cd' || t0 === 'chdir' || t0 === 'set-location' || t0 === 'sl') {
+              const arg = command.trim().slice(t0.length).trim().split(/\s+/)[0] ?? ''
+              void (async () => {
+                // SSH: seed the cwd from the shell's real directory (a hidden
+                // `pwd` query) when we don't yet track an absolute cwd. We never
+                // guess from $HOME, since the dir need not live under it.
+                if (!isLocal && cwdRef.current == null) {
+                  try {
+                    const real = await fetchRemoteCwd()
+                    if (real) cwdRef.current = real
+                  } catch {
+                    /* keep null; will fall back to the prompt */
+                  }
+                }
+                const next = resolveCdTarget(arg, cwdRef.current)
+                if (next) cwdRef.current = next
+              })()
+            }
+          }
           // F1: recolor the typed command (and, if the PS1 is uncolored, its
           // trailing symbol) right before the shell processes the Enter. The line
           // is already on screen uncolored; we rewrite it in place.
@@ -1703,8 +1879,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           resetTableCapture()
           // TODO(临时): 暂注释命令输出相关高亮（表格/print），保留输入高亮与 ls/dir。
           // startCaptureIfPrint(command, prompt)          // 命令输出高亮：cat/head/tail
-          startCaptureIfLsPlain(command, prompt)          // 保留：原 ls/dir
-          startLsCaptureIfMatch(command, prompt)          // 保留：原 ls/dir 可点击
+          // startCaptureIfLsPlain 已由 startLsCaptureIfMatch 兼管（plain ls/dir 在
+          // writeLsChunk 里完成着色+可点击，避免两个 capture 同时占用输出）。
+          startLsCaptureIfMatch(command, prompt)          // 保留：原 ls/dir 着色+可点击
           // startTableCaptureIfMatch(command, prompt)     // 命令输出高亮：df/ps/free/netstat/...
         }
       }
@@ -1906,6 +2083,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             startPolling()
+            seedInitialRemoteCwd()
           })
           .catch((err) => {
             const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
@@ -2111,6 +2289,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
               }
             } catch {}
           }, 100)
+          seedInitialRemoteCwd()
         })
         .catch((err) => {
           const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
