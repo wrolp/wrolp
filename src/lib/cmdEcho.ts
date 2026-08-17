@@ -31,7 +31,7 @@ const RESET = '\x1b[0m'
 const COLORS: Record<CmdTokenType, string> = {
   prog: '\x1b[1;35m', // bold magenta
   opt: '\x1b[32m', // green
-  arg: RESET, // default
+  arg: '\x1b[38;5;111m', // soft blue (plain arguments are highlighted too)
   str: '\x1b[33m', // yellow
   path: '\x1b[36m', // cyan
   redir: '\x1b[31m', // red
@@ -43,6 +43,10 @@ const COLORS: Record<CmdTokenType, string> = {
 
 // Operators / redirections treated as a single token.
 const OPERATORS = new Set(['>', '>>', '<', '|', '&&', '||', ';', '&'])
+
+// Operators that introduce a NEW command word (so the token after them should
+// be colored as a program, e.g. `cd opt | grep a` → `grep` is magenta).
+const CMD_SEPARATORS = new Set(['|', '&&', '||', ';'])
 
 // Split a command line into typed tokens (display-only; approximate is fine).
 export function tokenizeCommand(cmd: string): CmdToken[] {
@@ -99,6 +103,10 @@ export function tokenizeCommand(cmd: string): CmdToken[] {
       type = 'arg'
     }
     tokens.push({ text: word, type })
+    // After a command-separating operator (`|`, `&&`, `||`, `;`) the next word is
+    // a new program, so re-arm firstWord detection. File redirections (`>`, `<`)
+    // are followed by filenames, not commands, so they don't reset it.
+    if (type === 'redir' && CMD_SEPARATORS.has(word)) firstWord = true
     i = j
   }
   return tokens
