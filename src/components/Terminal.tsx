@@ -1726,13 +1726,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 const pos = computeLinkAnchor(term, linkTopBufferRow, linkLeftCol)
                 if (!pos) return
                 linkTooltipEntryRef.current = entry
-                if (pos.y < 70) {
-                  // Too close to the top edge — show below the name instead.
-                  setLinkTooltip({ x: pos.x, y: pos.y + pos.cellH, below: true, entry })
-                } else {
-                  // Overlap the top of the entry name by 2px.
-                  setLinkTooltip({ x: pos.x, y: pos.y - 2, entry })
+                // Render the card below the entry when it's near the top of the
+                // viewport, so it isn't clipped/overlapped at the top-left corner.
+                // A small downward nudge keeps it clearly under the name.
+                let below = pos.y < 90
+                // Above the name: nudge down 2px; below the name: nudge up 2px.
+                let top = below ? pos.y + pos.cellH - 2 : pos.y + 2
+                // Safety: even in the above case, never let the card climb above
+                // the viewport — flip it below if it would.
+                if (!below && top < 8) {
+                  below = true
+                  top = pos.y + pos.cellH - 2
                 }
+                setLinkTooltip({ x: pos.x, y: top, below, entry })
               }, 800)
             },
             leave: () => {
