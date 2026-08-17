@@ -1027,7 +1027,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       setTransferRows((prev) => mergeRows(prev, rows))
 
       // Upload the files themselves, several at a time. Each file streams in
-      // ~256KB chunks (browser reads are buffered up inside fsUploadFileStream);
+      // a few-MB chunks (browser reads are buffered up inside fsUploadFileStream);
       // the whole file is never serialized through the Tauri JSON IPC at once.
       let firstError: string | null = null
       await runConcurrent(files, UPLOAD_CONCURRENCY, async (f) => {

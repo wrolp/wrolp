@@ -531,7 +531,7 @@ export async function fsUploadFileBytes(
 
 /**
  * Encode a byte buffer as a base64 string. Chunked so very large buffers (e.g.
- * 1MB upload chunks) don't blow the `String.fromCharCode.apply` argument
+ * multi-MB upload chunks) don't blow the `String.fromCharCode.apply` argument
  * limit. Used by `fsUploadFileStream` to ship upload data as a single JSON
  * string instead of a huge array of numbers (the previous CPU hot spot).
  */
@@ -546,13 +546,14 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Stream an HTML5 `File` (drag & drop) to the remote target in small chunks.
+ * Stream an HTML5 `File` (drag & drop) to the remote target in chunks.
  * The whole file is never serialized through the Tauri JSON IPC at once —
  * the old `Array.from(await file.arrayBuffer())` produced a `number[]` of
  * every byte, which blew up memory and the WebView IPC payload for large
- * files. Here the frontend reads the file in ~64KB pieces and each chunk is
- * sent via its own small `upload_chunk` invoke; the remote handle is kept
- * open on the Rust side between chunks.
+ * files. Here the frontend reads the file in the browser's default ~64KB
+ * stream pieces, buffers them up to a few MB, and sends each buffered chunk
+ * via its own `upload_chunk` invoke; the remote handle is kept open on the
+ * Rust side between chunks.
  */
 export async function fsUploadFileStream(
   target: TargetRef,
@@ -577,7 +578,7 @@ export async function fsUploadFileStream(
     const reader = file.stream().getReader()
     let transferred = 0
     let pending: Uint8Array | null = null
-    const CHUNK = 1024 * 1024 // ~1MB per invoke: fewer IPC round-trips per byte
+    const CHUNK = 4 * 1024 * 1024 // ~4MB per invoke: fewer IPC round-trips per byte
     const send = async (data: Uint8Array) => {
       // base64, not a JSON number array: serializing every byte as a JSON
       // number made the WebView's JSON.stringify AND Rust's serde_json parse
