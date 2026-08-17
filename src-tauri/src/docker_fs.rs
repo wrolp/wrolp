@@ -323,9 +323,11 @@ pub async fn list_docker_containers(
   // NOTE: docker's `--format` template only exposes `.Status` (e.g. "Up 3 hours",
   // "Exited (0) 2 days ago") on `containerContext`. There is no top-level `.State`
   // field, so we derive the normalized state word from the Status text instead.
+  // `-a` lists all containers (running + stopped); callers filter by state.
   let argv = vec![
     "docker".to_string(),
     "ps".to_string(),
+    "-a".to_string(),
     "--format".to_string(),
     "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}".to_string(),
   ];

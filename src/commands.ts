@@ -650,6 +650,11 @@ export async function stopDockerContainer(tabId: number, containerName: string):
   return await invoke('stop_docker_container', { tabId, containerName })
 }
 
+/** Start a stopped Docker container on the jump host. */
+export async function startDockerContainer(tabId: number, containerName: string): Promise<void> {
+  return await invoke('start_docker_container', { tabId, containerName })
+}
+
 export async function dockerLogsStreamStart(
   tabId: number,
   containerName: string,

@@ -3894,6 +3894,28 @@ pub async fn stop_docker_container(
   }
 }
 
+/// Start a stopped Docker container on the jump host.
+/// Runs `docker start <container>`.
+#[tauri::command]
+pub async fn start_docker_container(
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  container_name: String,
+) -> Result<(), String> {
+  let handle = crate::remote_fs::get_jump_handle(&state, tab_id)?;
+  let argv = vec!["docker".into(), "start".into(), container_name];
+  match crate::docker_fs::exec_on_jump(&*handle, &argv, None).await {
+    Ok((_out, _err, status)) => {
+      if status == 0 {
+        Ok(())
+      } else {
+        Err(format!("docker start exited with status {}", status))
+      }
+    }
+    Err(e) => Err(e),
+  }
+}
+
 /// Start streaming `docker logs --tail N -f <container>`.
 /// Returns a stream_id for use with `poll_docker_logs` / `stop_docker_logs_stream`.
 #[tauri::command]

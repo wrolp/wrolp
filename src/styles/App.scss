@@ -4187,6 +4187,59 @@ input[type='password']::-ms-clear {
       cursor: default;
     }
   }
+
+  .docker-filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: $text-muted;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+
+    input[type='checkbox'] {
+      appearance: none;
+      width: 26px;
+      height: 14px;
+      border-radius: 7px;
+      background: #3a3a3a;
+      border: none;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.15s;
+      flex-shrink: 0;
+
+      &::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #9e9e9e;
+        transition: transform 0.15s, background 0.15s;
+      }
+
+      &:checked {
+        background: #0a7ce8;
+
+        &::after {
+          transform: translateX(12px);
+          background: #fff;
+        }
+      }
+    }
+
+    .docker-filter-toggle-text {
+      line-height: 1;
+    }
+
+    &:hover {
+      color: $text-primary;
+    }
+  }
 }
 
 .docker-list {
@@ -4224,6 +4277,13 @@ input[type='password']::-ms-clear {
   &.active {
     background: rgba($accent, 0.12);
     box-shadow: inset 2px 0 0 $accent;
+  }
+  &.stopped {
+    opacity: 0.55;
+
+    &:hover {
+      opacity: 0.9;
+    }
   }
 
   .docker-icon {

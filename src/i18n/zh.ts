@@ -368,6 +368,13 @@ const zh: Partial<Record<TranslationKey, string>> = {
   dockerStopping: '正在停止容器 “{name}” ...',
   dockerStopped: '容器 “{name}” 已停止',
   dockerStopFailed: '停止容器 “{name}” 失败：{err}',
+  dockerStarting: '正在启动容器 “{name}” ...',
+  dockerStarted: '容器 “{name}” 已启动',
+  dockerStartFailed: '启动容器 “{name}” 失败：{err}',
+  showAllContainers: '全部',
+  showAllContainersHint: '同时显示已停止的容器',
+  rightClickStart: '右键 → 启动容器',
+  noRunningContainers: '没有运行中的容器（勾选“全部”可查看已停止的容器）',
   // Local terminal
   localTerminal: '本地终端',
   openLocalShell: '打开本地终端',

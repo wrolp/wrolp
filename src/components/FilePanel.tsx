@@ -2072,10 +2072,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           </div>
           {dockerError && <div className="file-error">{dockerError}</div>}
           {dockerLoading && <div className="file-empty">{t('loading')}</div>}
-          {!dockerLoading && !dockerError && dockerContainers.length === 0 && (
+          {!dockerLoading && !dockerError && dockerContainers.filter((c) => c.state === 'running').length === 0 && (
             <div className="file-empty">{t('noContainers')}</div>
           )}
-          {dockerContainers.map((c) => (
+          {dockerContainers.filter((c) => c.state === 'running').map((c) => (
             <div
               key={c.id}
               className="docker-item"

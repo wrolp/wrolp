@@ -370,6 +370,13 @@ const en = {
   dockerStopping: 'Stopping container "{name}" ...',
   dockerStopped: 'Container "{name}" stopped',
   dockerStopFailed: 'Failed to stop container "{name}": {err}',
+  dockerStarting: 'Starting container "{name}" ...',
+  dockerStarted: 'Container "{name}" started',
+  dockerStartFailed: 'Failed to start container "{name}": {err}',
+  showAllContainers: 'All',
+  showAllContainersHint: 'Show stopped containers too',
+  rightClickStart: 'Right-click → Start container',
+  noRunningContainers: 'No running containers (toggle "All" to see stopped ones)',
   // Local terminal
   localTerminal: 'Local Terminal',
   openLocalShell: 'Open Local Terminal',

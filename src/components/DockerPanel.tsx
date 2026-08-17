@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ContainerInfo } from '../types'
-import { listDockerContainers, restartDockerContainer, stopDockerContainer } from '../commands'
+import {
+  listDockerContainers,
+  restartDockerContainer,
+  startDockerContainer,
+  stopDockerContainer,
+} from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
@@ -22,6 +27,8 @@ interface DockerPanelProps {
   onRestartContainer?: (container: ContainerInfo) => void
   /** Stop a running container. */
   onStopContainer?: (container: ContainerInfo) => void
+  /** Start a stopped container. */
+  onStartContainer?: (container: ContainerInfo) => void
   /** Label of the host machine whose containers are listed (shown in header). */
   serverLabel?: string
 }
@@ -42,12 +49,14 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onViewLogs,
   onRestartContainer,
   onStopContainer,
+  onStartContainer,
   serverLabel,
 }) => {
   const { t } = useI18n()
   const [containers, setContainers] = useState<ContainerInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showAll, setShowAll] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; container: ContainerInfo } | null>(null)
   const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
@@ -80,8 +89,6 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     (e: React.MouseEvent, container: ContainerInfo) => {
       e.preventDefault()
       e.stopPropagation()
-      // Only show the menu for running containers
-      if (container.state !== 'running') return
       setCtxMenu({ x: e.clientX, y: e.clientY, container })
       setMenuStyle({ left: e.clientX, top: e.clientY })
     },
@@ -147,6 +154,22 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     setCtxMenu(null)
   }, [ctxMenu, jumpTabId, load, onStopContainer])
 
+  const handleStart = useCallback(() => {
+    if (!ctxMenu) return
+    const container = ctxMenu.container
+    if (onStartContainer) {
+      onStartContainer(container)
+    } else {
+      // Fallback: start directly and refresh the list
+      startDockerContainer(jumpTabId, container.name)
+        .then(() => load())
+        .catch((e) => setError(String(e)))
+    }
+    setCtxMenu(null)
+  }, [ctxMenu, jumpTabId, load, onStartContainer])
+
+  const visible = showAll ? containers : containers.filter((c) => c.state === 'running')
+
   return (
     <div className="docker-panel">
       <div className="docker-panel-header">
@@ -165,34 +188,53 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
           )}
         </span>
         {expanded && (
-          <button className="docker-refresh" title="Refresh containers" onClick={load} disabled={loading}>
-            <Icon name="refresh" />
-          </button>
+          <>
+            <label className="docker-filter-toggle" title={t('showAllContainersHint')}>
+              <input
+                type="checkbox"
+                checked={showAll}
+                onChange={(e) => setShowAll(e.target.checked)}
+              />
+              <span className="docker-filter-toggle-text">{t('showAllContainers')}</span>
+            </label>
+            <button className="docker-refresh" title="Refresh containers" onClick={load} disabled={loading}>
+              <Icon name="refresh" />
+            </button>
+          </>
         )}
       </div>
       {expanded && (
         <div className="docker-list">
           {error && <div className="file-error">{error}</div>}
           {loading && <div className="file-empty">{t('loading')}</div>}
-          {!loading && !error && containers.length === 0 && (
-            <div className="file-empty">{t('noContainers')}</div>
-          )}
-          {containers.map((c) => (
-            <div
-              key={c.id}
-              className={`docker-item${activeContainer === c.name ? ' active' : ''}`}
-              onClick={() => onOpenContainer(c)}
-              onContextMenu={(e) => handleContextMenu(e, c)}
-              title={`${c.name}\n${c.image}\n${c.status}${c.state === 'running' ? '\n\n' + t('rightClickShell') : ''}\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}`}
-            >
-              <span className="docker-icon"><Icon name="container" /></span>
-              <div className="docker-info">
-                <div className="docker-name">{c.name}</div>
-                <div className="docker-image">{c.image}</div>
-              </div>
-              <span className={`docker-state ${c.state}`}>{c.state}</span>
+          {!loading && !error && visible.length === 0 && (
+            <div className="file-empty">
+              {showAll ? t('noContainers') : t('noRunningContainers')}
             </div>
-          ))}
+          )}
+          {visible.map((c) => {
+            const isRunning = c.state === 'running'
+            return (
+              <div
+                key={c.id}
+                className={`docker-item${activeContainer === c.name ? ' active' : ''}${isRunning ? '' : ' stopped'}`}
+                onClick={() => {
+                  if (isRunning) onOpenContainer(c)
+                }}
+                onContextMenu={(e) => handleContextMenu(e, c)}
+                title={`${c.name}\n${c.image}\n${c.status}${
+                  isRunning ? '\n\n' + t('rightClickShell') : '\n\n' + t('rightClickStart')
+                }${isRunning ? `\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}` : ''}`}
+              >
+                <span className="docker-icon"><Icon name="container" /></span>
+                <div className="docker-info">
+                  <div className="docker-name">{c.name}</div>
+                  <div className="docker-image">{c.image}</div>
+                </div>
+                <span className={`docker-state ${c.state}`}>{c.state}</span>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -204,24 +246,31 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
           style={{ left: menuStyle.left, top: menuStyle.top }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="context-menu-item" onClick={handleEnterShell}>
-            <Icon name="terminal" size={14} />
-            {t('enterShell')}
-          </div>
-          {onAnalyzeContainer && (
-            <div className="context-menu-item" onClick={handleAnalyzeContainer}>
-              <Icon name="search" size={14} />
-              {t('analyzeContainer')}
-            </div>
-          )}
-          <div className="context-menu-item" onClick={handleRestart}>
-            <Icon name="refresh" size={14} />
-            {t('dockerRestart')}
-          </div>
-          {ctxMenu.container.state === 'running' && (
-            <div className="context-menu-item ctx-danger" onClick={handleStop}>
-              <Icon name="stop" size={14} />
-              {t('dockerStop')}
+          {ctxMenu.container.state === 'running' ? (
+            <>
+              <div className="context-menu-item" onClick={handleEnterShell}>
+                <Icon name="terminal" size={14} />
+                {t('enterShell')}
+              </div>
+              {onAnalyzeContainer && (
+                <div className="context-menu-item" onClick={handleAnalyzeContainer}>
+                  <Icon name="search" size={14} />
+                  {t('analyzeContainer')}
+                </div>
+              )}
+              <div className="context-menu-item" onClick={handleRestart}>
+                <Icon name="refresh" size={14} />
+                {t('dockerRestart')}
+              </div>
+              <div className="context-menu-item ctx-danger" onClick={handleStop}>
+                <Icon name="stop" size={14} />
+                {t('dockerStop')}
+              </div>
+            </>
+          ) : (
+            <div className="context-menu-item" onClick={handleStart}>
+              <Icon name="play" size={14} />
+              {t('dockerStart')}
             </div>
           )}
           {onViewLogs && (

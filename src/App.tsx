@@ -68,6 +68,7 @@ import {
   decryptApiKey,
   listAiModels,
   restartDockerContainer,
+  startDockerContainer,
   stopDockerContainer,
   localClose,
   getLocalTerminals,
@@ -518,6 +519,26 @@ export default function App() {
         setToast({
           kind: 'error',
           text: t('dockerStopFailed', { name: container.name, err: msg }),
+        })
+      }
+    },
+    [activeTabId, t],
+  )
+
+  // Start a Docker container
+  const handleStartContainer = useCallback(
+    async (container: ContainerInfo) => {
+      if (activeTabId == null) return
+      setToast({ kind: 'progress', text: t('dockerStarting', { name: container.name }) })
+      try {
+        await startDockerContainer(activeTabId, container.name)
+        setToast({ kind: 'success', text: t('dockerStarted', { name: container.name }) })
+      } catch (e) {
+        const msg = String(e)
+        console.error(`Docker start failed: ${msg}`)
+        setToast({
+          kind: 'error',
+          text: t('dockerStartFailed', { name: container.name, err: msg }),
         })
       }
     },
@@ -4702,6 +4723,7 @@ export default function App() {
                     onViewLogs={handleViewContainerLogs}
                     onRestartContainer={handleRestartContainer}
                     onStopContainer={handleStopContainer}
+                    onStartContainer={handleStartContainer}
                   />
                 </div>
               )}
