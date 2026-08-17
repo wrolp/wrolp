@@ -13,6 +13,7 @@
  * highlighting at all. Our own tokenizer is synchronous and always works.
  */
 import { detectLanguage } from '../editor/languages'
+import { detectLsCommand, parseLsBlock, LsFormat, LsEntry } from './lsParse'
 
 const RESET = '\x1b[0m'
 
@@ -532,4 +533,250 @@ export function highlightLines(text: string, lang: string): string[] {
     out[i] = colorizeLine(lines[i], tokenizer(lines[i]))
   }
   return out
+}
+
+// ===== Multi-line aware highlighting (cat/head/tail output, diff, git, tree,
+// docker, xml, heredocs, block comments) =====
+//
+// `highlightLines` tokenizes line-by-line, so it can never colorize a token
+// that spans newlines (a `/* */` C comment, a python `"""docstring"""`, a shell
+// heredoc, or a whole `diff`/`git`/`tree` block). `highlightMultiline` instead
+// operates on the whole text block and is what the capture writer uses, so the
+// output stays 1:1 line-aligned while multiline constructs are colored.
+
+const ESC = '\x1b'
+function wrapHex(hex: string, text: string): string {
+  if (!text) return text
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `${ESC}[38;2;${r};${g};${b}m${text}${ESC}[0m`
+}
+
+// Languages whose per-line tokenizer can additionally carry multi-line tokens
+// (block comments / docstrings / heredocs). For others we just fall back to the
+// existing per-line tokenizer.
+const C_LIKE_MULTI = new Set([
+  'c', 'cpp', 'csharp', 'java', 'javascript', 'typescript', 'go', 'rust', 'php', 'json',
+  'scala', 'kotlin', 'sql', 'lua',
+])
+const MULTILINE_SPAN_LANGS = new Set<string>([
+  ...C_LIKE_MULTI, 'python', 'shell', 'sh', 'bash', 'yaml', 'toml', 'ini', 'css', 'scss', 'less',
+])
+
+// Whole-text block tokenizers for languages whose natural unit is the block.
+const BLOCK_TOKENIZERS: Record<string, (t: string) => string[]> = {
+  diff: tokenizeDiffBlock,
+  git: tokenizeGitBlock,
+  tree: tokenizeTreeBlock,
+  xml: tokenizeXmlBlock,
+  html: tokenizeXmlBlock,
+  docker: tokenizeDockerBlock,
+}
+
+function tokenizeDiffBlock(text: string): string[] {
+  return text.split('\n').map((line) => {
+    if (line.startsWith('+++') || line.startsWith('---')) return wrapHex('#c586c0', line)
+    if (line.startsWith('@@')) return wrapHex('#569cd6', line)
+    if (line.startsWith('+')) return wrapHex('#4ec9b0', line)
+    if (line.startsWith('-')) return wrapHex('#f48771', line)
+    if (
+      line.startsWith('diff --git') ||
+      line.startsWith('index ') ||
+      line.startsWith('similarity') ||
+      line.startsWith('rename') ||
+      line.startsWith('new file') ||
+      line.startsWith('deleted')
+    )
+      return wrapHex('#9cdcfe', line)
+    return line
+  })
+}
+
+function tokenizeGitBlock(text: string): string[] {
+  return text.split('\n').map((line) => {
+    if (line.startsWith('commit '))
+      return line.replace(/^commit (\S+)/, (_h, hash) => 'commit ' + wrapHex('#c586c0', hash))
+    if (line.startsWith('Author:')) return wrapHex('#9cdcfe', line)
+    if (line.startsWith('Date:')) return wrapHex('#6a9955', line)
+    if (line.startsWith('Merge:')) return wrapHex('#9cdcfe', line)
+    if (line.startsWith('diff --git') || line.startsWith('index ')) return wrapHex('#9cdcfe', line)
+    if (line.startsWith('@@')) return wrapHex('#569cd6', line)
+    if (line.startsWith('+')) return wrapHex('#4ec9b0', line)
+    if (line.startsWith('-')) return wrapHex('#f48771', line)
+    if (/^\s*(modified|new file|deleted|renamed|copied|untracked files?):/i.test(line))
+      return wrapHex('#569cd6', line)
+    if (/^#\s*On branch/i.test(line)) return wrapHex('#6a9955', line)
+    return line
+  })
+}
+
+function tokenizeTreeBlock(text: string): string[] {
+  return text.split('\n').map((line) => {
+    const m = line.match(/^([│\s]*[├└]──\s*)(.*)$/)
+    if (!m) return line
+    const prefix = wrapHex('#6a9955', m[1])
+    let name = m[2]
+    if (name.endsWith('/')) name = wrapHex('#4ec9b0', name)
+    else if (/->/.test(name)) name = wrapHex('#c586c0', name)
+    else if (/\.(sh|bash|exe|bat|cmd|ps1|bin|run|out|com|py|pl|rb|zsh|fish)$/i.test(name))
+      name = wrapHex('#dcdcaa', name)
+    return prefix + name
+  })
+}
+
+function tokenizeXmlBlock(text: string): string[] {
+  const TAG = /<\/?[A-Za-z_][\w:.-]*/g
+  let s = ''
+  let pos = 0
+  let m: RegExpExecArray | null
+  while ((m = TAG.exec(text))) {
+    s += text.slice(pos, m.index)
+    let tag = m[0]
+    // attribute names (` name=`)
+    tag = tag.replace(/(\s[A-Za-z_:][\w:.-]*)(?==)/g, (a) => wrapHex('#9cdcfe', a))
+    // attribute values
+    tag = tag.replace(/=("[^"]*"|'[^']*')/g, (q) => '=' + wrapHex('#ce9178', q.slice(1)))
+    s += wrapHex('#569cd6', tag)
+    pos = m.index + m[0].length
+  }
+  s += text.slice(pos)
+  return s.split('\n')
+}
+
+function tokenizeDockerBlock(text: string): string[] {
+  return text.split('\n').map((line, i) => {
+    if (i === 0) return wrapHex('#4ec9b0', line) // header row
+    if (/^[\s\-=|]+$/.test(line)) return wrapHex('#6a9955', line) // separator row
+    return line
+  })
+}
+
+// Colorize the "outside" text (between multi-line spans) per-line with the
+// normal tokenizer, so single-line tokens keep working everywhere.
+function colorizeOutside(seg: string, lang: string): string {
+  return seg
+    .split('\n')
+    .map((l) => highlightLines(l, lang)[0] ?? l)
+    .join('\n')
+}
+
+// Find and solid-colorize multi-line spans (block comments, docstrings,
+// heredocs); everything else is colorized per-line. Returns 1:1 line array.
+function applyMultilineSpans(text: string, lang: string): string[] {
+  const defs: { re: RegExp; color: string }[] = []
+  if (lang === 'python')
+    defs.push({ re: /"""[\s\S]*?"""|'''[\s\S]*?'''/g, color: '#ce9178' })
+  if (C_LIKE_MULTI.has(lang))
+    defs.push({ re: /\/\*[\s\S]*?\*\//g, color: '#6a9955' })
+  if (lang === 'shell' || lang === 'sh' || lang === 'bash')
+    defs.push({
+      re: /<<[-~]?\s*["']?(\w+)["']?(?:\r?\n)([\s\S]*?)(?:\r?\n)\1\b/g,
+      color: '#ce9178',
+    })
+  if (defs.length === 0) return highlightLines(text, lang)
+
+  const spans: [number, number, string][] = []
+  for (const d of defs) {
+    d.re.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = d.re.exec(text))) spans.push([m.index, m.index + m[0].length, d.color])
+  }
+  if (spans.length === 0) return highlightLines(text, lang)
+
+  spans.sort((a, b) => a[0] - b[0])
+  let s = ''
+  let pos = 0
+  for (const [start, end, color] of spans) {
+    if (start > pos) s += colorizeOutside(text.slice(pos, start), lang)
+    s += wrapHex(color, text.slice(start, end))
+    pos = end
+  }
+  if (pos < text.length) s += colorizeOutside(text.slice(pos), lang)
+  return s.split('\n')
+}
+
+/**
+ * Tokenize a whole text block for `lang` (multi-line aware) and return one
+ * colored string per line (1:1 with input lines, so it can be fed straight into
+ * the capture writer). Falls back to per-line tokenizing when the language has
+ * no multi-line constructs.
+ */
+export function highlightMultiline(text: string, lang: string): string[] {
+  let l = lang
+  if (!l || l === 'plaintext') {
+    const fromShebang = detectLanguageFromShebang(text)
+    if (fromShebang) l = fromShebang
+  }
+  if (BLOCK_TOKENIZERS[l]) return BLOCK_TOKENIZERS[l](text)
+  return applyMultilineSpans(text, l)
+}
+
+// ---- plain `ls` / `dir` listing highlight (multi-column) ----
+
+const LS_DIR = '#4ec9b0'
+const LS_LINK = '#c586c0'
+const LS_EXEC = '#dcdcaa'
+const LS_DEFAULT = '#d4d4d4'
+const EXEC_EXT = new Set([
+  'sh', 'bash', 'exe', 'bat', 'cmd', 'ps1', 'bin', 'run', 'out', 'com', 'py', 'pl', 'rb',
+  'js', 'ts', 'zsh', 'fish', 'ksh',
+])
+
+function lsNameColor(name: string, kind: string): string {
+  if (kind === 'dir') return LS_DIR
+  if (kind === 'link') return LS_LINK
+  // `unknown`: best-effort by name (plain `ls` carries no type indicator)
+  if (name.endsWith('/')) return LS_DIR
+  if (name.includes(' -> ')) return LS_LINK
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
+  if (EXEC_EXT.has(ext)) return LS_EXEC
+  return LS_DEFAULT
+}
+
+/**
+ * Colorize a captured plain `ls` / `dir` block. Entries are resolved by column
+ * (via `parseLsBlock`) so only the entry name gets wrapped — spacing/alignment
+ * is preserved. Returns 1:1 line array.
+ */
+export function highlightTableText(text: string, format: LsFormat): string[] {
+  const lines = text.split('\n')
+  const entries = parseLsBlock(text, format, 500)
+  const byLine: Record<number, LsEntry[]> = {}
+  for (const e of entries) (byLine[e.line] ??= []).push(e)
+  return lines.map((line, i) => {
+    const es = (byLine[i] ?? []).slice().sort((a, b) => b.col - a.col)
+    let s = line
+    for (const e of es) {
+      const end = e.col + e.name.length
+      if (end > s.length) continue
+      const color = lsNameColor(e.name, e.kind)
+      if (color === LS_DEFAULT) continue // default foreground: leave untouched
+      s = s.slice(0, e.col) + wrapHex(color, s.slice(e.col, end)) + s.slice(end)
+    }
+    return s
+  })
+}
+
+/** Convenience table highlighter factory (colorizes a captured block). */
+export function makeTableHighlighter(format: LsFormat): { colorize: (t: string) => string[] } {
+  return { colorize: (t: string) => highlightTableText(t, format) }
+}
+
+const PRINT_READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl', 'sed', 'awk'])
+
+/** True when `cmd` is a viewer/reader whose output we should re-color. */
+export function isPrintLike(cmd: string): boolean {
+  const tokens = cmd.trim().split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return false
+  const prog = (tokens[0].split(/[\\/]/).pop() ?? tokens[0]).toLowerCase()
+  if (PRINT_READERS.has(prog)) return true
+  // a reader anywhere in a pipeline (e.g. `grep x | cat`, `cat < foo`)
+  return /\b(cat|head|tail|less|more)\b/.test(cmd)
+}
+
+/** True when `cmd` is a plain (non-`ls -l`) `ls`/`dir` listing we can colorize. */
+export function isLsPlain(cmd: string): boolean {
+  const fmt = detectLsCommand(cmd)
+  return fmt === 'multi' || fmt === 'multiF' || fmt === 'dir'
 }
