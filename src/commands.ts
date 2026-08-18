@@ -584,6 +584,15 @@ export async function fsDeleteFile(
     : invoke<boolean>('target_delete_file', { target, path, isDir })
 }
 
+/** Remote-internal copy: copy `src` (file or dir) into `destDir` on the same target. */
+export async function fsCopy(
+  target: TargetRef,
+  src: string,
+  destDir: string,
+): Promise<void> {
+  return invoke<void>('target_copy_file', { target, src, destDir })
+}
+
 export async function fsReadFileContent(
   target: TargetRef,
   path: string,

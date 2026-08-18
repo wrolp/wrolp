@@ -4,7 +4,9 @@ use super::ssh_session::{
   SshSession, SwitchedUser, TargetRef, TransferControl, TunnelInfo, UploadSession,
 };
 use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
-use crate::remote_fs::{build_fs, build_sftp, delete_dir_recursive, get_jump_handle, RemoteFs};
+use crate::remote_fs::{
+  build_fs, build_sftp, copy_recursive, delete_dir_recursive, get_jump_handle, RemoteFs,
+};
 use encoding_rs::{Encoding, UTF_8};
 use russh::client::{self, Handler};
 use russh::ChannelId;
@@ -3313,6 +3315,73 @@ pub async fn target_upload_file_bytes(
   ensure_parent_dir_fs(fs.as_ref(), &remote_path).await?;
   fs.write_file(&remote_path, &file_data).await?;
   Ok(true)
+}
+
+/// Append a " copy" (then " copy N") suffix to `path` so a duplicate copy lands
+/// next to the original with a readable name, preserving any file extension
+/// (e.g. `report.txt` -> `report copy.txt`, directory `docs` -> `docs copy`).
+fn with_copy_suffix(path: &str) -> String {
+  let (parent, base) = match path.rsplit_once('/') {
+    Some((p, b)) => (p, b),
+    None => ("", path),
+  };
+  let (stem, ext) = match base.rsplit_once('.') {
+    Some((s, e)) if !s.is_empty() => (s, format!(".{}", e)),
+    _ => (base, String::new()),
+  };
+  let new_base = format!("{} copy{}", stem, ext);
+  if parent.is_empty() {
+    new_base
+  } else {
+    format!("{}/{}", parent, new_base)
+  }
+}
+
+/// Return `dest` unchanged if it's free, otherwise a unique variant via
+/// `with_copy_suffix` (and a numeric suffix if those are taken too).
+async fn unique_dest(fs: &dyn RemoteFs, dest: &str) -> Result<String, String> {
+  if fs.metadata(dest).await.is_err() {
+    return Ok(dest.to_string());
+  }
+  let mut candidate = with_copy_suffix(dest);
+  let mut n = 2;
+  while fs.metadata(&candidate).await.is_ok() {
+    candidate = format!("{} {}", with_copy_suffix(dest), n);
+    n += 1;
+  }
+  Ok(candidate)
+}
+
+/// Copy a remote file or directory to a destination directory on the same
+/// target (remote-internal copy/paste). The destination is named after the
+/// source's basename inside `dest_dir` (copying `/a/b.txt` into `/c` yields
+/// `/c/b.txt`). An existing name is uniquified instead of overwritten. Copying
+/// a directory into itself or a descendant is rejected.
+#[tauri::command]
+pub async fn target_copy_file(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  src: String,
+  dest_dir: String,
+) -> Result<(), String> {
+  let name = src
+    .rsplit('/')
+    .next()
+    .filter(|s| !s.is_empty())
+    .unwrap_or(&src)
+    .to_string();
+  let dest_dir = dest_dir.trim_end_matches('/');
+  let dest = format!("{}/{}", dest_dir, name);
+
+  // Reject copying a directory into itself or a descendant.
+  if dest == src || dest.starts_with(&format!("{}/", src)) {
+    return Err("Cannot copy a directory into itself".into());
+  }
+
+  let fs = build_fs(&app, &state, &target).await?;
+  let dest = unique_dest(fs.as_ref(), &dest).await?;
+  copy_recursive(fs.as_ref(), &src, &dest).await
 }
 
 /// List Docker containers reachable from a connected (jump host) tab.

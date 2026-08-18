@@ -402,6 +402,39 @@ impl RemoteFs for SftpFs {
   }
 }
 
+/// Recursively copy `src` (file or directory) to `dest` on the same remote
+/// filesystem. `dest` is the FULL destination path (the caller names it after
+/// the source's basename inside the chosen destination directory). Symlinks are
+/// skipped so a symlink pointing at an ancestor can't cause infinite recursion.
+pub async fn copy_recursive(
+  fs: &dyn RemoteFs,
+  src: &str,
+  dest: &str,
+) -> Result<(), String> {
+  let meta = fs.metadata(src).await?;
+  if meta.is_dir {
+    fs.create_dir(dest).await?;
+    let entries = fs.list_dir(src).await?;
+    for e in entries {
+      // Skip symlinks (mode starts with `l` for Docker / `120` for SFTP) so a
+      // symlink pointing at an ancestor can't cause infinite recursion.
+      if e.mode.starts_with('l') || e.mode.starts_with("120") {
+        continue;
+      }
+      let child_dest = if dest.ends_with('/') {
+        format!("{}{}", dest, e.name)
+      } else {
+        format!("{}/{}", dest, e.name)
+      };
+      Box::pin(copy_recursive(fs, &e.path, &child_dest)).await?;
+    }
+  } else {
+    let data = fs.read_file(src).await?;
+    fs.write_file(dest, &data).await?;
+  }
+  Ok(())
+}
+
 use crate::ssh_session::DirDownloadSummary;
 use std::path::Path;
 

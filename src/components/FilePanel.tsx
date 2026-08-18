@@ -24,6 +24,7 @@ import {
   fsCreateDirectory,
   fsRenameFile,
   fsWriteFileContent,
+  fsCopy,
   pauseTransfer,
   resumeTransfer,
   cancelTransfer,
@@ -342,6 +343,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const [tree, setTree] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Source node of the in-progress remote-internal copy (set by the "Copy"
+  // context-menu action). Consumed by "Paste" to copy it into the target dir.
+  const [copiedNode, setCopiedNode] = useState<TreeNode | null>(null)
   // Guards the browse-state write against target switches: on the render right
   // after `targetKey` changes, `currentPath` is still the PREVIOUS target's
   // value (the reset effect below sets it later), so writing it would corrupt
@@ -1040,13 +1044,36 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }
 
   /**
-   * "Paste" context-menu action: uploads the files currently copied to the
-   * system clipboard (Windows Explorer Ctrl+C). A right-click on a directory
-   * pastes into that directory; a right-click on a file or blank area pastes
-   * into the currently browsed directory.
+   * Remote-internal paste: copy the currently `copiedNode` (set by the "Copy"
+   * action) into `node`'s directory, or the browsed directory when pasting on a
+   * file / blank area. The backend uniquifies the name if a clash occurs.
+   */
+  const handleRemotePaste = async (node: TreeNode | null) => {
+    if (!copiedNode) return
+    const baseDir = node && node.isDir ? node.path : currentPath
+    const src = copiedNode
+    try {
+      await fsCopy(target, src.path, baseDir)
+      setCopiedNode(null)
+      refresh()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  /**
+   * "Paste" context-menu action. If a remote node was copied via the "Copy"
+   * action, this performs a remote-internal copy into the target directory.
+   * Otherwise it uploads the files currently in the system clipboard
+   * (Windows Explorer Ctrl+C). A right-click on a directory targets that
+   * directory; a right-click on a file or blank area targets the browsed dir.
    */
   const handlePaste = async (node: TreeNode | null) => {
     setContextMenu(null)
+    if (copiedNode) {
+      await handleRemotePaste(node)
+      return
+    }
     let paths: string[]
     try {
       paths = await getClipboardFiles()
@@ -2196,7 +2223,19 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             </div>
           )}
           <div className="context-menu-divider" />
-          <div className="context-menu-item" onClick={() => handlePaste(contextMenu.node)}>
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              if (contextMenu.node) setCopiedNode(contextMenu.node)
+              setContextMenu(null)
+            }}
+          >
+            <Icon name="copy" /> {t('copy')}
+          </div>
+          <div
+            className={`context-menu-item${copiedNode ? '' : ' disabled'}`}
+            onClick={() => handlePaste(contextMenu.node)}
+          >
             <Icon name="paste" /> Paste
           </div>
         </div>
