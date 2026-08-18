@@ -33,7 +33,6 @@ import {
   revertSftpUser,
   getSftpUser,
   sendInput,
-  pollWorkingDir,
   listDockerContainers,
 } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -116,6 +115,12 @@ interface FilePanelProps {
   expanded?: boolean
   onToggleExpanded?: () => void
   syncEnabled?: boolean
+  /**
+   * Current working directory of the associated terminal tab, reported by the
+   * Terminal component. When provided, shell-sync follows this real (interactive)
+   * directory instead of `pollWorkingDir`, which only returns the login/$HOME dir.
+   */
+  remoteCwd?: string | null
   onToggleSync?: () => void
   /**
    * Called when the user sets the current browsed directory as the SSH
@@ -259,6 +264,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     onToggleExpanded,
     syncEnabled = false,
     onToggleSync,
+    remoteCwd = null,
     onSetStartupDir,
     onEditFile,
     targetRef,
@@ -278,6 +284,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // Session-only tab id (null for jump/docker targets) — gates shell sync, SFTP
   // user switching and transfer pause, which only apply to the main connection.
   const sessionTabId = target.kind === 'session' ? target.tabId : null
+  // Tracks the last target the connect-load effect ran for, so we only restore a
+  // previously browsed (cached) path when the target actually switches — not on
+  // every `cd` in the same session (where we want to follow the shell instead).
+  const lastConnectTargetRef = useRef<string | null>(null)
+  // Target that has completed its initial directory load. Gates shell-following:
+  // after the first load, a terminal `cd` only moves the panel when shell-sync is
+  // on (handled by the sync effect below), never unconditionally.
+  const targetInitRef = useRef<string | null>(null)
 
   // Jump (ProxyJump remote) connection form state. Shown when the `jump` mode is
   // active but no jump target has been selected yet.
@@ -539,12 +553,22 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   useEffect(() => {
     if (isConnected) {
       // Restore the directory the user left when they last browsed this
-      // filesystem (targetKey), so switching to another terminal and back does
-      // not reset the file list to home. A fresh/unvisited target falls back to
-      // the target's home directory.
+      // filesystem (targetKey) so switching to another terminal and back does
+      // not reset the file list. BUT only when the *target* actually switches —
+      // on a `cd` in the same session we keep following the shell via
+      // `remoteCwd` (the Terminal-reported real working directory), which is far
+      // more accurate than the backend's `$HOME` fallback. A fresh/unvisited
+      // target (no cache) also uses `remoteCwd` when available.
+      const targetChanged = lastConnectTargetRef.current !== targetKey
+      lastConnectTargetRef.current = targetKey
+      // Same target, already initialized: following the shell's `cd` is the
+      // shell-sync effect's job (gated on syncEnabled). Return here so a
+      // terminal `cd` with sync disabled leaves the panel completely untouched —
+      // neither the browsed path nor the listing is yanked.
+      if (!targetChanged && targetInitRef.current === targetKey) return
       const cached = filePanelBrowseCache[targetKey]
-      const startPath = cached ? cached.currentPath : defaultPath
-      const startRoot = cached ? cached.rootPath : defaultPath
+      const startPath = targetChanged && cached ? cached.currentPath : remoteCwd ?? defaultPath
+      const startRoot = targetChanged && cached ? cached.rootPath : remoteCwd ?? defaultPath
       setCurrentPath(startPath)
       setRootPath(startRoot)
       // Non-session targets (jump/docker) can be addressed through a freshly
@@ -557,7 +581,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         if (cancelled) return
         const ok = await loadRootDir(startPath)
         if (cancelled) return
-        if (!ok && attempt < 30) {
+        if (ok) {
+          targetInitRef.current = targetKey
+        } else if (attempt < 30) {
           attempt++
           timer = setTimeout(attemptLoad, 250)
         }
@@ -573,7 +599,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         if (timer) clearTimeout(timer)
       }
     }
-  }, [isConnected, sessionTabId, targetKey, defaultPath])
+  }, [isConnected, sessionTabId, targetKey, defaultPath, remoteCwd])
 
   // Persist the browse state per target so switching back restores it. Runs
   // whenever the user navigates (currentPath/rootPath change). On the render
@@ -589,10 +615,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     filePanelBrowseCache[targetKey] = { currentPath, rootPath }
   }, [isConnected, currentPath, rootPath, targetKey])
 
-  // Shell → FilePanel sync (main session only). Each tick opens a fresh SSH
-  // connection to run `pwd`, so it only runs while the Files section is
-  // expanded and the window is visible — otherwise it would burn CPU (and a
-  // new SSH handshake every 5s) even when the panel is collapsed or hidden.
+  // Shell → FilePanel sync (main session only). Follow the real working
+  // directory reported by the Terminal (`remoteCwd`, which tracks `cd` in the
+  // interactive shell). We deliberately do NOT fall back to `poll_working_dir`:
+  // that command opens a fresh exec channel whose `pwd` returns the login/$HOME
+  // directory, which is wrong as soon as the shell has `cd`'d anywhere else.
   useEffect(() => {
     if (!syncEnabled || !isConnected || sessionTabId == null) return
     if (!expanded) return
@@ -600,13 +627,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     const poll = async () => {
       if (!active || document.hidden) return
       try {
-        const remotePath = await pollWorkingDir(sessionTabId)
+        const remotePath = remoteCwd
         if (!active || !remotePath) return
         if (remotePath !== lastPolledPath.current) {
           lastPolledPath.current = remotePath
-          if (rootPathRef.current === '.' || isWithinRoot(remotePath, rootPathRef.current)) {
-            loadRootDir(remotePath, false)
-          }
+          // Always follow the shell's real cwd. The `lastPolledPath` check above
+          // already prevents redundant reloads when the directory is unchanged,
+          // so there's no need to gate on `isWithinRoot` — that guard would leave
+          // the panel stuck at an ancestor (e.g. `$HOME`) after the shell `cd`s
+          // into a sibling/descendant directory, breaking click resolution.
+          loadRootDir(remotePath, false)
         }
       } catch {
         /* ignore */
@@ -624,7 +654,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [syncEnabled, isConnected, sessionTabId, loadRootDir, expanded])
+  }, [syncEnabled, isConnected, sessionTabId, loadRootDir, expanded, remoteCwd])
 
   // Transfer progress events (main session only). Each event carries the
   // filename, so we can route it to the matching per-file row in the list.

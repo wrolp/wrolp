@@ -362,6 +362,8 @@ interface TerminalComponentProps {
   onAddCommandSnippet?: (text: string) => void
   /** Open a file (clicked in `ls` output) in the remote/local editor. */
   onOpenFile?: (target: TargetRef, path: string) => void
+  /** Notify the parent of the current working directory (after connect, `cd`, etc.). */
+  onCwdChange?: (cwd: string | null) => void
 }
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
@@ -378,6 +380,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onAskAi,
   onAddCommandSnippet,
   onOpenFile,
+  onCwdChange,
   isLocal,
   localCwd,
   localShellType,
@@ -405,6 +408,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // for `[root@host lac724]#`). We keep the real (absolute) cwd by querying the
   // shell's actual directory (see fetchRemoteCwd) and by following `cd` commands.
   const cwdRef = useRef<string | null>(localCwd ?? null)
+  // Wrapper that keeps cwdRef in sync AND notifies the parent (so the FilePanel
+  // shell-sync follows the real directory instead of $HOME from poll_working_dir).
+  const onCwdChangeRef = useRef(onCwdChange)
+  onCwdChangeRef.current = onCwdChange
+  const setCwd = useCallback(
+    (path: string | null) => {
+      cwdRef.current = path
+      onCwdChangeRef.current?.(path)
+    },
+    [],
+  )
   // Cache of the SSH session's $HOME, fetched from poll_working_dir so a leading
   // `~` (from the prompt or `ls -l ~/docs`) can be expanded to an absolute path
   // (SFTP doesn't expand `~`, and the backend `expand_tilde` uses the *local*
@@ -420,14 +434,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // interactive shell itself. We send a marker-wrapped `pwd`, capture the result
   // from the output stream, and strip the echo+result from the terminal so the
   // user never sees it.
-  // Begin/end markers for the hidden `pwd` query. They are distinct so the
-  // regex can tell the *result* line (`BEG<path>END`) from the *echoed command*
-  // line (`echo "BEG$(pwd)END"`) — both contain the markers, but only the
-  // result holds an actual filesystem path between them.
-  const cwdQueryBegRef = useRef<string | null>(null)
-  const cwdQueryEndRef = useRef<string | null>(null)
-  const cwdQueryResolveRef = useRef<((v: string | null) => void) | null>(null)
-  const cwdQueryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Begin/end markers for the hidden `pwd` query. They are fixed per terminal
+  // instance so any stale/cancelled query output is always stripped from the
+  // screen. The regex distinguishes the *result* line (`BEG<path>END`) from the
+  // *echoed command* line by requiring the captured text to start with a real
+  // path prefix (`/`, `~`, or a Windows drive).
+  const cwdQueryBegRef = useRef<string>(`__WROLP_CWD_BEG_${Math.random().toString(36).slice(2, 10)}__`)
+  const cwdQueryEndRef = useRef<string>(`__WROLP_CWD_END_${Math.random().toString(36).slice(2, 10)}__`)
+  // Single in-flight cwd query. Only the latest query is ever honored — starting
+  // a new one cancels the previous (stale) one so a late `pwd` result can never
+  // clobber a newer, correctly-tracked working directory (e.g. the connect-time
+  // seed resolving after the user has already `cd`'d somewhere else).
+  const cwdQueryPendingRef = useRef<{
+    resolve: (v: string | null) => void
+    timer: ReturnType<typeof setTimeout> | null
+  } | null>(null)
   const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   // A real cwd starts with `/`, `~`, or a Windows drive. The echoed command's
   // `$(pwd)` text does NOT, so anchoring the capture on this prefix is what
@@ -442,11 +463,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const escB = escapeRegex(beg)
     const escE = escapeRegex(end)
     const m = chunk.match(new RegExp(escB + '(' + CWD_PATH_PREFIX + '[^\n]*?)' + escE))
-    if (m && cwdQueryResolveRef.current) {
-      const r = cwdQueryResolveRef.current
-      cwdQueryResolveRef.current = null
-      if (cwdQueryTimerRef.current) clearTimeout(cwdQueryTimerRef.current)
-      r(m[1])
+    if (m && cwdQueryPendingRef.current) {
+      const pending = cwdQueryPendingRef.current
+      cwdQueryPendingRef.current = null
+      if (pending.timer) clearTimeout(pending.timer)
+      pending.resolve(m[1])
     }
     // Remove every line that contains a marker (the echoed command + the result).
     return chunk.replace(new RegExp('[^\n]*(?:' + escB + '|' + escE + ')[^\n]*\n?', 'g'), '')
@@ -455,37 +476,42 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // (or null on timeout/error). The query output is stripped by stripCwdQuery.
   const fetchRemoteCwd = (): Promise<string | null> => {
     if (isLocal) return Promise.resolve(null)
+    // Cancel any in-flight query so a stale result can't clobber a newer cwd.
+    if (cwdQueryPendingRef.current) {
+      const old = cwdQueryPendingRef.current
+      cwdQueryPendingRef.current = null
+      if (old.timer) clearTimeout(old.timer)
+      old.resolve(null)
+    }
     return new Promise((resolve) => {
-      const rand = Math.random().toString(36).slice(2, 10)
-      const beg = 'wrolpcwdb' + rand
-      const end = 'wrolpcwde' + rand
-      cwdQueryBegRef.current = beg
-      cwdQueryEndRef.current = end
-      cwdQueryResolveRef.current = resolve
-      if (cwdQueryTimerRef.current) clearTimeout(cwdQueryTimerRef.current)
-      cwdQueryTimerRef.current = setTimeout(() => {
-        if (cwdQueryResolveRef.current) {
-          cwdQueryResolveRef.current(null)
-          cwdQueryResolveRef.current = null
-          cwdQueryBegRef.current = null
-          cwdQueryEndRef.current = null
+      const beg = cwdQueryBegRef.current
+      const end = cwdQueryEndRef.current
+      const timer = setTimeout(() => {
+        if (cwdQueryPendingRef.current && cwdQueryPendingRef.current.resolve === resolve) {
+          cwdQueryPendingRef.current = null
         }
+        resolve(null)
       }, 4000)
+      cwdQueryPendingRef.current = { resolve, timer }
       sendInput(tabIdRef.current, `echo "${beg}$(pwd)${end}"\r`)
     })
   }
   // Seed the best-known remote cwd right after connecting: a configured startup
-  // directory is authoritative; otherwise ask the shell for its real cwd.
+  // directory is authoritative (the backend `cd`s into it before handing over
+  // the interactive shell). Otherwise use `poll_working_dir`, which opens a fresh
+  // exec channel — at connect time that channel starts in the user's $HOME, the
+  // same place the interactive shell starts, so it gives a reliable initial cwd
+  // without injecting anything into the terminal stream and racing user input.
   const seedInitialRemoteCwd = () => {
     if (isLocal) return
     const sd = connectConfigRef.current?.startupDir
     if (sd) {
-      cwdRef.current = sd
+      setCwd(sd)
       return
     }
-    fetchRemoteCwd()
+    pollWorkingDir(tabIdRef.current)
       .then((real) => {
-        if (real) cwdRef.current = real
+        if (real && cwdRef.current == null) setCwd(real)
       })
       .catch(() => {})
   }
@@ -842,6 +868,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           : `cd -- '${abs.replace(/'/g, "'\\''")}'\r`
         sendInput(tabIdRef.current, cmd)
       }
+      // Track the new directory so the FilePanel shell-sync can follow it.
+      // This programmatic `sendInput` bypasses term.onData, so the Enter-handler
+      // cd tracking never sees it — resolve the target here instead. Unresolvable
+      // targets (`~`-relative, bare names without a base) keep the old value.
+      const next = resolveCdTarget(abs, cwdRef.current)
+      if (next) setCwd(next)
+      // The click was on the floating tooltip card (or a ctrl+click on the link),
+      // both of which can steal keyboard focus from xterm — give it back so the
+      // user can keep typing immediately after `cd`. Opening a *file* keeps the
+      // focus in the editor, so only the directory branch restores it.
+      termRef.current?.focus()
       return
     }
     void openLsFile(abs)
@@ -1110,8 +1147,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           if (cwdRef.current) return cwdRef.current
           const real = await fetchRemoteCwd()
           if (real) {
-            cwdRef.current = real
-            return real
+            // Don't clobber a cwd set (by a `cd` handler) while we were awaiting.
+            if (cwdRef.current == null) setCwd(real)
+            return cwdRef.current ?? real
           }
           return seedRemoteCwd(promptCwd)
         })()
@@ -1433,7 +1471,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // On reconnect the shell restarts in its start dir, so drop the tracked cwd
   // (it would otherwise stay stale at the pre-reconnect directory).
   useEffect(() => {
-    cwdRef.current = localCwd ?? null
+    setCwd(localCwd ?? null)
     homeRef.current = null
   }, [reconnectTrigger])
   useEffect(() => {
@@ -1896,7 +1934,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           if (command) {
             const t0 = command.trim().split(/\s+/)[0]?.toLowerCase()
             if (t0 === 'cd' || t0 === 'chdir' || t0 === 'set-location' || t0 === 'sl') {
-              const arg = command.trim().slice(t0.length).trim().split(/\s+/)[0] ?? ''
+              // Strip the `--` end-of-options marker and common flags (e.g.
+              // `cd -- /path`, `cd -L /path`) so the real target is parsed.
+              let cdRaw = command.trim().slice(t0.length).trim()
+              cdRaw = cdRaw.replace(/^--\s+/, '').replace(/^-[LP]\s+/, '')
+              const arg = cdRaw.split(/\s+/)[0] ?? ''
               void (async () => {
                 // SSH: seed the cwd from the shell's real directory (a hidden
                 // `pwd` query) when we don't yet track an absolute cwd. We never
@@ -1904,13 +1946,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 if (!isLocal && cwdRef.current == null) {
                   try {
                     const real = await fetchRemoteCwd()
-                    if (real) cwdRef.current = real
+                    if (real && cwdRef.current == null) setCwd(real)
                   } catch {
                     /* keep null; will fall back to the prompt */
                   }
                 }
                 const next = resolveCdTarget(arg, cwdRef.current)
-                if (next) cwdRef.current = next
+                if (next) setCwd(next)
               })()
             }
           }

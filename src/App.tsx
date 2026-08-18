@@ -141,6 +141,12 @@ export default function App() {
   const { t, lang, setLang } = useI18n()
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
+  // Per-tab current working directory, reported by the Terminal so the FilePanel
+  // shell-sync can follow the real (interactive) directory instead of $HOME.
+  const [cwdByTab, setCwdByTab] = useState<Record<string, string | null>>({})
+  const handleCwdChange = useCallback((tabId: number, cwd: string | null) => {
+    setCwdByTab((prev) => (prev[tabId] === cwd ? prev : { ...prev, [tabId]: cwd }))
+  }, [])
   const [commandListOpen, setCommandListOpen] = useState(false)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
@@ -624,6 +630,8 @@ export default function App() {
   }, [])
   const [syncEnabled, setSyncEnabled] = useState(() => {
     try {
+      // Default OFF: the file list stays decoupled from the terminal.
+      // Only an explicit "on" (localStorage '1') enables shell sync.
       return localStorage.getItem('wrolp-sync-enabled') === '1'
     } catch {
       return false
@@ -2730,6 +2738,7 @@ export default function App() {
             username: conn.username,
             password: conn.password,
             keyPath: conn.keyPath,
+            startupDir: conn.startupDir,
           }
         })()
       : undefined
@@ -2801,6 +2810,7 @@ export default function App() {
               }}
               onAddCommandSnippet={handleAddCommandSnippet}
               onOpenFile={openInEditor}
+              onCwdChange={(cwd) => handleCwdChange(tab.tabId, cwd)}
             />
           </div>
         )}
@@ -4658,7 +4668,10 @@ export default function App() {
                               const sConn = sTab?.connectionId
                                 ? connections.find((c) => c.id === sTab.connectionId)
                                 : undefined
-                              return sConn?.startupDir || '.'
+                              // Prefer the Terminal-reported real cwd (follows `cd`)
+                              // over the startup dir / '.' (which the backend resolves
+                              // to the login $HOME and would mis-track the panel).
+                              return cwdByTab[sTabId] ?? sConn?.startupDir ?? '.'
                             })()
                     }
                     targetRef={fileTarget ?? undefined}
@@ -4682,6 +4695,7 @@ export default function App() {
                       }))
                     }
                     syncEnabled={syncEnabled}
+                    remoteCwd={cwdByTab[ftabId] ?? null}
                     onToggleSync={() => {
                       const next = !syncEnabled
                       setSyncEnabled(next)
