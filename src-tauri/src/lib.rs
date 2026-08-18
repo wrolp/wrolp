@@ -237,6 +237,7 @@ pub fn run() {
       commands::target_upload_file_bytes,
       commands::target_upload_local_dir,
       commands::target_copy_file,
+      commands::target_path_exists,
       commands::list_docker_containers,
       commands::save_window_config,
       commands::load_window_config,

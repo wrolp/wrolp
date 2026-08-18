@@ -3352,11 +3352,26 @@ async fn unique_dest(fs: &dyn RemoteFs, dest: &str) -> Result<String, String> {
   Ok(candidate)
 }
 
+/// Whether a file or directory exists at `path` on the target (remote-internal
+/// existence check used to detect copy/paste name clashes before prompting).
+#[tauri::command]
+pub async fn target_path_exists(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  target: TargetRef,
+  path: String,
+) -> Result<bool, String> {
+  let fs = build_fs(&app, &state, &target).await?;
+  Ok(fs.metadata(&path).await.is_ok())
+}
+
 /// Copy a remote file or directory to a destination directory on the same
 /// target (remote-internal copy/paste). The destination is named after the
 /// source's basename inside `dest_dir` (copying `/a/b.txt` into `/c` yields
-/// `/c/b.txt`). An existing name is uniquified instead of overwritten. Copying
-/// a directory into itself or a descendant is rejected.
+/// `/c/b.txt`). When `dest_name` is provided, that exact name is used and an
+/// existing entry is NOT overwritten — the caller (frontend) prompts the user
+/// to rename instead. Copying a directory into itself or a descendant is
+/// rejected.
 #[tauri::command]
 pub async fn target_copy_file(
   app: tauri::AppHandle,
@@ -3364,6 +3379,7 @@ pub async fn target_copy_file(
   target: TargetRef,
   src: String,
   dest_dir: String,
+  dest_name: Option<String>,
 ) -> Result<(), String> {
   let name = src
     .rsplit('/')
@@ -3372,16 +3388,41 @@ pub async fn target_copy_file(
     .unwrap_or(&src)
     .to_string();
   let dest_dir = dest_dir.trim_end_matches('/');
-  let dest = format!("{}/{}", dest_dir, name);
 
-  // Reject copying a directory into itself or a descendant.
-  if dest == src || dest.starts_with(&format!("{}/", src)) {
+  // Resolve the final destination name: an explicit `dest_name` (the user's
+  // rename choice) wins; otherwise fall back to the source basename.
+  let final_name = match dest_name.as_deref() {
+    Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+    _ => name,
+  };
+  let final_dest = format!("{}/{}", dest_dir, final_name);
+
+  // Reject copying a directory into itself or a descendant. This must use the
+  // *final* path — with a rename the destination differs from the source even
+  // when pasting inside the same folder, so guarding on the basename would
+  // wrongly reject a legitimate same-folder copy.
+  if final_dest == src || final_dest.starts_with(&format!("{}/", src)) {
     return Err("Cannot copy a directory into itself".into());
   }
 
   let fs = build_fs(&app, &state, &target).await?;
-  let dest = unique_dest(fs.as_ref(), &dest).await?;
-  copy_recursive(fs.as_ref(), &src, &dest).await
+
+  // With an explicit name we refuse to overwrite an existing entry (the
+  // frontend prompts the user to rename); otherwise uniquify so we never
+  // clobber.
+  let final_dest = if dest_name.as_deref().map(|n| !n.trim().is_empty()).unwrap_or(false) {
+    if fs.metadata(&final_dest).await.is_ok() {
+      return Err(format!(
+        "A file or folder named '{}' already exists",
+        final_name
+      ));
+    }
+    final_dest
+  } else {
+    unique_dest(fs.as_ref(), &final_dest).await?
+  };
+
+  copy_recursive(fs.as_ref(), &src, &final_dest).await
 }
 
 /// List Docker containers reachable from a connected (jump host) tab.

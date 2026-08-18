@@ -806,7 +806,7 @@ export default function App() {
 
   // Transient toast notification (auto-dismiss, manually closable)
   const [toast, setToast] = useState<{
-    kind: 'success' | 'error' | 'progress'
+    kind: 'success' | 'error' | 'progress' | 'info'
     text: string
   } | null>(null)
   useEffect(() => {
@@ -5306,6 +5306,8 @@ export default function App() {
         >
           {toast.kind === 'progress' ? (
             <span className="toast-spinner" />
+          ) : toast.kind === 'info' ? (
+            <span className="toast-icon">ℹ</span>
           ) : (
             <span className="toast-icon">{toast.kind === 'success' ? '✓' : '✕'}</span>
           )}

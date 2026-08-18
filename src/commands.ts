@@ -584,13 +584,26 @@ export async function fsDeleteFile(
     : invoke<boolean>('target_delete_file', { target, path, isDir })
 }
 
-/** Remote-internal copy: copy `src` (file or dir) into `destDir` on the same target. */
+/** Remote-internal copy: copy `src` (file or dir) into `destDir` on the same target.
+ *  `destName` is the final basename; if it clashes with an existing entry the
+ *  backend refuses to overwrite (so the caller can prompt the user to rename). */
 export async function fsCopy(
   target: TargetRef,
   src: string,
   destDir: string,
+  destName?: string,
 ): Promise<void> {
-  return invoke<void>('target_copy_file', { target, src, destDir })
+  return invoke<void>('target_copy_file', {
+    target,
+    src,
+    destDir,
+    destName: destName ?? null,
+  })
+}
+
+/** Whether a file/folder exists at `path` on the target (remote-internal). */
+export async function fsPathExists(target: TargetRef, path: string): Promise<boolean> {
+  return fsFileExists(target, path)
 }
 
 export async function fsReadFileContent(

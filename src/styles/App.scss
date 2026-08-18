@@ -2798,6 +2798,7 @@ input[type='password']::-ms-clear {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  position: relative;
   border-top: 1px solid $border;
   transition:
     box-shadow 0.15s,
@@ -2861,6 +2862,46 @@ input[type='password']::-ms-clear {
         padding: 1px 5px;
         line-height: 1.4;
       }
+    }
+  }
+
+  // Local toast anchored just below the file-panel header (positioned
+  // relative to `.file-panel`). Auto-dismisses after a few seconds.
+  .panel-toast {
+    position: absolute;
+    top: 38px;
+    left: 8px;
+    right: 8px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.3;
+    color: #fff;
+    background: rgba(30, 30, 34, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    animation: toast-in 0.2s ease-out;
+    cursor: pointer;
+
+    .panel-toast-icon {
+      flex-shrink: 0;
+      font-weight: 700;
+    }
+
+    &.panel-toast-success {
+      border-left: 3px solid #28c76f;
+    }
+
+    &.panel-toast-error {
+      border-left: 3px solid #f44747;
+    }
+
+    &.panel-toast-info {
+      border-left: 3px solid #6c8cff;
     }
   }
 
@@ -3186,6 +3227,13 @@ input[type='password']::-ms-clear {
       color: #fff;
     }
 
+    // The node currently staged for a remote-internal paste (after "Copy").
+    &.copied {
+      background: rgba($accent, 0.18);
+      outline: 1px dashed rgba($accent, 0.7);
+      outline-offset: -1px;
+    }
+
     .tree-icon {
       flex-shrink: 0;
       width: 18px;
@@ -3210,6 +3258,19 @@ input[type='password']::-ms-clear {
       flex-shrink: 0;
       font-size: 12px;
       animation: spin 1s linear infinite;
+    }
+
+    .tree-copied-badge {
+      flex-shrink: 0;
+      margin-left: 4px;
+      padding: 0 5px;
+      font-size: 9px;
+      line-height: 14px;
+      border-radius: 7px;
+      background: $accent;
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
     }
   }
 
@@ -3511,6 +3572,10 @@ input[type='password']::-ms-clear {
 
   &.toast-progress {
     border-left: 3px solid #4aa3ff;
+  }
+
+  &.toast-info {
+    border-left: 3px solid #6c8cff;
   }
 
   .toast-icon {

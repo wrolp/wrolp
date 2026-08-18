@@ -25,6 +25,7 @@ import {
   fsRenameFile,
   fsWriteFileContent,
   fsCopy,
+  fsPathExists,
   pauseTransfer,
   resumeTransfer,
   cancelTransfer,
@@ -160,6 +161,23 @@ function getParentDir(p: string): string {
 function join(p: string, name: string): string {
   const base = p.endsWith('/') ? p : p + '/'
   return base + name
+}
+
+// Build a copy name for index `n`: "report.txt" -> "report copy.txt" (n=1) or
+// "report copy 2.txt" (n=2+), preserving the extension. Mirrors the backend
+// `with_copy_suffix` helper (n=1) and its ` copy N` uniquifier.
+function copyNameWithIndex(name: string, n: number): string {
+  const idx = name.lastIndexOf('.')
+  const suffix = n > 1 ? ` copy ${n}` : ' copy'
+  if (idx > 0) {
+    return `${name.slice(0, idx)}${suffix}${name.slice(idx)}`
+  }
+  return `${name}${suffix}`
+}
+
+// First suggested copy name (index 1).
+function withCopySuffix(name: string): string {
+  return copyNameWithIndex(name, 1)
 }
 
 // Whether `path` is the root itself or a descendant of `root`.
@@ -346,6 +364,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // Source node of the in-progress remote-internal copy (set by the "Copy"
   // context-menu action). Consumed by "Paste" to copy it into the target dir.
   const [copiedNode, setCopiedNode] = useState<TreeNode | null>(null)
+  // Local toast shown near the panel title bar (not the global app toast).
+  const [fileToast, setFileToast] = useState<{
+    kind: 'info' | 'success' | 'error'
+    text: string
+  } | null>(null)
+
+  useEffect(() => {
+    if (!fileToast) return
+    const id = setTimeout(() => setFileToast(null), 3000)
+    return () => clearTimeout(id)
+  }, [fileToast])
   // Guards the browse-state write against target switches: on the render right
   // after `targetKey` changes, `currentPath` is still the PREVIOUS target's
   // value (the reset effect below sets it later), so writing it would corrupt
@@ -369,6 +398,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const [renameTarget, setRenameTarget] = useState<TreeNode | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null)
+  // Copy/rename prompt: shown when a remote-internal paste lands on a name
+  // that already exists in the destination folder. Stores the pending copy so
+  // the user can pick a new name instead of silently auto-suffixing.
+  const [copyRename, setCopyRename] = useState<{
+    srcPath: string
+    baseDir: string
+    defaultName: string
+  } | null>(null)
+  const [copyRenameValue, setCopyRenameValue] = useState('')
+  const [copyRenameError, setCopyRenameError] = useState('')
   const [paused, setPaused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   // Directory row currently under a dragged item (highlight + drop target).
@@ -1044,21 +1083,85 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }
 
   /**
+   * Perform the actual remote-internal copy once a final name is decided.
+   */
+  const doRemoteCopy = async (srcPath: string, baseDir: string, destName: string) => {
+    try {
+      await fsCopy(target, srcPath, baseDir, destName)
+      setCopiedNode(null)
+      setCopyRename(null)
+      setFileToast({ kind: 'success', text: `Copied to ${join(baseDir, destName)}` })
+      refresh()
+    } catch (e) {
+      setError(String(e))
+      setFileToast({ kind: 'error', text: String(e) })
+    }
+  }
+
+  /**
    * Remote-internal paste: copy the currently `copiedNode` (set by the "Copy"
    * action) into `node`'s directory, or the browsed directory when pasting on a
-   * file / blank area. The backend uniquifies the name if a clash occurs.
+   * file / blank area. If the destination already contains an item with the
+   * same name, a rename prompt is shown instead of silently auto-suffixing.
    */
   const handleRemotePaste = async (node: TreeNode | null) => {
     if (!copiedNode) return
     const baseDir = node && node.isDir ? node.path : currentPath
     const src = copiedNode
+    const srcName = src.path.split('/').pop() || src.name || 'copy'
+    const dest = join(baseDir, srcName)
+
+    let exists = false
     try {
-      await fsCopy(target, src.path, baseDir)
-      setCopiedNode(null)
-      refresh()
-    } catch (e) {
-      setError(String(e))
+      exists = await fsPathExists(target, dest)
+    } catch {
+      exists = false
     }
+    if (exists) {
+      // Find a guaranteed-free default name ("report copy.txt", then
+      // "report copy 2.txt", ...) so the first "Copy" click always works even
+      // when the suggested name itself already exists in the destination.
+      let n = 1
+      let candidate = copyNameWithIndex(srcName, n)
+      try {
+        while (await fsPathExists(target, join(baseDir, candidate))) {
+          n += 1
+          candidate = copyNameWithIndex(srcName, n)
+        }
+      } catch {
+        candidate = withCopySuffix(srcName)
+      }
+      setCopyRename({ srcPath: src.path, baseDir, defaultName: candidate })
+      setCopyRenameValue(candidate)
+      setCopyRenameError('')
+      setContextMenu(null)
+      return
+    }
+    await doRemoteCopy(src.path, baseDir, srcName)
+  }
+
+  /**
+   * Confirm the copy-rename prompt: validate the entered name and, if it still
+   * clashes, keep the dialog open with an error; otherwise perform the copy.
+   */
+  const confirmCopyRename = async () => {
+    if (!copyRename) return
+    const name = copyRenameValue.trim()
+    if (!name) {
+      setCopyRenameError('Please enter a name')
+      return
+    }
+    const dest = join(copyRename.baseDir, name)
+    try {
+      const exists = await fsPathExists(target, dest)
+      if (exists) {
+        setCopyRenameError(`'${name}' already exists`)
+        return
+      }
+    } catch {
+      // If the existence check fails, proceed and let the backend reject.
+    }
+    await doRemoteCopy(copyRename.srcPath, copyRename.baseDir, name)
   }
 
   /**
@@ -1598,7 +1701,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     return nodes.map((node) => (
       <div key={node.path}>
         <div
-          className={`tree-row ${selPaths.has(node.path) ? 'selected' : ''} ${node.isDir ? 'dir' : 'file'} ${dropTargetPath === node.path ? 'drop-target' : ''}`}
+          className={`tree-row ${selPaths.has(node.path) ? 'selected' : ''} ${node.isDir ? 'dir' : 'file'} ${dropTargetPath === node.path ? 'drop-target' : ''} ${copiedNode && copiedNode.path === node.path ? 'copied' : ''}`}
           style={{ paddingLeft: 8 + depth * 14 }}
           onClick={(e) => handleNodeClick(node, e)}
           onContextMenu={(e) => {
@@ -1623,6 +1726,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             )}
           </span>
           <span className="tree-name">{node.name}</span>
+          {copiedNode && copiedNode.path === node.path && (
+            <span className="tree-copied-badge" title="Copied — ready to paste">
+              copied
+            </span>
+          )}
           {node.isDir ? null : <span className="tree-size">{formatSize(node.size)}</span>}
           {node.loading && (
             <span className="tree-spinner">
@@ -1734,6 +1842,18 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           </div>
         )}
       </div>
+
+      {fileToast && (
+        <div
+          className={`panel-toast panel-toast-${fileToast.kind}`}
+          onClick={() => setFileToast(null)}
+        >
+          <span className="panel-toast-icon">
+            {fileToast.kind === 'success' ? '✓' : fileToast.kind === 'error' ? '✕' : 'ℹ'}
+          </span>
+          <span className="panel-toast-text">{fileToast.text}</span>
+        </div>
+      )}
 
       {expanded && showTree && (
         <>
@@ -2226,7 +2346,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           <div
             className="context-menu-item"
             onClick={() => {
-              if (contextMenu.node) setCopiedNode(contextMenu.node)
+              if (contextMenu.node) {
+                setCopiedNode(contextMenu.node)
+                setFileToast({
+                  kind: 'info',
+                  text: `Copied "${contextMenu.node.name}". Right-click a folder and choose Paste.`,
+                })
+              }
               setContextMenu(null)
             }}
           >
@@ -2265,6 +2391,47 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               <button onClick={() => setRenameTarget(null)}>Cancel</button>
               <button className="primary" onClick={() => void confirmRename()}>
                 Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom copy-rename prompt (name clash on remote-internal paste) */}
+      {copyRename && (
+        <div className="modal-overlay" onClick={() => setCopyRename(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">Name conflict</div>
+            <div className="modal-body" style={{ padding: '12px 20px' }}>
+              <div style={{ marginBottom: 8 }}>
+                An item with this name already exists. Enter a new name:
+              </div>
+              <input
+                className="file-modal-input"
+                type="text"
+                value={copyRenameValue}
+                onChange={(e) => {
+                  setCopyRenameValue(e.target.value)
+                  setCopyRenameError('')
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void confirmCopyRename()
+                  if (e.key === 'Escape') setCopyRename(null)
+                }}
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                placeholder="New name"
+              />
+              {copyRenameError && (
+                <div style={{ color: '#e5484d', marginTop: 6, fontSize: 12 }}>
+                  {copyRenameError}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setCopyRename(null)}>Cancel</button>
+              <button className="primary" onClick={() => void confirmCopyRename()}>
+                Copy
               </button>
             </div>
           </div>
