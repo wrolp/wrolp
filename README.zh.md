@@ -34,9 +34,18 @@
 - 🪟 **浮动窗口与分栏布局** — 自由分割终端区域，并将面板弹出为独立浮动窗口
 - 🪟 **精致体验** — 自定义标题栏、托盘图标、窗口状态记忆、自动更新
 
+## 📸 截图
+
+### 新建连接
+
 <p align="center">
-  <!-- TODO: 添加截图 -->
-  <!-- <img src="docs/screenshot.png" alt="Wrolp Terminal 截图" width="720" /> -->
+  <img src="docs/images/new-connection.png" alt="Wrolp Terminal - 新建连接对话框" width="720" />
+</p>
+
+### AI 助手
+
+<p align="center">
+  <img src="docs/images/use-ai.png" alt="Wrolp Terminal - AI 助手分析已连接服务器" width="720" />
 </p>
 
 ## 功能特性

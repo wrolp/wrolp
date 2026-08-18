@@ -34,9 +34,18 @@
 - 🪟 **Floating panes & split layout** — split the terminal area any way you like and pop panes out into independent floating windows
 - 🪟 **Polished UX** — custom titlebar, tray icon, window geometry persistence, auto-updater
 
+## 📸 Screenshots
+
+### New connection dialog
+
 <p align="center">
-  <!-- TODO: add a screenshot -->
-  <!-- <img src="docs/screenshot.png" alt="Wrolp Terminal screenshot" width="720" /> -->
+  <img src="docs/images/new-connection.png" alt="Wrolp Terminal - New connection dialog" width="720" />
+</p>
+
+### AI assistant
+
+<p align="center">
+  <img src="docs/images/use-ai.png" alt="Wrolp Terminal - AI assistant analyzing a connected server" width="720" />
 </p>
 
 ## Features
