@@ -35,6 +35,9 @@ interface DockerPanelProps {
   onDeleteContainer?: (container: ContainerInfo) => Promise<void> | void
   /** Label of the host machine whose containers are listed (shown in header). */
   serverLabel?: string
+  /** When this value changes, the container list is reloaded (e.g. after a
+   *  stop/delete/start/restart triggered from the parent). */
+  refreshSignal?: number
 }
 
 /**
@@ -56,6 +59,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onStartContainer,
   onDeleteContainer,
   serverLabel,
+  refreshSignal,
 }) => {
   const { t } = useI18n()
   const [containers, setContainers] = useState<ContainerInfo[]>([])
@@ -82,7 +86,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
 
   useEffect(() => {
     load()
-  }, [load])
+  }, [load, refreshSignal])
 
   // Close context menu on click elsewhere
   useEffect(() => {

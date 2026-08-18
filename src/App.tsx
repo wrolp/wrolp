@@ -494,6 +494,7 @@ export default function App() {
       try {
         await restartDockerContainer(activeTabId, container.name)
         setToast({ kind: 'success', text: t('dockerRestarted', { name: container.name }) })
+        setDockerRefreshKey((k) => k + 1)
       } catch (e) {
         const msg = String(e)
         console.error(`Docker restart failed: ${msg}`)
@@ -506,6 +507,9 @@ export default function App() {
     [activeTabId, t],
   )
 
+  // Bumped to force the DockerPanel list to reload after a stop/delete/start/restart.
+  const [dockerRefreshKey, setDockerRefreshKey] = useState(0)
+
   // Stop a Docker container
   const handleStopContainer = useCallback(
     async (container: ContainerInfo) => {
@@ -514,6 +518,7 @@ export default function App() {
       try {
         await stopDockerContainer(activeTabId, container.name)
         setToast({ kind: 'success', text: t('dockerStopped', { name: container.name }) })
+        setDockerRefreshKey((k) => k + 1)
       } catch (e) {
         const msg = String(e)
         console.error(`Docker stop failed: ${msg}`)
@@ -534,6 +539,7 @@ export default function App() {
       try {
         await startDockerContainer(activeTabId, container.name)
         setToast({ kind: 'success', text: t('dockerStarted', { name: container.name }) })
+        setDockerRefreshKey((k) => k + 1)
       } catch (e) {
         const msg = String(e)
         console.error(`Docker start failed: ${msg}`)
@@ -554,6 +560,7 @@ export default function App() {
       try {
         await removeDockerContainer(activeTabId, container.name)
         setToast({ kind: 'success', text: t('dockerDeleted', { name: container.name }) })
+        setDockerRefreshKey((k) => k + 1)
       } catch (e) {
         const msg = String(e)
         console.error(`Docker remove failed: ${msg}`)
@@ -4709,6 +4716,7 @@ export default function App() {
                 >
                   <DockerPanel
                     jumpTabId={focusedLeafTabId ?? activeTabId ?? 0}
+                    refreshSignal={dockerRefreshKey}
                     serverLabel={(() => {
                       const dtId = focusedLeafTabId ?? activeTabId ?? 0
                       const dt = tabs.find((t) => t.tabId === dtId)
