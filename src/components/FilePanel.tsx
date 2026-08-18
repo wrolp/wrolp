@@ -375,6 +375,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     const id = setTimeout(() => setFileToast(null), 3000)
     return () => clearTimeout(id)
   }, [fileToast])
+  // New-file / new-folder custom dialog state (replaces the native window.prompt).
+  const [createModal, setCreateModal] = useState<{
+    baseDir: string
+    kind: 'file' | 'folder'
+  } | null>(null)
+  const [createValue, setCreateValue] = useState('')
+  const [createError, setCreateError] = useState('')
   // Guards the browse-state write against target switches: on the render right
   // after `targetKey` changes, `currentPath` is still the PREVIOUS target's
   // value (the reset effect below sets it later), so writing it would corrupt
@@ -1209,37 +1216,60 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     return out
   }, [selPaths, tree])
 
-  const newFile = async (baseNode: TreeNode | null) => {
-    setContextMenu(null)
-    const baseDir = baseNode
-      ? baseNode.isDir
-        ? baseNode.path
-        : getParentDir(baseNode.path)
-      : currentPath
-    const name = window.prompt('File name:')
-    if (!name) return
-    try {
-      await fsWriteFileContent(target, join(baseDir, name), '', 'utf-8')
-      refresh()
-    } catch (e) {
-      setError(String(e))
-    }
+  const resolveBaseDir = (baseNode: TreeNode | null): string => {
+    if (baseNode) return baseNode.isDir ? baseNode.path : getParentDir(baseNode.path)
+    return currentPath
   }
 
-  const newFolder = async (baseNode: TreeNode | null) => {
+  const newFile = (baseNode: TreeNode | null) => {
     setContextMenu(null)
-    const baseDir = baseNode
-      ? baseNode.isDir
-        ? baseNode.path
-        : getParentDir(baseNode.path)
-      : currentPath
-    const name = window.prompt('Folder name:')
-    if (!name) return
+    setCreateModal({ baseDir: resolveBaseDir(baseNode), kind: 'file' })
+    setCreateValue('')
+    setCreateError('')
+  }
+
+  const newFolder = (baseNode: TreeNode | null) => {
+    setContextMenu(null)
+    setCreateModal({ baseDir: resolveBaseDir(baseNode), kind: 'folder' })
+    setCreateValue('')
+    setCreateError('')
+  }
+
+  /**
+   * Confirm the New File / New Folder dialog: validate the name, refuse to
+   * overwrite an existing entry, then create it.
+   */
+  const confirmCreate = async () => {
+    if (!createModal) return
+    const name = createValue.trim()
+    if (!name) {
+      setCreateError('Please enter a name')
+      return
+    }
+    const dest = join(createModal.baseDir, name)
     try {
-      await fsCreateDirectory(target, join(baseDir, name))
+      if (await fsPathExists(target, dest)) {
+        setCreateError(`'${name}' already exists`)
+        return
+      }
+    } catch {
+      // If the existence check fails, proceed and let the backend reject.
+    }
+    try {
+      if (createModal.kind === 'folder') {
+        await fsCreateDirectory(target, dest)
+      } else {
+        await fsWriteFileContent(target, dest, '', 'utf-8')
+      }
+      setCreateModal(null)
       refresh()
+      setFileToast({
+        kind: 'success',
+        text: `${createModal.kind === 'folder' ? 'Folder' : 'File'} created: ${dest}`,
+      })
     } catch (e) {
       setError(String(e))
+      setCreateError(String(e))
     }
   }
 
@@ -2432,6 +2462,45 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               <button onClick={() => setCopyRename(null)}>Cancel</button>
               <button className="primary" onClick={() => void confirmCopyRename()}>
                 Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom New File / New Folder dialog */}
+      {createModal && (
+        <div className="modal-overlay" onClick={() => setCreateModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">
+              {createModal.kind === 'folder' ? 'New Folder' : 'New File'}
+            </div>
+            <div className="modal-body" style={{ padding: '12px 20px' }}>
+              <div style={{ marginBottom: 8 }}>Enter a name:</div>
+              <input
+                className="file-modal-input"
+                type="text"
+                value={createValue}
+                onChange={(e) => {
+                  setCreateValue(e.target.value)
+                  setCreateError('')
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void confirmCreate()
+                  if (e.key === 'Escape') setCreateModal(null)
+                }}
+                autoFocus
+              />
+              {createError && (
+                <div style={{ color: '#e5484d', marginTop: 6, fontSize: 12 }}>
+                  {createError}
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setCreateModal(null)}>Cancel</button>
+              <button className="primary" onClick={() => void confirmCreate()}>
+                Create
               </button>
             </div>
           </div>
