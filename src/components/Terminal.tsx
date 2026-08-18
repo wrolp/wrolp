@@ -971,7 +971,50 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }
 
-  const finalizeLsCapture = (term: Terminal, ls: LsCaptureState, promptEnd: string | null) => {
+  // Resolve the dir/file type for plain-`ls` entries (kind === 'unknown', which
+  // carry no type info) by listing the base directory once. Reuses lsDirCacheRef
+  // so repeated listings of the same dir are cheap. Entries whose name isn't
+  // found in the listing are left as 'unknown' (callers fall back gracefully).
+  const resolveLsKinds = async (
+    entries: LsEntry[],
+    baseDirPromise: Promise<string | null> | null,
+  ): Promise<LsEntry[]> => {
+    if (!baseDirPromise) return entries
+    if (!entries.some((e) => e.kind === 'unknown')) return entries
+    let base: string | null = null
+    try {
+      base = await baseDirPromise
+    } catch {
+      return entries
+    }
+    if (!base) return entries
+    const cache = lsDirCacheRef.current
+    let dirMap = cache.get(base)
+    if (!dirMap) {
+      try {
+        const target: TargetRef = isLocal
+          ? { kind: 'local', tabId: tabIdRef.current }
+          : { kind: 'session', tabId: tabIdRef.current }
+        const got = await fsListFiles(target, base)
+        dirMap = new Map(got.map((e) => [e.name, e.isDir]))
+        cache.set(base, dirMap)
+      } catch {
+        return entries
+      }
+    }
+    return entries.map((e) => {
+      if (e.kind !== 'unknown') return e
+      const isDir = dirMap!.get(e.name)
+      if (isDir === undefined) return e
+      return { ...e, kind: isDir ? 'dir' : 'file' }
+    })
+  }
+
+  const finalizeLsCapture = async (
+    term: Terminal,
+    ls: LsCaptureState,
+    promptEnd: string | null,
+  ) => {
     if (ls.timeout) {
       clearTimeout(ls.timeout)
       ls.timeout = null
@@ -985,8 +1028,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       term.write(highlightTableText(ls.pending, ls.format).join('\n'))
       ls.pending = ''
     }
-    const entries = parseLsBlock(text, ls.format)
+    const rawEntries = parseLsBlock(text, ls.format)
     const baseDirPromise = lsBaseDirPromiseRef.current
+    const entries =
+      rawEntries.length > 0 && baseDirPromise
+        ? await resolveLsKinds(rawEntries, baseDirPromise)
+        : rawEntries
     if (entries.length > 0 && baseDirPromise) {
       setLsEntries(ls.startRow, entries, baseDirPromise)
     }
@@ -1015,13 +1062,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       }
     }
     if (ls.prompt && ls.buf.endsWith(ls.prompt)) {
-      finalizeLsCapture(term, ls, ls.prompt)
+      void finalizeLsCapture(term, ls, ls.prompt)
       return
     }
     if (ls.timeout) clearTimeout(ls.timeout)
     ls.timeout = setTimeout(() => {
       ls.timeout = null
-      finalizeLsCapture(term, ls, null)
+      void finalizeLsCapture(term, ls, null)
     }, LS_CAPTURE_TIMEOUT_MS)
   }
 
