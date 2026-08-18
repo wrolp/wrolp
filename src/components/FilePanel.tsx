@@ -255,6 +255,12 @@ const formatSpeed = (bytesPerSec: number): string => {
 // would be lost. Module-level persistence survives remounts.
 const filePanelBrowseCache: Record<string, { currentPath: string; rootPath: string }> = {}
 
+// Last non-session filesystem target (docker container / jump remote) selected
+// per tab, kept at module scope so it survives the panel's unmount on tab
+// switches. Without it, docker → ssh → docker would drop the target and show
+// the container picker instead of the container's file list.
+const lastNonSessionTarget: Record<number, TargetRef> = {}
+
 export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function FilePanel(
   {
     tabId,
@@ -292,6 +298,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // after the first load, a terminal `cd` only moves the panel when shell-sync is
   // on (handled by the sync effect below), never unconditionally.
   const targetInitRef = useRef<string | null>(null)
+
+  // Keep the per-tab "last non-session target" in sync with the active target
+  // (set via the container picker, the jump form, or App's docker-shell focus
+  // sync), so re-entering docker/jump mode can restore the previously browsed
+  // filesystem instead of dropping back to the picker/form.
+  useEffect(() => {
+    if (target.kind === 'docker' || target.kind === 'jumpRemote' || target.kind === 'dockerSsh') {
+      lastNonSessionTarget[tabId] = target
+    }
+  }, [target, tabId])
 
   // Jump (ProxyJump remote) connection form state. Shown when the `jump` mode is
   // active but no jump target has been selected yet.
@@ -332,16 +348,29 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   const handleModeClick = (mode: FileTargetMode) => {
     if (mode === fileMode) {
-      // Clicking the active mode clears the current target, returning to the
-      // picker/form so a different remote/container can be chosen.
+      // Clicking the active mode clears the current target (and forgets it),
+      // returning to the picker/form so a different remote/container can be chosen.
+      delete lastNonSessionTarget[tabId]
       onSelectTarget?.(null)
-    } else {
-      if (mode === 'docker') loadDockerContainers()
+      return
+    }
+    const remembered = lastNonSessionTarget[tabId]
+    if (mode === 'docker') {
+      loadDockerContainers()
+      // Re-enter the previously browsed container filesystem (if any) instead of
+      // dumping the user back on the container picker.
+      if (remembered && remembered.kind === 'docker') onSelectTarget?.(remembered)
+    } else if (mode === 'jump') {
+      // Same for the ProxyJump remote: restore the last jump target if there is one.
+      if (remembered && (remembered.kind === 'jumpRemote' || remembered.kind === 'dockerSsh')) {
+        onSelectTarget?.(remembered)
+      }
+    } else if (mode === 'ssh') {
       // Switching to SSH always shows the local session, so drop any non-session
       // target that may still be set.
-      if (mode === 'ssh') onSelectTarget?.(null)
-      onFileModeChange?.(mode)
+      onSelectTarget?.(null)
     }
+    onFileModeChange?.(mode)
   }
 
   const handleConnectJump = () => {
@@ -567,8 +596,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       // neither the browsed path nor the listing is yanked.
       if (!targetChanged && targetInitRef.current === targetKey) return
       const cached = filePanelBrowseCache[targetKey]
-      const startPath = targetChanged && cached ? cached.currentPath : remoteCwd ?? defaultPath
-      const startRoot = targetChanged && cached ? cached.rootPath : remoteCwd ?? defaultPath
+      // Docker container filesystems uniformly open at the root "/" — the
+      // shell-reported cwd (remoteCwd) describes the container shell's working
+      // directory, and a cached browse path from an earlier visit is not
+      // restored either; the container's file list always starts at "/".
+      const startPath = target.kind === 'docker' ? '/' : targetChanged && cached ? cached.currentPath : remoteCwd ?? defaultPath
+      const startRoot = target.kind === 'docker' ? '/' : targetChanged && cached ? cached.rootPath : remoteCwd ?? defaultPath
       setCurrentPath(startPath)
       setRootPath(startRoot)
       // Non-session targets (jump/docker) can be addressed through a freshly

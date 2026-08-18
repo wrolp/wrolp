@@ -323,6 +323,75 @@ function expandTilde(cwd: string | null, home: string | null): string | null {
   return cwd
 }
 
+/**
+ * True when a submitted command enters an interactive nested session whose cwd
+ * lives in another context: a docker exec shell (`docker exec -it <ct> bash`)
+ * or an interactive nested ssh (`ssh host`, no remote command). Inside such a
+ * session the tracked cwd and any hidden `pwd` query describe the OUTER shell,
+ * not what's on screen — the cwd tracking must be invalidated and `ls` link
+ * bases taken from the prompt alone.
+ */
+function isNestedSessionEntry(command: string): boolean {
+  const c = command.trim()
+  if (!c) return false
+  const tokens = c.split(/\s+/).filter(Boolean)
+  const prog = tokens[0] === 'sudo' ? tokens[1] : tokens[0]
+  if (prog === 'docker') {
+    const m = /docker\s+exec\b/.exec(c)
+    if (!m) return false
+    const afterExec = c.slice(m.index + m[0].length)
+    // Interactive (`-it`/`-i`) shell entry only; one-shot remote commands
+    // (`docker exec <ct> ls /tmp`) return immediately and don't nest.
+    const interactive = /(?:^|\s)-[a-zA-Z]*i[a-zA-Z]*(?:\s|$)/.test(afterExec)
+    const shell = /(?:^|\s)(?:\/bin\/)?(?:bash|sh|zsh|ash|fish|ksh)(?:\s|$)/.test(afterExec)
+    return interactive && shell
+  }
+  if (prog === 'ssh') {
+    // Remote commands / pipes / redirections / quoting mean a one-shot
+    // non-interactive run (`ssh host 'ls'`, `ssh host | cat`).
+    if (/[|;"'<>]|&&|\|\|/.test(c)) return false
+    // Interactive login: `ssh [-flags value…] host` — exactly one trailing
+    // non-flag token (the host), nothing after it.
+    return /^(?:[^\s-]+\s+)?ssh\s+(?:-[a-zA-Z]+\s+\S+\s+)*\S+$/.test(c)
+  }
+  return false
+}
+
+/**
+ * Extracts the container name/ID from a `docker exec` command line, e.g.
+ * `docker exec -it lac-nacos /bin/bash` → "lac-nacos". Handles combined flags
+ * (`-it`), `--flag=value`, and flags that take a separate value (`-u root`,
+ * `-w /app`). Returns null when no container argument follows.
+ */
+function parseDockerExecContainer(command: string): string | null {
+  const c = command.trim()
+  const m = /docker\s+exec\b/.exec(c)
+  if (!m) return null
+  const rest = c.slice(m.index + m[0].length).trim()
+  if (!rest) return null
+  // Flags of `docker exec` that consume the next token as their value.
+  const takesValue = /^-(?:u|w|e|l|m|c|d|i|env|workdir|user|label|env-file|cpu-shares|memory)$/
+  const tokens = rest.split(/\s+/)
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]
+    if (tok.startsWith('-')) {
+      const eq = tok.indexOf('=')
+      const flag = eq === -1 ? tok : tok.slice(0, eq)
+      if (eq === -1 && takesValue.test(flag) && i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) {
+        i += 1
+      }
+      continue
+    }
+    return tok.replace(/^["']+|["']+$/g, '')
+  }
+  return null
+}
+
+/** True for `exit`/`logout` — leaves a nested session (or the shell itself). */
+function isNestedSessionExit(command: string): boolean {
+  return /^(?:exit|logout)\b/.test(command.trim())
+}
+
 interface TerminalComponentProps {
   tabId: number
   isActive: boolean
@@ -345,6 +414,12 @@ interface TerminalComponentProps {
   }
   /** When true, run a local PTY-backed shell instead of an SSH connection. */
   isLocal?: boolean
+  /** Container name when this shell was opened as a `docker exec` from the
+   *  Docker sidebar. The `docker exec` is sent programmatically (postConnectCmd),
+   *  so the Enter-handler nested-session tracking never fires — this flag makes
+   *  `ls` link bases come from the container's own prompt instead of the host
+   *  cwd (see startLsCaptureIfMatch). Cleared on `exit`. */
+  dockerContainer?: string
   /** Working directory to start the local shell in (local mode only). */
   localCwd?: string
   /** Shell command to use for the local shell (local mode only). */
@@ -382,6 +457,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onOpenFile,
   onCwdChange,
   isLocal,
+  dockerContainer,
   localCwd,
   localShellType,
 }) => {
@@ -408,6 +484,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // for `[root@host lac724]#`). We keep the real (absolute) cwd by querying the
   // shell's actual directory (see fetchRemoteCwd) and by following `cd` commands.
   const cwdRef = useRef<string | null>(localCwd ?? null)
+  // Depth of nested interactive sessions (docker exec shell / nested interactive
+  // ssh). Inside one, the tracked cwd and any hidden `pwd` query describe the
+  // OUTER shell, not the session shown on screen — so `ls` link bases must come
+  // from the prompt alone (see startLsCaptureIfMatch).
+  const nestedDepthRef = useRef(0)
+  // Non-null when this session was opened as a `docker exec` shell from the
+  // Docker sidebar (the docker exec itself is sent programmatically, so the
+  // Enter-handler nested tracking never fires — see prop docs).
+  const dockerContainerRef = useRef<string | null>(dockerContainer)
+  dockerContainerRef.current = dockerContainer
   // Wrapper that keeps cwdRef in sync AND notifies the parent (so the FilePanel
   // shell-sync follows the real directory instead of $HOME from poll_working_dir).
   const onCwdChangeRef = useRef(onCwdChange)
@@ -816,6 +902,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // listing its base dir (cached per base dir). Returns null when the lookup
   // can't be performed (no base dir, or the listing failed) — callers fall
   // back to a best-effort default.
+  // Target used to query the filesystem for `ls` click type resolution / file
+  // opening. A docker exec shell (dockerContainerRef set) queries the
+  // CONTAINER's filesystem, listed through the host session's docker CLI — the
+  // host session's SFTP would resolve container paths against the host and
+  // fail. Everything else uses the session's SFTP, or the local FS.
+  const lsFsTarget = (): TargetRef => {
+    const container = dockerContainerRef.current
+    return isLocal
+      ? { kind: 'local', tabId: tabIdRef.current }
+      : container
+        ? { kind: 'docker', jumpTabId: tabIdRef.current, container }
+        : { kind: 'session', tabId: tabIdRef.current }
+  }
+
   const lookupIsDir = async (
     baseDirPromise: Promise<string | null>,
     name: string,
@@ -826,10 +926,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     let dirMap = cache.get(base)
     if (dirMap?.has(name)) return dirMap.get(name) ?? null
     try {
-      const target: TargetRef = isLocal
-        ? { kind: 'local', tabId: tabIdRef.current }
-        : { kind: 'session', tabId: tabIdRef.current }
-      const entries = await fsListFiles(target, base)
+      const entries = await fsListFiles(lsFsTarget(), base)
       dirMap = new Map(entries.map((e) => [e.name, e.isDir]))
       cache.set(base, dirMap)
       return dirMap.get(name) ?? null
@@ -872,8 +969,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // This programmatic `sendInput` bypasses term.onData, so the Enter-handler
       // cd tracking never sees it — resolve the target here instead. Unresolvable
       // targets (`~`-relative, bare names without a base) keep the old value.
-      const next = resolveCdTarget(abs, cwdRef.current)
-      if (next) setCwd(next)
+      // In a docker exec shell the path is container-side (base came from the
+      // container's prompt or is a bare relative name) — the host-tracked cwd
+      // can't describe it, so skip the host-side tracking there.
+      if (dockerContainerRef.current == null) {
+        const next = resolveCdTarget(abs, cwdRef.current)
+        if (next) setCwd(next)
+      }
       // The click was on the floating tooltip card (or a ctrl+click on the link),
       // both of which can steal keyboard focus from xterm — give it back so the
       // user can keep typing immediately after `cd`. Opening a *file* keeps the
@@ -887,10 +989,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const openLsFile = async (absPath: string) => {
     const cb = onOpenFileRef.current
     if (!cb) return
-    const target: TargetRef = isLocal
-      ? { kind: 'local', tabId: tabIdRef.current }
-      : { kind: 'session', tabId: tabIdRef.current }
-    cb(target, absPath)
+    cb(lsFsTarget(), absPath)
   }
 
   // The parsed `entry.line` is a logical-line index into the (ANSI-stripped)
@@ -1029,10 +1128,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     let dirMap = cache.get(base)
     if (!dirMap) {
       try {
-        const target: TargetRef = isLocal
-          ? { kind: 'local', tabId: tabIdRef.current }
-          : { kind: 'session', tabId: tabIdRef.current }
-        const got = await fsListFiles(target, base)
+        const got = await fsListFiles(lsFsTarget(), base)
         dirMap = new Map(got.map((e) => [e.name, e.isDir]))
         cache.set(base, dirMap)
       } catch {
@@ -1137,13 +1233,40 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     promptCwdRef.current = promptCwd
     // $HOME (via poll_working_dir) is only used to expand a leading `~`. The real
     // cwd comes from the shell itself: `cwdRef` (seeded at connect / on every
-    // `cd`), or a hidden `pwd` query when we have nothing tracked yet.
-    const homePromise: Promise<string | null> = isLocal
+    // `cd`), or a hidden `pwd` query when we have nothing tracked yet. Inside a
+    // nested session (docker exec / nested ssh) both the tracked cwd and the
+    // `pwd` query describe the OUTER shell — and the prompt is not a reliable
+    // source either: bare prompts like `bash-5.0#` carry no path at all (the
+    // version token would be misread as a cwd), and bracketed ones show the
+    // OUTER cwd. So no base is captured; links resolve relative and the nested
+    // shell resolves them against its own working directory. The outer $HOME
+    // must not be used to expand `~` either.
+    const nested = nestedDepthRef.current > 0 || dockerContainerRef.current != null
+    const homePromise: Promise<string | null> = isLocal || nested
       ? Promise.resolve(null)
       : pollWorkingDir(tabIdRef.current).catch(() => null)
     const cwdPromise: Promise<string | null> = isLocal
       ? Promise.resolve(cwdRef.current ?? promptCwd ?? localCwd ?? null)
       : (async () => {
+          // Docker exec / nested ssh sessions: never take the cwd from the
+          // prompt — it either carries no path (bare `bash-5.0#`) or encodes the
+          // OUTER context. Query the interactive shell itself instead (it IS the
+          // container/remote shell) with the hidden marker-wrapped `pwd`, so ls
+          // links resolve to the real container-side absolute path and clicking
+          // a directory keeps working after the shell has `cd`'d elsewhere. On
+          // failure this resolves null and links fall back to relative paths
+          // (`cd -- 'x'`) resolved by the nested shell.
+          if (nested) {
+            // The query is injected into the interactive shell via sendInput —
+            // but this handler runs synchronously BEFORE the user's own `\r` is
+            // dispatched (sendInput(data) at the end of onData), so sending now
+            // would splice the query into the user's input line (`ls` + `echo …`
+            // → `lsecho …`). Defer one macrotask so the newline goes out first
+            // and the query lands as its own line at the next prompt.
+            return new Promise<string | null>((resolve) => {
+              setTimeout(() => resolve(fetchRemoteCwd()), 0)
+            })
+          }
           if (cwdRef.current) return cwdRef.current
           const real = await fetchRemoteCwd()
           if (real) {
@@ -1932,6 +2055,26 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // show a *relative* cwd, so we keep the real (absolute) cwd here for `ls`
           // link resolution. SSH is seeded from $HOME on the first `cd`.
           if (command) {
+            // Session-boundary commands switch the shell context: entering a
+            // nested session (docker exec shell / interactive ssh) or leaving
+            // one (exit/logout) makes the tracked cwd stale — it describes the
+            // OUTER shell, not what's on screen. Drop it so `ls` link bases
+            // fall back to the prompt-derived cwd (see startLsCaptureIfMatch).
+            if (isNestedSessionEntry(command)) {
+              nestedDepthRef.current += 1
+              // A manually typed `docker exec` shell — remember the container so
+              // `ls` click type resolution queries the CONTAINER filesystem (not
+              // the host SFTP) and cwd tracking stays container-relative.
+              dockerContainerRef.current = parseDockerExecContainer(command) ?? dockerContainerRef.current
+              cwdRef.current = null
+            } else if (isNestedSessionExit(command)) {
+              // Leaving a nested session, or exiting a sidebar-opened docker exec
+              // shell back to the host — drop the nested state so `ls` link
+              // bases fall back to the host cwd again.
+              if (nestedDepthRef.current > 0) nestedDepthRef.current -= 1
+              dockerContainerRef.current = null
+              cwdRef.current = null
+            }
             const t0 = command.trim().split(/\s+/)[0]?.toLowerCase()
             if (t0 === 'cd' || t0 === 'chdir' || t0 === 'set-location' || t0 === 'sl') {
               // Strip the `--` end-of-options marker and common flags (e.g.
@@ -1940,10 +2083,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
               cdRaw = cdRaw.replace(/^--\s+/, '').replace(/^-[LP]\s+/, '')
               const arg = cdRaw.split(/\s+/)[0] ?? ''
               void (async () => {
+                // Docker exec shells: `cd` runs inside the container — the
+                // host-tracked cwd can't describe container paths, so skip both
+                // the `pwd` seed and the cwd tracking (ls links resolve from the
+                // container's prompt instead).
+                if (dockerContainerRef.current != null) return
                 // SSH: seed the cwd from the shell's real directory (a hidden
                 // `pwd` query) when we don't yet track an absolute cwd. We never
-                // guess from $HOME, since the dir need not live under it.
-                if (!isLocal && cwdRef.current == null) {
+                // guess from $HOME, since the dir need not live under it. Inside
+                // a nested session the query would hit the OUTER shell, so skip
+                // it — absolute `cd` targets still resolve, relative ones fall
+                // back to the prompt on the next `ls`.
+                if (!isLocal && cwdRef.current == null && nestedDepthRef.current === 0) {
                   try {
                     const real = await fetchRemoteCwd()
                     if (real && cwdRef.current == null) setCwd(real)
@@ -2178,6 +2329,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             startPolling()
+            nestedDepthRef.current = 0 // fresh shell: no nested session carry-over
             seedInitialRemoteCwd()
           })
           .catch((err) => {
@@ -2384,6 +2536,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
               }
             } catch {}
           }, 100)
+          nestedDepthRef.current = 0 // fresh shell: no nested session carry-over
           seedInitialRemoteCwd()
         })
         .catch((err) => {

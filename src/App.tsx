@@ -2761,6 +2761,7 @@ export default function App() {
               connectConfig={connectConfig}
               autoConnect={!!tab.connectionId || isLocalShell}
               isLocal={isLocalShell}
+              dockerContainer={tab.dockerContainer}
               localCwd={tab.localShellCwd}
               localShellType={tab.localShellType}
               maxScrollback={maxScrollback}
