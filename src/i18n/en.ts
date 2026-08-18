@@ -187,6 +187,7 @@ const en = {
   upload: 'Upload',
   download: 'Download',
   newFolder: 'New Folder',
+  refreshThisFolder: 'Refresh folder',
   rename: 'Rename',
   fileEditor: 'File Editor',
   transfers: 'Transfers',

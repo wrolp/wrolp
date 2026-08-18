@@ -188,6 +188,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   upload: '上传',
   download: '下载',
   newFolder: '新建文件夹',
+  refreshThisFolder: '刷新此文件夹',
   rename: '重命名',
   fileEditor: '文件编辑器',
   transfers: '传输中',

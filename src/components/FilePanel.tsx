@@ -150,6 +150,9 @@ interface FilePanelProps {
 
 export interface FileTreeHandle {
   refresh: () => void
+  /** Reload a single directory's listing (partial refresh), preserving the
+   *  expansion state of subdirectories still present. */
+  refreshDirectory: (path: string) => void
 }
 
 /* ---------- helpers ---------- */
@@ -224,6 +227,32 @@ function updateNode(
   return nodes.map((n) => {
     if (n.path === path) return updater(n)
     if (n.children) return { ...n, children: updateNode(n.children, path, updater) }
+    return n
+  })
+}
+
+function findNode(nodes: TreeNode[], path: string): TreeNode | null {
+  for (const n of nodes) {
+    if (n.path === path) return n
+    if (n.children) {
+      const hit = findNode(n.children, path)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+// Replace one level of a directory listing with freshly fetched nodes (`next`),
+// but for directories still present keep the old node's expansion / loaded /
+// children state — so a partial refresh never collapses the user's expanded
+// subtree. Entries that no longer exist in `next` are dropped.
+function mergePreservingExpansion(prev: TreeNode[], next: TreeNode[]): TreeNode[] {
+  const prevMap = new Map(prev.map((n) => [n.path, n]))
+  return next.map((n) => {
+    const old = prevMap.get(n.path)
+    if (old && old.isDir) {
+      return { ...n, expanded: old.expanded, loaded: old.loaded, loading: false, children: old.children }
+    }
     return n
   })
 }
@@ -561,7 +590,59 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     }
   }, [target, currentPath, tree])
 
-  useImperativeHandle(ref, () => ({ refresh }), [refresh])
+  // Partial refresh: reload a single directory's listing instead of the whole
+  // tree. When `path` is the currently browsed directory the root listing is
+  // replaced; any other directory is located in the tree (if it's visible) and
+  // its children are replaced. mergePreservingExpansion keeps the expansion /
+  // loaded / children state of subdirectories still present, so a write
+  // operation never collapses the user's expanded subtree. Directories not
+  // currently in the visible tree are skipped — they'll be fetched fresh when
+  // expanded.
+  const reloadDirectory = useCallback(
+    async (path: string) => {
+      try {
+        const result = await fsListFiles(target, path)
+        const fresh = result.map(toNode)
+        const norm = normalizePath(path)
+        if (norm === normalizePath(currentPath)) {
+          // Top-level listing: merge, preserving expansion of surviving dirs.
+          setTree((t) => mergePreservingExpansion(t, fresh))
+        } else {
+          const node = findNode(tree, norm)
+          if (node && node.isDir) {
+            // The directory is visible in the tree: swap only its children.
+            // `getParentDir` returns a trailing slash (`/a/b/`) while tree node
+            // paths never carry one, so match against the normalized path —
+            // otherwise deletes/renames deep inside an expanded subtree would
+            // silently fail to refresh the listing.
+            setTree((t) =>
+              updateNode(t, norm, (n) => ({
+                ...n,
+                loaded: true,
+                loading: false,
+                children: mergePreservingExpansion(n.children ?? [], fresh),
+              })),
+            )
+          } else {
+            // The target directory isn't in the visible tree (e.g. the panel
+            // is rooted at home '.' where the absolute parent has no tree node,
+            // or the directory was never expanded). Fall back to a full refresh
+            // so the change still shows up.
+            await refresh()
+          }
+        }
+      } catch (e) {
+        setError(String(e))
+      }
+    },
+    [target, currentPath, tree, refresh],
+  )
+
+  useImperativeHandle(
+    ref,
+    () => ({ refresh, refreshDirectory: reloadDirectory }),
+    [refresh, reloadDirectory],
+  )
 
   // Load the local drive list once for the location dropdown (Windows only;
   // returns empty on other platforms).
@@ -976,9 +1057,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       })
       if (firstError) setError(firstError)
       setPaused(false)
-      refresh()
+      reloadDirectory(targetDir)
     },
-    [target, currentPath, refresh],
+    [target, currentPath, reloadDirectory],
   )
 
   /**
@@ -1039,9 +1120,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       })
       if (firstError) setError(firstError)
       setPaused(false)
-      refresh()
+      reloadDirectory(targetDir)
     },
-    [target, currentPath, refresh],
+    [target, currentPath, reloadDirectory],
   )
 
   // Drag-drop: `dragDropEnabled: false` keeps WebView2's external drops enabled,
@@ -1161,7 +1242,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       setCopiedNode(null)
       setCopyRename(null)
       setFileToast({ kind: 'success', text: `Copied to ${join(baseDir, destName)}` })
-      refresh()
+      reloadDirectory(baseDir)
     } catch (e) {
       setError(String(e))
       setFileToast({ kind: 'error', text: String(e) })
@@ -1325,7 +1406,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         await fsWriteFileContent(target, dest, '', 'utf-8')
       }
       setCreateModal(null)
-      refresh()
+      reloadDirectory(createModal.baseDir)
       setFileToast({
         kind: 'success',
         text: `${createModal.kind === 'folder' ? 'Folder' : 'File'} created: ${dest}`,
@@ -1351,7 +1432,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     const parent = getParentDir(node.path)
     try {
       await fsRenameFile(target, node.path, join(parent, newName))
-      refresh()
+      reloadDirectory(parent)
     } catch (e) {
       setError(String(e))
     }
@@ -1387,7 +1468,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       try {
         await fsDeleteFile(target, node.path, true)
         setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'done' } : r)))
-        refresh()
+        reloadDirectory(getParentDir(node.path))
       } catch (e) {
         const cancelled = cancelledKeysRef.current.has(key)
         setTransferRows((prev) =>
@@ -1396,13 +1477,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           ),
         )
         if (!cancelled) setError(String(e))
-        refresh()
+        reloadDirectory(getParentDir(node.path))
       }
       return
     }
     try {
       await fsDeleteFile(target, node.path, node.isDir)
-      refresh()
+      reloadDirectory(getParentDir(node.path))
     } catch (e) {
       setError(String(e))
     }
@@ -2382,6 +2463,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               }}
             >
               <Icon name="folderOpen" /> Enter directory
+            </div>
+          )}
+          {contextMenu.node && contextMenu.node.isDir && (
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                setContextMenu(null)
+                reloadDirectory(contextMenu.node!.path)
+              }}
+            >
+              <Icon name="refresh" /> {t('refreshThisFolder')}
             </div>
           )}
           {contextMenu.node && !contextMenu.node.isDir && (
