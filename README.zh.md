@@ -256,3 +256,12 @@ yarn tauri build
 - 与 Rust 共享的类型在 Rust 侧使用 `#[serde(rename_all = "camelCase")]`，并在 `src/types.ts` 中使用对应的 camelCase 接口。
 - 前端格式由 Prettier 强制约束（`.prettierrc`：singleQuote、no semi、printWidth 100）—— 运行 `yarn format`。
 - 新增后端命令必须同时在 `commands.rs` 与 `lib.rs` 的 `generate_handler!` 列表中注册。
+
+## 致谢
+
+- [russh](https://github.com/warp-tech/russh) —— 纯 Rust 异步 SSH 客户端
+- [Tauri](https://tauri.app/) —— 应用框架
+- [React](https://react.dev/) —— UI 库
+- [xterm.js](https://xtermjs.org/) —— 终端渲染
+- [Monaco Editor](https://microsoft.github.io/monaco-editor/) —— 代码编辑器
+- ……以及许多其他让本项目得以实现的开源库。
