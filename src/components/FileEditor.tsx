@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import monaco from '../editor/monacoSetup'
-import { LANGUAGE_OPTIONS, ENCODING_OPTIONS } from '../editor/languages'
+import { LANGUAGE_OPTIONS_SORTED, ENCODING_OPTIONS } from '../editor/languages'
 import type { TargetRef } from '../types'
 import HexViewer from './HexViewer'
 
@@ -302,7 +302,7 @@ export function FileEditor({
                     onChangeLanguage(active.key, e.target.value)
                   }
                 >
-                  {LANGUAGE_OPTIONS.map((o) => (
+                  {LANGUAGE_OPTIONS_SORTED.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.label}
                     </option>

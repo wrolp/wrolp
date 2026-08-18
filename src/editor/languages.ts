@@ -34,6 +34,14 @@ export const LANGUAGE_OPTIONS: LanguageOption[] = [
   { id: "properties", label: "Properties / .env" },
 ];
 
+// Alphabetical view of the language list (by label) for the manual picker
+// dropdown. Sorted at module load so the dropdown stays in a stable order;
+// `LANGUAGE_OPTIONS` itself is left untouched so id mapping / auto-detect
+// (which key off `id`, not this array) are unaffected.
+export const LANGUAGE_OPTIONS_SORTED: LanguageOption[] = [...LANGUAGE_OPTIONS].sort(
+  (a, b) => a.label.localeCompare(b.label),
+);
+
 const ExtMap: Record<string, string> = {
   js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
   ts: "typescript", tsx: "typescript",
