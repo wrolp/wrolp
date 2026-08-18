@@ -2,6 +2,47 @@
 
 ---
 
+## v0.0.5 — 2026-08-18
+
+Focused on terminal `ls` integration, file transfer performance, SSH tunnels, and Docker container lifecycle management.
+
+### Features
+- **Clickable `ls`/`dir` output** — hover tooltips on terminal listings with click-to-open/enter, accurate path resolution from the real working directory, and support for plain multi-column `ls`, `ls -F`, and wrapped lines
+- **Nested-session file browsing** — open files and browse directories from `docker exec` shells and nested SSH sessions, tracked via hidden `pwd` probes
+- **Terminal output highlighting** — typed commands, table output, command arguments, and post-pipe commands colorized; AI-issued commands show an execution status badge
+- **File panel partial refresh** — create, rename, delete, upload, and paste now refresh only the affected directory while preserving expanded subtrees
+- **Remote copy/paste** — copy/paste files across directories with conflict prompts; paste files from the clipboard
+- **Custom create dialog** — replace native prompts with an in-app dialog for creating files/folders
+- **Drag-and-drop directory upload** — upload whole local directories with visual feedback
+- **Recursive directory download** — download remote directories over SFTP
+- **Chunked streaming uploads** — large file transfers streamed in 4 MB base64 chunks, shared SFTP connections, Rust-side `walkdir` directory streaming, and parallelized transfers
+- **Transfer cancellation** — cancel in-flight transfers and directory deletes with progress feedback
+- **SSH tunnels** — local port forwarding support with saved tunnel management (CRUD), surfaced forward failures, and auto-stop for refused tunnels
+- **Docker container lifecycle** — stop, start, and remove stopped containers, with automatic container-list refresh after actions
+- **Floating command snippet list** — floating command snippet panel with persisted panel preferences and append-to-input support
+- **Startup directory option** — configure the initial working directory per SSH connection
+- **Editor save prompt** — confirm before closing editor tabs with unsaved changes; language options sorted alphabetically
+- **Location jump dropdown** — jump to common locations, including local drive roots, with Windows drive path handling
+- **Per-target browse persistence** — file panel browse state survives tab switches
+
+### Fixes
+- Fix wrapped-line `ls` link detection and hover handling
+- Resolve file vs. directory types correctly in `ls` output and terminal `cd` tracking for shell sync
+- Improve link tooltip placement near the top edge
+- Highlight command args and recolor post-pipe commands in `cmdEcho`
+- Avoid empty sessions when recording is disabled
+- Improve SFTP upload throughput and Windows drag-and-drop reliability
+- Fix transfer row matching and duplicate key issues
+- Fix new-item button click position and event propagation in the file panel
+- Preserve user-expanded directory state correctly on refresh
+- Keep overlays open in split panes when unfocused
+- Refresh the Docker container list after actions
+- Send snippets to the focused terminal pane and restore focus afterward
+- Reduce idle SSH polling and reconnect overhead
+- Add acknowledgments section to README
+
+---
+
 ## v0.0.4 — 2026-08-08
 
 Adding local terminal support, floating panes, binary file viewing, and AI workflow improvements.
