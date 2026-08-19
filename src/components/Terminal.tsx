@@ -34,11 +34,7 @@ import {
   looksLikeTableHeader,
   TableSpec,
 } from '../lib/tableOutput'
-import {
-  colorizeCommand,
-  colorizePromptSymbol,
-  splitRawLineAtVisibleIndex,
-} from '../lib/cmdEcho'
+import { colorizeCommand } from '../lib/cmdEcho'
 import type { AiTermMark, TargetRef } from '../types'
 
 // Tracks the single "active" terminal instance per session tabId. During a
@@ -2945,14 +2941,13 @@ function highlightCurrentCommandLine(term: Terminal) {
   }
   if (wrapped) return
   const coloredCmd = colorizeCommand(command)
-  const uncoloredPrompt = rawLine === plain
-  if (uncoloredPrompt) {
-    const coloredPrompt = colorizePromptSymbol(prompt)
-    term.write(`\x1b[2K\r` + coloredPrompt + coloredCmd)
-  } else {
-    const { before: rawPrompt } = splitRawLineAtVisibleIndex(rawLine, prompt.length)
-    term.write(`\x1b[2K\r` + rawPrompt + coloredCmd)
-  }
+  // Rewrite ONLY the command portion, leaving the prompt exactly as the shell
+  // drew it (including any user-colored PS1). xterm's line buffer does not expose
+  // the prompt's original ANSI codes (translateToString yields plain text), so
+  // redrawing the whole line would strip a custom-colored PS1's leading color.
+  // Instead we move the cursor to the end of the prompt and clear just from there
+  // to the line end, so the prompt keeps its appearance no matter how it's styled.
+  term.write(`\r\x1b[${prompt.length}C\x1b[K` + coloredCmd)
 }
 
 // Return the current input line only when the cursor sits at its END (so a
