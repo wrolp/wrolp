@@ -2001,8 +2001,9 @@ body.resizing-v {
   align-items: center;
   gap: 8px;
   padding: 4px 10px;
-  background: $bg-secondary;
-  border: 1px solid $border;
+  // Semi-transparent so the terminal text underneath stays readable.
+  background: rgba($bg-secondary, 0.9);
+  border: 1px solid rgba($border, 0.8);
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   color: $text-primary;
@@ -2011,6 +2012,8 @@ body.resizing-v {
   z-index: 2000;
   cursor: pointer;
   user-select: none;
+  // backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   // Anchored to the top-left of the entry name; rendered above the name.
   transform: translateY(-100%);
 
