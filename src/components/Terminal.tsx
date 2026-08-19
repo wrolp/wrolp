@@ -16,6 +16,7 @@ import {
   localResize,
   pollWorkingDir,
   fsListFiles,
+  fsFileExists,
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -2099,7 +2100,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                   }
                 }
                 const next = resolveCdTarget(arg, cwdRef.current)
-                if (next) setCwd(next)
+                if (!next) return
+                // Don't trust the computed path — verify the directory actually exists
+                // before updating the tracked cwd. A failed `cd` leaves the shell in
+                // its current directory, so using the bogus target would make all
+                // subsequent `ls` links point to a non-existent base.
+                try {
+                  const exists = await fsFileExists(lsFsTarget(), next)
+                  if (exists) setCwd(next)
+                } catch {
+                  /* fall through: keep old cwd; ls links will use prompt as fallback */
+                }
               })()
             }
           }
