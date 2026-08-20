@@ -119,6 +119,9 @@ export interface TabInfo {
   // localShell tab fields
   localShellCwd?: string
   localShellType?: string
+  // Display name for a local shell tab (from the sidebar Local Terminal entry).
+  // Falls back to the cwd when absent.
+  localShellName?: string
   // When set, this terminal tab is a shell running inside a Docker container
   // (`docker exec`). The value is the container name.
   dockerContainer?: string

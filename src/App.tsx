@@ -1365,7 +1365,7 @@ export default function App() {
 
   // Open a local shell as a NEW top-level tab (workspace).
   const openLocalShellTab = useCallback(
-    (cwd?: string, shell?: string): number => {
+    (cwd?: string, shell?: string, name?: string): number => {
       const tabId = nextTabId++
       const newTab: TabInfo = {
         tabId,
@@ -1376,6 +1376,7 @@ export default function App() {
         tabType: 'localShell',
         localShellCwd: cwd,
         localShellType: shell,
+        localShellName: name,
       }
       setTabs((prev) => [...prev, newTab])
       const leafId = newLeafId()
@@ -1389,8 +1390,8 @@ export default function App() {
 
   // Open a local shell as a NEW top-level tab (workspace).
   const handleOpenLocalTerminal = useCallback(
-    (cwd?: string, shell?: string) => {
-      return openLocalShellTab(cwd, shell)
+    (cwd?: string, shell?: string, name?: string) => {
+      return openLocalShellTab(cwd, shell, name)
     },
     [openLocalShellTab],
   )
@@ -1409,6 +1410,7 @@ export default function App() {
       cwd: string | undefined,
       shell: string | undefined,
       direction: 'row' | 'column',
+      name?: string,
     ): number | null => {
       const rootId = activeTabIdRef.current
       if (rootId == null) return null
@@ -1428,6 +1430,7 @@ export default function App() {
         embedded: true,
         localShellCwd: cwd,
         localShellType: shell,
+        localShellName: name,
       }
       setTabs((prev) => [...prev, newTab])
       const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
@@ -1866,8 +1869,10 @@ export default function App() {
       if (tab.tabType === 'settings') return '⚙ ' + t('tabSettings')
       if (tab.tabType === 'aiChat') return '🤖 ' + t('tabAiChat')
       if (tab.tabType === 'dockerLog') return `📋 ${tab.containerName ?? 'Logs'}`
-      if (tab.tabType === 'localShell')
-        return `🖥 ${tab.localShellCwd ? tab.localShellCwd : t('localTerminal')}`
+      if (tab.tabType === 'localShell') {
+        const localLabel = tab.localShellName || tab.localShellCwd || t('localTerminal')
+        return `🖥 ${localLabel}`
+      }
       if (tab.dockerContainer) return `🐳 ${tab.dockerContainer}`
       if (!tab.connectionId) return tab.connectionName
       const siblings = tabs.filter(
@@ -1885,7 +1890,7 @@ export default function App() {
     (tab: TabInfo) => {
       setTabContextMenu(null)
       if (tab.tabType === 'localShell') {
-        openLocalShellTab(tab.localShellCwd)
+        openLocalShellTab(tab.localShellCwd, tab.localShellType, tab.localShellName)
         return
       }
       if (tab.tabType !== 'terminal' || !tab.connectionId) return
@@ -4579,9 +4584,11 @@ export default function App() {
               onSplitDown={(conn) => handleOpenSplit(conn, 'column')}
               sidebarWidth={sidebarWidth}
               localTerminals={localTerminals}
-              onOpenLocalTerminal={(entry) => handleOpenLocalTerminal(entry.cwd, entry.shell)}
+              onOpenLocalTerminal={(entry) =>
+                handleOpenLocalTerminal(entry.cwd, entry.shell, entry.name)
+              }
               onOpenLocalSplit={(entry, direction) =>
-                handleOpenLocalSplit(entry.cwd, entry.shell, direction)
+                handleOpenLocalSplit(entry.cwd, entry.shell, direction, entry.name)
               }
               onLocalTerminalsChanged={reloadLocalTerminals}
               expanded={connectionsExpanded}
