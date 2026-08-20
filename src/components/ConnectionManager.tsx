@@ -34,6 +34,8 @@ interface ConnectionManagerProps {
   localTerminals?: LocalTerminalEntry[]
   onOpenLocalTerminal?: (entry: LocalTerminalEntry) => void
   onOpenLocalSplit?: (entry: LocalTerminalEntry, direction: 'row' | 'column') => void
+  /** Open a local terminal entry's directory in the OS file manager. */
+  onOpenLocalDir?: (entry: LocalTerminalEntry) => void
   onLocalTerminalsChanged?: () => void
   collapsedGroups?: string[]
   onCollapsedGroupsChange?: (value: string[]) => void
@@ -73,6 +75,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   localTerminals = [],
   onOpenLocalTerminal,
   onOpenLocalSplit,
+  onOpenLocalDir,
   onLocalTerminalsChanged,
   collapsedGroups = [],
   onCollapsedGroupsChange,
@@ -506,6 +509,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 entries={localTerminals}
                 onOpen={onOpenLocalTerminal}
                 onOpenSplit={onOpenLocalSplit}
+                onOpenInFileManager={onOpenLocalDir}
                 onChanged={onLocalTerminalsChanged}
               />
               {connections.length === 0 ? (
@@ -857,6 +861,7 @@ interface LocalTerminalsSectionProps {
   entries: LocalTerminalEntry[]
   onOpen?: (entry: LocalTerminalEntry) => void
   onOpenSplit?: (entry: LocalTerminalEntry, direction: 'row' | 'column') => void
+  onOpenInFileManager?: (entry: LocalTerminalEntry) => void
   onChanged?: () => void
 }
 
@@ -864,6 +869,7 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
   entries,
   onOpen,
   onOpenSplit,
+  onOpenInFileManager,
   onChanged,
 }) => {
   const { t } = useI18n()
@@ -1146,6 +1152,17 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
                 {t('splitDown')}
               </div>
             </>
+          )}
+          {onOpenInFileManager && localMenu.entry.cwd && (
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                onOpenInFileManager(localMenu.entry)
+                setLocalMenu(null)
+              }}
+            >
+              {t('openInFileManager')}
+            </div>
           )}
           <div className="context-menu-divider" />
           <div

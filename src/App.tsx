@@ -137,6 +137,20 @@ export class ErrorBoundary extends React.Component<
   }
 }
 
+/**
+ * Convert a path so the OS file manager (explorer on Windows) can open it.
+ * Git-bash style POSIX paths like /c/Users/foo become C:\Users\foo; native
+ * paths pass through unchanged.
+ */
+function toNativeWinPath(dir: string): string {
+  return /^\/[a-zA-Z](?:\/|$)/.test(dir)
+    ? dir.replace(/^\/([a-zA-Z])(?:\/(.*))?$/, (_m, drive, rest) => {
+        const tail = rest ? rest.replace(/\//g, '\\') : ''
+        return `${drive.toUpperCase()}:\\${tail}`
+      })
+    : dir
+}
+
 export default function App() {
   const { t, lang, setLang } = useI18n()
   const [tabs, setTabs] = useState<TabInfo[]>([])
@@ -157,6 +171,9 @@ export default function App() {
     x: number
     y: number
     tab: TabInfo
+    // True when the menu was opened from a split-pane header (the root tab of a
+    // workspace has no `embedded` flag, so duplication must still split).
+    fromPane?: boolean
   } | null>(null)
   const tabContextMenuRef = useRef<HTMLDivElement | null>(null)
   const [tabDragIndex, setTabDragIndex] = useState<number | null>(null)
@@ -1887,8 +1904,22 @@ export default function App() {
 
   // Duplicate tab via right-click menu
   const duplicateTab = useCallback(
-    (tab: TabInfo) => {
+    (tab: TabInfo, fromPane?: boolean) => {
       setTabContextMenu(null)
+      // Split-pane tab (an embedded session, or a pane right-click on the root
+      // tab which itself has no `embedded` flag) → clone it as a new split pane
+      // inside the active workspace instead of a new top-level tab.
+      if (tab.embedded || fromPane) {
+        if (tab.tabType === 'localShell') {
+          handleOpenLocalSplit(tab.localShellCwd, tab.localShellType, 'row', tab.localShellName)
+          return
+        }
+        if (tab.tabType === 'terminal' && tab.connectionId) {
+          const conn = cachedConnections.find((c) => c.id === tab.connectionId)
+          if (conn) openInSplit(conn, 'row', tab.dockerContainer)
+        }
+        return
+      }
       if (tab.tabType === 'localShell') {
         openLocalShellTab(tab.localShellCwd, tab.localShellType, tab.localShellName)
         return
@@ -1897,7 +1928,39 @@ export default function App() {
       const conn = cachedConnections.find((c) => c.id === tab.connectionId)
       if (conn) openTab(conn)
     },
-    [openTab],
+    [openTab, openInSplit, handleOpenLocalSplit],
+  )
+
+  // Right-click → "Open in File Manager" for a local shell tab. Uses the live cwd
+  // (follows `cd`) when available, otherwise the startup directory.
+  const openLocalShellDir = useCallback(
+    async (tab: TabInfo) => {
+      setTabContextMenu(null)
+      const dir = cwdByTab[tab.tabId] ?? tab.localShellCwd
+      if (!dir) return
+      try {
+        await open(toNativeWinPath(dir))
+      } catch (e) {
+        console.error('Failed to open directory in file manager:', e)
+        setToast({ kind: 'error', text: String(e) })
+      }
+    },
+    [cwdByTab, setToast],
+  )
+
+  // Right-click → "Open in File Manager" for a local terminal entry in the
+  // sidebar connection list: opens the entry's configured directory.
+  const handleOpenLocalDir = useCallback(
+    async (entry: LocalTerminalEntry) => {
+      if (!entry.cwd) return
+      try {
+        await open(toNativeWinPath(entry.cwd))
+      } catch (e) {
+        console.error('Failed to open local terminal directory:', e)
+        setToast({ kind: 'error', text: String(e) })
+      }
+    },
+    [setToast],
   )
 
   // Close a single pane within a workspace. Only that pane's session is
@@ -3785,7 +3848,18 @@ export default function App() {
           >
             ⠿
           </span>
-          <span className="term-pane-title">{tab ? getTabLabel(tab) : 'No terminal'}</span>
+          <span
+            className="term-pane-title"
+            onContextMenu={(e) => {
+              // Right-click on a split-pane tab opens the same context menu as the
+              // top tab bar (e.g. "Open in File Manager" for local shells).
+              e.preventDefault()
+              e.stopPropagation()
+              if (tab) setTabContextMenu({ x: e.clientX, y: e.clientY, tab, fromPane: true })
+            }}
+          >
+            {tab ? getTabLabel(tab) : 'No terminal'}
+          </span>
           {tab?.tabType === 'terminal' && leaf.tabId != null && (
             <button
               className="term-pane-reconnect"
@@ -4590,6 +4664,7 @@ export default function App() {
               onOpenLocalSplit={(entry, direction) =>
                 handleOpenLocalSplit(entry.cwd, entry.shell, direction, entry.name)
               }
+              onOpenLocalDir={handleOpenLocalDir}
               onLocalTerminalsChanged={reloadLocalTerminals}
               expanded={connectionsExpanded}
               onToggleExpanded={() =>
@@ -4924,21 +4999,29 @@ export default function App() {
               </button>
             </div>
 
-            {/* Tab right-click context menu */}
+            {/* Tab right-click context menu (SSH terminals + local shell tabs) */}
             {tabContextMenu &&
-              tabContextMenu.tab.tabType === 'terminal' &&
-              tabContextMenu.tab.connectionId && (
+              ((tabContextMenu.tab.tabType === 'terminal' && tabContextMenu.tab.connectionId) ||
+                tabContextMenu.tab.tabType === 'localShell') && (
                 <div
                   ref={tabContextMenuRef}
                   className="tab-context-menu"
                   style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
                   onClick={(e) => e.stopPropagation()}
                 >
+                  {tabContextMenu.tab.tabType === 'localShell' && (
+                    <div
+                      className="context-menu-item"
+                      onClick={() => openLocalShellDir(tabContextMenu.tab)}
+                    >
+                      {t('openInFileManager')}
+                    </div>
+                  )}
                   <div
                     className="context-menu-item"
-                    onClick={() => duplicateTab(tabContextMenu.tab)}
+                    onClick={() => duplicateTab(tabContextMenu.tab, tabContextMenu.fromPane)}
                   >
-                    Duplicate Tab
+                    {t('duplicateTab')}
                   </div>
                 </div>
               )}

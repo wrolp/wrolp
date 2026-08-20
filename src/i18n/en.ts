@@ -388,6 +388,8 @@ const en = {
   localTerminal: 'Local Terminal',
   openLocalShell: 'Open Local Terminal',
   openLocalShellHint: 'Default directory / system default shell',
+  openInFileManager: 'Open in File Manager',
+  duplicateTab: 'Duplicate Tab',
   recentDirs: 'Recent Directories',
   clearDirHistory: 'Clear History',
   removeFromHistory: 'Remove from history',

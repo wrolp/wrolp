@@ -29,7 +29,7 @@
   },
   "plugins": {
     "shell": {
-      "open": true
+      "open": ".*"
     },
     "updater": {
       "endpoints": [

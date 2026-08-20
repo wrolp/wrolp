@@ -386,6 +386,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   localTerminal: '本地终端',
   openLocalShell: '打开本地终端',
   openLocalShellHint: '默认目录 / 系统默认 shell',
+  openInFileManager: '在文件管理器中打开',
+  duplicateTab: '复制标签页',
   recentDirs: '最近目录',
   clearDirHistory: '清空历史',
   removeFromHistory: '从历史中移除',
