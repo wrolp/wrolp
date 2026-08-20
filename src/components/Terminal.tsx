@@ -2940,6 +2940,10 @@ function highlightCurrentCommandLine(term: Terminal) {
   const plain = stripAnsi(rawLine)
   const { prompt, command } = splitPromptCommand(plain)
   if (!command && !prompt) return
+  // Never recolor full-screen TUI screens (vi/nano/less/tmux/etc.). Those use the
+  // alternate buffer and manage their own styling; rewriting a line here strips
+  // their colors and corrupts indentation.
+  if (term.buffer.active.type === 'alternate') return
   const buffer = term.buffer.active
   let y = buffer.baseY + buffer.cursorY
   let wrapped = false
@@ -2972,6 +2976,9 @@ function getInputLineAtCursorEnd(term: Terminal): { prompt: string; command: str
   const plain = stripAnsi(rawLine)
   const { prompt, command } = splitPromptCommand(plain)
   const buffer = term.buffer.active
+  // Full-screen programs (vi/nano/less/tmux/etc.) use the alternate buffer. Every
+  // line there is program output, not a shell command line, so never recolor it.
+  if (buffer.type === 'alternate') return null
   // Reject wrapped (multi-row) commands: repositioning would corrupt rows.
   let y = buffer.baseY + buffer.cursorY
   while (y > 0) {
