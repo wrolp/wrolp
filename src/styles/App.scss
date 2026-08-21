@@ -2427,20 +2427,6 @@ body.resizing-v {
       transition: background 0.15s;
     }
 
-    .btn-browse {
-      background: $bg-input;
-      color: $text-primary;
-      border: 1px solid $border;
-      padding: 6px 12px;
-      font-size: 13px;
-      white-space: nowrap;
-      cursor: pointer;
-
-      &:hover {
-        background: #4c4c4c;
-      }
-    }
-
     .btn-cancel {
       background: $bg-input;
       color: $text-primary;
@@ -2508,28 +2494,6 @@ body.resizing-v {
     }
   }
 
-  .dir-row {
-    display: flex;
-    gap: 8px;
-
-    input {
-      flex: 1;
-    }
-
-    button {
-      flex-shrink: 0;
-      padding: 0 12px;
-      background: $bg-input;
-      border: 1px solid $border;
-      border-radius: 4px;
-      color: $text-primary;
-      cursor: pointer;
-
-      &:hover {
-        background: #4c4c4c;
-      }
-    }
-  }
 }
 
 .modal-error {
@@ -2606,6 +2570,33 @@ body.resizing-v {
       &:hover {
         background: rgba(0, 122, 204, 0.18);
       }
+    }
+  }
+}
+
+// Shared directory-picker row: a flex row holding an input (flex: 1) and a
+// "Browse" button. Used by both the SSH connection editor (key path, inside
+// `.form-group`) and the local terminal editor (working dir, inside
+// `.modal-field`) so the Browse button looks identical in both places.
+.dir-row {
+  display: flex;
+  gap: 8px;
+
+  input {
+    flex: 1;
+  }
+
+  button {
+    flex-shrink: 0;
+    padding: 0 12px;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: 4px;
+    color: $text-primary;
+    cursor: pointer;
+
+    &:hover {
+      background: #4c4c4c;
     }
   }
 }

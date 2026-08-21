@@ -21,6 +21,7 @@ import type {
   TunnelInfo,
   StartTunnelArgs,
   TunnelConfig,
+  KeepaliveConfig,
 } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {

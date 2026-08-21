@@ -1508,14 +1508,13 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             <>
               <div className="form-group">
                 <label>{t('keyPath')}</label>
-                <div style={{ display: 'flex', gap: '6px' }}>
+                <div className="dir-row">
                   <input
                     value={keyPath}
                     onChange={(e) => setKeyPath(e.target.value)}
                     placeholder="~/.ssh/id_rsa (default)"
-                    style={{ flex: 1 }}
                   />
-                  <button type="button" onClick={handleBrowseKey} className="btn-browse">
+                  <button type="button" onClick={handleBrowseKey}>
                     {t('browse')}
                   </button>
                 </div>
