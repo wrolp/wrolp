@@ -1021,7 +1021,7 @@ export default function App() {
       const tid = event.payload.tabId
       setTabs((prev) =>
         prev.map((t) =>
-          t.tabId === tid && t.status === 'connected'
+          t.tabId === tid && (t.status === 'connected' || t.status === 'suspect')
             ? { ...t, status: 'disconnected', errorMessage: 'Connection lost' }
             : t,
         ),
@@ -1029,6 +1029,30 @@ export default function App() {
     })
     return () => {
       unlisten.then((fn) => fn())
+    }
+  }, [])
+
+  // Listen for keepalive probe results: turn the status dot yellow on the first
+  // failed probe (suspect), back to green when a probe succeeds again. Reaching
+  // the max retry count is reported separately as "connection-closed" (red).
+  useEffect(() => {
+    const unlistenSuspect = listen<{ tabId: number }>('connection-suspect', (event) => {
+      const tid = event.payload.tabId
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.tabId === tid && t.status === 'connected' ? { ...t, status: 'suspect' } : t,
+        ),
+      )
+    })
+    const unlistenOk = listen<{ tabId: number }>('connection-ok', (event) => {
+      const tid = event.payload.tabId
+      setTabs((prev) =>
+        prev.map((t) => (t.tabId === tid && t.status === 'suspect' ? { ...t, status: 'connected' } : t)),
+      )
+    })
+    return () => {
+      unlistenSuspect.then((fn) => fn())
+      unlistenOk.then((fn) => fn())
     }
   }, [])
 

@@ -417,7 +417,8 @@ pub struct SshSession {
   pub channel_arc: Option<Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>>,
   /// Shared SSH session handle, kept alive for the session lifetime.
   /// Used to open extra channels (ProxyJump direct-tcpip, docker exec) for
-  /// secondary targets without re-authenticating.
+  /// secondary targets without re-authenticating, and for the keepalive probe
+  /// (each probe opens a fresh non-PTY channel via this handle).
   pub session_handle: Option<Arc<russh::client::Handle<SshHandler>>>,
   /// Optional switched user for SFTP operations (different from connection config user)
   pub switched_sftp_user: Option<SwitchedUser>,

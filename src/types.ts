@@ -104,7 +104,7 @@ export interface TabInfo {
   connectionId?: string
   connectionName: string
   host: string
-  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'settings' | 'aiChat'
+  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'suspect' | 'settings' | 'aiChat'
   errorMessage?: string
   tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat' | 'localShell'
   // When true, this session was created by splitting a tab and is NOT shown as

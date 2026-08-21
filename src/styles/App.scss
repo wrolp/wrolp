@@ -1121,6 +1121,9 @@ body.resize-v * {
     &.disconnected {
       background: #888;
     }
+    &.suspect {
+      background: #e5c07b;
+    }
   }
 }
 

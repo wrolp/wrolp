@@ -74,12 +74,62 @@ impl Handler for SshHandler {
 
 /// I/O loop for the interactive PTY channel. The SSH `Handle` is kept alive in
 /// `AppState.sessions[tab].session_handle` (see `connect`), so it is not owned here.
+/// Probe connectivity by opening a fresh (non-PTY) channel, running a no-op
+/// command (`true`), and waiting for the channel to close. Returns `Err` if the
+/// channel can't be opened, the `exec` fails, or any step doesn't finish within
+/// `timeout` — all imply the server is no longer responding.
+///
+/// A brand-new channel is opened for every probe. This is deliberate: when the
+/// network is yanked (e.g. cable pulled), the write inside `exec` can block
+/// indefinitely while the OS waits for ACKs from an unreachable peer. Wrapping
+/// the whole sequence in a timeout bounds that hang, and using a fresh channel
+/// each time means a stalled channel can never hold a shared lock or poison the
+/// next probe — so `run_session_loop` always gets a chance to emit the suspect /
+/// closed events (and to observe a shutdown signal for a superseded session).
+async fn probe_channel_run(
+  handle: &russh::client::Handle<SshHandler>,
+  timeout: std::time::Duration,
+) -> Result<(), ()> {
+  let mut ch = match tokio::time::timeout(timeout, handle.channel_open_session()).await {
+    Ok(Ok(ch)) => ch,
+    _ => return Err(()),
+  };
+  match tokio::time::timeout(timeout, ch.exec(true, "true")).await {
+    Ok(Ok(())) => {}
+    _ => return Err(()),
+  }
+  // Read messages until the channel is closed (None), bounded by the timeout.
+  loop {
+    match tokio::time::timeout(timeout, ch.wait()).await {
+      Ok(Some(_)) => continue,
+      Ok(None) => return Ok(()),
+      Err(_) => return Err(()),
+    }
+  }
+}
+
 async fn run_session_loop(
+  app: tauri::AppHandle,
   channel: Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>,
   mut data_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
   mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
   tid: u32,
+  _session_id: u64,
 ) {
+  // SSH-level keepalive probe (interval + max retries, configured in Settings).
+  // Three states are reported to the frontend:
+  //   - first failed probe        -> "connection-suspect"  (yellow dot)
+  //   - probe succeeds again      -> "connection-ok"       (back to green)
+  //   - max consecutive failures   -> break, connect() emits "connection-closed"
+  //                                    (red dot) and tears the session down.
+  let (ka_interval, ka_max) = load_keepalive().unwrap_or((std::time::Duration::from_secs(30), 3u64));
+  let mut ka_timer = tokio::time::interval(ka_interval);
+  ka_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+  // Eat the immediate first tick so probing starts after one full interval.
+  ka_timer.tick().await;
+  let mut failed: u64 = 0;
+  let mut suspect = false;
+
   loop {
     tokio::select! {
       Some(data) = data_rx.recv() => {
@@ -87,6 +137,65 @@ async fn run_session_loop(
         if let Err(e) = ch.data(data.as_slice()).await {
           eprintln!("[russh] write error for tab={}: {:?}", tid, e);
           break;
+        }
+      }
+      _ = ka_timer.tick() => {
+        // Send an SSH-level keepalive and verify the socket still accepts writes.
+        // Wrapped in a timeout: a stalled/half-dead connection fails the write
+        // (or hangs past the interval), surfacing as a probe failure.
+        let probe = {
+          // Pull the shared SSH handle out, then drop the sessions lock *before*
+          // any await so the spawned future stays `Send`. Each probe opens its
+          // own channel via this handle (see `probe_channel_run`).
+          let handle = {
+            let state = match app.try_state::<AppState>() {
+              Some(s) => s,
+              None => break,
+            };
+            let sessions = match state.sessions.lock() {
+              Ok(g) => g,
+              Err(_) => break,
+            };
+            sessions.get(&tid).and_then(|s| s.session_handle.clone())
+          };
+          match handle {
+            // Outer timeout bounds the whole probe (open + exec + wait) so a
+            // single dead probe returns within one keepalive interval.
+            Some(h) => {
+              match tokio::time::timeout(ka_interval, probe_channel_run(&h, ka_interval)).await {
+                Ok(inner) => inner,
+                Err(_) => Err(()),
+              }
+            }
+            None => Ok(()),
+          }
+        };
+        match probe {
+          Ok(()) => {
+            if suspect {
+              suspect = false;
+              let _ = app.emit("connection-ok", serde_json::json!({ "tabId": tid }));
+            }
+            failed = 0;
+          }
+          Err(_) => {
+            failed += 1;
+            if !suspect {
+              suspect = true;
+              let _ = app.emit(
+                "connection-suspect",
+                serde_json::json!({ "tabId": tid }),
+              );
+            }
+            if failed >= ka_max {
+              // Give up — connect()'s cleanup emits "connection-closed".
+              eprintln!(
+                "[russh] keepalive failed {} times for tab={}, declaring dead",
+                failed, tid
+              );
+              break;
+            }
+          }
         }
       }
       _ = &mut shutdown_rx => {
@@ -226,14 +335,10 @@ pub async fn connect(
         is_sftp: false,
         shell_channel_id: None,
       };
-      let mut ssh_config = client::Config::default();
-      // Apply SSH-level keepalive (interval + max) so silently-dropped
-      // connections (network drop, NAT timeout) are detected and torn down.
-      if let Some((interval, max)) = load_keepalive() {
-        ssh_config.keepalive_interval = Some(interval);
-        ssh_config.keepalive_max = max as usize;
-      }
-      let ssh_config = Arc::new(ssh_config);
+      // Keepalive is not configured via russh's built-in mechanism; instead
+      // run_session_loop runs its own probe so it can report the intermediate
+      // "suspect" (yellow) state before declaring the connection dead.
+      let ssh_config = Arc::new(client::Config::default());
 
       let mut handle =
         match client::connect(ssh_config, (cfg.host.as_str(), cfg.port), handler).await {
@@ -341,7 +446,8 @@ pub async fn connect(
       eprintln!("[russh] shell started for tab={}", tid);
 
       // Store channel Arc (for resize) and the shared session handle (for
-      // ProxyJump / docker exec on secondary targets) in the session.
+      // ProxyJump / docker exec on secondary targets, and the keepalive probe)
+      // in the session.
       {
         if let Some(app_state) = app_handle.try_state::<AppState>() {
           if let Ok(mut sessions) = app_state.sessions.lock() {
@@ -372,7 +478,15 @@ pub async fn connect(
       eprintln!("[russh] test event pushed to buffer for tab={}", tid);
 
       // 4. Run I/O loop (handle kept alive in AppState.session_handle)
-      run_session_loop(channel, data_rx, shutdown_rx, tid).await;
+      run_session_loop(
+        app_handle.clone(),
+        channel,
+        data_rx,
+        shutdown_rx,
+        tid,
+        session_id,
+      )
+      .await;
 
       eprintln!("[russh] disconnected for tab={}", tid);
 
