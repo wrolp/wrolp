@@ -890,4 +890,3 @@ pub async fn confirm_ai_tool(
   );
   Ok(())
 }
-

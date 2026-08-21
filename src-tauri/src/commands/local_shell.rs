@@ -366,4 +366,3 @@ fn record_local_shell_dir(state: &AppState, path: &str, shell: Option<&str>) {
   dirs.sort_by(|a, b| b.last_used.cmp(&a.last_used));
   dirs.truncate(20);
 }
-

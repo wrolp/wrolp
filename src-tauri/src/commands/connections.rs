@@ -261,4 +261,3 @@ pub async fn delete_group(
   }
   Ok(changed)
 }
-

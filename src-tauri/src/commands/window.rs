@@ -119,4 +119,3 @@ pub async fn save_layout(app: tauri::AppHandle, layout: String) -> Result<(), St
     .await
     .map_err(|e| e.to_string())
 }
-

@@ -374,4 +374,3 @@ pub async fn restore_builtin_template(
   let conn = state.db.lock().map_err(|e| e.to_string())?;
   db::restore_builtin_template(&conn, &key)
 }
-

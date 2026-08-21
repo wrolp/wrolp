@@ -620,4 +620,3 @@ pub async fn poll_output(
   }
   Ok(result)
 }
-

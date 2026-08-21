@@ -1142,4 +1142,3 @@ pub async fn cancel_transfer(state: tauri::State<'_, AppState>, tab_id: u32) -> 
   }
   Ok(())
 }
-
