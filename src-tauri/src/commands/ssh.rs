@@ -226,7 +226,14 @@ pub async fn connect(
         is_sftp: false,
         shell_channel_id: None,
       };
-      let ssh_config = Arc::new(client::Config::default());
+      let mut ssh_config = client::Config::default();
+      // Apply SSH-level keepalive (interval + max) so silently-dropped
+      // connections (network drop, NAT timeout) are detected and torn down.
+      if let Some((interval, max)) = load_keepalive() {
+        ssh_config.keepalive_interval = Some(interval);
+        ssh_config.keepalive_max = max as usize;
+      }
+      let ssh_config = Arc::new(ssh_config);
 
       let mut handle =
         match client::connect(ssh_config, (cfg.host.as_str(), cfg.port), handler).await {

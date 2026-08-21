@@ -51,6 +51,8 @@ import {
   loadWindowConfig,
   saveWindowConfig,
   setAutoRecord,
+  getKeepalive,
+  setKeepalive,
   setRecordingEnabled,
   getRecordingEnabled,
   fsReadFileContent,
@@ -658,6 +660,10 @@ export default function App() {
   const [aiInputHeight, setAiInputHeight] = useState(0)
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([])
   const [autoRecord, setAutoRecordState] = useState(false)
+  // SSH keepalive settings (Settings page). Read on startup, persisted to
+  // window.json so future connect() calls in Rust pick them up.
+  const [keepaliveInterval, setKeepaliveInterval] = useState(30)
+  const [keepaliveMax, setKeepaliveMax] = useState(3)
   // Per-tab recording indicator (map from tabId → recording on/off). Loaded
   // from the backend so the button reflects the actual state after reconnect.
   const [recordingByTab, setRecordingByTab] = useState<Record<number, boolean>>({})
@@ -766,6 +772,17 @@ export default function App() {
   const handleAutoRecordChange = useCallback((enabled: boolean) => {
     setAutoRecordState(enabled)
     setAutoRecord(enabled).catch(() => {})
+  }, [])
+
+  // SSH keepalive settings (Settings). Persists to window.json so future
+  // connect() calls in Rust pick them up. Minimums enforced (interval >= 10,
+  // count >= 2) on both frontend and backend.
+  const handleKeepaliveChange = useCallback((interval: number, max: number) => {
+    const i = Number.isFinite(interval) ? Math.max(10, Math.floor(interval)) : 30
+    const m = Number.isFinite(max) ? Math.max(2, Math.floor(max)) : 3
+    setKeepaliveInterval(i)
+    setKeepaliveMax(m)
+    setKeepalive(i, m).catch(() => {})
   }, [])
 
   // Toggle session recording for one pane (the record button in the pane
@@ -1148,6 +1165,12 @@ export default function App() {
         if (config.autoRecordSessions !== undefined) {
           setAutoRecordState(config.autoRecordSessions)
         }
+      })
+      .catch(() => {})
+    getKeepalive()
+      .then((k) => {
+        setKeepaliveInterval(k.interval)
+        setKeepaliveMax(k.max)
       })
       .catch(() => {})
   }, [])
@@ -2983,6 +3006,44 @@ export default function App() {
                           {t('autoRecordSessions')}
                         </label>
                         <span className="settings-help">{t('autoRecordSessionsDesc')}</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label className="settings-label" htmlFor="keepaliveInterval">
+                          {t('keepaliveInterval')}
+                        </label>
+                        <input
+                          id="keepaliveInterval"
+                          type="number"
+                          min={10}
+                          step={1}
+                          className="settings-input"
+                          style={{ width: '100px' }}
+                          value={keepaliveInterval}
+                          onChange={(e) =>
+                            handleKeepaliveChange(Number(e.target.value), keepaliveMax)
+                          }
+                        />
+                        <span className="settings-help">{t('keepaliveIntervalDesc')}</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label className="settings-label" htmlFor="keepaliveMax">
+                          {t('keepaliveMax')}
+                        </label>
+                        <input
+                          id="keepaliveMax"
+                          type="number"
+                          min={2}
+                          step={1}
+                          className="settings-input"
+                          style={{ width: '100px' }}
+                          value={keepaliveMax}
+                          onChange={(e) =>
+                            handleKeepaliveChange(keepaliveInterval, Number(e.target.value))
+                          }
+                        />
+                        <span className="settings-help">{t('keepaliveMaxDesc')}</span>
                       </div>
 
                       <div className="settings-field">

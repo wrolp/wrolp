@@ -250,6 +250,12 @@ export interface LocalShellDir {
   lastUsed: number
 }
 
+/** SSH keepalive settings: interval in seconds and max unanswered retries. */
+export interface KeepaliveConfig {
+  interval: number
+  max: number
+}
+
 export interface LocalTerminalEntry {
   id: string
   name: string

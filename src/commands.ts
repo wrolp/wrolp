@@ -244,6 +244,14 @@ export async function setAutoRecord(enabled: boolean): Promise<void> {
   await invoke<void>('set_auto_record', { enabled })
 }
 
+export async function getKeepalive(): Promise<KeepaliveConfig> {
+  return await invoke<KeepaliveConfig>('get_keepalive')
+}
+
+export async function setKeepalive(interval: number, max: number): Promise<void> {
+  await invoke<void>('set_keepalive', { interval, max })
+}
+
 export async function setRecordingEnabled(tabId: number, enabled: boolean): Promise<boolean> {
   return await invoke<boolean>('set_recording_enabled', { tabId, enabled })
 }

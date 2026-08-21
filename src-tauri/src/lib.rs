@@ -267,6 +267,8 @@ pub fn run() {
       commands::restore_builtin_template,
       commands::get_auto_record,
       commands::set_auto_record,
+      commands::get_keepalive,
+      commands::set_keepalive,
       commands::set_recording_enabled,
       commands::get_recording_enabled,
       commands::analyze_host,

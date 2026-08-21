@@ -420,6 +420,12 @@ const en = {
   autoRecordSessions: 'Auto-record sessions',
   autoRecordSessionsDesc:
     'Start recording automatically after an SSH connection. When off, use the per-pane record button to record manually.',
+  keepaliveInterval: 'SSH keepalive interval (seconds)',
+  keepaliveIntervalDesc:
+    'How often to send an SSH-level ping to detect dropped connections. Minimum 10 seconds.',
+  keepaliveMax: 'SSH keepalive retries',
+  keepaliveMaxDesc:
+    'Unanswered pings before the connection is closed. Minimum 2.',
   retry: 'Retry',
   copy: 'Copy',
   paste: 'Paste',
