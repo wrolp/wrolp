@@ -4740,7 +4740,10 @@ export default function App() {
                       fileTarget?.kind === 'docker'
                         ? '/'
                         : fileTarget?.kind === 'local'
-                          ? (tabs.find((t) => t.tabId === fileTarget.tabId)?.localShellCwd ?? '/')
+                          ? // Empty path resolves to the user's home directory
+                            // in the backend; "/" would map to the current
+                            // drive root on Windows instead.
+                            (tabs.find((t) => t.tabId === fileTarget.tabId)?.localShellCwd ?? '')
                           : // Session target: open the file panel at the connection's
                             // startup directory (same directory the terminal cd's
                             // into on connect), falling back to home.
