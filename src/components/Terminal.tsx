@@ -27,7 +27,12 @@ import {
   highlightTableText,
   isPrintLike,
 } from '../lib/termHighlight'
-import { detectLsCommand, parseLsBlock, extractCwdFromPrompt, resolveCdTarget } from '../lib/lsParse'
+import {
+  detectLsCommand,
+  parseLsBlock,
+  extractCwdFromPrompt,
+  resolveCdTarget,
+} from '../lib/lsParse'
 import type { LsEntry } from '../lib/lsParse'
 import {
   detectTableCommand,
@@ -374,7 +379,12 @@ function parseDockerExecContainer(command: string): string | null {
     if (tok.startsWith('-')) {
       const eq = tok.indexOf('=')
       const flag = eq === -1 ? tok : tok.slice(0, eq)
-      if (eq === -1 && takesValue.test(flag) && i + 1 < tokens.length && !tokens[i + 1].startsWith('-')) {
+      if (
+        eq === -1 &&
+        takesValue.test(flag) &&
+        i + 1 < tokens.length &&
+        !tokens[i + 1].startsWith('-')
+      ) {
         i += 1
       }
       continue
@@ -495,13 +505,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // shell-sync follows the real directory instead of $HOME from poll_working_dir).
   const onCwdChangeRef = useRef(onCwdChange)
   onCwdChangeRef.current = onCwdChange
-  const setCwd = useCallback(
-    (path: string | null) => {
-      cwdRef.current = path
-      onCwdChangeRef.current?.(path)
-    },
-    [],
-  )
+  const setCwd = useCallback((path: string | null) => {
+    cwdRef.current = path
+    onCwdChangeRef.current?.(path)
+  }, [])
   // Cache of the SSH session's $HOME, fetched from poll_working_dir so a leading
   // `~` (from the prompt or `ls -l ~/docs`) can be expanded to an absolute path
   // (SFTP doesn't expand `~`, and the backend `expand_tilde` uses the *local*
@@ -1273,13 +1280,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           }
           return seedRemoteCwd(promptCwd)
         })()
-    lsBaseDirPromiseRef.current = Promise.all([homePromise, cwdPromise]).then(
-      ([home, cwd]) => {
-        if (!isLocal) homeRef.current = home ?? null
-        const base = resolveLsBaseDir(cwd, targetArg)
-        return isLocal ? base : expandTilde(base, home)
-      },
-    )
+    lsBaseDirPromiseRef.current = Promise.all([homePromise, cwdPromise]).then(([home, cwd]) => {
+      if (!isLocal) homeRef.current = home ?? null
+      const base = resolveLsBaseDir(cwd, targetArg)
+      return isLocal ? base : expandTilde(base, home)
+    })
     const buf = term.buffer.active
     lsCaptureRef.current = {
       format,
@@ -1461,16 +1466,52 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
   // Map a filename to a highlight language (self-contained, no async worker).
   const EXT_LANG: Record<string, string> = {
-    js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
-    ts: 'typescript', tsx: 'typescript',
-    py: 'python', rb: 'ruby', pl: 'perl', php: 'php', go: 'go', rs: 'rust',
-    java: 'java', kt: 'kotlin', scala: 'scala',
-    c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', cs: 'csharp',
-    json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml', ini: 'ini', cfg: 'ini', conf: 'ini', properties: 'ini',
-    xml: 'xml', html: 'html', htm: 'html', svg: 'xml',
-    sh: 'shell', bash: 'shell', zsh: 'shell', psm1: 'shell',
-    css: 'css', scss: 'scss', less: 'less', sql: 'sql', lua: 'lua',
-    md: 'markdown', markdown: 'markdown', dockerfile: 'docker',
+    js: 'javascript',
+    jsx: 'javascript',
+    mjs: 'javascript',
+    cjs: 'javascript',
+    ts: 'typescript',
+    tsx: 'typescript',
+    py: 'python',
+    rb: 'ruby',
+    pl: 'perl',
+    php: 'php',
+    go: 'go',
+    rs: 'rust',
+    java: 'java',
+    kt: 'kotlin',
+    scala: 'scala',
+    c: 'c',
+    h: 'c',
+    cpp: 'cpp',
+    cc: 'cpp',
+    cxx: 'cpp',
+    hpp: 'cpp',
+    cs: 'csharp',
+    json: 'json',
+    yaml: 'yaml',
+    yml: 'yaml',
+    toml: 'toml',
+    ini: 'ini',
+    cfg: 'ini',
+    conf: 'ini',
+    properties: 'ini',
+    xml: 'xml',
+    html: 'html',
+    htm: 'html',
+    svg: 'xml',
+    sh: 'shell',
+    bash: 'shell',
+    zsh: 'shell',
+    psm1: 'shell',
+    css: 'css',
+    scss: 'scss',
+    less: 'less',
+    sql: 'sql',
+    lua: 'lua',
+    md: 'markdown',
+    markdown: 'markdown',
+    dockerfile: 'docker',
   }
   const PRINT_READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl', 'sed', 'awk'])
 
@@ -1703,7 +1744,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       unlistenAiMark = un
     })
 
-      const term = new Terminal({
+    const term = new Terminal({
       cursorBlink: true,
       fontSize: 14,
       fontFamily:
@@ -1718,27 +1759,27 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // will alpha-blend shell-rendered cell backgrounds (e.g. powerlevel10k
         // prompt blocks) against the theme background and the colors look wrong.
         background: '#1e1e1e',
-        foreground: '#d4d4d4',
+        foreground: '#ffffff',
         cursor: '#aeafad',
         selectionBackground: '#264f78',
-        black: '#1e1e1e',
+        black: '#a0a0a0',
         red: '#f44747',
         green: '#3a8558',
         yellow: '#dcdcaa',
-        blue: '#b8e0ff',
+        blue: '#5b7fb5',
         magenta: '#c586c0',
         cyan: '#4dc9b0',
-        white: '#d4d4d4',
+        white: '#ffffff',
         brightBlack: '#808080',
         brightRed: '#f44747',
         brightGreen: '#4daa6a',
         brightYellow: '#dcdcaa',
-        brightBlue: '#d4ecff',
+        brightBlue: '#5b7fb5',
         brightMagenta: '#d4a0d4',
         brightCyan: '#6ae6cc',
         brightWhite: '#ffffff',
       },
-      minimumContrastRatio: 4.5,
+      minimumContrastRatio: 1,
       allowProposedApi: true,
     })
 
@@ -2139,7 +2180,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // startCaptureIfPrint(command, prompt)          // 命令输出高亮：cat/head/tail
           // startCaptureIfLsPlain 已由 startLsCaptureIfMatch 兼管（plain ls/dir 在
           // writeLsChunk 里完成着色+可点击，避免两个 capture 同时占用输出）。
-          startLsCaptureIfMatch(command, prompt)          // 保留：原 ls/dir 着色+可点击
+          startLsCaptureIfMatch(command, prompt) // 保留：原 ls/dir 着色+可点击
           // startTableCaptureIfMatch(command, prompt)     // 命令输出高亮：df/ps/free/netstat/...
         }
       }
@@ -2240,6 +2281,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       resizeObserverRef.current.observe(containerRef.current)
     }
 
+    // Re-fit once web fonts (Nerd Fonts etc.) finish loading. xterm measures cell
+    // metrics at fit() time, so a fit that ran before the font arrived computes
+    // wrong cols/rows and the prompt renders truncated until a manual resize.
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      document.fonts.ready
+        .then(() => maybeFitAndResize())
+        .catch(() => {})
+    }
+
     // Poll SSH output (every 100ms), completely bypassing Tauri event system.
     // The poll is skipped while the window is hidden (minimized / occluded) or
     // the session is no longer connected — backend buffers the output, and the
@@ -2310,7 +2360,32 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           .then(() => {
             connectedRef.current = true
             onStatusChangeRef.current('connected')
-            startPolling()
+            // Defer startPolling until after a confirmed-good fit+resize.
+            // If we start polling now, the shell may emit its prompt at the
+            // initial (possibly undersized) cols/rows, and even a later SIGWINCH
+            // cannot fully fix already-rendered content. Waiting for the container
+            // to reach its final geometry ensures the first frame of output is
+            // rendered at the correct width — matching what the user sees after a
+            // manual window resize.
+            setTimeout(() => {
+              if (fitRef.current && term.cols > 0 && term.rows > 0) {
+                const prevCols = term.cols
+                const prevRows = term.rows
+                fitRef.current.fit()
+                term.refresh(0, term.rows - 1)
+                // Only propagate if geometry actually changed (avoids spurious
+                // SIGWINCH when the initial fit was already correct).
+                if (
+                  term.cols !== prevCols ||
+                  term.rows !== prevRows
+                ) {
+                  lastColsRef.current = term.cols
+                  lastRowsRef.current = term.rows
+                  sendResize(term)
+                }
+              }
+              startPolling()
+            }, 400)
           })
           .catch((err) => {
             const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
@@ -2340,9 +2415,27 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           .then(() => {
             connectedRef.current = true
             onStatusChangeRef.current('connected')
-            startPolling()
             nestedDepthRef.current = 0 // fresh shell: no nested session carry-over
             seedInitialRemoteCwd()
+            // Same deferred-fit-then-poll rationale as the local shell path:
+            // ensure correct geometry before any output is rendered.
+            setTimeout(() => {
+              if (fitRef.current && term.cols > 0 && term.rows > 0) {
+                const prevCols = term.cols
+                const prevRows = term.rows
+                fitRef.current.fit()
+                term.refresh(0, term.rows - 1)
+                if (
+                  term.cols !== prevCols ||
+                  term.rows !== prevRows
+                ) {
+                  lastColsRef.current = term.cols
+                  lastRowsRef.current = term.rows
+                  sendResize(term)
+                }
+              }
+              startPolling()
+            }, 400)
           })
           .catch((err) => {
             const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
@@ -2352,7 +2445,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       }
     }
 
-    const waitForLayoutAndFit = () => {
+    const waitForLayoutAndFit = async () => {
+      // Wait for the bundled Nerd Font before measuring cells. If fit() runs
+      // with a fallback font, the column width is wrong and the shell prompt is
+      // misaligned until the window is manually resized.
+      await document.fonts.load('14px "WrolpNerdFont"').catch(() => {
+        /* fall back to the current font if the bundled font fails to load */
+      })
       const container = containerRef.current
       if (!container) return
       const w = container.clientWidth
@@ -2454,6 +2553,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             ;(term as any)._core?._renderService?.clear()
             fit.fit()
             term.refresh(0, term.rows - 1)
+            // Propagate the corrected geometry to the shell too (SIGWINCH),
+            // otherwise the shell keeps the pre-font-load size and the prompt
+            // stays truncated until a manual resize.
+            if (
+              term.cols !== lastColsRef.current ||
+              term.rows !== lastRowsRef.current
+            ) {
+              lastColsRef.current = term.cols
+              lastRowsRef.current = term.rows
+              sendResize(term)
+            }
           } catch {
             /* container may be momentarily 0-sized */
           }
@@ -2524,16 +2634,35 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           .then(() => {
             connectedRef.current = true
             onStatusChangeRef.current('connected')
-            if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-            pollTimerRef.current = setInterval(async () => {
-              if (document.hidden || !connectedRef.current) return
-              try {
-                const chunks = await pollOutput(currentTabId)
-                if (chunks.length > 0) {
-                  for (const chunk of chunks) writeOutput(chunk)
+            // Defer polling + post-connect fit so geometry is correct before
+            // any output is rendered.
+            setTimeout(() => {
+              const fit = fitRef.current
+              if (fit && term.cols > 0 && term.rows > 0) {
+                const prevCols = term.cols
+                const prevRows = term.rows
+                fit.fit()
+                term.refresh(0, term.rows - 1)
+                if (
+                  term.cols !== prevCols ||
+                  term.rows !== prevRows
+                ) {
+                  lastColsRef.current = term.cols
+                  lastRowsRef.current = term.rows
+                  sendResize(term)
                 }
-              } catch {}
-            }, 100)
+              }
+              if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+              pollTimerRef.current = setInterval(async () => {
+                if (document.hidden || !connectedRef.current) return
+                try {
+                  const chunks = await pollOutput(currentTabId)
+                  if (chunks.length > 0) {
+                    for (const chunk of chunks) writeOutput(chunk)
+                  }
+                } catch {}
+              }, 100)
+            }, 300)
           })
           .catch((err) => {
             const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
@@ -2562,21 +2691,37 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         .then(() => {
           connectedRef.current = true
           onStatusChangeRef.current('connected')
-          // Start polling again
-          if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-          pollTimerRef.current = setInterval(async () => {
-            if (document.hidden || !connectedRef.current) return
-            try {
-              const chunks = await pollOutput(currentTabId)
-              if (chunks.length > 0) {
-                for (const chunk of chunks) {
-                  writeOutput(chunk)
-                }
-              }
-            } catch {}
-          }, 100)
           nestedDepthRef.current = 0 // fresh shell: no nested session carry-over
           seedInitialRemoteCwd()
+          // Defer polling + post-connect fit so geometry is correct before any
+          // output is rendered.
+          setTimeout(() => {
+            const fit = fitRef.current
+            if (fit && term.cols > 0 && term.rows > 0) {
+              const prevCols = term.cols
+              const prevRows = term.rows
+              fit.fit()
+              term.refresh(0, term.rows - 1)
+              if (
+                term.cols !== prevCols ||
+                term.rows !== prevRows
+              ) {
+                lastColsRef.current = term.cols
+                lastRowsRef.current = term.rows
+                sendResize(term)
+              }
+            }
+            if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+            pollTimerRef.current = setInterval(async () => {
+              if (document.hidden || !connectedRef.current) return
+              try {
+                const chunks = await pollOutput(currentTabId)
+                if (chunks.length > 0) {
+                  for (const chunk of chunks) writeOutput(chunk)
+                }
+              } catch {}
+            }, 100)
+          }, 300)
         })
         .catch((err) => {
           const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)

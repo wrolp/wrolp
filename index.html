@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Wrolp Terminal</title>
+    <!-- Preload the bundled Nerd Font so xterm.js measures cells with the real
+         glyph widths on the very first open(), avoiding misaligned prompts. -->
+    <link
+      rel="preload"
+      as="font"
+      href="/fonts/MesloLGS-NF-Regular.ttf"
+      type="font/ttf"
+      crossorigin="anonymous"
+    />
   </head>
   <body>
     <div id="root"></div>
