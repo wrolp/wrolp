@@ -381,11 +381,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
             Wrap
           </label>
           <label className="dlv-control-item dlv-checkbox">
-            <input
-              type="checkbox"
-              checked={color}
-              onChange={(e) => setColor(e.target.checked)}
-            />
+            <input type="checkbox" checked={color} onChange={(e) => setColor(e.target.checked)} />
             Color
           </label>
         </div>
@@ -432,9 +428,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
             )}
           </>
         ) : (
-          <div className="dlv-empty">
-            {loading ? 'Loading logs\u2026' : 'No log output'}
-          </div>
+          <div className="dlv-empty">{loading ? 'Loading logs\u2026' : 'No log output'}</div>
         )}
       </div>
     </div>

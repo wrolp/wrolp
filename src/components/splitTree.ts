@@ -136,7 +136,10 @@ export function adjustSiblingSizes(
       sizes[j] = sj
       return { ...node, sizes }
     }
-    return { ...node, children: node.children.map((c) => adjustSiblingSizes(c, branchId, i, j, si, sj)) }
+    return {
+      ...node,
+      children: node.children.map((c) => adjustSiblingSizes(c, branchId, i, j, si, sj)),
+    }
   }
   return node
 }
@@ -194,7 +197,10 @@ function insertSibling(
     children[idx] = nested
     return { ...node, children }
   }
-  return { ...node, children: node.children.map((c) => insertSibling(c, targetId, source, before, dir, makeId)) }
+  return {
+    ...node,
+    children: node.children.map((c) => insertSibling(c, targetId, source, before, dir, makeId)),
+  }
 }
 
 // Move the pane `sourceId` relative to `targetId` according to `position`.

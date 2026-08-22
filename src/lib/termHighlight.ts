@@ -557,11 +557,33 @@ function wrapHex(hex: string, text: string): string {
 // (block comments / docstrings / heredocs). For others we just fall back to the
 // existing per-line tokenizer.
 const C_LIKE_MULTI = new Set([
-  'c', 'cpp', 'csharp', 'java', 'javascript', 'typescript', 'go', 'rust', 'php', 'json',
-  'scala', 'kotlin', 'sql', 'lua',
+  'c',
+  'cpp',
+  'csharp',
+  'java',
+  'javascript',
+  'typescript',
+  'go',
+  'rust',
+  'php',
+  'json',
+  'scala',
+  'kotlin',
+  'sql',
+  'lua',
 ])
 const MULTILINE_SPAN_LANGS = new Set<string>([
-  ...C_LIKE_MULTI, 'python', 'shell', 'sh', 'bash', 'yaml', 'toml', 'ini', 'css', 'scss', 'less',
+  ...C_LIKE_MULTI,
+  'python',
+  'shell',
+  'sh',
+  'bash',
+  'yaml',
+  'toml',
+  'ini',
+  'css',
+  'scss',
+  'less',
 ])
 
 // Whole-text block tokenizers for languages whose natural unit is the block.
@@ -665,10 +687,8 @@ function colorizeOutside(seg: string, lang: string): string {
 // heredocs); everything else is colorized per-line. Returns 1:1 line array.
 function applyMultilineSpans(text: string, lang: string): string[] {
   const defs: { re: RegExp; color: string }[] = []
-  if (lang === 'python')
-    defs.push({ re: /"""[\s\S]*?"""|'''[\s\S]*?'''/g, color: '#ce9178' })
-  if (C_LIKE_MULTI.has(lang))
-    defs.push({ re: /\/\*[\s\S]*?\*\//g, color: '#6a9955' })
+  if (lang === 'python') defs.push({ re: /"""[\s\S]*?"""|'''[\s\S]*?'''/g, color: '#ce9178' })
+  if (C_LIKE_MULTI.has(lang)) defs.push({ re: /\/\*[\s\S]*?\*\//g, color: '#6a9955' })
   if (lang === 'shell' || lang === 'sh' || lang === 'bash')
     defs.push({
       re: /<<[-~]?\s*["']?(\w+)["']?(?:\r?\n)([\s\S]*?)(?:\r?\n)\1\b/g,
@@ -719,8 +739,24 @@ const LS_LINK = '#c586c0'
 const LS_EXEC = '#dcdcaa'
 const LS_DEFAULT = '#d4d4d4'
 const EXEC_EXT = new Set([
-  'sh', 'bash', 'exe', 'bat', 'cmd', 'ps1', 'bin', 'run', 'out', 'com', 'py', 'pl', 'rb',
-  'js', 'ts', 'zsh', 'fish', 'ksh',
+  'sh',
+  'bash',
+  'exe',
+  'bat',
+  'cmd',
+  'ps1',
+  'bin',
+  'run',
+  'out',
+  'com',
+  'py',
+  'pl',
+  'rb',
+  'js',
+  'ts',
+  'zsh',
+  'fish',
+  'ksh',
 ])
 
 function lsNameColor(name: string, kind: string): string {

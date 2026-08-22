@@ -151,11 +151,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
 
       {/* ---- Orchestration (docker-compose vs direct run) ---- */}
       <div className="analysis-section analysis-orchestration">
-        <h4>
-          {data.orchestration.isCompose
-            ? `☰ ${t('dockerCompose')}`
-            : `⚙ ${t('directRun')}`}
-        </h4>
+        <h4>{data.orchestration.isCompose ? `☰ ${t('dockerCompose')}` : `⚙ ${t('directRun')}`}</h4>
         {/* Inferred compose file — shown for both compose & mount-detected containers */}
         {data.orchestration.inferredComposeFile && (
           <div className="orch-inferred-file">
@@ -294,11 +290,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
               {data.ports.map((p, i) => (
                 <tr key={i}>
                   <td>{p.containerPort}</td>
-                  <td>
-                    {p.hostPort
-                      ? `${p.hostIp || '0.0.0.0'}:${p.hostPort}`
-                      : '\u2014'}
-                  </td>
+                  <td>{p.hostPort ? `${p.hostIp || '0.0.0.0'}:${p.hostPort}` : '\u2014'}</td>
                 </tr>
               ))}
             </tbody>

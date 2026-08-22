@@ -376,7 +376,8 @@ const en = {
   dockerStartFailed: 'Failed to start container "{name}": {err}',
   dockerDelete: 'Delete',
   dockerDeleteTitle: 'Delete container',
-  dockerDeleteConfirm: 'Are you sure you want to delete the stopped container "{name}"?\nThis action cannot be undone.',
+  dockerDeleteConfirm:
+    'Are you sure you want to delete the stopped container "{name}"?\nThis action cannot be undone.',
   dockerDeleting: 'Deleting container "{name}" ...',
   dockerDeleted: 'Container "{name}" deleted',
   dockerDeleteFailed: 'Failed to delete container "{name}": {err}',
@@ -424,8 +425,7 @@ const en = {
   keepaliveIntervalDesc:
     'How often to send an SSH-level ping to detect dropped connections. Minimum 10 seconds.',
   keepaliveMax: 'SSH keepalive retries',
-  keepaliveMaxDesc:
-    'Unanswered pings before the connection is closed. Minimum 2.',
+  keepaliveMaxDesc: 'Unanswered pings before the connection is closed. Minimum 2.',
   retry: 'Retry',
   copy: 'Copy',
   paste: 'Paste',
@@ -496,8 +496,7 @@ const en = {
   commandListHint: 'Click a command to send it to the terminal (press Enter to run).',
   cmdListOpacity: 'Panel opacity',
   snippetFillVarsTitle: 'Fill Variables',
-  snippetFillVarsDesc:
-    'Provide values for the variables in this command before sending.',
+  snippetFillVarsDesc: 'Provide values for the variables in this command before sending.',
   snippetSend: 'Send',
   snippetFillVarsRequired: 'Please provide a value for "{name}"',
   // Global variables (shared library for command snippets)

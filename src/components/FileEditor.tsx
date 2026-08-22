@@ -77,11 +77,7 @@ export function FileEditor({
   // Create / recreate editor when active tab changes
   useEffect(() => {
     const canEdit =
-      active &&
-      !active.loading &&
-      !active.error &&
-      !active.isBinary &&
-      !active.isTooLarge
+      active && !active.loading && !active.error && !active.isBinary && !active.isTooLarge
     if (!containerRef.current || !canEdit) {
       return
     }
@@ -110,9 +106,8 @@ export function FileEditor({
     })
 
     // Ctrl/Cmd+S inside the editor
-    editor.addCommand(
-      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-      () => handlersRef.current.onSave(active.key),
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
+      handlersRef.current.onSave(active.key),
     )
 
     // Set initial EOL
@@ -174,11 +169,7 @@ export function FileEditor({
   if (tabs.length === 0) return null
 
   const editable =
-    active &&
-    !active.loading &&
-    !active.error &&
-    !active.isBinary &&
-    !active.isTooLarge
+    active && !active.loading && !active.error && !active.isBinary && !active.isTooLarge
 
   return (
     <div className="file-editor">
@@ -212,9 +203,7 @@ export function FileEditor({
       <div className="editor-body">
         {!active && <div className="editor-empty">No file open</div>}
 
-        {active && active.loading && (
-          <div className="editor-loading">Loading {active.path}…</div>
-        )}
+        {active && active.loading && <div className="editor-loading">Loading {active.path}…</div>}
 
         {active && active.error && (
           <div className="editor-error">Failed to open: {active.error}</div>
@@ -245,34 +234,27 @@ export function FileEditor({
             <HexViewer base64={active.hexBase64} name={active.name} size={active.size} />
           )}
 
-        {active &&
-          !active.loading &&
-          !active.error &&
-          active.isBinary &&
-          !active.hexBase64 && (
-            <div className="editor-readonly">
-              <div className="editor-readonly-msg">
-                This file appears to be binary and cannot be edited as text.
-              </div>
-              <div className="editor-readonly-hint">
-                Use the file panel's download feature to fetch it instead.
-              </div>
+        {active && !active.loading && !active.error && active.isBinary && !active.hexBase64 && (
+          <div className="editor-readonly">
+            <div className="editor-readonly-msg">
+              This file appears to be binary and cannot be edited as text.
             </div>
-          )}
+            <div className="editor-readonly-hint">
+              Use the file panel's download feature to fetch it instead.
+            </div>
+          </div>
+        )}
 
-        {active &&
-          !active.loading &&
-          !active.error &&
-          active.isTooLarge && (
-            <div className="editor-readonly">
-              <div className="editor-readonly-msg">
-                {`This file is too large (${(active.size / 1024 / 1024).toFixed(1)} MB) to edit inline.`}
-              </div>
-              <div className="editor-readonly-hint">
-                Use the file panel's download feature to fetch it instead.
-              </div>
+        {active && !active.loading && !active.error && active.isTooLarge && (
+          <div className="editor-readonly">
+            <div className="editor-readonly-msg">
+              {`This file is too large (${(active.size / 1024 / 1024).toFixed(1)} MB) to edit inline.`}
             </div>
-          )}
+            <div className="editor-readonly-hint">
+              Use the file panel's download feature to fetch it instead.
+            </div>
+          </div>
+        )}
 
         {editable && (
           <>
@@ -298,9 +280,7 @@ export function FileEditor({
               <label className="editor-select">
                 <select
                   value={active.language}
-                  onChange={(e) =>
-                    onChangeLanguage(active.key, e.target.value)
-                  }
+                  onChange={(e) => onChangeLanguage(active.key, e.target.value)}
                 >
                   {LANGUAGE_OPTIONS_SORTED.map((o) => (
                     <option key={o.id} value={o.id}>
@@ -312,9 +292,7 @@ export function FileEditor({
               <label className="editor-select">
                 <select
                   value={active.encoding}
-                  onChange={(e) =>
-                    onChangeEncoding(active.key, e.target.value)
-                  }
+                  onChange={(e) => onChangeEncoding(active.key, e.target.value)}
                 >
                   {ENCODING_OPTIONS.map((o) => (
                     <option key={o.id} value={o.id}>
@@ -326,12 +304,7 @@ export function FileEditor({
               <label className="editor-select">
                 <select
                   value={active.lineEnding}
-                  onChange={(e) =>
-                    onChangeLineEnding(
-                      active.key,
-                      e.target.value as 'LF' | 'CRLF',
-                    )
-                  }
+                  onChange={(e) => onChangeLineEnding(active.key, e.target.value as 'LF' | 'CRLF')}
                 >
                   <option value="LF">LF</option>
                   <option value="CRLF">CRLF</option>
@@ -339,20 +312,13 @@ export function FileEditor({
               </label>
               <button
                 className={`editor-btn${showWhitespace !== 'none' ? ' active' : ''}`}
-                onClick={() =>
-                  setShowWhitespace((v) =>
-                    v === 'none' ? 'all' : 'none',
-                  )
-                }
+                onClick={() => setShowWhitespace((v) => (v === 'none' ? 'all' : 'none'))}
                 title={showWhitespace !== 'none' ? 'Hide whitespace' : 'Show whitespace'}
               >
                 ¶ {showWhitespace !== 'none' ? 'On' : 'Off'}
               </button>
               <label className="editor-select tab-size" title="Tab size">
-                <select
-                  value={tabSize}
-                  onChange={(e) => setTabSize(Number(e.target.value))}
-                >
+                <select value={tabSize} onChange={(e) => setTabSize(Number(e.target.value))}>
                   <option value={2}>2</option>
                   <option value={4}>4</option>
                   <option value={8}>8</option>

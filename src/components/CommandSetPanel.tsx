@@ -108,9 +108,7 @@ export const CommandSetPanel: React.FC<CommandSetPanelProps> = ({
       {loading ? (
         <div className="panel-empty">{t('loading')}</div>
       ) : cmdSets.length === 0 ? (
-        <div className="panel-empty">
-          {t('noCommandSets')}
-        </div>
+        <div className="panel-empty">{t('noCommandSets')}</div>
       ) : (
         <div className="cmd-set-table">
           {cmdSets.map((cs) => (
@@ -187,9 +185,7 @@ const CommandSetEditor: React.FC<CommandSetEditorProps> = ({
   const { t } = useI18n()
   const [name, setName] = useState(cmdSet?.name || '')
   const [connectionId, setConnectionId] = useState(cmdSet?.connectionId || '')
-  const [commandsText, setCommandsText] = useState(
-    cmdSet?.commands.join('\n') || '',
-  )
+  const [commandsText, setCommandsText] = useState(cmdSet?.commands.join('\n') || '')
 
   const handleSave = () => {
     const commands = commandsText

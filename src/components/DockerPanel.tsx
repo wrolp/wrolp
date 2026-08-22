@@ -95,15 +95,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     return () => document.removeEventListener('click', close)
   }, [])
 
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, container: ContainerInfo) => {
-      e.preventDefault()
-      e.stopPropagation()
-      setCtxMenu({ x: e.clientX, y: e.clientY, container })
-      setMenuStyle({ left: e.clientX, top: e.clientY })
-    },
-    [],
-  )
+  const handleContextMenu = useCallback((e: React.MouseEvent, container: ContainerInfo) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setCtxMenu({ x: e.clientX, y: e.clientY, container })
+    setMenuStyle({ left: e.clientX, top: e.clientY })
+  }, [])
 
   // Adjust menu position when it would overflow the viewport
   useLayoutEffect(() => {

@@ -251,7 +251,13 @@ function mergePreservingExpansion(prev: TreeNode[], next: TreeNode[]): TreeNode[
   return next.map((n) => {
     const old = prevMap.get(n.path)
     if (old && old.isDir) {
-      return { ...n, expanded: old.expanded, loaded: old.loaded, loading: false, children: old.children }
+      return {
+        ...n,
+        expanded: old.expanded,
+        loaded: old.loaded,
+        loading: false,
+        children: old.children,
+      }
     }
     return n
   })
@@ -638,11 +644,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     [target, currentPath, tree, refresh],
   )
 
-  useImperativeHandle(
-    ref,
-    () => ({ refresh, refreshDirectory: reloadDirectory }),
-    [refresh, reloadDirectory],
-  )
+  useImperativeHandle(ref, () => ({ refresh, refreshDirectory: reloadDirectory }), [
+    refresh,
+    reloadDirectory,
+  ])
 
   // Load the local drive list once for the location dropdown (Windows only;
   // returns empty on other platforms).
@@ -2647,9 +2652,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 autoFocus
               />
               {createError && (
-                <div style={{ color: '#e5484d', marginTop: 6, fontSize: 12 }}>
-                  {createError}
-                </div>
+                <div style={{ color: '#e5484d', marginTop: 6, fontSize: 12 }}>{createError}</div>
               )}
             </div>
             <div className="modal-actions">

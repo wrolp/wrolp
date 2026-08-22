@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import type { ConnectionConfig, SessionSummary } from '../types'
-import { listSessions, deleteSession, deleteAllSessions, renameSession, extractCommands } from '../commands'
+import {
+  listSessions,
+  deleteSession,
+  deleteAllSessions,
+  renameSession,
+  extractCommands,
+} from '../commands'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'

@@ -50,10 +50,7 @@ export function ConfirmDialog({
               {saveLabel}
             </button>
           )}
-          <button
-            className={danger ? 'btn-danger' : 'btn-primary'}
-            onClick={onConfirm}
-          >
+          <button className={danger ? 'btn-danger' : 'btn-primary'} onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>

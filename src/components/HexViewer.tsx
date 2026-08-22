@@ -86,9 +86,7 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
         <span className="hex-filename" title={name}>
           {name}
         </span>
-        <span className="hex-meta">
-          {bytes.length.toLocaleString()} bytes
-        </span>
+        <span className="hex-meta">{bytes.length.toLocaleString()} bytes</span>
         <span className="hex-spacer" />
         <span className="hex-hint">hex dump · read-only</span>
       </div>
@@ -100,10 +98,7 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
       <div className="hex-body">{rows}</div>
       {more > 0 && (
         <div className="hex-more">
-          <button
-            className="editor-btn"
-            onClick={() => setShownBytes((n) => n + 1_048_576)}
-          >
+          <button className="editor-btn" onClick={() => setShownBytes((n) => n + 1_048_576)}>
             Show next 1 MiB ({more.toLocaleString()} bytes remaining)
           </button>
         </div>

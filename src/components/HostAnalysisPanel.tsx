@@ -44,18 +44,18 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
   }, [activeTabId])
 
   const handleToolClick = useCallback(async (toolName: string) => {
-    if (activeTabId === null) return
-    setSelectedTool(toolName)
-    setHelpLoading(true)
-    setHelpText(null)
-    try {
-      const text = await commandHelp(activeTabId, toolName)
-      setHelpText(text)
-    } catch (e) {
-      setHelpText(`Error: ${e}`)
-    } finally {
-      setHelpLoading(false)
-    }
+      if (activeTabId === null) return
+      setSelectedTool(toolName)
+      setHelpLoading(true)
+      setHelpText(null)
+      try {
+        const text = await commandHelp(activeTabId, toolName)
+        setHelpText(text)
+      } catch (e) {
+        setHelpText(`Error: ${e}`)
+      } finally {
+        setHelpLoading(false)
+      }
   }, [activeTabId])
 
   const filteredPackages = (analysis?.packages ?? []).filter((p) =>
@@ -63,12 +63,12 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
   )
 
   const conn = activeTabId !== null
-    ? connections.find((c) => c.id === analysis?.tabId?.toString() || analysis)
-    : null
+      ? connections.find((c) => c.id === analysis?.tabId?.toString() || analysis)
+      : null
 
   const connectionName = activeTabId !== null
     ? connections.find(c => analysis && c.id.toString() === String(analysis.tabId))?.name ?? `Tab ${activeTabId}`
-    : '—'
+      : '—'
 
   return (
     <div className="host-analysis-panel">
@@ -82,9 +82,7 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
           <Icon name="refresh" />
           {loading ? t('analyzing') : t('analyzeHost')}
         </button>
-        {activeTabId === null && (
-          <span className="analysis-hint">{t('connectToHostFirst')}</span>
-        )}
+        {activeTabId === null && <span className="analysis-hint">{t('connectToHostFirst')}</span>}
       </div>
 
       {error && <div className="analysis-error">{error}</div>}
@@ -165,7 +163,7 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
                 </button>
               </div>
               <pre className="help-content">
-                {helpLoading ? t('loading') : helpText ?? t('noHelpAvailable')}
+                {helpLoading ? t('loading') : (helpText ?? t('noHelpAvailable'))}
               </pre>
             </div>
           )}

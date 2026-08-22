@@ -1047,7 +1047,9 @@ export default function App() {
     const unlistenOk = listen<{ tabId: number }>('connection-ok', (event) => {
       const tid = event.payload.tabId
       setTabs((prev) =>
-        prev.map((t) => (t.tabId === tid && t.status === 'suspect' ? { ...t, status: 'connected' } : t)),
+        prev.map((t) =>
+          t.tabId === tid && t.status === 'suspect' ? { ...t, status: 'connected' } : t,
+        ),
       )
     })
     return () => {
@@ -1372,21 +1374,22 @@ export default function App() {
       remotePort: number
       error: string
       fatal?: boolean
-    }>(
-      'tunnel-error',
-      (event) => {
-        const p = event.payload
-        setToast({
-          kind: 'error',
-          text: t('tunnelForwardFailed', { host: p.remoteHost, port: String(p.remotePort), err: p.error }),
-        })
-        // Fatal: the server refuses forwarding (AdministrativelyProhibited)
-        // and the backend already auto-stopped the tunnel. Show a fix-it hint.
-        if (p.fatal) {
-          setTunnelFatalInfo({ host: p.remoteHost, port: String(p.remotePort) })
-        }
-      },
-    ).then((un) => {
+    }>('tunnel-error', (event) => {
+      const p = event.payload
+      setToast({
+        kind: 'error',
+        text: t('tunnelForwardFailed', {
+          host: p.remoteHost,
+          port: String(p.remotePort),
+          err: p.error,
+        }),
+      })
+      // Fatal: the server refuses forwarding (AdministrativelyProhibited)
+      // and the backend already auto-stopped the tunnel. Show a fix-it hint.
+      if (p.fatal) {
+        setTunnelFatalInfo({ host: p.remoteHost, port: String(p.remotePort) })
+      }
+    }).then((un) => {
       unlistenTunnelError = un
     })
     return () => {
@@ -2167,9 +2170,7 @@ export default function App() {
             dockerLogTabId = dl.tabId
             title = `${t('dockerLogs')}: ${dl.containerName ?? dlId}`
           }
-        } else if (
-          editorTabsRef.current.some((e) => e.key === sv && e.sshTabId === tabId)
-        ) {
+        } else if (editorTabsRef.current.some((e) => e.key === sv && e.sshTabId === tabId)) {
           kind = 'editor'
           editorKey = sv
           const et = editorTabsRef.current.find((e) => e.key === sv && e.sshTabId === tabId)
@@ -2808,7 +2809,10 @@ export default function App() {
             console.error('Failed to start tunnel:', msg)
             setToast({
               kind: 'error',
-              text: t('tunnelStartFailed', { name: config.name ?? `${config.localPort}`, err: msg }),
+              text: t('tunnelStartFailed', {
+                name: config.name ?? `${config.localPort}`,
+                err: msg,
+              }),
             })
           })
       }
@@ -3994,96 +3998,96 @@ export default function App() {
               tab never appear in another. The tabs follow the pane itself (not
               focus) so switching splits keeps the editor's tab bar visible. */}
           {(sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) && (
-              <div className="term-pane-file-tabs">
-                <div
-                  className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (leaf.tabId != null) setShellViewFor(leaf.tabId, 'terminal')
-                  }}
-                  title={t('shellTerminal')}
-                >
-                  <Icon name="terminal" size={11} />
-                  <span>{t('shellTerminal')}</span>
-                </div>
-                {sessionEditorTabs
-                  .filter((et) => !isOverlayFloated(et.key))
-                  .map((et) => (
-                    <div
-                      key={et.key}
-                      className={`term-pane-file-tab${sv === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (leaf.tabId != null) {
-                          setActiveEditorKeyFor(leaf.tabId, et.key)
-                          setShellViewFor(leaf.tabId, et.key)
-                        }
-                      }}
-                      title={et.path}
-                    >
-                      <span className="term-pane-file-tab-name">{et.name}</span>
-                      {et.isDirty && <span className="term-pane-file-tab-dirty">●</span>}
-                      <span
-                        className="term-pane-file-tab-float"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          // Float the file editor overlay directly (explicit kind),
-                          // so it doesn't depend on the global shellView / focus.
-                          floatPane(leaf.id, { kind: 'editor', editorKey: et.key })
-                        }}
-                        title={t('floatPane')}
-                      >
-                        ⤢
-                      </span>
-                      <span
-                        className="term-pane-file-tab-close"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          requestCloseEditorTab(et.key)
-                        }}
-                      >
-                        ×
-                      </span>
-                    </div>
-                  ))}
-                {sessionDockerLogTabs
-                  .filter((dt) => !isOverlayFloated(dt.tabId))
-                  .map((dt) => (
-                    <div
-                      key={dt.tabId}
-                      className={`term-pane-file-tab${sv === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (leaf.tabId != null) setShellViewFor(leaf.tabId, `dockerlog:${dt.tabId}`)
-                      }}
-                      title={`${t('dockerLogs')}: ${dt.containerName}`}
-                    >
-                      <span className="term-pane-file-tab-name">📋 {dt.containerName}</span>
-                      <span
-                        className="term-pane-file-tab-float"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          // Float the docker log overlay directly (explicit kind), so
-                          // it doesn't depend on the global shellView / focus state.
-                          floatPane(leaf.id, { kind: 'dockerLog', dockerLogTabId: dt.tabId })
-                        }}
-                        title={t('floatPane')}
-                      >
-                        ⤢
-                      </span>
-                      <span
-                        className="term-pane-file-tab-close"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          closeDockerLogTab(dt.tabId)
-                        }}
-                      >
-                        ×
-                      </span>
-                    </div>
-                  ))}
+            <div className="term-pane-file-tabs">
+              <div
+                className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (leaf.tabId != null) setShellViewFor(leaf.tabId, 'terminal')
+                }}
+                title={t('shellTerminal')}
+              >
+                <Icon name="terminal" size={11} />
+                <span>{t('shellTerminal')}</span>
               </div>
-            )}
+              {sessionEditorTabs
+                .filter((et) => !isOverlayFloated(et.key))
+                .map((et) => (
+                  <div
+                    key={et.key}
+                    className={`term-pane-file-tab${sv === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (leaf.tabId != null) {
+                        setActiveEditorKeyFor(leaf.tabId, et.key)
+                        setShellViewFor(leaf.tabId, et.key)
+                      }
+                    }}
+                    title={et.path}
+                  >
+                    <span className="term-pane-file-tab-name">{et.name}</span>
+                    {et.isDirty && <span className="term-pane-file-tab-dirty">●</span>}
+                    <span
+                      className="term-pane-file-tab-float"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        // Float the file editor overlay directly (explicit kind),
+                        // so it doesn't depend on the global shellView / focus.
+                        floatPane(leaf.id, { kind: 'editor', editorKey: et.key })
+                      }}
+                      title={t('floatPane')}
+                    >
+                      ⤢
+                    </span>
+                    <span
+                      className="term-pane-file-tab-close"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        requestCloseEditorTab(et.key)
+                      }}
+                    >
+                      ×
+                    </span>
+                  </div>
+                ))}
+              {sessionDockerLogTabs
+                .filter((dt) => !isOverlayFloated(dt.tabId))
+                .map((dt) => (
+                  <div
+                    key={dt.tabId}
+                    className={`term-pane-file-tab${sv === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (leaf.tabId != null) setShellViewFor(leaf.tabId, `dockerlog:${dt.tabId}`)
+                    }}
+                    title={`${t('dockerLogs')}: ${dt.containerName}`}
+                  >
+                    <span className="term-pane-file-tab-name">📋 {dt.containerName}</span>
+                    <span
+                      className="term-pane-file-tab-float"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        // Float the docker log overlay directly (explicit kind), so
+                        // it doesn't depend on the global shellView / focus state.
+                        floatPane(leaf.id, { kind: 'dockerLog', dockerLogTabId: dt.tabId })
+                      }}
+                      title={t('floatPane')}
+                    >
+                      ⤢
+                    </span>
+                    <span
+                      className="term-pane-file-tab-close"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        closeDockerLogTab(dt.tabId)
+                      }}
+                    >
+                      ×
+                    </span>
+                  </div>
+                ))}
+            </div>
+          )}
           <span
             className="term-pane-float"
             onMouseDown={(e) => e.stopPropagation()}
