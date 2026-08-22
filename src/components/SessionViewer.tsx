@@ -54,11 +54,13 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
     if (!containerRef.current) return
     const term = new Terminal({
       fontSize: 13,
-      fontFamily: 'Cascadia Code, Consolas, monospace',
+      fontFamily:
+        '"WrolpNerdFont", "FiraCode Nerd Font", "Fira Code Nerd Font", "CaskaydiaCove Nerd Font", "CaskaydiaCove NF", "JetBrainsMono Nerd Font", "MesloLGS NF", "Symbols Nerd Font", Cascadia Code, Consolas, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace',
       cursorBlink: false,
       disableStdin: true,
       convertEol: true,
       scrollback: 100000,
+      minimumContrastRatio: 4.5,
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -76,6 +78,33 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
       term.dispose()
       termRef.current = null
     }
+  }, [])
+
+  // Load the bundled Nerd Font. If xterm opened with a fallback font, the
+  // texture atlas and cell metrics need to be reset once the real font is
+  // ready, otherwise icon glyphs render with stale metrics and leave ghosts.
+  useEffect(() => {
+    document.fonts.load('13px "WrolpNerdFont"').then(
+      () => {
+        const fit = fitRef.current
+        const term = termRef.current
+        if (fit && term && term.cols > 0 && term.rows > 0) {
+          try {
+            // Reset the renderer so the font texture atlas is rebuilt with the
+            // newly loaded Nerd Font metrics, then refresh every visible row.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ;(term as any)._core?._renderService?.clear()
+            fit.fit()
+            term.refresh(0, term.rows - 1)
+          } catch {
+            /* container may be momentarily 0-sized */
+          }
+        }
+      },
+      () => {
+        /* font failed to load; terminal stays on fallback, still usable */
+      },
+    )
   }, [])
 
   const playNext = useCallback(() => {

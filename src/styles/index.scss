@@ -1,5 +1,16 @@
 @use 'variables' as *;
 
+// Bundled Nerd Font (MesloLGS NF) so terminal icon glyphs (powerline / nerdfont
+// symbols used by shells like powerlevel10k / oh-my-zsh) render correctly even
+// when the user has no Nerd Font installed on their system.
+@font-face {
+  font-family: 'WrolpNerdFont';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/MesloLGS-NF-Regular.ttf') format('truetype');
+}
+
 * {
   margin: 0;
   padding: 0;

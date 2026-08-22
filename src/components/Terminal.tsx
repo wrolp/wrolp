@@ -1703,17 +1703,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       unlistenAiMark = un
     })
 
-    const term = new Terminal({
+      const term = new Terminal({
       cursorBlink: true,
       fontSize: 14,
-      fontFamily: '"Fira Code", "Cascadia Code", Consolas, "Courier New", monospace',
+      fontFamily:
+        '"WrolpNerdFont", "FiraCode Nerd Font", "Fira Code Nerd Font", "CaskaydiaCove Nerd Font", "CaskaydiaCove NF", "JetBrainsMono Nerd Font", "MesloLGS NF", "Symbols Nerd Font", "Fira Code", "Cascadia Code", Consolas, "Courier New", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace',
       scrollback: maxScrollback ?? 5000,
       // NOTE: do NOT enable `windowsMode`. It is the legacy winpty / pre-1903
       // ConPTY workaround (forces a line feed at the right edge and disables
       // reflow) and actively misaligns rows against a modern ConPTY, which
       // already emits proper VT sequences.
       theme: {
-        background: '#00000000',
+        // Opaque terminal background. Do NOT use transparency here: xterm.js
+        // will alpha-blend shell-rendered cell backgrounds (e.g. powerlevel10k
+        // prompt blocks) against the theme background and the colors look wrong.
+        background: '#1e1e1e',
         foreground: '#d4d4d4',
         cursor: '#aeafad',
         selectionBackground: '#264f78',
@@ -1734,6 +1738,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         brightCyan: '#6ae6cc',
         brightWhite: '#ffffff',
       },
+      minimumContrastRatio: 4.5,
       allowProposedApi: true,
     })
 
@@ -2432,6 +2437,33 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoConnect])
+
+  // Load the bundled Nerd Font. If xterm opened with a fallback font, the
+  // texture atlas and cell metrics need to be reset once the real font is
+  // ready, otherwise icon glyphs render with stale metrics and leave ghosts.
+  useEffect(() => {
+    document.fonts.load('14px "WrolpNerdFont"').then(
+      () => {
+        const fit = fitRef.current
+        const term = termRef.current
+        if (fit && term && term.cols > 0 && term.rows > 0) {
+          try {
+            // Reset the renderer so the font texture atlas is rebuilt with the
+            // newly loaded Nerd Font metrics, then refresh every visible row.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ;(term as any)._core?._renderService?.clear()
+            fit.fit()
+            term.refresh(0, term.rows - 1)
+          } catch {
+            /* container may be momentarily 0-sized */
+          }
+        }
+      },
+      () => {
+        /* font failed to load; terminal stays on fallback, input still works */
+      },
+    )
+  }, [])
 
   // Reconnect when trigger changes (keep xterm instance alive, preserve history)
   useEffect(() => {
