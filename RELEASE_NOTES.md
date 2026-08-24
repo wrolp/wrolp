@@ -2,6 +2,33 @@
 
 ---
 
+## v0.0.6 — 2026-08-22
+
+Focused on SSH keepalive reliability, terminal rendering quality, and local shell workflows.
+
+### Features
+- **Configurable SSH keepalive** — set the keepalive interval (min 10s) and max consecutive failures (min 2) in Settings; persisted to `window.json` and applied to new connections
+- **Keepalive probe with suspect status** — actively probe connectivity via a fresh channel (with timeout) so stalled connections are caught; the tab turns yellow ("suspect") after the first failed probe, returns to green when it recovers, and tears down after max consecutive failures
+- **Open in File Manager** — right-click a local shell tab (follows the live `cd` cwd) or a local terminal entry in the sidebar to open its directory in the OS file manager
+- **Pane duplicate** — right-click a split-pane tab to clone it as a new split pane, supporting SSH sessions, local shells, and Docker terminal sessions
+- **Local shell display names** — named local shell entries shown in tab labels
+- **Terminal rendering polish** — deferred fit-then-poll so the first frame of output renders at the correct geometry instead of an undersized initial size
+- **Bundled nerd font** — ship the MesloLG Nerd Font with the app to fix glyph rendering in the terminal and session replay
+
+### Fixes
+- Skip line recolor in alternate-buffer apps (vim, htop, etc.) so full-screen UIs aren't corrupted
+- Verify the `cd` target exists before updating the tracked working directory
+- Preserve the colored prompt when highlighting the typed command
+- Open the user home directory when a local terminal entry has an empty path
+- Improve status tooltip readability
+- Unify directory picker row styles
+
+### Internal
+- Split `commands.rs` into domain-scoped modules (ssh, window, recordings, etc.)
+- Code formatting and cleanup across frontend and backend
+
+---
+
 ## v0.0.5 — 2026-08-18
 
 Focused on terminal `ls` integration, file transfer performance, SSH tunnels, and Docker container lifecycle management.
