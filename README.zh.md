@@ -188,70 +188,36 @@ cd src-tauri && cargo clean && cd ..
 yarn tauri build
 ```
 
-## 项目结构
+## 测试
 
-```
-├── src/                            # 前端源码
-│   ├── App.tsx                     # 单一编排器：顶层状态 + 布局
-│   ├── main.tsx                    # 入口
-│   ├── types.ts                    # 与 Rust 共享的 TS 类型（camelCase）
-│   ├── commands.ts                 # 全部 Tauri 命令封装（每个命令一个导出）
-│   ├── i18n/                       # 国际化（中 / 英）
-│   │   ├── index.tsx               # I18nProvider / useI18n / t()
-│   │   ├── en.ts                   # 英文文案
-│   │   └── zh.ts                   # 中文文案
-│   ├── styles/                     # SCSS
-│   │   ├── index.scss              # 全局基础样式
-│   │   ├── App.scss                # 应用布局与组件样式
-│   │   └── _variables.scss         # 共享变量（颜色等）
-│   └── components/
-│       ├── Titlebar.tsx            # 自定义标题栏（关闭窗口装饰）
-│       ├── ConnectionManager.tsx   # 连接增删改查、分组、拖拽排序
-│       ├── Terminal.tsx            # 每标签的 xterm.js + 100ms poll_output 循环
-│       ├── FilePanel.tsx           # 远程 SFTP 文件树
-│       ├── FileEditor.tsx          # 基于 Monaco 的远程文件编辑器
-│       ├── AiChatPanel.tsx         # AI 聊天 / 智能体界面
-│       ├── BottomPanel.tsx          # 会话 + 命令集容器
-│       ├── SessionListPanel.tsx    # 会话录制浏览器
-│       ├── SessionViewer.tsx       # 录制回放
-│       ├── CommandSetPanel.tsx     # 命令集界面
-│       ├── DockerPanel.tsx         # Docker 容器 / 分析
-│       ├── DockerLogViewer.tsx     # Docker 日志流查看器
-│       ├── DockerAnalysisPanel.tsx # Docker 分析结果
-│       ├── HostAnalysisPanel.tsx   # 主机分析结果
-│       ├── ConfirmDialog.tsx       # 可复用的确认对话框
-│       ├── Icon.tsx                # SVG 图标
-│       ├── FloatingWindow.tsx      # 作为浮动窗口渲染的弹出面板
-│       ├── HexViewer.tsx           # 二进制文件的十六进制查看器
-│       └── splitTree.ts            # 分栏树辅助函数（水平 / 垂直分栏布局）
-├── src-tauri/                      # Rust 后端
-│   ├── src/
-│   │   ├── main.rs                 # 应用入口
-│   │   ├── lib.rs                  # Tauri 构建器、插件、SQLite 初始化、托盘、录制刷新、invoke_handler
-│   │   ├── commands.rs             # 全部 #[tauri::command] 处理函数
-│   │   ├── ssh_session.rs          # AppState、SshSession、SshHandler、ConnectionConfig、TransferControl
-│   │   ├── ai.rs                   # AI 聊天 / 智能体、工具定义、模型获取
-│   │   ├── db.rs                   # SQLite 访问（录制 + 命令集）
-│   │   ├── vault.rs                # 加密的 API Key 存储（AES-256-GCM 文件保险库）
-│   │   ├── remote_fs.rs            # SFTP 辅助函数
-│   │   ├── local_fs.rs             # 本地文件系统（LocalFs，实现 RemoteFs trait）
-│   │   ├── docker_fs.rs            # Docker 日志 / 分析辅助函数
-│   │   ├── docker_analysis.rs      # Docker 分析逻辑
-│   │   ├── host_analysis.rs        # 主机分析逻辑
-│   │   ├── schema.sql              # SQLite 结构定义
-│   │   └── ssh_test.rs             # 独立的 russh 测试二进制
-│   ├── Cargo.toml
-│   ├── tauri.conf.json             # Tauri 配置（msi 打包、透明窗口）
-│   ├── capabilities/default.json   # Tauri API 权限
-│   └── build.rs
-├── scripts/
-│   └── generate-icons.mjs          # 重新生成应用图标
-├── package.json
-├── tsconfig.json
-├── vite.config.ts
-└── yarn.lock
+### Rust 单元测试与集成
+
+```bash
+cd src-tauri
+cargo test                 # 运行全部 Rust 单元测试（local_fs、ai_term 等模块内的 #[cfg(test)]）
+cargo run --bin ssh_test   # 独立的 russh 连通性探测二进制
 ```
 
+- 后端单测分散在各模块内（如 `local_fs.rs`、`ai_term.rs`），用 `#[cfg(test)]` + `#[tokio::test]` 编写，覆盖纯逻辑（路径解析、协议编解码、RemoteFs 适配、配置校验等）。
+- 新增涉及纯逻辑的功能时，优先补单测；涉及真实网络/进程的功能用 `ssh_test` 这类独立二进制做冒烟探测。
+
+### 前端 E2E（Playwright + 模拟 IPC）
+
+E2E 基于 Playwright，阶段一：在真实浏览器中运行 Vite 前端（`yarn dev`），通过注入假的 `window.__TAURI_INTERNALS__` 把 Tauri 后端打桩（见 `e2e/ui/helpers/tauriMock.ts`），**无需编译 Rust 即可验证 UI**。
+
+```bash
+# 首次运行需安装 Playwright 浏览器
+npx playwright install
+
+# 运行全部 E2E
+yarn test:e2e              # 等价于 npx playwright test
+
+# 指定端口（CI 或本机已占用默认 1420 时）
+E2E_PORT=1430 yarn test:e2e
+```
+
+- 用例位于 `e2e/ui/`（如 `terminal.spec.ts`、`connections.spec.ts`、`command-list.spec.ts`、`app-boot.spec.ts`）。
+- 后端打桩点位于 `e2e/ui/helpers/tauriMock.ts`：按 `invoke` 的命令名返回固定或参数化的响应，便于在无真实 SSH / 服务器的情况下验证前端行为。
 ## 技术栈
 
 - **前端**：React 19 + TypeScript + xterm.js + Monaco 编辑器 + Vite + SCSS

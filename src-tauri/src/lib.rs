@@ -1,17 +1,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai;
-mod commands;
-mod db;
+// `commands`/`db`/`ssh_session` are `pub` so `src-tauri/tests/` integration
+// tests can drive the `#[tauri::command]` handlers via `tauri::test`.
+pub mod commands;
+pub mod db;
 mod docker_analysis;
 mod docker_fs;
 mod host_analysis;
 mod local_fs;
 mod remote_fs;
-mod ssh_session;
+pub mod ssh_session;
 mod vault;
 #[cfg(windows)]
 mod webview_drop;
+#[cfg(test)]
+mod tests;
 
 use ssh_session::AppState;
 use tauri::generate_handler;

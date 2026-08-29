@@ -105,13 +105,16 @@ pub(crate) fn get_data_dir() -> Option<std::path::PathBuf> {
   dirs::config_dir().map(|p| p.join("wrolp-terminal"))
 }
 
-pub(crate) fn get_connections_path() -> Option<std::path::PathBuf> {
-  get_data_dir().map(|p| p.join("connections.json"))
+/// Resolve the app data dir, honoring an explicit base-dir override (tests).
+/// `base` takes precedence when present; otherwise falls back to the real
+/// config dir.
+pub(crate) fn data_dir_for(base: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+  base.map(|b| b.to_path_buf()).or_else(get_data_dir)
 }
 
 /// Persist the current connections list to disk in the encrypted format.
 pub(crate) async fn persist_connections(state: &tauri::State<'_, AppState>) -> Result<(), String> {
-  let path = get_connections_path();
+  let path = data_dir_for(state.base_dir.as_deref()).map(|p| p.join("connections.json"));
   if let Some(ref path) = path {
     let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
     let workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;

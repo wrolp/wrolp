@@ -197,7 +197,10 @@ pub async fn save_local_terminals(
     let mut store = state.local_terminals.lock().map_err(|e| e.to_string())?;
     *store = entries.clone();
   }
-  if let Some(ref path) = crate::ssh_session::get_local_terminals_path() {
+  let path = data_dir_for(state.base_dir.as_deref())
+    .map(|p| p.join("local_terminals.json"))
+    .or_else(crate::ssh_session::get_local_terminals_path);
+  if let Some(ref path) = path {
     if let Some(parent) = path.parent() {
       let _ = std::fs::create_dir_all(parent);
     }

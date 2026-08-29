@@ -18,3 +18,8 @@ wrolp-terminal/
 # Local connection/window config that may contain secrets
 connections.json
 window.json
+
+# Playwright E2E output
+test-results/
+playwright-report/
+blob-report/

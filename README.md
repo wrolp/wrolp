@@ -188,66 +188,36 @@ cd src-tauri && cargo clean && cd ..
 yarn tauri build
 ```
 
-## Project Structure
+## Testing
 
-```
-├── src/                            # Frontend source
-│   ├── App.tsx                     # Single orchestrator: top-level state + layout
-│   ├── main.tsx                    # Entry point
-│   ├── types.ts                    # TS types shared with Rust (camelCase)
-│   ├── commands.ts                 # All Tauri command wrappers (one export per command)
-│   ├── styles/                     # SCSS
-│   │   ├── index.scss              # Global base styles
-│   │   ├── App.scss                # App layout & component styles
-│   │   └── _variables.scss         # Shared variables (colors etc.)
-│   └── components/
-│       ├── Titlebar.tsx            # Custom titlebar (window decorations off)
-│       ├── ConnectionManager.tsx   # Connection CRUD, groups, drag-reorder
-│       ├── Terminal.tsx            # xterm.js per tab + 100ms poll_output loop
-│       ├── FilePanel.tsx           # Remote SFTP file tree
-│       ├── FileEditor.tsx          # Monaco-based remote file editor
-│       ├── AiChatPanel.tsx         # AI chat / agent UI
-│       ├── BottomPanel.tsx         # Sessions + command sets container
-│       ├── SessionListPanel.tsx    # Session recordings browser
-│       ├── SessionViewer.tsx       # Recording playback
-│       ├── CommandSetPanel.tsx     # Command sets UI
-│       ├── DockerPanel.tsx         # Docker containers / analysis
-│       ├── DockerLogViewer.tsx     # Docker log streaming viewer
-│       ├── DockerAnalysisPanel.tsx # Docker analysis results
-│       ├── HostAnalysisPanel.tsx   # Host analysis results
-│       ├── ConfirmDialog.tsx       # Reusable confirm dialog
-│       ├── Icon.tsx                # SVG icons
-│       ├── FloatingWindow.tsx      # Detached pane rendered as a floating window
-│       ├── HexViewer.tsx            # Hex dump viewer for binary files
-│       └── splitTree.ts            # Split-pane tree helpers (horizontal/vertical split layout)
-├── src-tauri/                      # Rust backend
-│   ├── src/
-│   │   ├── main.rs                 # App entry
-│   │   ├── lib.rs                  # Tauri builder, plugins, SQLite init, tray, recording flush, invoke_handler
-│   │   ├── commands.rs             # All #[tauri::command] handlers
-│   │   ├── ssh_session.rs          # AppState, SshSession, SshHandler, ConnectionConfig, TransferControl
-│   │   ├── ai.rs                   # AI chat/agent, tool definitions, model fetching
-│   │   ├── db.rs                   # SQLite access (recordings + command sets)
-│   │   ├── vault.rs                # Encrypted API key storage (AES-256-GCM file vault)
-│   │   ├── remote_fs.rs            # SFTP helpers
-│   │   ├── local_fs.rs             # Local filesystem (LocalFs, implements RemoteFs trait)
-│   │   ├── docker_fs.rs            # Docker log/analysis helpers
-│   │   ├── docker_analysis.rs      # Docker analysis logic
-│   │   ├── host_analysis.rs        # Host analysis logic
-│   │   ├── schema.sql              # SQLite schema
-│   │   └── ssh_test.rs             # Standalone russh test binary
-│   ├── Cargo.toml
-│   ├── tauri.conf.json             # Tauri config (msi bundle, transparent window)
-│   ├── capabilities/default.json   # Tauri API permissions
-│   └── build.rs
-├── scripts/
-│   └── generate-icons.mjs          # Regenerate app icons
-├── package.json
-├── tsconfig.json
-├── vite.config.ts
-└── yarn.lock
+### Rust unit & integration tests
+
+```bash
+cd src-tauri
+cargo test                 # run all Rust unit tests (#[cfg(test)] in local_fs, ai_term, …)
+cargo run --bin ssh_test   # standalone russh connectivity probe binary
 ```
 
+- Backend unit tests live inside each module (e.g. `local_fs.rs`, `ai_term.rs`) using `#[cfg(test)]` + `#[tokio::test]`, covering pure logic (path parsing, protocol (de)serialization, RemoteFs adapters, config validation, …).
+- Prefer adding unit tests for pure-logic features; for real network/process behaviour use a standalone binary such as `ssh_test` as a smoke probe.
+
+### Frontend E2E (Playwright + mocked IPC)
+
+E2E is powered by Playwright, Phase 1: the Vite frontend (`yarn dev`) runs in a real browser, and the Tauri backend is stubbed by injecting a fake `window.__TAURI_INTERNALS__` (see `e2e/ui/helpers/tauriMock.ts`) — **no Rust build required** to verify the UI.
+
+```bash
+# install Playwright browsers on first run
+npx playwright install
+
+# run all E2E
+yarn test:e2e              # equivalent to npx playwright test
+
+# custom port (CI, or when 1420 is already taken locally)
+E2E_PORT=1430 yarn test:e2e
+```
+
+- Specs live in `e2e/ui/` (e.g. `terminal.spec.ts`, `connections.spec.ts`, `command-list.spec.ts`, `app-boot.spec.ts`).
+- The backend stub lives in `e2e/ui/helpers/tauriMock.ts`: it returns fixed/parameterised responses keyed by the `invoke` command name, so frontend behaviour can be verified without a real SSH server / file server.
 ## Tech Stack
 
 - **Frontend**: React 19 + TypeScript + xterm.js + Monaco editor + Vite + SCSS

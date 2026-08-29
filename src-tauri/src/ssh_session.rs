@@ -35,6 +35,11 @@ fn get_connections_path() -> Option<std::path::PathBuf> {
   dirs::config_dir().map(|p| p.join("wrolp-terminal").join("connections.json"))
 }
 
+/// Connections path under an explicit base dir (test override).
+pub fn connections_path_in(base_dir: &std::path::Path) -> std::path::PathBuf {
+  base_dir.join("connections.json")
+}
+
 /// SSH connection config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -565,6 +570,12 @@ pub struct ActiveRecording {
 
 /// Global application state
 pub struct AppState {
+  /// Optional override for the app config directory (`%APPDATA%\wrolp-terminal`
+  /// by default). When set, every on-disk artifact (connections.json,
+  /// window.json, local_terminals.json, ai_config.json, vault.key, SQLite db)
+  /// is resolved under this base dir instead — used by tests so they never
+  /// touch the real user config.
+  pub base_dir: Option<std::path::PathBuf>,
   pub connections: StdMutex<Vec<ConnectionConfig>>,
   /// Available workspaces (owned by this app instance).
   pub workspaces: StdMutex<Vec<WorkspaceInfo>>,
@@ -685,11 +696,21 @@ pub struct LocalShellDir {
 }
 
 impl AppState {
+  /// Build state bound to the real user config dir (normal app behaviour).
   pub fn new(db: DbConn) -> Self {
-    let (connections, workspaces, active_workspace_id) = get_initial_connections();
+    Self::new_with_base(db, None)
+  }
 
-    let ai_config = crate::ai::load_ai_config().ok();
+  /// Build state with an explicit config base dir. `None` resolves every path
+  /// from `dirs::config_dir()/wrolp-terminal`; `Some(dir)` redirects all
+  /// persistence under `dir` (used by `tauri::test` integration tests so they
+  /// never read or write the real user config).
+  pub fn new_with_base(db: DbConn, base_dir: Option<std::path::PathBuf>) -> Self {
+    let (connections, workspaces, active_workspace_id) = get_initial_connections(base_dir.as_deref());
+    let ai_config = crate::ai::load_ai_config_in(base_dir.as_deref()).ok();
+    let local_terminals = get_initial_local_terminals(base_dir.as_deref());
     Self {
+      base_dir,
       connections: StdMutex::new(connections),
       workspaces: StdMutex::new(workspaces),
       active_workspace_id: StdMutex::new(active_workspace_id),
@@ -709,7 +730,7 @@ impl AppState {
       ai_pending: StdMutex::new(None),
       local_shells: StdMutex::new(HashMap::new()),
       local_shell_dirs: StdMutex::new(Vec::new()),
-      local_terminals: StdMutex::new(get_initial_local_terminals()),
+      local_terminals: StdMutex::new(local_terminals),
       tunnels: StdMutex::new(HashMap::new()),
       next_tunnel_id: AtomicU64::new(1),
       upload_sessions: StdMutex::new(HashMap::new()),
@@ -721,8 +742,10 @@ impl AppState {
 }
 
 /// Load saved local terminal entries from `local_terminals.json`.
-fn get_initial_local_terminals() -> Vec<LocalTerminalEntry> {
-  let path = get_local_terminals_path();
+fn get_initial_local_terminals(base_dir: Option<&std::path::Path>) -> Vec<LocalTerminalEntry> {
+  let path = base_dir
+    .map(local_terminals_path_in)
+    .or_else(get_local_terminals_path);
   if let Some(ref path) = path {
     if path.exists() {
       if let Ok(content) = std::fs::read_to_string(path) {
@@ -740,11 +763,20 @@ pub fn get_local_terminals_path() -> Option<std::path::PathBuf> {
   dirs::config_dir().map(|p| p.join("wrolp-terminal").join("local_terminals.json"))
 }
 
+/// Local-terminals path under an explicit base dir (test override).
+pub fn local_terminals_path_in(base_dir: &std::path::Path) -> std::path::PathBuf {
+  base_dir.join("local_terminals.json")
+}
+
 /// Load initial connection list, workspaces, and active workspace id from config.
 /// Supports v2 (workspace-aware) and v1 (encrypted) formats, and transparently
 /// migrates legacy plaintext files by re-writing them in the v2 format.
-fn get_initial_connections() -> (Vec<ConnectionConfig>, Vec<WorkspaceInfo>, String) {
-  let path = get_connections_path();
+fn get_initial_connections(
+  base_dir: Option<&std::path::Path>,
+) -> (Vec<ConnectionConfig>, Vec<WorkspaceInfo>, String) {
+  let path = base_dir
+    .map(connections_path_in)
+    .or_else(get_connections_path);
   if let Some(ref path) = path {
     if path.exists() {
       if let Ok(content) = std::fs::read_to_string(path) {

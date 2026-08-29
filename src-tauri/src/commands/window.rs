@@ -1,6 +1,11 @@
 use super::*;
 // ==================== Window Config Persistence ====================
 
+/// Resolve the `window.json` path, honoring the state's base-dir override.
+fn window_config_path_for(state: &tauri::State<'_, AppState>) -> Option<std::path::PathBuf> {
+  data_dir_for(state.base_dir.as_deref()).map(|p| p.join("window.json"))
+}
+
 /// Synchronously read the `auto_record_sessions` flag from window.json.
 /// Used inside `connect()` (which is async but runs on the main thread), so we
 /// read the file directly instead of awaiting a command.
@@ -14,14 +19,23 @@ pub(crate) fn load_window_config_auto_record() -> bool {
 
 /// Read the current auto-record Sessions setting (Settings page).
 #[tauri::command]
-pub async fn get_auto_record() -> bool {
-  load_window_config_auto_record()
+pub async fn get_auto_record(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+  Ok(
+    window_config_path_for(&state)
+      .and_then(|p| std::fs::read_to_string(p).ok())
+      .and_then(|content| serde_json::from_str::<WindowConfig>(&content).ok())
+      .map(|c| c.auto_record_sessions)
+      .unwrap_or(false),
+  )
 }
 
 /// Persist the auto-record Sessions setting (Settings page).
 #[tauri::command]
-pub async fn set_auto_record(enabled: bool) -> Result<(), String> {
-  let path = get_window_config_path().ok_or("Cannot determine config directory")?;
+pub async fn set_auto_record(
+  state: tauri::State<'_, AppState>,
+  enabled: bool,
+) -> Result<(), String> {
+  let path = window_config_path_for(&state).ok_or("Cannot determine config directory")?;
   let mut config = match std::fs::read_to_string(&path)
     .ok()
     .and_then(|c| serde_json::from_str::<WindowConfig>(&c).ok())
@@ -56,22 +70,26 @@ pub struct KeepaliveConfig {
 
 /// Read the current SSH keepalive settings (Settings page).
 #[tauri::command]
-pub async fn get_keepalive() -> KeepaliveConfig {
-  let config = get_window_config_path()
+pub async fn get_keepalive(state: tauri::State<'_, AppState>) -> Result<KeepaliveConfig, String> {
+  let config = window_config_path_for(&state)
     .and_then(|p| std::fs::read_to_string(p).ok())
     .and_then(|content| serde_json::from_str::<WindowConfig>(&content).ok())
     .unwrap_or_else(WindowConfig::default);
-  KeepaliveConfig {
+  Ok(KeepaliveConfig {
     interval: config.keepalive_interval,
     max: config.keepalive_max,
-  }
+  })
 }
 
 /// Persist SSH keepalive settings (Settings page). Values below the minimums
 /// (interval < 10s, count < 2) are clamped up to the minimum.
 #[tauri::command]
-pub async fn set_keepalive(interval: u64, max: u64) -> Result<(), String> {
-  let path = get_window_config_path().ok_or("Cannot determine config directory")?;
+pub async fn set_keepalive(
+  state: tauri::State<'_, AppState>,
+  interval: u64,
+  max: u64,
+) -> Result<(), String> {
+  let path = window_config_path_for(&state).ok_or("Cannot determine config directory")?;
   let mut config = std::fs::read_to_string(&path)
     .ok()
     .and_then(|c| serde_json::from_str::<WindowConfig>(&c).ok())
@@ -131,8 +149,11 @@ fn default_keepalive_interval() -> u64 { 30 }
 fn default_keepalive_max() -> u64 { 3 }
 
 #[tauri::command]
-pub async fn save_window_config(config: WindowConfig) -> Result<(), String> {
-  let path = get_window_config_path().ok_or("Cannot determine config directory")?;
+pub async fn save_window_config(
+  state: tauri::State<'_, AppState>,
+  config: WindowConfig,
+) -> Result<(), String> {
+  let path = window_config_path_for(&state).ok_or("Cannot determine config directory")?;
   if let Some(parent) = path.parent() {
     let _ = tokio::fs::create_dir_all(parent).await;
   }
@@ -143,8 +164,10 @@ pub async fn save_window_config(config: WindowConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn load_window_config() -> Result<WindowConfig, String> {
-  let path = get_window_config_path().ok_or("Cannot determine config directory")?;
+pub async fn load_window_config(
+  state: tauri::State<'_, AppState>,
+) -> Result<WindowConfig, String> {
+  let path = window_config_path_for(&state).ok_or("Cannot determine config directory")?;
   if !path.exists() {
     return Ok(WindowConfig::default());
   }

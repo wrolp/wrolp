@@ -189,10 +189,21 @@ fn ai_config_path() -> Option<PathBuf> {
   data_dir().map(|p| p.join("ai_config.json"))
 }
 
+fn ai_config_path_in(base_dir: &std::path::Path) -> PathBuf {
+  base_dir.join("ai_config.json")
+}
+
 // ---- Config persistence ----
 
 pub fn load_ai_config() -> Result<AiConfig, String> {
-  let path = ai_config_path().ok_or_else(|| "cannot resolve config dir".to_string())?;
+  load_ai_config_in(None)
+}
+
+/// Load the AI config, optionally resolving it under an explicit base dir
+/// (test override — see `AppState::new_with_base`).
+pub fn load_ai_config_in(base_dir: Option<&std::path::Path>) -> Result<AiConfig, String> {
+  let path = base_dir.map(ai_config_path_in).or_else(ai_config_path);
+  let path = path.ok_or_else(|| "cannot resolve config dir".to_string())?;
   if path.exists() {
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     // Try the new multi-profile format first.

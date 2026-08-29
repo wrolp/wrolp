@@ -44,5 +44,11 @@ path = "src/main.rs"
 name = "ssh_test"
 path = "src/ssh_test.rs"
 
+[dev-dependencies]
+# `tauri::test` mock runtime for command-level integration tests (Phase 2 of
+# task/plans/e2e-testing.md). The `test` feature only compiles for `cargo test`.
+tauri = { version = "2", features = ["test"] }
+tempfile = "3"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
