@@ -792,6 +792,28 @@ body.resize-v * {
     color: $text-dim;
   }
 
+  // Local-terminal entries tint the icon by shell flavour, so cmd / PowerShell
+  // / bash / WSL / Git Bash stay apart at a glance even at 14px.
+  .shell-icon-shellCmd {
+    color: #9cdcfe;
+  }
+
+  .shell-icon-shellPowershell {
+    color: #4c9aff;
+  }
+
+  .shell-icon-shellBash {
+    color: #89d185;
+  }
+
+  .shell-icon-shellWsl {
+    color: #f5c26b;
+  }
+
+  .shell-icon-shellGitBash {
+    color: #f0883e;
+  }
+
   .conn-item-label {
     flex: 1;
     overflow: hidden;

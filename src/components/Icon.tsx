@@ -49,6 +49,14 @@ export type IconName =
   | 'panelLeft'
   | 'panelRight'
   | 'image'
+  // Shell flavours for local-terminal entries. All five are a terminal window
+  // carrying a distinguishing mark, so they stay recognisable as terminals while
+  // still telling cmd / PowerShell / bash / WSL / Git Bash apart at 14px.
+  | 'shellCmd'
+  | 'shellPowershell'
+  | 'shellBash'
+  | 'shellWsl'
+  | 'shellGitBash'
 
 const PATHS: Record<IconName, ReactNode> = {
   refresh: (
@@ -233,6 +241,49 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="4" y="5" width="16" height="13" rx="2" />
       <polyline points="7 10 9.5 12.5 7 15" />
       <line x1="11" y1="15.5" x2="17" y2="15.5" />
+    </>
+  ),
+  // cmd.exe — prompt plus the block cursor that is its signature.
+  shellCmd: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2" />
+      <polyline points="6.5 9 9.5 12 6.5 15" />
+      <rect x="12" y="11" width="4" height="4" rx="0.6" />
+    </>
+  ),
+  // PowerShell — lightning bolt.
+  shellPowershell: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2" />
+      <path d="M14.2 8.4 10.3 14h2.6l-1 3.6 4-5.7h-2.7l1-3.5z" />
+    </>
+  ),
+  // bash / sh / zsh — dollar prompt.
+  shellBash: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2" />
+      <path d="M14.8 9.4c-1.2-1-3.5-.8-3.7.9-.2 1.7 3.3 1.5 3.1 3.3-.1 1.7-2.5 1.9-3.7.8" />
+      <line x1="12.6" y1="7.8" x2="12.6" y2="16.6" />
+    </>
+  ),
+  // WSL — a terminal hosted inside a windowed (Windows) frame: title-bar rule.
+  shellWsl: (
+    <>
+      <rect x="2.5" y="3.5" width="19" height="17" rx="2" />
+      <line x1="2.5" y1="8" x2="21.5" y2="8" />
+      <polyline points="6.5 12.5 9 15 6.5 17.5" />
+      <line x1="11" y1="17.5" x2="16.5" y2="17.5" />
+    </>
+  ),
+  // Git Bash — the git fork mark.
+  shellGitBash: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2" />
+      <circle cx="8.8" cy="9.4" r="2" />
+      <circle cx="8.8" cy="16.6" r="2" />
+      <path d="M8.8 11.4v3.2" />
+      <circle cx="15.4" cy="12.9" r="2" />
+      <path d="M15.4 10.9c-1.6.2-4 .5-5.2 1.2" />
     </>
   ),
   sparkles: (

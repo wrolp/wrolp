@@ -26,6 +26,7 @@ import {
 } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
+import type { IconName } from './Icon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { ClearableInput } from './ClearableInput'
@@ -68,6 +69,38 @@ const SHELL_PRESETS: { value: string; labelKey: TranslationKey }[] = [
   { value: 'wsl', labelKey: 'shellWsl' },
   { value: 'gitbash', labelKey: 'shellGitBash' },
 ]
+
+/** Pick the icon representing a local-terminal `shell` value.
+ *
+ *  Presets map directly. Anything else is an absolute path typed by the user
+ *  (e.g. `C:\Program Files\Git\bin\bash.exe`), so match on path fragments —
+ *  most specific first — and fall back to the generic terminal icon.
+ */
+function shellIconName(shell: string): IconName {
+  const s = shell.trim().toLowerCase()
+  if (!s) return 'terminal'
+  switch (s) {
+    case 'cmd':
+      return 'shellCmd'
+    case 'pwsh':
+    case 'powershell':
+      return 'shellPowershell'
+    case 'bash':
+      return 'shellBash'
+    case 'wsl':
+      return 'shellWsl'
+    case 'gitbash':
+      return 'shellGitBash'
+  }
+  if (s.includes('git-bash') || s.includes('git\\bin\\bash') || s.includes('git/usr/bin/bash')) {
+    return 'shellGitBash'
+  }
+  if (s.includes('wsl')) return 'shellWsl'
+  if (s.includes('pwsh') || s.includes('powershell')) return 'shellPowershell'
+  if (s.includes('cmd.exe') || s.endsWith('cmd')) return 'shellCmd'
+  if (s.includes('bash') || s.includes('zsh') || s.endsWith('sh.exe')) return 'shellBash'
+  return 'terminal'
+}
 
 const UNGROUPED = '__ungrouped__'
 
@@ -1036,46 +1069,49 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
               <span className="conn-item-sub">{t('openLocalShellHint')}</span>
             </span>
           </div>
-          {entries.map((entry) => (
-            <div
-              key={entry.id}
-              className="conn-item local-term-item"
-              onClick={() => onOpen?.(entry)}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                setLocalMenu({ x: e.clientX, y: e.clientY, entry })
-              }}
-              title={`${entry.cwd}  [${shellLabel(entry.shell)}]`}
-            >
-              <span className="conn-item-icon">
-                <Icon name="terminal" size={14} />
-              </span>
-              <span className="conn-item-label">
-                <span className="conn-item-name">{entry.name}</span>
-                <span className="conn-item-sub">{shellLabel(entry.shell)}</span>
-              </span>
-              <span
-                className="conn-item-edit"
-                title={t('editLocalTerminal')}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  openModal(entry)
+          {entries.map((entry) => {
+            const shellIcon = shellIconName(entry.shell)
+            return (
+              <div
+                key={entry.id}
+                className="conn-item local-term-item"
+                onClick={() => onOpen?.(entry)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setLocalMenu({ x: e.clientX, y: e.clientY, entry })
                 }}
+                title={`${entry.cwd}  [${shellLabel(entry.shell)}]`}
               >
-                <Icon name="edit" size={12} />
-              </span>
-              <span
-                className="conn-item-del"
-                title={t('deleteLocalTerminal')}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setConfirmLocalDelete(entry)
-                }}
-              >
-                ×
-              </span>
-            </div>
-          ))}
+                <span className={`conn-item-icon shell-icon-${shellIcon}`}>
+                  <Icon name={shellIcon} size={14} />
+                </span>
+                <span className="conn-item-label">
+                  <span className="conn-item-name">{entry.name}</span>
+                  <span className="conn-item-sub">{shellLabel(entry.shell)}</span>
+                </span>
+                <span
+                  className="conn-item-edit"
+                  title={t('editLocalTerminal')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openModal(entry)
+                  }}
+                >
+                  <Icon name="edit" size={12} />
+                </span>
+                <span
+                  className="conn-item-del"
+                  title={t('deleteLocalTerminal')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setConfirmLocalDelete(entry)
+                  }}
+                >
+                  ×
+                </span>
+              </div>
+            )
+          })}
         </div>
       )}
 
