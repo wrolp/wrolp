@@ -2636,8 +2636,14 @@ body.resizing-v {
   .baud-rate-suggestions {
     position: absolute;
     z-index: 30;
-    left: 0;
+    // This field sits in the right-hand column of the form row, so the panel is
+    // anchored to the right edge and grows leftwards. `max-content` (instead of
+    // `left: 0; right: 0`, which pins it to the field's narrow width) keeps the
+    // notes — "most common", "ESP8266 boot" — from being squeezed or clipped.
     right: 0;
+    left: auto;
+    min-width: 100%;
+    width: max-content;
     margin: 2px 0 0;
     padding: 4px 0;
     list-style: none;
@@ -2645,24 +2651,26 @@ body.resizing-v {
     border: 1px solid $accent-hover;
     border-radius: 4px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    max-height: 200px;
+    max-height: 260px;
     overflow-y: auto;
 
     li {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
-      gap: 10px;
+      gap: 12px;
       padding: 5px 12px;
       font-size: 13px;
       color: $text-primary;
       cursor: pointer;
+      white-space: nowrap;
 
       &:hover {
         background: rgba(0, 122, 204, 0.18);
       }
 
       .baud-value {
+        flex-shrink: 0;
         font-family: $font-mono;
       }
 
