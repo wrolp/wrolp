@@ -11,9 +11,10 @@
 #[allow(unused_imports)]
 pub(crate) use super::ssh_session::{
   ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
-  DirUploadSummary, FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SshError, SshHandler,
-  SshSession, SwitchedUser, TargetRef, TransferControl, TunnelInfo, UploadSession,
+  DirUploadSummary, FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SerialSession, SshError,
+  SshHandler, SshSession, SwitchedUser, TargetRef, TransferControl, TunnelInfo, UploadSession,
 };
+pub use serial::*;
 #[allow(unused_imports)]
 pub(crate) use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
 #[allow(unused_imports)]
@@ -247,6 +248,7 @@ pub(crate) fn shell_quote_arg(s: &str) -> String {
 // --- Submodules -----------------------------------------------------------
 
 pub(crate) mod connections;
+pub(crate) mod serial;
 pub(crate) mod ssh;
 pub(crate) mod local_shell;
 pub(crate) mod sftp;

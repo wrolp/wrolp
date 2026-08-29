@@ -17,6 +17,8 @@ import {
   pollWorkingDir,
   fsListFiles,
   fsFileExists,
+  connectSerial,
+  serialSendInput,
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -418,9 +420,21 @@ interface TerminalComponentProps {
     keyPath?: string
     /** Directory the shell starts in after connecting (sent as `cd <dir>`). */
     startupDir?: string
+    // Serial-port connection fields (only meaningful when the tab is serial).
+    kind?: string
+    portName?: string
+    baudRate?: number
+    dataBits?: number
+    stopBits?: number
+    parity?: string
+    flowControl?: string
+    group?: string
+    workspaceId?: string
   }
   /** When true, run a local PTY-backed shell instead of an SSH connection. */
   isLocal?: boolean
+  /** When true, open a serial (COM port) terminal instead of an SSH connection. */
+  isSerial?: boolean
   /** Container name when this shell was opened as a `docker exec` from the
    *  Docker sidebar. The `docker exec` is sent programmatically (postConnectCmd),
    *  so the Enter-handler nested-session tracking never fires — this flag makes
@@ -464,6 +478,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onOpenFile,
   onCwdChange,
   isLocal,
+  isSerial,
   dockerContainer,
   localCwd,
   localShellType,
@@ -1461,7 +1476,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // in onData). recolorLiveLine is gated by expectingEchoRef, so
     // it only fires while we're awaiting a keystroke echo — program output is
     // never recolored, which keeps input working.
-    recolorLiveLine()
+    // Skip for serial: login:/Password: prompts are not shell prompts and the
+    // prompt-recognition heuristics can rewrite/corrupt them.
+    if (!isSerial) recolorLiveLine()
   }
 
   // Map a filename to a highlight language (self-contained, no async worker).
@@ -2188,12 +2205,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // in writeOutput knows the line is a typed command (not program output).
       // Coloring is done ONLY once the echo is written back (race-free with the
       // async SSH echo — no rAF rewrite that could erase in-flight characters).
-      if (!/^[\r\n]+$/.test(data)) {
+      // Skip for serial: login:/Password: prompts are not shell prompts and the
+      // recolor logic misidentifies/corrupts them.
+      if (!isSerial && !/^[\r\n]+$/.test(data)) {
         expectingEchoRef.current = true
       }
       if (isLocal) {
         localSendInput(currentTabId, data).catch((err) =>
           console.error('local_send_input error:', err),
+        )
+      } else if (isSerial) {
+        serialSendInput(currentTabId, data).catch((err) =>
+          console.error('serial_send_input error:', err),
         )
       } else {
         sendInput(currentTabId, data)
@@ -2394,6 +2417,36 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             term.write(`\x1b[31m[local shell] failed to start: ${errMsg}\x1b[0m\r\n`)
             onStatusChangeRef.current('error', errMsg)
             console.error('open_local_shell error:', err)
+          })
+      } else if (isSerial) {
+        const sCfg = cfg!
+        connectSerial(
+          {
+            id: sCfg.id,
+            name: sCfg.name || sCfg.portName || 'Serial',
+            portName: sCfg.portName || '',
+            baudRate: sCfg.baudRate ?? 9600,
+            dataBits: sCfg.dataBits ?? 8,
+            stopBits: sCfg.stopBits ?? 1,
+            parity: sCfg.parity || 'none',
+            flowControl: sCfg.flowControl || 'none',
+            group: sCfg.group,
+            workspaceId: sCfg.workspaceId,
+          },
+          currentTabId,
+          cols,
+          rows,
+        )
+          .then(() => {
+            connectedRef.current = true
+            onStatusChangeRef.current('connected')
+            startPolling()
+          })
+          .catch((err) => {
+            const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
+            term.write(`\x1b[31m[serial] connect failed: ${errMsg}\x1b[0m\r\n`)
+            onStatusChangeRef.current('error', errMsg)
+            console.error('connect_serial error:', err)
           })
       } else {
         const sshCfg = cfg!
@@ -2600,8 +2653,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     const cfg = connectConfigRef.current
     const currentTabId = tabIdRef.current
-    // Local shells have no SSH connectConfig; only SSH sessions need it.
-    if (!cfg && !isLocal) return
+    // Local shells and serials: serials still have a connectConfig, but guard anyway.
+    if (!cfg && !isLocal && !isSerial) return
 
     if (isLocal) {
       // A local shell is driven by ConPTY, which repaints the screen with
@@ -2668,6 +2721,50 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
             onStatusChangeRef.current('error', errMsg)
             console.error('local reconnect error:', err)
+          })
+        return
+      }
+
+      if (isSerial) {
+        const sCfg = cfg!
+        connectSerial(
+          {
+            id: sCfg.id,
+            name: sCfg.name || sCfg.portName || 'Serial',
+            portName: sCfg.portName || '',
+            baudRate: sCfg.baudRate ?? 9600,
+            dataBits: sCfg.dataBits ?? 8,
+            stopBits: sCfg.stopBits ?? 1,
+            parity: sCfg.parity || 'none',
+            flowControl: sCfg.flowControl || 'none',
+            group: sCfg.group,
+            workspaceId: sCfg.workspaceId,
+          },
+          currentTabId,
+          cols,
+          rows,
+        )
+          .then(() => {
+            connectedRef.current = true
+            onStatusChangeRef.current('connected')
+            setTimeout(() => {
+              if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+              pollTimerRef.current = setInterval(async () => {
+                if (document.hidden || !connectedRef.current) return
+                try {
+                  const chunks = await pollOutput(currentTabId)
+                  if (chunks.length > 0) {
+                    for (const chunk of chunks) writeOutput(chunk)
+                  }
+                } catch {}
+              }, 100)
+            }, 300)
+          })
+          .catch((err) => {
+            const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
+            term.write(`\x1b[31m[serial] reconnect failed: ${errMsg}\x1b[0m\r\n`)
+            onStatusChangeRef.current('error', errMsg)
+            console.error('connect_serial error:', err)
           })
         return
       }

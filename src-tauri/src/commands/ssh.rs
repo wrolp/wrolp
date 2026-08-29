@@ -641,6 +641,7 @@ pub async fn connect(
 
 #[tauri::command]
 pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<bool, String> {
+  // SSH sessions
   let shutdown_tx = {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     if let Some(session) = sessions.get_mut(&tab_id) {
@@ -652,6 +653,16 @@ pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: u32) -> Resul
 
   if let Some(tx) = shutdown_tx {
     let _ = tx.send(());
+    return Ok(true);
+  }
+
+  // Serial (COM port) sessions — signal the reader thread to stop.
+  {
+    let sessions = state.serial_sessions.lock().map_err(|e| e.to_string())?;
+    if let Some(s) = sessions.get(&tab_id) {
+      s.shutdown.store(true, Ordering::SeqCst);
+      return Ok(true);
+    }
   }
 
   Ok(true)
@@ -702,6 +713,12 @@ pub async fn resize_terminal(
   cols: u32,
   rows: u32,
 ) -> Result<bool, String> {
+  // Serial ports have no PTY to resize — nothing to do.
+  if let Ok(sessions) = state.serial_sessions.lock() {
+    if sessions.contains_key(&tab_id) {
+      return Ok(true);
+    }
+  }
   let channel = {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     sessions

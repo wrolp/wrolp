@@ -364,22 +364,25 @@ export default function App() {
       const targetId = focusLeaf ? focus! : collectLeaves(tree)[0]?.id
       if (!targetId) return null
       const tabId = nextTabId++
+      const isSerial = conn.kind === 'serial'
       const newTab: TabInfo = {
         tabId,
         connectionId: conn.id,
         connectionName: conn.name,
-        host: `${conn.host}:${conn.port}`,
+        host: isSerial ? conn.portName || 'Serial' : `${conn.host}:${conn.port}`,
         status: 'connecting',
-        tabType: 'terminal',
+        tabType: isSerial ? 'serial' : 'terminal',
         embedded: true,
         dockerContainer,
         // Persisted so the shell re-enters the container on every reconnect
         // (e.g. when the pane is floated/restored and reconnects).
         postConnectCmd: dockerContainer
           ? `docker exec -it ${dockerContainer} /bin/bash || docker exec -it ${dockerContainer} /bin/sh\r`
-          : conn.startupDir
-            ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
-            : undefined,
+          : isSerial
+            ? undefined
+            : conn.startupDir
+              ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
+              : undefined,
       }
       setTabs((prev) => [...prev, newTab])
       const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
@@ -1407,18 +1410,25 @@ export default function App() {
   const openTab = useCallback(
     (conn: ConnectionConfig): number => {
       const tabId = nextTabId++
+      // Honour the connection kind: serial connections must open a COM-port
+      // terminal, not an SSH session (otherwise the port name is fed to russh
+      // as an SSH host and the connect fails).
+      const isSerial = conn.kind === 'serial'
       const newTab: TabInfo = {
         tabId,
         connectionId: conn.id,
         connectionName: conn.name,
-        host: `${conn.host}:${conn.port}`,
+        host: isSerial ? conn.portName || 'Serial' : `${conn.host}:${conn.port}`,
         status: 'connecting',
-        tabType: 'terminal',
+        tabType: isSerial ? 'serial' : 'terminal',
         // When the connection defines a startup directory, cd into it once the
-        // shell is ready (same mechanism as docker-shell panes).
-        postConnectCmd: conn.startupDir
-          ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
-          : undefined,
+        // shell is ready (same mechanism as docker-shell panes). Serial ports
+        // have no shell, so they never get a startup command.
+        postConnectCmd: isSerial
+          ? undefined
+          : conn.startupDir
+            ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
+            : undefined,
       }
       setTabs((prev) => [...prev, newTab])
       const leafId = newLeafId()
@@ -1622,7 +1632,7 @@ export default function App() {
       if (prev !== tabId) return prev
       const remaining = tabsRef.current.filter(
         (t) =>
-          (t.tabType === 'terminal' || t.tabType === 'localShell') &&
+          (t.tabType === 'terminal' || t.tabType === 'localShell' || t.tabType === 'serial') &&
           !t.embedded &&
           !sessionIds.includes(t.tabId),
       )
@@ -2758,7 +2768,13 @@ export default function App() {
   const allTabToLeaf = useMemo(() => {
     const m = new Map<number, string>()
     for (const root of tabs) {
-      if ((root.tabType !== 'terminal' && root.tabType !== 'localShell') || root.embedded) continue
+      if (
+        (root.tabType !== 'terminal' &&
+          root.tabType !== 'localShell' &&
+          root.tabType !== 'serial') ||
+        root.embedded
+      )
+        continue
       const tree = splitTrees[root.tabId]
       if (!tree) continue
       buildTabToLeaf(tree).forEach((v, k) => m.set(k, v))
@@ -2858,10 +2874,19 @@ export default function App() {
             password: conn.password,
             keyPath: conn.keyPath,
             startupDir: conn.startupDir,
+            // Serial-port fields (only meaningful when kind === 'serial').
+            kind: conn.kind,
+            portName: conn.portName,
+            baudRate: conn.baudRate,
+            dataBits: conn.dataBits,
+            stopBits: conn.stopBits,
+            parity: conn.parity,
+            flowControl: conn.flowControl,
           }
         })()
       : undefined
     const isLocalShell = tab.tabType === 'localShell'
+    const isSerial = tab.tabType === 'serial'
     return (
       <div style={{ height: '100%', width: '100%', position: 'relative' }}>
         {tab.tabType !== 'settings' && (
@@ -2880,6 +2905,7 @@ export default function App() {
               connectConfig={connectConfig}
               autoConnect={!!tab.connectionId || isLocalShell}
               isLocal={isLocalShell}
+              isSerial={isSerial}
               dockerContainer={tab.dockerContainer}
               localCwd={tab.localShellCwd}
               localShellType={tab.localShellType}
@@ -4578,6 +4604,7 @@ export default function App() {
       (t) =>
         t.tabType === 'terminal' ||
         t.tabType === 'localShell' ||
+        t.tabType === 'serial' ||
         (t.tabType === 'settings' && settingsActive),
     )
     .map((tab) => {
@@ -4620,7 +4647,9 @@ export default function App() {
   // inside an always-mounted container. Only the active workspace is visible;
   // switching toggles visibility (never remounts), so sessions persist.
   const rootTabs = tabs.filter(
-    (t) => (t.tabType === 'terminal' || t.tabType === 'localShell') && !t.embedded,
+    (t) =>
+      (t.tabType === 'terminal' || t.tabType === 'localShell' || t.tabType === 'serial') &&
+      !t.embedded,
   )
 
   const terminalContent = (

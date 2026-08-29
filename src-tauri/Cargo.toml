@@ -35,6 +35,7 @@ walkdir = "2"
 windows = "0.61"
 windows-core = "0.61"
 webview2-com = "0.38"
+serialport = "4"
 
 [[bin]]
 name = "wrolp-terminal"

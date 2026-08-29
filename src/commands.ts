@@ -10,6 +10,8 @@ import type {
   AiPromptTemplate,
   FileContent,
   TargetRef,
+  SerialPortView,
+  SerialConfig,
   ContainerInfo,
   ToolCallEvent,
   AiEndpointProfile,
@@ -97,6 +99,26 @@ export async function disconnect(tabId: number): Promise<boolean> {
 
 export async function sendInput(tabId: number, data: string): Promise<boolean> {
   return await invoke<boolean>('send_input', { tabId, data })
+}
+
+/** Enumerate serial (COM) ports available on the machine. */
+export async function listSerialPorts(): Promise<SerialPortView[]> {
+  return await invoke<SerialPortView[]>('list_serial_ports')
+}
+
+/** Open a serial port terminal. */
+export async function connectSerial(
+  config: SerialConfig,
+  tabId: number,
+  cols: number,
+  rows: number,
+): Promise<{ status: string }> {
+  return await invoke<{ status: string }>('connect_serial', { cfg: config, tabId, cols, rows })
+}
+
+/** Send raw bytes to an open serial port. */
+export async function serialSendInput(tabId: number, data: string): Promise<boolean> {
+  return await invoke<boolean>('serial_send_input', { tabId, data })
 }
 
 export async function resizeTerminal(tabId: number, cols: number, rows: number): Promise<boolean> {

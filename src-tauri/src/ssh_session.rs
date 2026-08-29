@@ -70,6 +70,23 @@ pub struct ConnectionConfig {
   /// connection to be currently open.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub tunnels: Vec<TunnelConfig>,
+  /// Connection kind discriminator: "ssh" (default) or "serial". When "serial",
+  /// the serial-port fields below drive `connect_serial` instead of SSH.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub kind: Option<String>,
+  /// Serial port name (e.g. "COM3" / "/dev/ttyUSB0").
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub port_name: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub baud_rate: Option<u32>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub data_bits: Option<u8>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub stop_bits: Option<u8>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub parity: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub flow_control: Option<String>,
 }
 
 /// A saved SSH local-port-forwarding tunnel definition attached to a
@@ -130,6 +147,22 @@ pub struct PersistedConnection {
   pub workspace_id: Option<String>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub tunnels: Vec<TunnelConfig>,
+  /// Connection kind: "ssh" (default) or "serial".
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub kind: Option<String>,
+  /// Serial port name.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub port_name: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub baud_rate: Option<u32>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub data_bits: Option<u8>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub stop_bits: Option<u8>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub parity: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub flow_control: Option<String>,
 }
 
 /// Envelope written to `connections.json`. Version history:
@@ -179,6 +212,13 @@ impl PersistedConnection {
       startup_dir: c.startup_dir.clone(),
       workspace_id: c.workspace_id.clone(),
       tunnels: c.tunnels.clone(),
+      kind: c.kind.clone(),
+      port_name: c.port_name.clone(),
+      baud_rate: c.baud_rate,
+      data_bits: c.data_bits,
+      stop_bits: c.stop_bits,
+      parity: c.parity.clone(),
+      flow_control: c.flow_control.clone(),
     })
   }
 }
@@ -208,6 +248,13 @@ impl ConnectionConfig {
       startup_dir: p.startup_dir.clone(),
       workspace_id: p.workspace_id.clone(),
       tunnels: p.tunnels.clone(),
+      kind: p.kind.clone(),
+      port_name: p.port_name.clone(),
+      baud_rate: p.baud_rate,
+      data_bits: p.data_bits,
+      stop_bits: p.stop_bits,
+      parity: p.parity.clone(),
+      flow_control: p.flow_control.clone(),
     })
   }
 }
@@ -439,6 +486,23 @@ pub struct SwitchedUser {
   pub password: String,
 }
 
+/// Active serial (COM port) terminal session.
+///
+/// Reuses the shared `AppState.output_buffers` poll path (a dedicated OS thread
+/// reads the blocking port and pushes received bytes into `output_buffers[tab_id]`),
+/// so the frontend needs no new polling logic — `poll_output` already drains it
+/// like it does for SSH. Writes are sent to that thread via `write_tx`.
+pub struct SerialSession {
+  pub tab_id: u32,
+  /// Set to `true` to ask the reader thread to exit (then emit `connection-closed`).
+  pub shutdown: Arc<std::sync::atomic::AtomicBool>,
+  /// Channel to the reader thread for outgoing bytes (serial_send_input pushes here).
+  pub write_tx: Option<std::sync::mpsc::Sender<Vec<u8>>>,
+  /// Monotonic version — bumped on each (re)connect for the same tab, so a
+  /// superseded reader thread can avoid emitting a stale `connection-closed`.
+  pub session_id: u64,
+}
+
 // ==================== P6: Jump host / Docker targets ====================
 
 /// Credentials for a secondary target (independent of the jump host).
@@ -582,6 +646,8 @@ pub struct AppState {
   /// Currently active workspace id.
   pub active_workspace_id: StdMutex<String>,
   pub sessions: StdMutex<HashMap<u32, SshSession>>,
+  /// Active serial (COM port) terminal sessions: tab_id → session.
+  pub serial_sessions: StdMutex<HashMap<u32, SerialSession>>,
   /// Polling output buffer: tab_id → pending text chunks (frontend polls every 100ms)
   pub output_buffers: StdMutex<HashMap<u32, Vec<String>>>,
   /// AI output capture sinks for SSH tabs: tab_id → accumulated output.
@@ -715,6 +781,7 @@ impl AppState {
       workspaces: StdMutex::new(workspaces),
       active_workspace_id: StdMutex::new(active_workspace_id),
       sessions: StdMutex::new(HashMap::new()),
+      serial_sessions: StdMutex::new(HashMap::new()),
       output_buffers: StdMutex::new(HashMap::new()),
       ai_captures: StdMutex::new(HashMap::new()),
       next_ai_term_seq: AtomicU64::new(1),

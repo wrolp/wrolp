@@ -16,6 +16,45 @@ export interface ConnectionConfig {
   workspaceId?: string
   /** Saved SSH tunnel definitions attached to this connection (not started). */
   tunnels?: TunnelConfig[]
+  /** Connection kind: "ssh" (default) or "serial". When "serial", the serial-port
+   *  fields below drive the connection instead of the SSH host/port. */
+  kind?: string
+  /** Serial port name (e.g. "COM3" / "/dev/ttyUSB0"). */
+  portName?: string
+  baudRate?: number
+  dataBits?: number
+  stopBits?: number
+  /** "none" | "odd" | "even" */
+  parity?: string
+  /** "none" | "software" | "hardware" */
+  flowControl?: string
+}
+
+/** A serial (COM) port discovered on the machine, with a device-manager-style
+ *  friendly description so the user can pick the right port. */
+export interface SerialPortView {
+  /** "COM3" / "/dev/ttyUSB0" */
+  name: string
+  /** Friendly description (manufacturer / product / type) */
+  description: string
+  /** "usb" | "bluetooth" | "pci" | "unknown" */
+  portType?: string
+}
+
+/** Serial connection parameters sent to `connectSerial`. */
+export interface SerialConfig {
+  id: string
+  name: string
+  portName: string
+  baudRate: number
+  dataBits: number
+  stopBits: number
+  /** "none" | "odd" | "even" */
+  parity: string
+  /** "none" | "software" | "hardware" */
+  flowControl: string
+  group?: string
+  workspaceId?: string
 }
 
 /** A saved SSH local-port-forwarding tunnel definition (persisted config). */
@@ -106,7 +145,7 @@ export interface TabInfo {
   host: string
   status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'suspect' | 'settings' | 'aiChat'
   errorMessage?: string
-  tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat' | 'localShell'
+  tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat' | 'localShell' | 'serial'
   // When true, this session was created by splitting a tab and is NOT shown as
   // its own entry in the top tab bar — it lives inside its parent workspace's
   // pane layout (see App.tsx `splitTrees`).

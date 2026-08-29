@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { ConnectionConfig, LocalTerminalEntry, TunnelConfig, TunnelInfo } from '../types'
+import type { ConnectionConfig, LocalTerminalEntry, SerialPortView, TunnelConfig, TunnelInfo } from '../types'
 import {
   saveConnection as saveConn,
   deleteConnection,
@@ -13,6 +13,7 @@ import {
   addTunnel,
   updateTunnel,
   stopTunnel,
+  listSerialPorts,
 } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
@@ -1264,7 +1265,9 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
           </div>
         ) : (
           <div className="conn-host">
-            {conn.host}:{conn.port}
+            {conn.kind === 'serial'
+              ? `${conn.portName || 'Serial'}${conn.baudRate ? ' @ ' + conn.baudRate : ''}`
+              : `${conn.host}:${conn.port}`}
           </div>
         )}
       </div>
@@ -1331,6 +1334,39 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     group && !existingGroups.includes(group) ? 'new' : 'select',
   )
 
+  // Serial-port connection fields
+  const [kind, setKind] = useState<'ssh' | 'serial'>(
+    connection?.kind === 'serial' ? 'serial' : 'ssh',
+  )
+  const [portName, setPortName] = useState(connection?.portName || '')
+  const [serialPorts, setSerialPorts] = useState<SerialPortView[]>([])
+  const [baudRate, setBaudRate] = useState(connection?.baudRate || 9600)
+  const [dataBits, setDataBits] = useState(connection?.dataBits || 8)
+  const [stopBits, setStopBits] = useState(connection?.stopBits || 1)
+  const [parity, setParity] = useState(connection?.parity || 'none')
+  const [flowControl, setFlowControl] = useState(connection?.flowControl || 'none')
+  // Custom serial-port combobox: the native <datalist> does not render the
+  // option `label`/description reliably across Chromium builds, so we render
+  // our own suggestion list (port name + friendly description, both visible).
+  const [showPortList, setShowPortList] = useState(false)
+  const filteredSerialPorts = useMemo(() => {
+    const q = portName.trim().toLowerCase()
+    if (!q) return serialPorts
+    return serialPorts.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        (p.description || '').toLowerCase().includes(q),
+    )
+  }, [serialPorts, portName])
+
+  useEffect(() => {
+    if (kind === 'serial') {
+      listSerialPorts()
+        .then(setSerialPorts)
+        .catch(() => setSerialPorts([]))
+    }
+  }, [kind])
+
   const handleBrowseKey = async () => {
     try {
       const selected = await open({
@@ -1345,24 +1381,37 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   }
 
   const handleSave = () => {
-    const finalName = name.trim() || host.trim() || 'Unnamed'
-    const finalUsername = username.trim() || 'root'
-    if (!host.trim()) {
+    const isSerial = kind === 'serial'
+    const finalName =
+      name.trim() || (isSerial ? portName.trim() : host.trim()) || 'Unnamed'
+    if (isSerial) {
+      if (!portName.trim()) {
+        alert('Please select a serial port')
+        return
+      }
+    } else if (!host.trim()) {
       alert(t('fillHost'))
       return
     }
     const config: ConnectionConfig = {
       id: connection?.id || uuidv4(),
       name: finalName,
-      host: host.trim(),
-      port,
-      username: finalUsername,
-      password: authType === 'password' ? password : undefined,
-      keyPath: authType === 'key' ? keyPath.trim() || '~/.ssh/id_rsa' : undefined,
-      passphrase: authType === 'key' ? passphrase || undefined : undefined,
+      host: isSerial ? portName.trim() : host.trim(),
+      port: isSerial ? 0 : port,
+      username: isSerial ? '' : username.trim() || 'root',
+      password: isSerial ? undefined : authType === 'password' ? password : undefined,
+      keyPath: isSerial ? undefined : authType === 'key' ? keyPath.trim() || '~/.ssh/id_rsa' : undefined,
+      passphrase: isSerial ? undefined : authType === 'key' ? passphrase || undefined : undefined,
       group: group.trim() || undefined,
       description: description.trim() || undefined,
-      startupDir: startupDir.trim() || undefined,
+      startupDir: isSerial ? undefined : startupDir.trim() || undefined,
+      kind: isSerial ? 'serial' : 'ssh',
+      portName: isSerial ? portName.trim() : undefined,
+      baudRate: isSerial ? baudRate : undefined,
+      dataBits: isSerial ? dataBits : undefined,
+      stopBits: isSerial ? stopBits : undefined,
+      parity: isSerial ? parity : undefined,
+      flowControl: isSerial ? flowControl : undefined,
     }
     onSave(config)
   }
@@ -1377,6 +1426,148 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </span>
         </div>
         <div className="modal-body">
+          {/* Connection type: SSH or Serial */}
+          <div className="auth-type-toggle" style={{ marginBottom: 12 }}>
+            <label>
+              <input type="radio" checked={kind === 'ssh'} onChange={() => setKind('ssh')} />
+              SSH
+            </label>
+            <label>
+              <input type="radio" checked={kind === 'serial'} onChange={() => setKind('serial')} />
+              Serial
+            </label>
+          </div>
+          {kind === 'serial' && (
+            <>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Port</label>
+                  <div
+                    className="serial-port-combo"
+                    onBlur={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                        setShowPortList(false)
+                      }
+                    }}
+                  >
+                    <input
+                      className="form-input serial-port-input"
+                      value={portName}
+                      onChange={(e) => {
+                        setPortName(e.target.value)
+                        setShowPortList(true)
+                      }}
+                      onFocus={() => setShowPortList(true)}
+                      placeholder="COM3 / /dev/ttyUSB0 …"
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                    {portName && (
+                      <button
+                        type="button"
+                        className="port-clear-btn"
+                        title="Clear port"
+                        aria-label="Clear port"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          setPortName('')
+                          setShowPortList(true)
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                    {showPortList && filteredSerialPorts.length > 0 && (
+                      <ul className="serial-port-suggestions">
+                        {filteredSerialPorts.map((p) => (
+                          <li
+                            key={p.name}
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              setPortName(p.name)
+                              setShowPortList(false)
+                            }}
+                          >
+                            <span className="port-name">{p.name}</span>
+                            {p.description && p.description !== p.name && (
+                              <span className="port-desc">{p.description}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label>Baud rate</label>
+                  <input
+                    type="number"
+                    value={baudRate}
+                    onChange={(e) => setBaudRate(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Data bits</label>
+                  <select
+                    className="form-select"
+                    value={dataBits}
+                    onChange={(e) => setDataBits(Number(e.target.value))}
+                  >
+                    {[5, 6, 7, 8].map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Stop bits</label>
+                  <select
+                    className="form-select"
+                    value={stopBits}
+                    onChange={(e) => setStopBits(Number(e.target.value))}
+                  >
+                    {[1, 2].map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Parity</label>
+                  <select
+                    className="form-select"
+                    value={parity}
+                    onChange={(e) => setParity(e.target.value)}
+                  >
+                    {['none', 'odd', 'even'].map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Flow control</label>
+                  <select
+                    className="form-select"
+                    value={flowControl}
+                    onChange={(e) => setFlowControl(e.target.value)}
+                  >
+                    {['none', 'software', 'hardware'].map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
+          {kind === 'ssh' && (
           <div className="form-row">
             <div className="form-group">
               <label>{t('host')}</label>
@@ -1396,6 +1587,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               />
             </div>
           </div>
+          )}
           <div className="form-group">
             <label>{t('connectionName')}</label>
             <input
@@ -1404,6 +1596,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               placeholder={t('myServer')}
             />
           </div>
+          {kind === 'ssh' && (
           <div className="form-group">
             <label>{t('username')}</label>
             <input
@@ -1412,6 +1605,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               placeholder="root"
             />
           </div>
+          )}
           <div className="form-group">
             <label>
               {t('group')} ({t('default')})
@@ -1455,6 +1649,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               placeholder={t('notes')}
             />
           </div>
+          {kind === 'ssh' && (
           <div className="form-group">
             <label>{t('startupDir')}</label>
             <input
@@ -1464,7 +1659,10 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               spellCheck={false}
             />
           </div>
+          )}
 
+          {kind === 'ssh' && (
+          <>
           <div className="auth-type-toggle">
             <label>
               <input
@@ -1539,6 +1737,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 </div>
               </div>
             </>
+          )}
+          </>
           )}
         </div>
         <div className="modal-footer">

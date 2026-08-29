@@ -2572,6 +2572,80 @@ body.resizing-v {
       }
     }
   }
+
+  // Serial port combobox suggestions (replaces native <datalist>, which does
+  // not render the option `label`/description reliably across Chromium builds).
+  .serial-port-combo {
+    position: relative;
+
+    .serial-port-input {
+      padding-right: 30px;
+    }
+
+    .port-clear-btn {
+      position: absolute;
+      top: 50%;
+      right: 8px;
+      transform: translateY(-50%);
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: $text-secondary;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+      border-radius: 50%;
+
+      &:hover {
+        color: $text-primary;
+        background: rgba(255, 255, 255, 0.08);
+      }
+    }
+  }
+
+  .serial-port-suggestions {
+    position: absolute;
+    z-index: 30;
+    left: 0;
+    right: 0;
+    margin: 2px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: $bg-secondary;
+    border: 1px solid $accent-hover;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    max-height: 200px;
+    overflow-y: auto;
+
+    li {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 6px 12px;
+      font-size: 13px;
+      color: $text-primary;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(0, 122, 204, 0.18);
+      }
+
+      .port-name {
+        font-weight: 600;
+      }
+
+      .port-desc {
+        font-size: 12px;
+        color: $text-secondary;
+      }
+    }
+  }
 }
 
 // Shared directory-picker row: a flex row holding an input (flex: 1) and a
