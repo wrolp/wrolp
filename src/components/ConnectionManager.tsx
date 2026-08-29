@@ -28,6 +28,7 @@ import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
+import { ClearableInput } from './ClearableInput'
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[]
@@ -1496,7 +1497,9 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
       id: connection?.id || uuidv4(),
       name: finalName,
       host: isSerial ? portName.trim() : host.trim(),
-      port: isSerial ? 0 : port,
+      // The port field can be cleared while typing; fall back to the kind's
+      // default so no connection is ever saved with port 0.
+      port: isSerial ? 0 : port || (isTelnet ? 23 : 22),
       username: isSerial ? '' : username.trim() || 'root',
       // Telnet is password-only (no SSH keys), so key fields are cleared.
       password: isSerial ? undefined : isTelnet || authType === 'password' ? password : undefined,
@@ -1586,9 +1589,9 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                     {portName && (
                       <button
                         type="button"
-                        className="port-clear-btn"
-                        title="Clear port"
-                        aria-label="Clear port"
+                        className="input-clear-btn"
+                        title="Clear"
+                        aria-label="Clear"
                         onMouseDown={(e) => {
                           e.preventDefault()
                           setPortName('')
@@ -1644,6 +1647,21 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                         spellCheck={false}
                         autoComplete="off"
                       />
+                      {baudRate > 0 && (
+                        <button
+                          type="button"
+                          className="input-clear-btn"
+                          title="Clear"
+                          aria-label="Clear"
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setBaudRate(0)
+                            setShowBaudList(true)
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
                       {showBaudList && filteredBaudRates.length > 0 && (
                         <ul className="baud-rate-suggestions">
                           {filteredBaudRates.map((b) => (
@@ -1792,38 +1810,47 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             <div className="form-row">
               <div className="form-group">
                 <label>{t('host')}</label>
-                <input
+                <ClearableInput
                   value={host}
-                  onChange={(e) => setHost(e.target.value)}
+                  onValueChange={setHost}
                   placeholder="192.168.1.100"
+                  spellCheck={false}
+                  autoComplete="off"
                 />
               </div>
               <div className="form-group">
                 <label>{t('port')}</label>
-                <input
-                  type="number"
-                  value={port}
-                  onChange={(e) => setPort(Number(e.target.value))}
+                <ClearableInput
+                  type="text"
+                  inputMode="numeric"
+                  value={port ? String(port) : ''}
+                  onValueChange={(v) => setPort(Number(v.replace(/\D/g, '')) || 0)}
                   placeholder={kind === 'telnet' ? '23' : '22'}
+                  spellCheck={false}
+                  autoComplete="off"
                 />
               </div>
             </div>
           )}
           <div className="form-group">
             <label>{t('connectionName')}</label>
-            <input
+            <ClearableInput
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onValueChange={setName}
               placeholder={t('myServer')}
+              spellCheck={false}
+              autoComplete="off"
             />
           </div>
           {kind !== 'serial' && (
             <div className="form-group">
               <label>{t('username')}</label>
-              <input
+              <ClearableInput
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onValueChange={setUsername}
                 placeholder="root"
+                spellCheck={false}
+                autoComplete="off"
               />
             </div>
           )}
@@ -1854,30 +1881,35 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               <option value="__new__">{t('newGroup')}</option>
             </select>
             {groupMode === 'new' && (
-              <input
-                style={{ marginTop: '6px' }}
+              <ClearableInput
+                wrapperStyle={{ marginTop: '6px' }}
                 value={group}
-                onChange={(e) => setGroup(e.target.value)}
+                onValueChange={setGroup}
                 placeholder={t('newGroupName')}
+                spellCheck={false}
+                autoComplete="off"
               />
             )}
           </div>
           <div className="form-group">
             <label>{t('description')}</label>
-            <input
+            <ClearableInput
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onValueChange={setDescription}
               placeholder={t('notes')}
+              spellCheck={false}
+              autoComplete="off"
             />
           </div>
           {kind === 'ssh' && (
             <div className="form-group">
               <label>{t('startupDir')}</label>
-              <input
+              <ClearableInput
                 value={startupDir}
-                onChange={(e) => setStartupDir(e.target.value)}
+                onValueChange={setStartupDir}
                 placeholder={t('startupDirPlaceholder')}
                 spellCheck={false}
+                autoComplete="off"
               />
             </div>
           )}
@@ -1909,32 +1941,36 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               {authType === 'password' || kind === 'telnet' ? (
                 <div className="form-group">
                   <label>{t('password')}</label>
-                  <div className="input-with-icon">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder={t('password')}
-                    />
-                    <button
-                      type="button"
-                      className="input-icon-btn"
-                      onClick={() => setShowPassword((v) => !v)}
-                      aria-label={showPassword ? t('hidePassword') : t('showPassword')}
-                    >
-                      <Icon name={showPassword ? 'eyeOff' : 'eye'} size={16} />
-                    </button>
-                  </div>
+                  <ClearableInput
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onValueChange={setPassword}
+                    placeholder={t('password')}
+                    autoComplete="off"
+                    trailing={
+                      <button
+                        type="button"
+                        className="input-icon-btn"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? t('hidePassword') : t('showPassword')}
+                        title={showPassword ? t('hidePassword') : t('showPassword')}
+                      >
+                        <Icon name={showPassword ? 'eyeOff' : 'eye'} size={16} />
+                      </button>
+                    }
+                  />
                 </div>
               ) : (
                 <>
                   <div className="form-group">
                     <label>{t('keyPath')}</label>
                     <div className="dir-row">
-                      <input
+                      <ClearableInput
                         value={keyPath}
-                        onChange={(e) => setKeyPath(e.target.value)}
+                        onValueChange={setKeyPath}
                         placeholder="~/.ssh/id_rsa (default)"
+                        spellCheck={false}
+                        autoComplete="off"
                       />
                       <button type="button" onClick={handleBrowseKey}>
                         {t('browse')}
@@ -1943,22 +1979,24 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                   </div>
                   <div className="form-group">
                     <label>{t('passphrase')}</label>
-                    <div className="input-with-icon">
-                      <input
-                        type={showPassphrase ? 'text' : 'password'}
-                        value={passphrase}
-                        onChange={(e) => setPassphrase(e.target.value)}
-                        placeholder={t('passphrase')}
-                      />
-                      <button
-                        type="button"
-                        className="input-icon-btn"
-                        onClick={() => setShowPassphrase((v) => !v)}
-                        aria-label={showPassphrase ? 'Hide passphrase' : 'Show passphrase'}
-                      >
-                        <Icon name={showPassphrase ? 'eyeOff' : 'eye'} size={16} />
-                      </button>
-                    </div>
+                    <ClearableInput
+                      type={showPassphrase ? 'text' : 'password'}
+                      value={passphrase}
+                      onValueChange={setPassphrase}
+                      placeholder={t('passphrase')}
+                      autoComplete="off"
+                      trailing={
+                        <button
+                          type="button"
+                          className="input-icon-btn"
+                          onClick={() => setShowPassphrase((v) => !v)}
+                          aria-label={showPassphrase ? 'Hide passphrase' : 'Show passphrase'}
+                          title={showPassphrase ? 'Hide passphrase' : 'Show passphrase'}
+                        >
+                          <Icon name={showPassphrase ? 'eyeOff' : 'eye'} size={16} />
+                        </button>
+                      }
+                    />
                   </div>
                 </>
               )}

@@ -2580,31 +2580,6 @@ body.resizing-v {
     .serial-port-input {
       padding-right: 30px;
     }
-
-    .port-clear-btn {
-      position: absolute;
-      top: 50%;
-      right: 8px;
-      transform: translateY(-50%);
-      width: 18px;
-      height: 18px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      border: none;
-      background: transparent;
-      color: $text-secondary;
-      cursor: pointer;
-      font-size: 12px;
-      line-height: 1;
-      border-radius: 50%;
-
-      &:hover {
-        color: $text-primary;
-        background: rgba(255, 255, 255, 0.08);
-      }
-    }
   }
 
   .serial-port-suggestions {
@@ -2652,6 +2627,10 @@ body.resizing-v {
     position: relative;
     flex: 1;
     min-width: 0;
+
+    input {
+      padding-right: 30px;
+    }
   }
 
   .baud-rate-suggestions {
@@ -2706,6 +2685,13 @@ body.resizing-v {
 
   input {
     flex: 1;
+  }
+
+  // A clearable field adds its own wrapper, so that wrapper — not the input —
+  // is the flex item that has to grow.
+  > .clearable-input {
+    flex: 1;
+    min-width: 0;
   }
 
   button {
@@ -2814,16 +2800,18 @@ input[type='password']::-ms-clear {
   display: none;
 }
 
-// Wrapper that places a show/hide (eye) button inside the input field,
-// pinned to the right edge.
-.input-with-icon {
+// Shell for a field with in-box buttons (`ClearableInput`): the ✕ clear button
+// and an optional trailing element (the password show/hide eye) are pinned to
+// the right edge.
+.clearable-input {
   position: relative;
   display: flex;
   align-items: center;
 
   input {
     width: 100%;
-    padding-right: 38px;
+    // Room for the clear ✕; `with-trailing` widens it for the eye as well.
+    padding-right: 30px;
   }
 
   .input-icon-btn {
@@ -2843,6 +2831,65 @@ input[type='password']::-ms-clear {
     &:hover {
       color: $text-primary;
     }
+  }
+}
+
+// Clear (✕) button pinned inside a field. Hidden by default and revealed on
+// hover / focus so dense forms stay uncluttered; it is only rendered while the
+// field has content. Shared by `.clearable-input` (plain fields) and the two
+// serial comboboxes, which own their wrapper.
+.clearable-input .input-clear-btn,
+.serial-port-combo .input-clear-btn,
+.baud-rate-combo .input-clear-btn {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    color 0.12s ease,
+    background 0.12s ease;
+
+  &:hover {
+    color: $text-primary;
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.clearable-input:hover .input-clear-btn,
+.clearable-input:focus-within .input-clear-btn,
+.serial-port-combo:hover .input-clear-btn,
+.serial-port-combo:focus-within .input-clear-btn,
+.baud-rate-combo:hover .input-clear-btn,
+.baud-rate-combo:focus-within .input-clear-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+// With a trailing element (the password eye) both buttons must fit, so the
+// clear ✕ shifts left of it.
+.clearable-input.with-trailing {
+  input {
+    padding-right: 56px;
+  }
+
+  .input-clear-btn {
+    right: 30px;
   }
 }
 
