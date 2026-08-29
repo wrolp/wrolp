@@ -4003,7 +4003,7 @@ export default function App() {
           >
             {tab ? getTabLabel(tab) : 'No terminal'}
           </span>
-          {tab?.tabType === 'terminal' && leaf.tabId != null && (
+          {tab?.tabType === 'terminal' || tab?.tabType === 'serial' ? (
             <button
               className="term-pane-reconnect"
               onMouseDown={(e) => e.stopPropagation()}
@@ -4015,7 +4015,7 @@ export default function App() {
             >
               <Icon name="refresh" size={12} />
             </button>
-          )}
+          ) : null}
           {/* Session recording toggle — only for SSH terminal sessions. */}
           {tab?.tabType === 'terminal' && leaf.tabId != null && (
             <button
