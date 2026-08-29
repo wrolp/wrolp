@@ -8,7 +8,6 @@ import '@xterm/xterm/css/xterm.css'
 import {
   connect,
   sendInput,
-  commitCommand,
   pollOutput,
   resizeTerminal,
   openLocalShell,
@@ -22,13 +21,7 @@ import {
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
-import {
-  stripAnsi,
-  preloadHighlightLanguages,
-  highlightMultiline,
-  highlightTableText,
-  isPrintLike,
-} from '../lib/termHighlight'
+import { stripAnsi, highlightTableText } from '../lib/termHighlight'
 import {
   detectLsCommand,
   parseLsBlock,
@@ -36,431 +29,53 @@ import {
   resolveCdTarget,
 } from '../lib/lsParse'
 import type { LsEntry } from '../lib/lsParse'
-import {
-  detectTableCommand,
-  colorizeTableLine,
-  looksLikeTableHeader,
-  TableSpec,
-} from '../lib/tableOutput'
-import { colorizeCommand } from '../lib/cmdEcho'
+import { detectTableCommand } from '../lib/tableOutput'
 import type { AiTermMark, TargetRef } from '../types'
+import {
+  activeTerminalByTab,
+  latestTerminalByTab,
+  scrollbackCache,
+  replayScrollback,
+} from './terminal/registry'
+import type { CaptureState } from './terminal/capture'
+import { clearCaptureTimers, feedCapture, ensureHighlightLanguagesPreloaded } from './terminal/capture'
+import {
+  AI_CMD_FG,
+  AI_OUTPUT_FG,
+  ANSI_RESET,
+  AI_MARK_TIMEOUT_MS,
+  truncateCmd,
+} from './terminal/aiMark'
+import type { AiMarkState } from './terminal/aiMark'
+import { colorizeChunk, colorizeOutputChunk } from './terminal/aiMark'
+import {
+  LS_CAPTURE_TIMEOUT_MS,
+  LS_MAX_BYTES,
+  joinPath,
+  extractLsTargetArg,
+  resolveLsBaseDir,
+  expandTilde,
+  isNestedSessionEntry,
+  parseDockerExecContainer,
+  isNestedSessionExit,
+} from './terminal/lsCapture'
+import type { LsCaptureState, LsClickableEntry } from './terminal/lsCapture'
+import {
+  getCurrentCommandLine,
+  splitPromptCommand,
+  highlightCurrentCommandLine,
+  getInputLineAtCursorEnd,
+  commitSubmittedCommands,
+} from './terminal/promptLine'
+import { commandHighlighter } from './terminal/langHighlight'
+import type { TableCaptureState } from './terminal/tableCapture'
+import { feedTable } from './terminal/tableCapture'
+import type { TerminalComponentProps } from './terminal/types'
 
-// Tracks the single "active" terminal instance per session tabId. During a
-// transient double-mount (React mounts the new terminal before unmounting the
-// old one — e.g. on split/close/reconcile), two instances for the same tabId
-// briefly coexist. Only the instance registered here may send input, so the
-// stale duplicate can never echo the same keystroke twice into the SSH session
-// (which produced bugs like typing "ls" reaching the shell as "lss").
-const activeTerminalByTab = new Map<number, Terminal>()
+export { focusTerminal, getTerminalInputText } from './terminal/registry'
 
-// Tracks the most recently mounted terminal instance for each session tabId,
-// regardless of focus. Used by `focusTerminal` so callers outside this file
-// (reconnect button, "send to terminal") can move keyboard focus into the
-// right xterm instance — even when that terminal is not the currently focused
-// pane (e.g. a disconnected tab about to be reconnected).
-const latestTerminalByTab = new Map<number, Terminal>()
 
-/** Move keyboard focus into the terminal owned by `tabId` (no-op if none). */
-export const focusTerminal = (tabId: number): void => {
-  const term = latestTerminalByTab.get(tabId)
-  if (term) term.focus()
-}
 
-/** Text the user has already typed on the current input line (prompt
- *  stripped), for the terminal owned by `tabId`. Empty if none / unknown. */
-export const getTerminalInputText = (tabId: number): string => {
-  const term = latestTerminalByTab.get(tabId)
-  if (!term) return ''
-  return stripPrompt(getCurrentCommandLine(term))
-}
-
-// Preserves terminal scrollback across transient re-mounts (float pop-out / dock
-// back). React tears down the xterm instance when its portal container changes,
-// so we serialize the full buffer (ANSI colors included, via @xterm/addon-serialize)
-// here and replay it on the next mount.
-const scrollbackCache = new Map<number, string>()
-
-const replayScrollback = (term: Terminal, tabId: number): void => {
-  const cached = scrollbackCache.get(tabId)
-  if (!cached) return
-  scrollbackCache.delete(tabId)
-  term.write(cached)
-  term.scrollToBottom()
-}
-
-// ---- terminal output syntax highlight state machine (cat/head/tail) ----
-//
-// When the user runs `cat file.py`, we enter "capture" mode: output chunks are
-// buffered (ANSI-stripped), complete lines are re-tokenized with Monaco and
-// written with ANSI colors as they stream in, and the next shell prompt (or a
-// silence timeout) ends the capture. Large outputs fall back to raw passthrough.
-
-interface CaptureState {
-  lang: string
-  /** Highlighter that colorizes the whole captured buffer (multi-line aware). */
-  highlighter: (text: string) => string[]
-  /** Plain-text shell prompt captured from the submitted command line. */
-  prompt: string
-  /** ANSI-stripped output accumulated since capture started. */
-  buf: string
-  /** Number of `buf` lines already written to the terminal (line 0 = echo). */
-  writtenLines: number
-  bytes: number
-  timeout: ReturnType<typeof setTimeout> | null
-  flushTimer: ReturnType<typeof setTimeout> | null
-}
-
-const MAX_HIGHLIGHT_BYTES = 512 * 1024
-const CAPTURE_TIMEOUT_MS = 800
-const FLUSH_DEBOUNCE_MS = 40
-
-let highlightLanguagesPreloaded = false
-
-function clearCaptureTimers(c: CaptureState): void {
-  if (c.timeout) {
-    clearTimeout(c.timeout)
-    c.timeout = null
-  }
-  if (c.flushTimer) {
-    clearTimeout(c.flushTimer)
-    c.flushTimer = null
-  }
-}
-
-/**
- * Write `buf` lines in the inclusive range `[from, to)`. Line 0 is the shell's
- * echo of the command and is written plainly; the rest are colorized. When
- * `trailingNewline` is true every written line is newline-terminated (used for
- * flushing complete lines only); otherwise only interior lines get the newline.
- */
-function writeRange(
-  term: Terminal,
-  c: CaptureState,
-  content: string,
-  from: number,
-  to: number,
-  trailingNewline: boolean,
-): void {
-  if (to <= from) return
-  const lines = content.split('\n')
-  const colored = c.highlighter(content)
-  for (let i = from; i < to; i++) {
-    term.write(i === 0 ? lines[0] : colored[i])
-    if (trailingNewline || i < to - 1) term.write('\r\n')
-  }
-  c.writtenLines = to
-}
-
-/** Flush any new *complete* lines (buffered so far) as colored output. */
-function flushCapturedLines(term: Terminal, c: CaptureState): void {
-  const completeCount = c.buf.split('\n').length - 1
-  writeRange(term, c, c.buf, c.writtenLines, completeCount, true)
-}
-
-/** Colorize everything remaining and stop capturing; optionally append the prompt. */
-function finalizeCapture(term: Terminal, c: CaptureState, promptEnd: string | null): void {
-  clearCaptureTimers(c)
-  const content = promptEnd ? c.buf.slice(0, c.buf.length - promptEnd.length) : c.buf
-  writeRange(term, c, content, c.writtenLines, content.split('\n').length, false)
-  if (promptEnd) term.write(promptEnd)
-}
-
-/** Abort capture (over the size threshold): dump the unwritten tail raw. */
-function giveUpCapture(term: Terminal, c: CaptureState): void {
-  clearCaptureTimers(c)
-  const rest = c.buf.split('\n').slice(c.writtenLines).join('\r\n')
-  if (rest.length > 0) term.write(rest)
-}
-
-/**
- * Feed one output chunk while capturing. `onEnd` is invoked (synchronously for
- * prompt/size endings, or later from the silence timeout) once capture has
- * ended, so the caller can drop the capture state and resume passthrough.
- */
-function feedCapture(term: Terminal, c: CaptureState, chunk: string, onEnd: () => void): void {
-  c.buf += stripAnsi(chunk)
-  c.bytes += chunk.length
-
-  if (c.bytes > MAX_HIGHLIGHT_BYTES) {
-    giveUpCapture(term, c)
-    onEnd()
-    return
-  }
-
-  if (c.prompt && c.buf.endsWith(c.prompt)) {
-    finalizeCapture(term, c, c.prompt)
-    onEnd()
-    return
-  }
-
-  if (c.flushTimer) clearTimeout(c.flushTimer)
-  c.flushTimer = setTimeout(() => {
-    c.flushTimer = null
-    flushCapturedLines(term, c)
-  }, FLUSH_DEBOUNCE_MS)
-
-  if (c.timeout) clearTimeout(c.timeout)
-  c.timeout = setTimeout(() => {
-    c.timeout = null
-    finalizeCapture(term, c, null)
-    onEnd()
-  }, CAPTURE_TIMEOUT_MS)
-}
-
-// ---- AI-issued command/output highlight (ai-term-mark) ----
-//
-// `run_command_on_terminal` types AI commands into the live shell and emits
-// `ai-term-mark` begin/end events. xterm's `onData` never fires for backend
-// writes, so the command line can't be detected via keystrokes — instead the
-// frontend colorizes the output stream itself: bright cyan + bold for the
-// echoed command line (up to its first newline), dim cyan for the command's
-// output, restoring the default color on `end`. This is a pure output-stream
-// rewrite, so it works identically for SSH and ConPTY local shells.
-
-const AI_CMD_FG = '\x1b[96m\x1b[1m' // bright cyan + bold
-const AI_OUTPUT_FG = '\x1b[2m\x1b[36m' // dim cyan
-const ANSI_RESET = '\x1b[0m'
-const AI_MARK_TIMEOUT_MS = 90_000
-
-/** Truncate a command to a displayable length for the status badge. */
-function truncateCmd(cmd: string, max = 40): string {
-  if (cmd.length <= max) return cmd
-  return cmd.slice(0, max) + '…'
-}
-
-interface AiMarkState {
-  mode: 'cmd' | 'output' | 'done'
-  seq: number
-  /** The shell prompt captured at `begin` (plain text, as read from the
-   *  terminal buffer). Used to detect when the shell redraws it after the
-   *  command finishes — at that point we stop tinting so the prompt keeps its
-   *  original color instead of inheriting the AI output tint. */
-  prompt: string
-}
-
-/** Rewrite a chunk's foreground color, dropping any pre-existing SGR color. */
-function colorizeChunk(chunk: string, fg: string): string {
-  if (!chunk.includes('\x1b[')) return fg + chunk + ANSI_RESET
-  return fg + chunk.replace(/(\x1b\[[0-9;]*m)/g, ANSI_RESET + fg) + ANSI_RESET
-}
-
-/** Dim a plain output chunk; pass colored chunks (grep/git) through untouched. */
-function colorizeOutputChunk(chunk: string): string {
-  if (chunk.includes('\x1b[')) return chunk
-  return AI_OUTPUT_FG + chunk + ANSI_RESET
-}
-
-// ---- clickable `ls` output (ls/ll/dir) ----
-//
-// When the user runs `ls -l`/`ll`/`la`/`dir`, output is written to the
-// terminal unchanged (passthrough) while being buffered for parsing. Once the
-// next prompt (or a silence timeout) ends the block, each entry's name becomes
-// a clickable xterm link (via registerLinkProvider): directories send
-// `cd <name>`, files open in the editor. The row for each entry is derived
-// from the buffer row captured when the command was submitted.
-
-const LS_CAPTURE_TIMEOUT_MS = 2000
-const LS_MAX_BYTES = 128 * 1024
-
-interface LsCaptureState {
-  format: 'long' | 'dir' | 'multi' | 'multiF'
-  prompt: string
-  /** Absolute buffer row of the echoed command line (captured at submit). */
-  startRow: number
-  buf: string
-  bytes: number
-  timeout: ReturnType<typeof setTimeout> | null
-  /** Raw bytes of an incomplete trailing line (plain `ls`/`dir` coloring only). */
-  pending: string
-}
-
-/**
- * A parsed `ls` entry bound to the absolute base directory of *its own*
- * listing (captured at submit time). Carrying the baseDir per entry — rather
- * than reading a single global "latest listing" ref — is what lets multiple
- * listings coexist on screen: each click resolves against the directory of
- * the listing it came from, even after a newer `ls` has run elsewhere.
- */
-interface LsClickableEntry extends LsEntry {
-  baseDirPromise: Promise<string | null>
-}
-
-function joinPath(base: string, name: string): string {
-  if (!base) return name
-  // Use the host's native separator so Windows local paths stay `C:\a\b`
-  // (cmd/PowerShell/backend PathBuf all accept it) and Unix paths stay `/a/b`.
-  const sep = /^[A-Za-z]:[\\/]/.test(base) ? '\\' : '/'
-  return `${base.replace(/[\\/]+$/, '')}${sep}${name}`
-}
-
-/** Extract a single non-flag path argument from an `ls`-style command, if any. */
-function extractLsTargetArg(cmd: string): string | null {
-  const tokens = cmd.trim().split(/\s+/).filter(Boolean)
-  const nonFlag = tokens.slice(1).filter((a) => !a.startsWith('-'))
-  return nonFlag.length === 1 ? nonFlag[0] : null
-}
-
-/**
- * Resolve the directory a listing's entries live in: the command's target path
- * argument when present (absolute `/…` / `X:\…` / `~…` used as-is, relative
- * joined to the cwd captured at submit time), otherwise the cwd itself. Returns
- * null only when neither the target nor the cwd is known.
- */
-function resolveLsBaseDir(cwd: string | null, targetArg: string | null): string | null {
-  if (!targetArg) return cwd
-  if (targetArg.startsWith('~') || targetArg.startsWith('/') || /^[A-Za-z]:[\\/]/.test(targetArg)) {
-    return targetArg.replace(/[\\/]+$/, '')
-  }
-  if (!cwd) return null
-  return joinPath(cwd, targetArg)
-}
-
-/**
- * Expand a leading `~/…` (or bare `~`) to `home`; leave other paths untouched.
- * SFTP doesn't expand `~` itself, and the backend's `expand_tilde` resolves the
- * *local* machine's home — so remote editor-open paths must be absolutized here.
- */
-function expandTilde(cwd: string | null, home: string | null): string | null {
-  if (!cwd) return null
-  if (cwd === '~') return home ?? cwd
-  if (cwd.startsWith('~/') && home) return `${home}${cwd.slice(1)}` // cwd.slice(1) → '/…'
-  return cwd
-}
-
-/**
- * True when a submitted command enters an interactive nested session whose cwd
- * lives in another context: a docker exec shell (`docker exec -it <ct> bash`)
- * or an interactive nested ssh (`ssh host`, no remote command). Inside such a
- * session the tracked cwd and any hidden `pwd` query describe the OUTER shell,
- * not what's on screen — the cwd tracking must be invalidated and `ls` link
- * bases taken from the prompt alone.
- */
-function isNestedSessionEntry(command: string): boolean {
-  const c = command.trim()
-  if (!c) return false
-  const tokens = c.split(/\s+/).filter(Boolean)
-  const prog = tokens[0] === 'sudo' ? tokens[1] : tokens[0]
-  if (prog === 'docker') {
-    const m = /docker\s+exec\b/.exec(c)
-    if (!m) return false
-    const afterExec = c.slice(m.index + m[0].length)
-    // Interactive (`-it`/`-i`) shell entry only; one-shot remote commands
-    // (`docker exec <ct> ls /tmp`) return immediately and don't nest.
-    const interactive = /(?:^|\s)-[a-zA-Z]*i[a-zA-Z]*(?:\s|$)/.test(afterExec)
-    const shell = /(?:^|\s)(?:\/bin\/)?(?:bash|sh|zsh|ash|fish|ksh)(?:\s|$)/.test(afterExec)
-    return interactive && shell
-  }
-  if (prog === 'ssh') {
-    // Remote commands / pipes / redirections / quoting mean a one-shot
-    // non-interactive run (`ssh host 'ls'`, `ssh host | cat`).
-    if (/[|;"'<>]|&&|\|\|/.test(c)) return false
-    // Interactive login: `ssh [-flags value…] host` — exactly one trailing
-    // non-flag token (the host), nothing after it.
-    return /^(?:[^\s-]+\s+)?ssh\s+(?:-[a-zA-Z]+\s+\S+\s+)*\S+$/.test(c)
-  }
-  return false
-}
-
-/**
- * Extracts the container name/ID from a `docker exec` command line, e.g.
- * `docker exec -it lac-nacos /bin/bash` → "lac-nacos". Handles combined flags
- * (`-it`), `--flag=value`, and flags that take a separate value (`-u root`,
- * `-w /app`). Returns null when no container argument follows.
- */
-function parseDockerExecContainer(command: string): string | null {
-  const c = command.trim()
-  const m = /docker\s+exec\b/.exec(c)
-  if (!m) return null
-  const rest = c.slice(m.index + m[0].length).trim()
-  if (!rest) return null
-  // Flags of `docker exec` that consume the next token as their value.
-  const takesValue = /^-(?:u|w|e|l|m|c|d|i|env|workdir|user|label|env-file|cpu-shares|memory)$/
-  const tokens = rest.split(/\s+/)
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i]
-    if (tok.startsWith('-')) {
-      const eq = tok.indexOf('=')
-      const flag = eq === -1 ? tok : tok.slice(0, eq)
-      if (
-        eq === -1 &&
-        takesValue.test(flag) &&
-        i + 1 < tokens.length &&
-        !tokens[i + 1].startsWith('-')
-      ) {
-        i += 1
-      }
-      continue
-    }
-    return tok.replace(/^["']+|["']+$/g, '')
-  }
-  return null
-}
-
-/** True for `exit`/`logout` — leaves a nested session (or the shell itself). */
-function isNestedSessionExit(command: string): boolean {
-  return /^(?:exit|logout)\b/.test(command.trim())
-}
-
-interface TerminalComponentProps {
-  tabId: number
-  isActive: boolean
-  isFocused?: boolean
-  /** Current shell view for this tab's pane ("terminal", editor key, docker
-   *  log key). When transitioning back to "terminal" (e.g. from file editor),
-   *  the terminal is automatically focused. */
-  shellView?: string
-  reconnectTrigger?: number
-  connectConfig?: {
-    id: string
-    name?: string
-    host: string
-    port: number
-    username: string
-    password?: string
-    keyPath?: string
-    /** Directory the shell starts in after connecting (sent as `cd <dir>`). */
-    startupDir?: string
-    // Serial-port connection fields (only meaningful when the tab is serial).
-    kind?: string
-    portName?: string
-    baudRate?: number
-    dataBits?: number
-    stopBits?: number
-    parity?: string
-    flowControl?: string
-    group?: string
-    workspaceId?: string
-  }
-  /** When true, run a local PTY-backed shell instead of an SSH connection. */
-  isLocal?: boolean
-  /** When true, open a serial (COM port) terminal instead of an SSH connection. */
-  isSerial?: boolean
-  /** Container name when this shell was opened as a `docker exec` from the
-   *  Docker sidebar. The `docker exec` is sent programmatically (postConnectCmd),
-   *  so the Enter-handler nested-session tracking never fires — this flag makes
-   *  `ls` link bases come from the container's own prompt instead of the host
-   *  cwd (see startLsCaptureIfMatch). Cleared on `exit`. */
-  dockerContainer?: string
-  /** Working directory to start the local shell in (local mode only). */
-  localCwd?: string
-  /** Shell command to use for the local shell (local mode only). */
-  localShellType?: string
-  autoConnect: boolean
-  /** Maximum scrollback lines to retain (default 5000). */
-  maxScrollback?: number
-  onStatusChange: (
-    status: 'connecting' | 'connected' | 'error' | 'disconnected',
-    errorMessage?: string,
-  ) => void
-  onSizeChange?: (cols: number, rows: number) => void
-  onAskAi?: (selectedText: string) => void
-  /** Save the selected text as a command snippet (floating command list). */
-  onAddCommandSnippet?: (text: string) => void
-  /** Open a file (clicked in `ls` output) in the remote/local editor. */
-  onOpenFile?: (target: TargetRef, path: string) => void
-  /** Notify the parent of the current working directory (after connect, `cd`, etc.). */
-  onCwdChange?: (cwd: string | null) => void
-}
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
@@ -739,22 +354,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // clearLsLinks().
   }
 
-  // ---- generic aligned-table highlight (df / ps / free / ss / mount / ...) ----
-  const TABLE_CAPTURE_TIMEOUT_MS = 1500
-  const TABLE_MAX_BYTES = 512 * 1024
-
-  interface TableCaptureState {
-    spec: TableSpec
-    prompt: string
-    /** Incomplete trailing row (no newline yet) carried into the next chunk. */
-    partial: string
-    /** Total rows written so far — row 0 is the header. */
-    lineCount: number
-    bytes: number
-    done: boolean
-    timeout: ReturnType<typeof setTimeout> | null
-  }
-
   const tableCaptureRef = useRef<TableCaptureState | null>(null)
   // True from the moment we send a keystroke until its echo has been recolored.
   // Gates the writeOutput recolor so we only recolor *typed* lines and never
@@ -803,97 +402,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     expectingEchoRef.current = false
   }
 
-  // Colorize and immediately write one table row. Row 0 of the capture is the
-  // header (bold + bright); every later row gets per-column role coloring.
-  // Writing each row as it arrives guarantees every row is colored consistently
-  // — there is no buffering/debounced rewrite that could leave some rows plain.
-  const writeTableLine = (term: Terminal, c: TableCaptureState, raw: string) => {
-    // Don't assume the very first captured line is the header. Commands like
-    // `netstat -tnlp` emit an info line ("Active Internet connections...")
-    // before the real column header. Skip leading non-header lines plain so the
-    // actual header gets the uniform bold+bright style and the body gets role
-    // coloring.
-    if (c.lineCount === 0 && !looksLikeTableHeader(raw, c.spec)) {
-      term.write(raw + '\r\n')
-      return
-    }
-    const isHeader = c.lineCount === 0
-    // stripAnsi already removed the PTY \r; emit \r\n so xterm returns to column 1.
-    term.write(colorizeTableLine(raw, c.spec, isHeader) + '\r\n')
-    c.lineCount++
-  }
-
-  const feedTable = (term: Terminal, c: TableCaptureState, chunk: string, onEnd: () => void) => {
-    if (c.done) return
-    c.bytes += chunk.length
-
-    if (c.bytes > TABLE_MAX_BYTES) {
-      // Too big — stop capturing and dump the rest of the buffer uncolored.
-      if (c.partial) {
-        term.write(c.partial + '\r\n')
-        c.partial = ''
-      }
-      term.write(stripAnsi(chunk))
-      c.done = true
-      onEnd()
-      return
-    }
-
-    // Strip ANSI so a colored PS1 in the trailing prompt still matches `c.prompt`
-    // (which is the plain prompt captured on Enter).
-    const text = stripAnsi(chunk)
-
-    // Detect the next prompt ending the table.
-    let endIdx = -1
-    if (c.prompt) {
-      const pos = text.lastIndexOf(c.prompt)
-      if (pos >= 0) endIdx = pos
-    }
-
-    const body = endIdx >= 0 ? text.slice(0, endIdx) : text
-    const acc = c.partial + body
-    c.partial = ''
-
-    if (endIdx >= 0) {
-      // Prompt present: every line in `acc` is a complete table row (the prompt
-      // follows it). Colorize and write them all, then echo the prompt back.
-      for (const ln of acc.split('\n')) {
-        if (ln.length > 0) writeTableLine(term, c, ln)
-      }
-      term.write(text.slice(endIdx))
-      c.done = true
-      onEnd()
-      return
-    }
-
-    // Streaming: split into complete rows, hold any trailing incomplete row.
-    if (acc.length > 0) {
-      if (acc.endsWith('\n')) {
-        const lines = acc.split('\n')
-        lines.pop() // drop trailing empty produced by the final '\n'
-        for (const ln of lines) writeTableLine(term, c, ln)
-      } else {
-        const lines = acc.split('\n')
-        if (lines.length > 1) {
-          c.partial = lines.pop() as string // incomplete trailing row
-          for (const ln of lines) writeTableLine(term, c, ln)
-        } else {
-          c.partial = lines[0] // whole thing is a not-yet-complete row
-        }
-      }
-    }
-
-    if (c.timeout) clearTimeout(c.timeout)
-    c.timeout = setTimeout(() => {
-      c.timeout = null
-      if (c.partial) {
-        writeTableLine(term, c, c.partial)
-        c.partial = ''
-      }
-      c.done = true
-      onEnd()
-    }, TABLE_CAPTURE_TIMEOUT_MS)
-  }
 
   // Start a table capture for known table commands (df/ps/free/ss/...). Only
   // one command runs at a time, so clears the print/ls captures first to avoid
@@ -1481,98 +989,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     if (!isSerial) recolorLiveLine()
   }
 
-  // Map a filename to a highlight language (self-contained, no async worker).
-  const EXT_LANG: Record<string, string> = {
-    js: 'javascript',
-    jsx: 'javascript',
-    mjs: 'javascript',
-    cjs: 'javascript',
-    ts: 'typescript',
-    tsx: 'typescript',
-    py: 'python',
-    rb: 'ruby',
-    pl: 'perl',
-    php: 'php',
-    go: 'go',
-    rs: 'rust',
-    java: 'java',
-    kt: 'kotlin',
-    scala: 'scala',
-    c: 'c',
-    h: 'c',
-    cpp: 'cpp',
-    cc: 'cpp',
-    cxx: 'cpp',
-    hpp: 'cpp',
-    cs: 'csharp',
-    json: 'json',
-    yaml: 'yaml',
-    yml: 'yaml',
-    toml: 'toml',
-    ini: 'ini',
-    cfg: 'ini',
-    conf: 'ini',
-    properties: 'ini',
-    xml: 'xml',
-    html: 'html',
-    htm: 'html',
-    svg: 'xml',
-    sh: 'shell',
-    bash: 'shell',
-    zsh: 'shell',
-    psm1: 'shell',
-    css: 'css',
-    scss: 'scss',
-    less: 'less',
-    sql: 'sql',
-    lua: 'lua',
-    md: 'markdown',
-    markdown: 'markdown',
-    dockerfile: 'docker',
-  }
-  const PRINT_READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl', 'sed', 'awk'])
-
-  // Best-effort language for a `cat`/`head`/`tail` (or piped) command, derived
-  // from the file arguments it references.
-  const langFromPrintCommand = (cmd: string): string => {
-    const cleaned = cmd.replace(/[|<>]/g, ' ').split(/\s+/).filter(Boolean)
-    const files = cleaned.filter((t) => !t.startsWith('-') && !PRINT_READERS.has(t.toLowerCase()))
-    for (const f of files) {
-      const base = (f.split(/[\\/]/).pop() ?? f).toLowerCase()
-      const ext = base.includes('.') ? base.split('.').pop()! : ''
-      if (EXT_LANG[ext]) return EXT_LANG[ext]
-      if (base === 'dockerfile') return 'docker'
-      if (base === 'makefile') return 'makefile'
-      if (base === 'gemfile') return 'ruby'
-      if (base.startsWith('.') && base.includes('git')) return 'ini'
-    }
-    return 'plaintext'
-  }
-
-  // Choose a highlighter for a submitted command, or null if it's not something
-  // we should recolor. Covers `cat`/`head`/`tail` (+ pipes/redirects/globs),
-  // `git diff/log/show/status`, `tree`, and `docker ps`/`images`.
-  const commandHighlighter = (
-    cmd: string,
-  ): { lang: string; highlighter: (t: string) => string[] } | null => {
-    const tokens = cmd.trim().split(/\s+/).filter(Boolean)
-    if (tokens.length === 0) return null
-    const prog = (tokens[0].split(/[\\/]/).pop() ?? tokens[0]).toLowerCase()
-    const sub = tokens[1]?.toLowerCase() ?? ''
-    if ((prog === 'git' || prog === 'podman' || prog === 'kubectl') && sub) {
-      if (['diff', 'log', 'show', 'status', 'branch', 'blame'].includes(sub))
-        return { lang: 'git', highlighter: (t) => highlightMultiline(t, 'git') }
-    }
-    if (prog === 'tree') return { lang: 'tree', highlighter: (t) => highlightMultiline(t, 'tree') }
-    if (prog === 'docker' && ['ps', 'images', 'image', 'container', 'compose', 'service'].includes(sub))
-      return { lang: 'docker', highlighter: (t) => highlightMultiline(t, 'docker') }
-    if (isPrintLike(cmd)) {
-      const lang = langFromPrintCommand(cmd)
-      return { lang, highlighter: (t) => highlightMultiline(t, lang) }
-    }
-    return null
-  }
-
   const startPrintCapture = (lang: string, highlighter: (t: string) => string[], prompt: string) => {
     resetCapture()
     // NOTE: do NOT clearLsLinks() here. A previous `ls` listing may still be
@@ -1700,10 +1116,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     hasRun.current = true
 
-    if (!highlightLanguagesPreloaded) {
-      highlightLanguagesPreloaded = true
-      preloadHighlightLanguages()
-    }
+    ensureHighlightLanguagesPreloaded()
 
     const cfg = connectConfigRef.current
     console.log('[Terminal] connectConfig=', cfg)
@@ -3138,148 +2551,4 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   )
 }
 
-// Read the full logical line under the cursor, reassembling wrapped
-// continuation lines so long tab-completed commands are not truncated.
-function getCurrentCommandLine(term: Terminal): string {
-  const buffer = term.buffer.active
-  // `cursorY` is relative to `baseY` (0..rows-1) but `getLine` expects an
-  // absolute buffer index — offset by `baseY` so this reads the actual cursor
-  // row rather than a stale scrollback line.
-  let y = buffer.baseY + buffer.cursorY
-  const line = buffer.getLine(y)
-  if (!line) return ''
-  let text = line.translateToString(true)
-  while (y > 0) {
-    const prev = buffer.getLine(y - 1)
-    if (prev && prev.isWrapped) {
-      text = prev.translateToString(true) + text
-      y -= 1
-    } else {
-      break
-    }
-  }
-  return text
-}
 
-// Remove ANSI escape sequences and split a submitted buffer line into its
-// leading shell prompt (plain text) and the command that follows.
-function splitPromptCommand(line: string): { prompt: string; command: string } {
-  const noAnsi = line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-  // Markers in both "with trailing space" and bare forms: PowerShell / cmd
-  // prompts end in `>` (often WITHOUT a trailing space — `PS C:\path>`),
-  // bash/zsh use `$ ` / `# ` / `% ` / `❯ ` (usually WITH a space). Taking the
-  // rightmost match keeps user-typed `>`/`$` inside an actual command intact
-  // enough for the "is there already input?" check: a bare prompt yields an
-  // empty command, a prompt + typed text yields the text.
-  const markers = ['$ ', '# ', '% ', '> ', '❯ ', '$', '#', '%', '>', '❯']
-  let idx = -1
-  let matched = ''
-  for (const m of markers) {
-    const pos = noAnsi.lastIndexOf(m)
-    if (pos > idx) {
-      idx = pos
-      matched = m
-    }
-  }
-  if (idx >= 0) {
-    return {
-      prompt: noAnsi.slice(0, idx + matched.length),
-      command: noAnsi.slice(idx + matched.length).trimEnd(),
-    }
-  }
-  return { prompt: '', command: noAnsi.trim() }
-}
-
-// Remove ANSI escape sequences and strip a leading shell prompt so only the
-// command itself remains.
-function stripPrompt(line: string): string {
-  return splitPromptCommand(line).command
-}
-
-// Recolor the currently-displayed input line (prompt + typed command) in place.
-// The remote shell has already echoed the uncolored line onto the screen; we
-// tokenize the command and rewrite just that line with SGR colors.
-//
-// - If the user's PS1 is uncolored (no ANSI in the raw line), we also color the
-//   trailing prompt symbol (root `#` red, else green) and rewrite the whole line.
-// - If the PS1 is already colored, we leave the prompt untouched and only recolor
-//   the command portion (split the raw line exactly at the prompt boundary so the
-//   user's ANSI PS1 is preserved byte-for-byte).
-//
-// Wrapped (multi-row) lines are skipped — repositioning would corrupt the
-// continuation rows, and an uncolored long line is harmless.
-function highlightCurrentCommandLine(term: Terminal) {
-  const rawLine = getCurrentCommandLine(term)
-  if (!rawLine) return
-  const plain = stripAnsi(rawLine)
-  const { prompt, command } = splitPromptCommand(plain)
-  if (!command && !prompt) return
-  // Never recolor full-screen TUI screens (vi/nano/less/tmux/etc.). Those use the
-  // alternate buffer and manage their own styling; rewriting a line here strips
-  // their colors and corrupts indentation.
-  if (term.buffer.active.type === 'alternate') return
-  const buffer = term.buffer.active
-  let y = buffer.baseY + buffer.cursorY
-  let wrapped = false
-  while (y > 0) {
-    const prev = buffer.getLine(y - 1)
-    if (prev && prev.isWrapped) {
-      wrapped = true
-      y -= 1
-    } else break
-  }
-  if (wrapped) return
-  const coloredCmd = colorizeCommand(command)
-  // Rewrite ONLY the command portion, leaving the prompt exactly as the shell
-  // drew it (including any user-colored PS1). xterm's line buffer does not expose
-  // the prompt's original ANSI codes (translateToString yields plain text), so
-  // redrawing the whole line would strip a custom-colored PS1's leading color.
-  // Instead we move the cursor to the end of the prompt and clear just from there
-  // to the line end, so the prompt keeps its appearance no matter how it's styled.
-  term.write(`\r\x1b[${prompt.length}C\x1b[K` + coloredCmd)
-}
-
-// Return the current input line only when the cursor sits at its END (so a
-// full-line recolor leaves the caret exactly where the user is typing). Returns
-// null when: the line is wrapped across rows, the caret is mid-command (e.g.
-// after an arrow key), or the caret is in program output. An empty command
-// (a bare prompt) is allowed — it is used to color just the prompt symbol.
-function getInputLineAtCursorEnd(term: Terminal): { prompt: string; command: string } | null {
-  const rawLine = getCurrentCommandLine(term)
-  if (!rawLine) return null
-  const plain = stripAnsi(rawLine)
-  const { prompt, command } = splitPromptCommand(plain)
-  const buffer = term.buffer.active
-  // Full-screen programs (vi/nano/less/tmux/etc.) use the alternate buffer. Every
-  // line there is program output, not a shell command line, so never recolor it.
-  if (buffer.type === 'alternate') return null
-  // Reject wrapped (multi-row) commands: repositioning would corrupt rows.
-  let y = buffer.baseY + buffer.cursorY
-  while (y > 0) {
-    const prev = buffer.getLine(y - 1)
-    if (prev && prev.isWrapped) return null
-    else break
-  }
-  // Cursor must be on the last row at column = promptLen + commandLen.
-  if (buffer.cursorX !== prompt.length + command.length) return null
-  return { prompt, command }
-}
-
-// Capture commands submitted by the user. A single Enter commits the current
-// terminal-buffer line (which holds tab-completed text); a multi-line paste
-// commits each pasted line directly.
-function commitSubmittedCommands(term: Terminal, data: string, tabId: number) {
-  if (/^[\r\n]+$/.test(data)) {
-    const cmd = stripPrompt(getCurrentCommandLine(term))
-    if (cmd.trim().length > 0) {
-      commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
-    }
-    return
-  }
-  for (const raw of data.split(/[\r\n]+/)) {
-    const cmd = raw.replace(/[\x00-\x1f]/g, '').trim()
-    if (cmd.length > 0) {
-      commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
-    }
-  }
-}
