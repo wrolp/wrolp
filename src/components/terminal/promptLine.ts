@@ -1,12 +1,13 @@
 import { Terminal } from '@xterm/xterm'
 import { stripAnsi } from '../../lib/termHighlight'
-import { colorizeCommand } from '../../lib/cmdEcho'
+import { colorizeCommand, splitRawLineAtVisibleIndex } from '../../lib/cmdEcho'
 import { commitCommand } from '../../commands'
 
 // Read the full logical line under the cursor, reassembling wrapped
 // continuation lines so long tab-completed commands are not truncated.
 export function getCurrentCommandLine(term: Terminal): string {
   const buffer = term.buffer.active
+  const cols = term.cols
   // `cursorY` is relative to `baseY` (0..rows-1) but `getLine` expects an
   // absolute buffer index — offset by `baseY` so this reads the actual cursor
   // row rather than a stale scrollback line.
@@ -14,14 +15,22 @@ export function getCurrentCommandLine(term: Terminal): string {
   const line = buffer.getLine(y)
   if (!line) return ''
   let text = line.translateToString(true)
+  // Walk back while the previous row looks like a continuation. Prefer the
+  // explicit `isWrapped` flag, but fall back to a full-row heuristic: if the
+  // assembled text still hasn't found a prompt marker, the previous physical
+  // row is probably the wrapped head of the same logical line.
   while (y > 0) {
     const prev = buffer.getLine(y - 1)
-    if (prev && prev.isWrapped) {
-      text = prev.translateToString(true) + text
+    if (!prev) break
+    const { prompt } = splitPromptCommand(stripAnsi(text))
+    if (prompt.length > 0) break
+    const prevText = prev.translateToString(true)
+    if (prev.isWrapped || stripAnsi(prevText).length >= cols) {
+      text = prevText + text
       y -= 1
-    } else {
-      break
+      continue
     }
+    break
   }
   return text
 }
@@ -71,8 +80,11 @@ export function stripPrompt(line: string): string {
 //   the command portion (split the raw line exactly at the prompt boundary so the
 //   user's ANSI PS1 is preserved byte-for-byte).
 //
-// Wrapped (multi-row) lines are skipped — repositioning would corrupt the
-// continuation rows, and an uncolored long line is harmless.
+// Wrapped (multi-row) commands ARE recolored: we move the cursor up to the line's
+// first physical row, rewrite the full colored command (xterm re-wraps it exactly
+// as the shell did), clear the last row's tail, and erase any stale continuation
+// rows left behind by a previous, longer layout. Skipping them would leave the
+// wrapped continuation painted with the shell prompt's SGR (e.g. its background).
 export function highlightCurrentCommandLine(term: Terminal) {
   const rawLine = getCurrentCommandLine(term)
   if (!rawLine) return
@@ -84,31 +96,63 @@ export function highlightCurrentCommandLine(term: Terminal) {
   // their colors and corrupts indentation.
   if (term.buffer.active.type === 'alternate') return
   const buffer = term.buffer.active
-  let y = buffer.baseY + buffer.cursorY
-  let wrapped = false
-  while (y > 0) {
-    const prev = buffer.getLine(y - 1)
-    if (prev && prev.isWrapped) {
-      wrapped = true
-      y -= 1
-    } else break
+  const cols = term.cols
+  const lastRow = buffer.baseY + buffer.cursorY
+  // Top physical row of this (possibly wrapped) logical line. Prefer the
+  // explicit `isWrapped` chain, but fall back to the logical length: right at
+  // the wrap boundary xterm may not have set `isWrapped` yet, so a line whose
+  // cursor has just spilled onto the next row would otherwise look unwrapped.
+  let firstRow = lastRow
+  while (firstRow > 0 && buffer.getLine(firstRow - 1)?.isWrapped) {
+    firstRow -= 1
   }
-  if (wrapped) return
+  const logicalLen = prompt.length + command.length
+  const expectedFirstRow = logicalLen > 0 ? lastRow - Math.floor((logicalLen - 1) / cols) : lastRow
+  if (expectedFirstRow < firstRow) firstRow = expectedFirstRow
+  const rowOffset = lastRow - firstRow
   const coloredCmd = colorizeCommand(command)
-  // Rewrite ONLY the command portion, leaving the prompt exactly as the shell
-  // drew it (including any user-colored PS1). xterm's line buffer does not expose
-  // the prompt's original ANSI codes (translateToString yields plain text), so
-  // redrawing the whole line would strip a custom-colored PS1's leading color.
-  // Instead we move the cursor to the end of the prompt and clear just from there
-  // to the line end, so the prompt keeps its appearance no matter how it's styled.
-  term.write(`\r\x1b[${prompt.length}C\x1b[K` + coloredCmd)
+  // Selection can stick to buffer coordinates across wraps and repaint newly
+  // typed text with the selection background — drop it before rewriting.
+  term.clearSelection()
+
+  // Wrapped (multi-row) commands: clear and rewrite the whole logical line.
+  // A partial in-place rewrite leaves `isWrapped` in a broken state, so later
+  // reads only see the continuation row and end up coloring the parameter as a
+  // new command.
+  if (rowOffset > 0) {
+    const { before: rawPrompt } = splitRawLineAtVisibleIndex(rawLine, prompt.length)
+    const moveUp = `\x1b[${rowOffset}A`
+    // Also clear stale continuation rows left by a previous, longer layout.
+    const maxRow = buffer.baseY + term.rows - 1
+    let staleRows = 0
+    for (let r = lastRow + 1; r <= maxRow; r++) {
+      const ln = buffer.getLine(r)
+      if (!ln || !ln.isWrapped) break
+      staleRows += 1
+    }
+    const clearRows = rowOffset + staleRows
+    term.write(`${moveUp}\r\x1b[2K`)
+    for (let i = 0; i < clearRows; i++) {
+      term.write(`\x1b[1B\x1b[2K`)
+    }
+    const back = clearRows > 0 ? `\x1b[${clearRows}A` : ''
+    term.write(`${back}\r${rawPrompt}\x1b[0m${coloredCmd}\x1b[0m`)
+    return
+  }
+
+  // Unwrapped line: simple in-place recolor. Move to just past the prompt,
+  // reset SGR so the prompt's style doesn't leak, and rewrite the colored
+  // command. Clear the tail in case the command just shrank (backspace).
+  term.write(`\r\x1b[${prompt.length}C\x1b[0m` + coloredCmd)
+  term.write(`\x1b[0m\x1b[K`)
 }
 
 // Return the current input line only when the cursor sits at its END (so a
 // full-line recolor leaves the caret exactly where the user is typing). Returns
-// null when: the line is wrapped across rows, the caret is mid-command (e.g.
-// after an arrow key), or the caret is in program output. An empty command
-// (a bare prompt) is allowed — it is used to color just the prompt symbol.
+// null when: the caret is mid-command (e.g. after an arrow key), or the caret is
+// in program output. A wrapped (multi-row) command whose caret is on its LAST
+// physical row IS recognized, so the continuation rows get recolored too. An empty
+// command (a bare prompt) is allowed — it is used to color just the prompt symbol.
 export function getInputLineAtCursorEnd(term: Terminal): { prompt: string; command: string } | null {
   const rawLine = getCurrentCommandLine(term)
   if (!rawLine) return null
@@ -118,15 +162,20 @@ export function getInputLineAtCursorEnd(term: Terminal): { prompt: string; comma
   // Full-screen programs (vi/nano/less/tmux/etc.) use the alternate buffer. Every
   // line there is program output, not a shell command line, so never recolor it.
   if (buffer.type === 'alternate') return null
-  // Reject wrapped (multi-row) commands: repositioning would corrupt rows.
-  let y = buffer.baseY + buffer.cursorY
-  while (y > 0) {
-    const prev = buffer.getLine(y - 1)
-    if (prev && prev.isWrapped) return null
-    else break
-  }
-  // Cursor must be on the last row at column = promptLen + commandLen.
-  if (buffer.cursorX !== prompt.length + command.length) return null
+  const cols = term.cols
+  const logicalLen = prompt.length + command.length
+  const row = buffer.baseY + buffer.cursorY
+  const nextRow = row + 1 <= buffer.baseY + term.rows - 1 ? buffer.getLine(row + 1) : null
+  const nextWrapped = !!(nextRow && nextRow.isWrapped)
+  // The caret is at the end of the command when it sits on the LAST physical row of
+  // the (possibly wrapped) logical line, at the column where the command's tail ends.
+  // For a wrapped line the tail column is logicalLen % cols; an exact multiple of cols
+  // leaves the caret at column 0 of the following (non-wrapped) row.
+  const tailCol = logicalLen % cols
+  const atEndCol = buffer.cursorX === tailCol || (tailCol === 0 && buffer.cursorX === 0)
+  if (!atEndCol) return null
+  // If the next row is a wrapped continuation, the caret is mid-wrap, not at the end.
+  if (nextWrapped) return null
   return { prompt, command }
 }
 
