@@ -1410,6 +1410,21 @@ export default function App() {
   // own layout.
   const openTab = useCallback(
     (conn: ConnectionConfig): number => {
+      // A COM (serial) port is exclusive: if a terminal for this connection is
+      // already open, focus it instead of opening a second tab — a second open
+      // would fail to acquire the port and leave a dead tab.
+      if (conn.kind === 'serial') {
+        const existing = tabsRef.current.find(
+          (t) => t.connectionId === conn.id && t.tabType === 'serial',
+        )
+        if (existing) {
+          setActiveTabId(existing.tabId)
+          const leaf = tabToLeafRef.current.get(existing.tabId)
+          if (leaf) setFocusedLeafByRoot((prev) => ({ ...prev, [existing.tabId]: leaf }))
+          setToast({ kind: 'info', text: t('serialAlreadyOpen') })
+          return existing.tabId
+        }
+      }
       const tabId = nextTabId++
       // Honour the connection kind: serial connections must open a COM-port
       // terminal, not an SSH session (otherwise the port name is fed to russh

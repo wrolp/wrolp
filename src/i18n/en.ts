@@ -73,6 +73,7 @@ const en = {
   quickConnect: 'Quick Connect',
   group: 'Group',
   noConnectionsYet: 'No connections yet',
+  serialAlreadyOpen: 'This serial port is already open in another terminal',
   host: 'Host',
   port: 'Port',
   username: 'Username',

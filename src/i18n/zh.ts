@@ -75,6 +75,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   quickConnect: '快速连接',
   group: '分组',
   noConnectionsYet: '暂无连接',
+  serialAlreadyOpen: '该串口已在其他终端中打开',
   host: '主机',
   port: '端口',
   username: '用户名',
