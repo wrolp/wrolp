@@ -2645,6 +2645,55 @@ body.resizing-v {
       }
     }
   }
+
+  // Baud-rate combobox: same custom-dropdown pattern as the port picker, minus
+  // the description line. Sits inside `.dir-row` next to the Detect button.
+  .baud-rate-combo {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .baud-rate-suggestions {
+    position: absolute;
+    z-index: 30;
+    left: 0;
+    right: 0;
+    margin: 2px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: $bg-secondary;
+    border: 1px solid $accent-hover;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    max-height: 200px;
+    overflow-y: auto;
+
+    li {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 12px;
+      font-size: 13px;
+      color: $text-primary;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(0, 122, 204, 0.18);
+      }
+
+      .baud-value {
+        font-family: $font-mono;
+      }
+
+      .baud-note {
+        flex-shrink: 0;
+        font-size: 11px;
+        color: $text-secondary;
+      }
+    }
+  }
 }
 
 // Shared directory-picker row: a flex row holding an input (flex: 1) and a

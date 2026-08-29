@@ -1316,6 +1316,34 @@ interface ConnectionModalProps {
   onSave: (config: ConnectionConfig) => void
 }
 
+/** Baud rates offered by the serial baud-rate dropdown.
+ *
+ *  74880 is the fixed rate of the ESP8266 ROM boot log. The rates above
+ *  230400 need a USB-serial adapter that accepts arbitrary divisors
+ *  (FTDI / CP210x / CH34x) — a real 16550 UART will not reach them.
+ */
+const COMMON_BAUD_RATES: { value: number; note?: string }[] = [
+  { value: 1200 },
+  { value: 2400 },
+  { value: 4800 },
+  { value: 9600, note: 'default' },
+  { value: 14400 },
+  { value: 19200 },
+  { value: 28800 },
+  { value: 38400 },
+  { value: 57600 },
+  { value: 74880, note: 'ESP8266 boot' },
+  { value: 115200, note: 'most common' },
+  { value: 128000 },
+  { value: 230400 },
+  { value: 256000 },
+  { value: 460800 },
+  { value: 500000 },
+  { value: 921600 },
+  { value: 1000000 },
+  { value: 2000000 },
+]
+
 export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   connection,
   defaultGroup = '',
@@ -1369,6 +1397,14 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   } | null>(null)
   const [baudCandidates, setBaudCandidates] = useState<BaudCandidate[] | null>(null)
   const [baudDetectError, setBaudDetectError] = useState<string | null>(null)
+  // Custom baud-rate dropdown: the native <datalist> is not used for the same
+  // reason as the port picker (unreliable label rendering across Chromium).
+  const [showBaudList, setShowBaudList] = useState(false)
+  const filteredBaudRates = useMemo(() => {
+    const q = String(baudRate || '')
+    if (!q) return COMMON_BAUD_RATES
+    return COMMON_BAUD_RATES.filter((b) => String(b.value).includes(q))
+  }, [baudRate])
   // Custom serial-port combobox: the native <datalist> does not render the
   // option `label`/description reliably across Chromium builds, so we render
   // our own suggestion list (port name + friendly description, both visible).
@@ -1477,7 +1513,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
       startupDir: isSerial ? undefined : startupDir.trim() || undefined,
       kind: isSerial ? 'serial' : isTelnet ? 'telnet' : 'ssh',
       portName: isSerial ? portName.trim() : undefined,
-      baudRate: isSerial ? baudRate : undefined,
+      // The baud field can be cleared while typing; never persist 0.
+      baudRate: isSerial ? baudRate || 9600 : undefined,
       dataBits: isSerial ? dataBits : undefined,
       stopBits: isSerial ? stopBits : undefined,
       parity: isSerial ? parity : undefined,
@@ -1585,11 +1622,46 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 <div className="form-group">
                   <label>Baud rate</label>
                   <div className="dir-row">
-                    <input
-                      type="number"
-                      value={baudRate}
-                      onChange={(e) => setBaudRate(Number(e.target.value))}
-                    />
+                    <div
+                      className="baud-rate-combo"
+                      onBlur={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                          setShowBaudList(false)
+                        }
+                      }}
+                    >
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={baudRate ? String(baudRate) : ''}
+                        onChange={(e) => {
+                          const digits = e.target.value.replace(/\D/g, '')
+                          setBaudRate(digits ? Number(digits) : 0)
+                          setShowBaudList(true)
+                        }}
+                        onFocus={() => setShowBaudList(true)}
+                        placeholder="9600"
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                      {showBaudList && filteredBaudRates.length > 0 && (
+                        <ul className="baud-rate-suggestions">
+                          {filteredBaudRates.map((b) => (
+                            <li
+                              key={b.value}
+                              onMouseDown={(e) => {
+                                e.preventDefault()
+                                setBaudRate(b.value)
+                                setShowBaudList(false)
+                              }}
+                            >
+                              <span className="baud-value">{b.value.toLocaleString('en-US')}</span>
+                              {b.note && <span className="baud-note">{b.note}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={handleDetectBaud}
