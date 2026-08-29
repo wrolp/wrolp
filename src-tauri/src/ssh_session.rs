@@ -87,6 +87,10 @@ pub struct ConnectionConfig {
   pub parity: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub flow_control: Option<String>,
+  /// Telnet only: opt-in best-effort auto-login (`login:` / `Password:` prompt
+  /// matching). Never on by default — Telnet is plaintext.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub auto_login: Option<bool>,
 }
 
 /// A saved SSH local-port-forwarding tunnel definition attached to a
@@ -163,6 +167,9 @@ pub struct PersistedConnection {
   pub parity: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub flow_control: Option<String>,
+  /// Telnet only: opt-in best-effort auto-login (see `ConnectionConfig`).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub auto_login: Option<bool>,
 }
 
 /// Envelope written to `connections.json`. Version history:
@@ -219,6 +226,7 @@ impl PersistedConnection {
       stop_bits: c.stop_bits,
       parity: c.parity.clone(),
       flow_control: c.flow_control.clone(),
+      auto_login: c.auto_login,
     })
   }
 }
@@ -255,6 +263,7 @@ impl ConnectionConfig {
       stop_bits: p.stop_bits,
       parity: p.parity.clone(),
       flow_control: p.flow_control.clone(),
+      auto_login: p.auto_login,
     })
   }
 }
@@ -503,6 +512,27 @@ pub struct SerialSession {
   pub session_id: u64,
 }
 
+/// Active Telnet (plain TCP) terminal session.
+///
+/// Same shape as the serial session: a background tokio task owns the socket,
+/// strips the Telnet IAC negotiations out of the server stream and pushes the
+/// remaining clean bytes into `AppState.output_buffers` — so the frontend keeps
+/// using `poll_output` unchanged. Outgoing bytes travel through `write_tx`
+/// (already IAC-escaped by the sender).
+pub struct TelnetSession {
+  pub tab_id: u32,
+  /// Channel for outgoing bytes (user input + negotiation replies).
+  pub write_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+  /// Live terminal geometry, shared with the IAC parser so a NAWS
+  /// re-negotiation always reports the current size (`telnet_resize` updates it).
+  pub size: Arc<StdMutex<(u32, u32)>>,
+  /// Signals the reader task to stop; taken by `disconnect`.
+  pub shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+  /// Monotonic version — bumped on each reconnection for the same tab, so a
+  /// superseded task can avoid emitting a stale `connection-closed`.
+  pub session_id: u64,
+}
+
 // ==================== P6: Jump host / Docker targets ====================
 
 /// Credentials for a secondary target (independent of the jump host).
@@ -648,6 +678,8 @@ pub struct AppState {
   pub sessions: StdMutex<HashMap<u32, SshSession>>,
   /// Active serial (COM port) terminal sessions: tab_id → session.
   pub serial_sessions: StdMutex<HashMap<u32, SerialSession>>,
+  /// Active Telnet terminal sessions: tab_id → session.
+  pub telnet_sessions: StdMutex<HashMap<u32, TelnetSession>>,
   /// Polling output buffer: tab_id → pending text chunks (frontend polls every 100ms)
   pub output_buffers: StdMutex<HashMap<u32, Vec<String>>>,
   /// AI output capture sinks for SSH tabs: tab_id → accumulated output.
@@ -782,6 +814,7 @@ impl AppState {
       active_workspace_id: StdMutex::new(active_workspace_id),
       sessions: StdMutex::new(HashMap::new()),
       serial_sessions: StdMutex::new(HashMap::new()),
+      telnet_sessions: StdMutex::new(HashMap::new()),
       output_buffers: StdMutex::new(HashMap::new()),
       ai_captures: StdMutex::new(HashMap::new()),
       next_ai_term_seq: AtomicU64::new(1),

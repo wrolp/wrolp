@@ -365,20 +365,21 @@ export default function App() {
       if (!targetId) return null
       const tabId = nextTabId++
       const isSerial = conn.kind === 'serial'
+      const isTelnet = conn.kind === 'telnet'
       const newTab: TabInfo = {
         tabId,
         connectionId: conn.id,
         connectionName: conn.name,
         host: isSerial ? conn.portName || 'Serial' : `${conn.host}:${conn.port}`,
         status: 'connecting',
-        tabType: isSerial ? 'serial' : 'terminal',
+        tabType: isSerial ? 'serial' : isTelnet ? 'telnet' : 'terminal',
         embedded: true,
         dockerContainer,
         // Persisted so the shell re-enters the container on every reconnect
         // (e.g. when the pane is floated/restored and reconnects).
         postConnectCmd: dockerContainer
           ? `docker exec -it ${dockerContainer} /bin/bash || docker exec -it ${dockerContainer} /bin/sh\r`
-          : isSerial
+          : isSerial || (isTelnet && !conn.autoLogin)
             ? undefined
             : conn.startupDir
               ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
@@ -1414,21 +1415,25 @@ export default function App() {
       // terminal, not an SSH session (otherwise the port name is fed to russh
       // as an SSH host and the connect fails).
       const isSerial = conn.kind === 'serial'
+      const isTelnet = conn.kind === 'telnet'
       const newTab: TabInfo = {
         tabId,
         connectionId: conn.id,
         connectionName: conn.name,
         host: isSerial ? conn.portName || 'Serial' : `${conn.host}:${conn.port}`,
         status: 'connecting',
-        tabType: isSerial ? 'serial' : 'terminal',
+        tabType: isSerial ? 'serial' : isTelnet ? 'telnet' : 'terminal',
         // When the connection defines a startup directory, cd into it once the
         // shell is ready (same mechanism as docker-shell panes). Serial ports
-        // have no shell, so they never get a startup command.
-        postConnectCmd: isSerial
-          ? undefined
-          : conn.startupDir
-            ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
-            : undefined,
+        // have no shell, so they never get a startup command. Telnet only gets
+        // one when auto-login is on — otherwise the `cd` would be typed into
+        // the `login:` prompt.
+        postConnectCmd:
+          isSerial || (isTelnet && !conn.autoLogin)
+            ? undefined
+            : conn.startupDir
+              ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
+              : undefined,
       }
       setTabs((prev) => [...prev, newTab])
       const leafId = newLeafId()
@@ -1632,7 +1637,10 @@ export default function App() {
       if (prev !== tabId) return prev
       const remaining = tabsRef.current.filter(
         (t) =>
-          (t.tabType === 'terminal' || t.tabType === 'localShell' || t.tabType === 'serial') &&
+          (t.tabType === 'terminal' ||
+            t.tabType === 'localShell' ||
+            t.tabType === 'serial' ||
+            t.tabType === 'telnet') &&
           !t.embedded &&
           !sessionIds.includes(t.tabId),
       )
@@ -2771,7 +2779,8 @@ export default function App() {
       if (
         (root.tabType !== 'terminal' &&
           root.tabType !== 'localShell' &&
-          root.tabType !== 'serial') ||
+          root.tabType !== 'serial' &&
+          root.tabType !== 'telnet') ||
         root.embedded
       )
         continue
@@ -2882,11 +2891,14 @@ export default function App() {
             stopBits: conn.stopBits,
             parity: conn.parity,
             flowControl: conn.flowControl,
+            // Telnet fields (only meaningful when kind === 'telnet').
+            autoLogin: conn.autoLogin,
           }
         })()
       : undefined
     const isLocalShell = tab.tabType === 'localShell'
     const isSerial = tab.tabType === 'serial'
+    const isTelnet = tab.tabType === 'telnet'
     return (
       <div style={{ height: '100%', width: '100%', position: 'relative' }}>
         {tab.tabType !== 'settings' && (
@@ -2906,6 +2918,7 @@ export default function App() {
               autoConnect={!!tab.connectionId || isLocalShell}
               isLocal={isLocalShell}
               isSerial={isSerial}
+              isTelnet={isTelnet}
               dockerContainer={tab.dockerContainer}
               localCwd={tab.localShellCwd}
               localShellType={tab.localShellType}
@@ -4605,6 +4618,7 @@ export default function App() {
         t.tabType === 'terminal' ||
         t.tabType === 'localShell' ||
         t.tabType === 'serial' ||
+        t.tabType === 'telnet' ||
         (t.tabType === 'settings' && settingsActive),
     )
     .map((tab) => {
@@ -4648,7 +4662,10 @@ export default function App() {
   // switching toggles visibility (never remounts), so sessions persist.
   const rootTabs = tabs.filter(
     (t) =>
-      (t.tabType === 'terminal' || t.tabType === 'localShell' || t.tabType === 'serial') &&
+      (t.tabType === 'terminal' ||
+        t.tabType === 'localShell' ||
+        t.tabType === 'serial' ||
+        t.tabType === 'telnet') &&
       !t.embedded,
   )
 

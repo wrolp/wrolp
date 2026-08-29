@@ -29,6 +29,8 @@ export interface TerminalComponentProps {
     stopBits?: number
     parity?: string
     flowControl?: string
+    /** Telnet only: opt-in best-effort auto-login. */
+    autoLogin?: boolean
     group?: string
     workspaceId?: string
   }
@@ -36,6 +38,9 @@ export interface TerminalComponentProps {
   isLocal?: boolean
   /** When true, open a serial (COM port) terminal instead of an SSH connection. */
   isSerial?: boolean
+  /** When true, open a Telnet (plain TCP + IAC negotiation) terminal instead of
+   *  an SSH connection. */
+  isTelnet?: boolean
   /** Container name when this shell was opened as a `docker exec` from the
    *  Docker sidebar. The `docker exec` is sent programmatically (postConnectCmd),
    *  so the Enter-handler nested-session tracking never fires — this flag makes

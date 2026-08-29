@@ -665,6 +665,17 @@ pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: u32) -> Resul
     }
   }
 
+  // Telnet sessions — signal the reader task to stop.
+  {
+    let mut sessions = state.telnet_sessions.lock().map_err(|e| e.to_string())?;
+    if let Some(s) = sessions.get_mut(&tab_id) {
+      if let Some(tx) = s.shutdown_tx.take() {
+        let _ = tx.send(());
+        return Ok(true);
+      }
+    }
+  }
+
   Ok(true)
 }
 
@@ -716,6 +727,20 @@ pub async fn resize_terminal(
   // Serial ports have no PTY to resize — nothing to do.
   if let Ok(sessions) = state.serial_sessions.lock() {
     if sessions.contains_key(&tab_id) {
+      return Ok(true);
+    }
+  }
+  // Telnet has no PTY either — the remote learns the geometry through the NAWS
+  // subnegotiation (RFC 1073), which is the only resize channel available.
+  {
+    let sessions = state.telnet_sessions.lock().map_err(|e| e.to_string())?;
+    if let Some(s) = sessions.get(&tab_id) {
+      if let Ok(mut size) = s.size.lock() {
+        *size = (cols, rows);
+      }
+      s.write_tx
+        .send(crate::commands::telnet::naws_bytes((cols, rows)))
+        .map_err(|e| format!("Failed to send NAWS: {}", e))?;
       return Ok(true);
     }
   }

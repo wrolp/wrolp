@@ -18,6 +18,8 @@ import {
   fsFileExists,
   connectSerial,
   serialSendInput,
+  connectTelnet,
+  telnetSendInput,
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -94,6 +96,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onCwdChange,
   isLocal,
   isSerial,
+  isTelnet,
   dockerContainer,
   localCwd,
   localShellType,
@@ -195,7 +198,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Ask the interactive shell for its real absolute cwd. Resolves with the path
   // (or null on timeout/error). The query output is stripped by stripCwdQuery.
   const fetchRemoteCwd = (): Promise<string | null> => {
-    if (isLocal) return Promise.resolve(null)
+    // Telnet has no SFTP channel, so there is nothing to query — skip it
+    // instead of firing an SSH-only request that is guaranteed to fail.
+    if (isLocal || isTelnet) return Promise.resolve(null)
     // Cancel any in-flight query so a stale result can't clobber a newer cwd.
     if (cwdQueryPendingRef.current) {
       const old = cwdQueryPendingRef.current
@@ -1610,7 +1615,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // startCaptureIfPrint(command, prompt)          // 命令输出高亮：cat/head/tail
           // startCaptureIfLsPlain 已由 startLsCaptureIfMatch 兼管（plain ls/dir 在
           // writeLsChunk 里完成着色+可点击，避免两个 capture 同时占用输出）。
-          startLsCaptureIfMatch(command, prompt) // 保留：原 ls/dir 着色+可点击
+          // Telnet has no SFTP channel, so `ls` entries can't be resolved or
+          // opened — skip the clickable-link capture entirely for it.
+          if (!isTelnet) startLsCaptureIfMatch(command, prompt) // 保留：原 ls/dir 着色+可点击
           // startTableCaptureIfMatch(command, prompt)     // 命令输出高亮：df/ps/free/netstat/...
         }
       }
@@ -1630,6 +1637,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       } else if (isSerial) {
         serialSendInput(currentTabId, data).catch((err) =>
           console.error('serial_send_input error:', err),
+        )
+      } else if (isTelnet) {
+        telnetSendInput(currentTabId, data).catch((err) =>
+          console.error('telnet_send_input error:', err),
         )
       } else {
         sendInput(currentTabId, data)
@@ -1860,6 +1871,35 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             term.write(`\x1b[31m[serial] connect failed: ${errMsg}\x1b[0m\r\n`)
             onStatusChangeRef.current('error', errMsg)
             console.error('connect_serial error:', err)
+          })
+      } else if (isTelnet) {
+        const tCfg = cfg!
+        connectTelnet(
+          {
+            id: tCfg.id,
+            name: tCfg.name || `${tCfg.username || ''}@${tCfg.host}`.replace(/^@/, ''),
+            host: tCfg.host,
+            port: tCfg.port || 23,
+            username: tCfg.username || '',
+            password: tCfg.password,
+            autoLogin: tCfg.autoLogin ?? false,
+            group: tCfg.group,
+            workspaceId: tCfg.workspaceId,
+          },
+          currentTabId,
+          cols,
+          rows,
+        )
+          .then(() => {
+            connectedRef.current = true
+            onStatusChangeRef.current('connected')
+            startPolling()
+          })
+          .catch((err) => {
+            const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
+            term.write(`\x1b[31m[telnet] connect failed: ${errMsg}\x1b[0m\r\n`)
+            onStatusChangeRef.current('error', errMsg)
+            console.error('connect_telnet error:', err)
           })
       } else {
         const sshCfg = cfg!
@@ -2178,6 +2218,49 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             term.write(`\x1b[31m[serial] reconnect failed: ${errMsg}\x1b[0m\r\n`)
             onStatusChangeRef.current('error', errMsg)
             console.error('connect_serial error:', err)
+          })
+        return
+      }
+
+      if (isTelnet) {
+        const tCfg = cfg!
+        connectTelnet(
+          {
+            id: tCfg.id,
+            name: tCfg.name || `${tCfg.username || ''}@${tCfg.host}`.replace(/^@/, ''),
+            host: tCfg.host,
+            port: tCfg.port || 23,
+            username: tCfg.username || '',
+            password: tCfg.password,
+            autoLogin: tCfg.autoLogin ?? false,
+            group: tCfg.group,
+            workspaceId: tCfg.workspaceId,
+          },
+          currentTabId,
+          cols,
+          rows,
+        )
+          .then(() => {
+            connectedRef.current = true
+            onStatusChangeRef.current('connected')
+            setTimeout(() => {
+              if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+              pollTimerRef.current = setInterval(async () => {
+                if (document.hidden || !connectedRef.current) return
+                try {
+                  const chunks = await pollOutput(currentTabId)
+                  if (chunks.length > 0) {
+                    for (const chunk of chunks) writeOutput(chunk)
+                  }
+                } catch {}
+              }, 100)
+            }, 300)
+          })
+          .catch((err) => {
+            const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
+            term.write(`\x1b[31m[telnet] reconnect failed: ${errMsg}\x1b[0m\r\n`)
+            onStatusChangeRef.current('error', errMsg)
+            console.error('connect_telnet error:', err)
           })
         return
       }

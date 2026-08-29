@@ -1335,9 +1335,13 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   )
 
   // Serial-port connection fields
-  const [kind, setKind] = useState<'ssh' | 'serial'>(
-    connection?.kind === 'serial' ? 'serial' : 'ssh',
+  const [kind, setKind] = useState<'ssh' | 'serial' | 'telnet'>(
+    connection?.kind === 'serial' ? 'serial' : connection?.kind === 'telnet' ? 'telnet' : 'ssh',
   )
+  // Telnet: opt-in best-effort auto-login (`login:` / `Password:` prompt
+  // matching). Off by default — Telnet is plaintext, so credentials are never
+  // injected unless the user explicitly asks for it.
+  const [autoLogin, setAutoLogin] = useState(connection?.autoLogin ?? false)
   const [portName, setPortName] = useState(connection?.portName || '')
   const [serialPorts, setSerialPorts] = useState<SerialPortView[]>([])
   const [baudRate, setBaudRate] = useState(connection?.baudRate || 9600)
@@ -1382,6 +1386,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
 
   const handleSave = () => {
     const isSerial = kind === 'serial'
+    const isTelnet = kind === 'telnet'
     const finalName =
       name.trim() || (isSerial ? portName.trim() : host.trim()) || 'Unnamed'
     if (isSerial) {
@@ -1399,19 +1404,27 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
       host: isSerial ? portName.trim() : host.trim(),
       port: isSerial ? 0 : port,
       username: isSerial ? '' : username.trim() || 'root',
-      password: isSerial ? undefined : authType === 'password' ? password : undefined,
-      keyPath: isSerial ? undefined : authType === 'key' ? keyPath.trim() || '~/.ssh/id_rsa' : undefined,
-      passphrase: isSerial ? undefined : authType === 'key' ? passphrase || undefined : undefined,
+      // Telnet is password-only (no SSH keys), so key fields are cleared.
+      password: isSerial ? undefined : isTelnet || authType === 'password' ? password : undefined,
+      keyPath:
+        isSerial || isTelnet
+          ? undefined
+          : authType === 'key'
+            ? keyPath.trim() || '~/.ssh/id_rsa'
+            : undefined,
+      passphrase:
+        isSerial || isTelnet ? undefined : authType === 'key' ? passphrase || undefined : undefined,
       group: group.trim() || undefined,
       description: description.trim() || undefined,
       startupDir: isSerial ? undefined : startupDir.trim() || undefined,
-      kind: isSerial ? 'serial' : 'ssh',
+      kind: isSerial ? 'serial' : isTelnet ? 'telnet' : 'ssh',
       portName: isSerial ? portName.trim() : undefined,
       baudRate: isSerial ? baudRate : undefined,
       dataBits: isSerial ? dataBits : undefined,
       stopBits: isSerial ? stopBits : undefined,
       parity: isSerial ? parity : undefined,
       flowControl: isSerial ? flowControl : undefined,
+      autoLogin: isTelnet ? autoLogin : undefined,
     }
     onSave(config)
   }
@@ -1426,7 +1439,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </span>
         </div>
         <div className="modal-body">
-          {/* Connection type: SSH or Serial */}
+          {/* Connection type: SSH, Serial or Telnet */}
           <div className="auth-type-toggle" style={{ marginBottom: 12 }}>
             <label>
               <input type="radio" checked={kind === 'ssh'} onChange={() => setKind('ssh')} />
@@ -1435,6 +1448,19 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             <label>
               <input type="radio" checked={kind === 'serial'} onChange={() => setKind('serial')} />
               Serial
+            </label>
+            <label>
+              <input
+                type="radio"
+                checked={kind === 'telnet'}
+                onChange={() => {
+                  setKind('telnet')
+                  // Nudge the port to the Telnet default, but only while the
+                  // user hasn't edited it away from the SSH default.
+                  if (port === 22) setPort(23)
+                }}
+              />
+              Telnet
             </label>
           </div>
           {kind === 'serial' && (
@@ -1567,7 +1593,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               </div>
             </>
           )}
-          {kind === 'ssh' && (
+          {kind !== 'serial' && (
           <div className="form-row">
             <div className="form-group">
               <label>{t('host')}</label>
@@ -1583,7 +1609,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 type="number"
                 value={port}
                 onChange={(e) => setPort(Number(e.target.value))}
-                placeholder="22"
+                placeholder={kind === 'telnet' ? '23' : '22'}
               />
             </div>
           </div>
@@ -1596,7 +1622,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               placeholder={t('myServer')}
             />
           </div>
-          {kind === 'ssh' && (
+          {kind !== 'serial' && (
           <div className="form-group">
             <label>{t('username')}</label>
             <input
@@ -1661,8 +1687,10 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </div>
           )}
 
-          {kind === 'ssh' && (
+          {kind !== 'serial' && (
           <>
+          {/* Telnet is password-only — no SSH-key toggle. */}
+          {kind === 'ssh' && (
           <div className="auth-type-toggle">
             <label>
               <input
@@ -1681,8 +1709,9 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
               {t('sshKey')}
             </label>
           </div>
+          )}
 
-          {authType === 'password' ? (
+          {authType === 'password' || kind === 'telnet' ? (
             <div className="form-group">
               <label>{t('password')}</label>
               <div className="input-with-icon">
@@ -1737,6 +1766,23 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 </div>
               </div>
             </>
+          )}
+
+          {kind === 'telnet' && (
+            <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'normal' }}>
+                <input
+                  type="checkbox"
+                  checked={autoLogin}
+                  onChange={(e) => setAutoLogin(e.target.checked)}
+                />
+                Auto-login with the saved username / password
+              </label>
+              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+                Best-effort: matches <code>login:</code> / <code>Password:</code> prompts. Telnet is
+                unencrypted — credentials travel in plain text.
+              </div>
+            </div>
           )}
           </>
           )}

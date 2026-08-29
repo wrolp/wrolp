@@ -12,6 +12,7 @@ import type {
   TargetRef,
   SerialPortView,
   SerialConfig,
+  TelnetConfig,
   ContainerInfo,
   ToolCallEvent,
   AiEndpointProfile,
@@ -119,6 +120,28 @@ export async function connectSerial(
 /** Send raw bytes to an open serial port. */
 export async function serialSendInput(tabId: number, data: string): Promise<boolean> {
   return await invoke<boolean>('serial_send_input', { tabId, data })
+}
+
+/** Open a Telnet session (plain TCP + IAC negotiation). */
+export async function connectTelnet(
+  config: TelnetConfig,
+  tabId: number,
+  cols: number,
+  rows: number,
+): Promise<{ status: string; tabId: number }> {
+  return await invoke<{ status: string; tabId: number }>('connect_telnet', {
+    cfg: config,
+    tabId,
+    cols,
+    rows,
+  })
+}
+
+/** Send keystrokes to a Telnet session (IAC-escaped, CR → CRLF).
+ *  Resize needs no dedicated call: `resizeTerminal` routes to the NAWS
+ *  subnegotiation server-side for telnet sessions. */
+export async function telnetSendInput(tabId: number, data: string): Promise<boolean> {
+  return await invoke<boolean>('telnet_send_input', { tabId, data })
 }
 
 export async function resizeTerminal(tabId: number, cols: number, rows: number): Promise<boolean> {

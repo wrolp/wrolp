@@ -12,7 +12,8 @@
 pub(crate) use super::ssh_session::{
   ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
   DirUploadSummary, FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SerialSession, SshError,
-  SshHandler, SshSession, SwitchedUser, TargetRef, TransferControl, TunnelInfo, UploadSession,
+  SshHandler, SshSession, SwitchedUser, TargetRef, TelnetSession, TransferControl, TunnelInfo,
+  UploadSession,
 };
 pub use serial::*;
 #[allow(unused_imports)]
@@ -249,6 +250,7 @@ pub(crate) fn shell_quote_arg(s: &str) -> String {
 
 pub(crate) mod connections;
 pub(crate) mod serial;
+pub(crate) mod telnet;
 pub(crate) mod ssh;
 pub(crate) mod local_shell;
 pub(crate) mod sftp;
@@ -261,6 +263,7 @@ pub(crate) mod tunnels;
 
 // Re-export every command so `crate::commands::<name>` keeps working from lib.rs.
 pub use connections::*;
+pub use telnet::*;
 pub use ssh::*;
 pub use local_shell::*;
 pub use sftp::*;

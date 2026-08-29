@@ -52,6 +52,16 @@ fn conn(id: &str, name: &str) -> ConnectionConfig {
     group: None,
     workspace_id: None,
     tunnels: vec![],
+    // Serial-port fields (unused by these tests).
+    kind: None,
+    port_name: None,
+    baud_rate: None,
+    data_bits: None,
+    stop_bits: None,
+    parity: None,
+    flow_control: None,
+    // Telnet field (unused by these tests).
+    auto_login: None,
   }
 }
 

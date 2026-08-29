@@ -16,8 +16,8 @@ export interface ConnectionConfig {
   workspaceId?: string
   /** Saved SSH tunnel definitions attached to this connection (not started). */
   tunnels?: TunnelConfig[]
-  /** Connection kind: "ssh" (default) or "serial". When "serial", the serial-port
-   *  fields below drive the connection instead of the SSH host/port. */
+  /** Connection kind: "ssh" (default), "serial" or "telnet". When "serial", the
+   *  serial-port fields below drive the connection instead of the SSH host/port. */
   kind?: string
   /** Serial port name (e.g. "COM3" / "/dev/ttyUSB0"). */
   portName?: string
@@ -28,6 +28,23 @@ export interface ConnectionConfig {
   parity?: string
   /** "none" | "software" | "hardware" */
   flowControl?: string
+  /** Telnet only: opt-in best-effort auto-login (`login:` / `Password:` prompt
+   *  matching). Off unless explicitly enabled — Telnet is plaintext. */
+  autoLogin?: boolean
+}
+
+/** Telnet connection parameters sent to `connectTelnet`. */
+export interface TelnetConfig {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  password?: string
+  /** Opt-in best-effort auto-login. */
+  autoLogin: boolean
+  group?: string
+  workspaceId?: string
 }
 
 /** A serial (COM) port discovered on the machine, with a device-manager-style
@@ -145,7 +162,7 @@ export interface TabInfo {
   host: string
   status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'suspect' | 'settings' | 'aiChat'
   errorMessage?: string
-  tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat' | 'localShell' | 'serial'
+  tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat' | 'localShell' | 'serial' | 'telnet'
   // When true, this session was created by splitting a tab and is NOT shown as
   // its own entry in the top tab bar — it lives inside its parent workspace's
   // pane layout (see App.tsx `splitTrees`).

@@ -198,6 +198,8 @@ pub fn run() {
       commands::list_serial_ports,
       commands::connect_serial,
       commands::serial_send_input,
+      commands::connect_telnet,
+      commands::telnet_send_input,
       commands::open_local_shell,
       commands::local_send_input,
       commands::local_resize,
