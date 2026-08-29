@@ -17,13 +17,15 @@
 
 [中文文档](./README.zh.md) · [English](#)
 
-**Wrolp Terminal** is a Tauri 2 + React 19 + TypeScript desktop SSH terminal client. The native backend is written in Rust and connects directly to remote servers using the pure-Rust async [`russh`](https://github.com/warp-tech/russh) library. File transfer and remote editing use `russh-sftp`. Windows-first (MSI bundle), but builds on Linux/macOS too.
+**Wrolp Terminal** is a Tauri 2 + React 19 + TypeScript desktop terminal client for SSH, Telnet and serial (COM) ports. The native backend is written in Rust and connects directly to remote servers using the pure-Rust async [`russh`](https://github.com/warp-tech/russh) library. File transfer and remote editing use `russh-sftp`. Windows is the primary target — the release bundle target is MSI only — but the app runs and can be developed on Linux/macOS too.
 
-> **Note**: This README describes the current state of the code. The app has grown well beyond a single-tab JSON terminal — it now includes multi-tab SSH, SFTP file management, a remote file editor, session recording, command sets, Docker/host analysis, an AI assistant with tool-calling, and more.
+> **Note**: This README tracks the current state of the code, not a roadmap. When in doubt, trust the code.
 
 ## ✨ Highlights
 
-- 🖥️ **Multi-tab SSH terminal** with xterm.js, password/key auth, and auto-reconnect
+- 🖥️ **Multi-tab SSH terminal** with xterm.js, password/key auth, and a keepalive-driven health indicator
+- 🔌 **Telnet & serial (COM)** — plain-TCP sessions with IAC negotiation, and serial ports with auto-detected baud rate
+- 🔀 **SSH tunnels** — save local port-forwarding rules per connection and start/stop them from the sidebar
 - 💻 **Local terminal** — open shells on your own machine and browse local files, side by side with remote tabs
 - 📂 **SFTP file manager** — upload/download with pause & resume, remote file tree
 - ✍️ **Remote file editor** (Monaco) with UTF-8/GBK encoding auto-detect
@@ -55,8 +57,26 @@
 - **Interactive terminal**: xterm.js rendering per tab, multi-tab switching.
 - **Authentication**: password and SSH key authentication.
 - **PTY**: `xterm-256color` PTY + shell, resize support.
-- **Reconnect**: reusing a tab reuses the same instance; a stale-task guard (`session_id` monotonic counter) prevents a superseded background task from corrupting state.
+- **Connection health**: an SSH-level keepalive (interval + max retries, configurable in Settings) drives the tab status dot — green → yellow (`connection-suspect`) on a failed probe, red (`connection-closed`) once the retries are exhausted. A **Reconnect** button re-uses the same tab instance; a stale-task guard (`session_id` monotonic counter) prevents a superseded background task from corrupting state.
 - **Working directory sync**: SFTP operations stay in sync with `cd` typed in the shell (`poll_working_dir` runs `pwd` on a throwaway exec channel).
+
+### SSH tunnels
+
+- Save local port-forwarding rules on a connection (`TunnelConfig`) and manage them from the sidebar — add, edit, delete, start, stop.
+- Each saved rule shows its local address and remote target and is marked active while forwarding.
+- The backend emits `tunnel-changed` whenever a tunnel starts, stops or dies, so the sidebar stays in sync (including after a tab disconnects).
+
+### Telnet
+
+- Plain-TCP sessions (`connect_telnet`) with a small built-in IAC negotiation state machine (ECHO / SGA / TERMINAL-TYPE / NAWS).
+- Window resizes are reported to the server through the NAWS sub-option (Telnet has no PTY).
+- Optional best-effort auto-login that matches `login:` / `Password:` prompts — **off by default**, since Telnet is unencrypted.
+
+### Serial port (COM)
+
+- Enumerates available ports with friendly names (USB manufacturer / product, VID:PID); pick one from the list or type a custom port name.
+- Configurable baud rate, data bits, stop bits, parity and flow control; the baud rate can also be picked from a dropdown of common values.
+- **Baud-rate auto-detection**: UART has no clock line and no negotiation, so the peer's real rate cannot be read. The backend instead probes each common rate, listens (nudging silent devices with a newline) and scores how much the received bytes look like terminal text — results come back ranked with a confidence score and a sample preview.
 
 ### SFTP file management
 - Remote file tree browser (sidebar `FilePanel`).
@@ -113,7 +133,7 @@
 ### Window & shell integration
 - Custom titlebar (window `decorations: false`); window geometry/opacity persisted (`window.json`).
 - Show/hide on close, tray icon, auto-updater (GitHub release endpoint — set a real `pubkey` in `tauri.conf.json` before shipping).
-- Persistent connection configs (`connections.json`) and SQLite DB (`wrolp.db`, WAL mode) under the OS config dir + `wrolp-terminal/`.
+- Persistent connection configs (`connections.json`, encrypted — it also stores workspaces) and SQLite DB (`wrolp.db`, WAL mode) under the OS config dir + `wrolp-terminal/`.
 
 ## System Dependencies
 
@@ -218,19 +238,20 @@ E2E_PORT=1430 yarn test:e2e
 
 - Specs live in `e2e/ui/` (e.g. `terminal.spec.ts`, `connections.spec.ts`, `command-list.spec.ts`, `app-boot.spec.ts`).
 - The backend stub lives in `e2e/ui/helpers/tauriMock.ts`: it returns fixed/parameterised responses keyed by the `invoke` command name, so frontend behaviour can be verified without a real SSH server / file server.
+
 ## Tech Stack
 
 - **Frontend**: React 19 + TypeScript + xterm.js + Monaco editor + Vite + SCSS
 - **Backend**: Tauri 2 + Rust (tokio) + russh / russh-sftp
 - **SSH**: pure-Rust [`russh`](https://github.com/warp-tech/russh) async SSH client
-- **IPC**: Tauri `invoke` commands + frontend polling for terminal output (Windows background-task workaround). Only `connection-closed` and `transfer-progress` use Tauri events.
-- **Storage**: JSON (`connections.json`, `window.json`) + SQLite (`wrolp.db`, WAL) for recordings and command sets; encrypted secrets via an AES-256-GCM file vault (no OS keyring).
+- **IPC**: Tauri `invoke` commands + frontend polling for terminal output (Windows background-task workaround). Tauri events are used only for the few push notifications the UI cannot poll: `connection-closed`, `connection-suspect`, `connection-ok`, `transfer-progress`, `tunnel-changed`, `ai-term-mark`, `native-drag-drop`, `baud-detect-progress`.
+- **Storage**: `window.json` (window geometry, opacity, recording and keepalive settings) plus an **encrypted** `connections.json` (connections and workspaces) + SQLite (`wrolp.db`, WAL) for recordings and command sets; encrypted secrets via an AES-256-GCM file vault (no OS keyring).
 
 ## Conventions
 
 - Types shared with Rust use `#[serde(rename_all = "camelCase")]` on the Rust side and matching camelCase interfaces in `src/types.ts`.
 - Frontend formatting is enforced by Prettier (`.prettierrc`: singleQuote, no semi, printWidth 100) — run `yarn format`.
-- New backend commands must be registered in both `commands.rs` and the `generate_handler!` list in `lib.rs`.
+- Backend commands live in focused submodules under `src-tauri/src/commands/` (e.g. `serial.rs`); a new command must also be registered in the `generate_handler!` list in `src-tauri/src/lib.rs`, and its frontend wrapper goes in `src/commands.ts`.
 
 ## License
 

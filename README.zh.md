@@ -17,13 +17,15 @@
 
 [English](./README.md) · [中文](#)
 
-**Wrolp Terminal** 是基于 Tauri 2 + React 19 + TypeScript 的桌面端 SSH 终端客户端。原生后端使用 Rust 编写，通过纯 Rust 异步库 [`russh`](https://github.com/warp-tech/russh) 直连远程服务器。文件传输与远程编辑使用 `russh-sftp`。以 Windows 为主（打包为 MSI），但也支持 Linux / macOS 构建。
+**Wrolp Terminal** 是基于 Tauri 2 + React 19 + TypeScript 的桌面终端客户端，支持 SSH、Telnet 与串口（COM）。原生后端使用 Rust 编写，通过纯 Rust 异步库 [`russh`](https://github.com/warp-tech/russh) 直连远程服务器。文件传输与远程编辑使用 `russh-sftp`。以 Windows 为主要目标平台 —— 发布打包目标仅为 MSI —— 但也可以在 Linux / macOS 上运行与开发。
 
-> **说明**：本 README 描述了代码当前的状态。应用早已不止是一个单标签 JSON 终端，现已包含多标签 SSH、SFTP 文件管理、远程文件编辑器、会话录制、命令集、Docker / 主机分析、带工具调用的 AI 助手等功能。
+> **说明**：本 README 记录的是代码当前的状态，而非路线图。如有出入，以代码为准。
 
 ## ✨ 功能亮点
 
-- 🖥️ **多标签 SSH 终端** — 基于 xterm.js，支持密码 / 密钥认证与自动重连
+- 🖥️ **多标签 SSH 终端** — 基于 xterm.js，支持密码 / 密钥认证与基于保活的连接状态指示
+- 🔌 **Telnet 与串口（COM）** — 带 IAC 协商的纯 TCP 会话，以及支持波特率自动检测的串口
+- 🔀 **SSH 隧道** — 按连接保存本地端口转发规则，可在侧栏启停
 - 💻 **本地终端** — 在本机打开 Shell 并浏览本地文件，与远程标签并排使用
 - 📂 **SFTP 文件管理** — 上传 / 下载支持暂停与续传，远程文件树浏览
 - ✍️ **远程文件编辑器**（Monaco）— 自动识别 UTF-8 / GBK 编码
@@ -55,8 +57,26 @@
 - **交互式终端**：每个标签使用 xterm.js 渲染，支持多标签切换。
 - **认证方式**：支持密码与 SSH 密钥认证。
 - **PTY**：`xterm-256color` PTY + Shell，支持窗口大小调整。
-- **重连**：复用标签会复用同一实例；通过过期的任务守卫（`session_id` 单调递增计数器）防止被取代的后台任务破坏状态。
+- **连接健康状态**：SSH 层保活（间隔与最大重试次数，可在设置中配置）驱动标签状态点 —— 探测失败转黄（`connection-suspect`），重试耗尽转红（`connection-closed`）。通过 **重连** 按钮复用同一标签实例；通过过期的任务守卫（`session_id` 单调递增计数器）防止被取代的后台任务破坏状态。
 - **工作目录同步**：SFTP 操作与在 Shell 中输入的 `cd` 保持同步（`poll_working_dir` 会在一次性 exec 通道上执行 `pwd`）。
+
+### SSH 隧道
+
+- 可在连接上保存本地端口转发规则（`TunnelConfig`），并在侧栏管理 —— 增、改、删、启动、停止。
+- 每条规则显示其本地地址与远端目标，转发中会被标记为活动状态。
+- 隧道启动、停止或异常退出时后端会发出 `tunnel-changed`，侧栏因此保持同步（标签断开后同样适用）。
+
+### Telnet
+
+- 纯 TCP 会话（`connect_telnet`），内置轻量 IAC 协商状态机（ECHO / SGA / TERMINAL-TYPE / NAWS）。
+- 窗口尺寸变化通过 NAWS 子选项上报给服务端（Telnet 没有 PTY）。
+- 可选的尽力而为自动登录，匹配 `login:` / `Password:` 提示符 —— **默认关闭**，因为 Telnet 不加密。
+
+### 串口（COM）
+
+- 枚举可用端口并显示友好名称（USB 厂商 / 产品名、VID:PID）；可从列表选择，也可手动输入端口名。
+- 可配置波特率、数据位、停止位、校验位与流控；波特率也可从常用值下拉框中选取。
+- **波特率自动检测**：UART 没有时钟线也没有协商机制，因此无法读取对端的真实速率。后端改为逐个探测常用速率，监听（对静默设备发送换行试探）并对收到的字节像终端文本的程度打分 —— 结果按置信度排序返回，并附带样本预览。
 
 ### SFTP 文件管理
 - 远程文件树浏览器（侧边栏 `FilePanel`）。
@@ -113,7 +133,7 @@
 ### 窗口与系统集成
 - 自定义标题栏（窗口 `decorations: false`）；窗口位置 / 尺寸 / 透明度持久化（`window.json`）。
 - 关闭时隐藏、系统托盘图标、自动更新（GitHub Release 端点 —— 发布前需在 `tauri.conf.json` 中设置真实 `pubkey`）。
-- 持久化的连接配置（`connections.json`）与 SQLite 数据库（`wrolp.db`，WAL 模式）存放在 OS 配置目录下的 `wrolp-terminal/`。
+- 持久化的连接配置（`connections.json`，已加密 —— 同时保存工作区）与 SQLite 数据库（`wrolp.db`，WAL 模式）存放在 OS 配置目录下的 `wrolp-terminal/`。
 
 ## 系统依赖
 
@@ -218,19 +238,20 @@ E2E_PORT=1430 yarn test:e2e
 
 - 用例位于 `e2e/ui/`（如 `terminal.spec.ts`、`connections.spec.ts`、`command-list.spec.ts`、`app-boot.spec.ts`）。
 - 后端打桩点位于 `e2e/ui/helpers/tauriMock.ts`：按 `invoke` 的命令名返回固定或参数化的响应，便于在无真实 SSH / 服务器的情况下验证前端行为。
+
 ## 技术栈
 
 - **前端**：React 19 + TypeScript + xterm.js + Monaco 编辑器 + Vite + SCSS
 - **后端**：Tauri 2 + Rust (tokio) + russh / russh-sftp
 - **SSH**：纯 Rust 异步 SSH 客户端 [`russh`](https://github.com/warp-tech/russh)
-- **IPC**：Tauri `invoke` 命令 + 前端轮询终端输出（Windows 后台线程的权宜之计）。仅 `connection-closed` 与 `transfer-progress` 使用 Tauri 事件。
-- **存储**：JSON（`connections.json`、`window.json`）+ SQLite（`wrolp.db`，WAL）用于录制与命令集；机密通过 AES-256-GCM 文件保险库加密（不使用 OS 密钥环）。
+- **IPC**：Tauri `invoke` 命令 + 前端轮询终端输出（Windows 后台线程的权宜之计）。Tauri 事件仅用于少数前端无法轮询的推送通知：`connection-closed`、`connection-suspect`、`connection-ok`、`transfer-progress`、`tunnel-changed`、`ai-term-mark`、`native-drag-drop`、`baud-detect-progress`。
+- **存储**：`window.json`（窗口位置尺寸、透明度、录制与保活设置）以及**加密的** `connections.json`（连接与工作区）+ SQLite（`wrolp.db`，WAL）用于录制与命令集；机密通过 AES-256-GCM 文件保险库加密（不使用 OS 密钥环）。
 
 ## 约定
 
 - 与 Rust 共享的类型在 Rust 侧使用 `#[serde(rename_all = "camelCase")]`，并在 `src/types.ts` 中使用对应的 camelCase 接口。
 - 前端格式由 Prettier 强制约束（`.prettierrc`：singleQuote、no semi、printWidth 100）—— 运行 `yarn format`。
-- 新增后端命令必须同时在 `commands.rs` 与 `lib.rs` 的 `generate_handler!` 列表中注册。
+- 后端命令按职责拆分在 `src-tauri/src/commands/` 下的子模块中（如 `serial.rs`）；新增命令还要在 `src-tauri/src/lib.rs` 的 `generate_handler!` 列表中注册，前端包装函数放在 `src/commands.ts`。
 
 ## 致谢
 
