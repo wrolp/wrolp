@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "dtor-proc-macro"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f678cf4a922c215c63e0de95eb1ff08a958a81d47e485cf9da1e27bf6305cfa5"
 
@@ -6635,7 +6635,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "wrolp-terminal"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "aes-gcm",
  "anyhow",

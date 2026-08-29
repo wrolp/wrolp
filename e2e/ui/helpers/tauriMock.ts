@@ -136,7 +136,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return { interval: 30, max: 3 }
           case 'get_app_version':
             return {
-              version: '0.0.6',
+              version: '0.0.7',
               gitHash: 'mock',
               gitBranch: 'main',
               buildTime: '2026-08-28',

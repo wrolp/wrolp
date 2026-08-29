@@ -1,6 +1,6 @@
 {
   "productName": "wrolp-terminal",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "identifier": "com.wrolp-terminal.app",
   "build": {
     "frontendDist": "../dist",

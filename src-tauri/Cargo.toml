@@ -1,6 +1,6 @@
 [package]
 name = "wrolp-terminal"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2021"
 license = "MIT"
 default-run = "wrolp-terminal"
