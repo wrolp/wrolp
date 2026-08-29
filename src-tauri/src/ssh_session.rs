@@ -503,6 +503,10 @@ pub struct SwitchedUser {
 /// like it does for SSH. Writes are sent to that thread via `write_tx`.
 pub struct SerialSession {
   pub tab_id: u32,
+  /// Port this session owns (e.g. "COM3"). Lets commands that need exclusive
+  /// access — such as baud-rate detection — detect that the port is already
+  /// open by us instead of failing with a generic OS "access denied".
+  pub port_name: String,
   /// Set to `true` to ask the reader thread to exit (then emit `connection-closed`).
   pub shutdown: Arc<std::sync::atomic::AtomicBool>,
   /// Channel to the reader thread for outgoing bytes (serial_send_input pushes here).

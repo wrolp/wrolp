@@ -74,6 +74,17 @@ export interface SerialConfig {
   workspaceId?: string
 }
 
+/** One probed baud rate returned by `detectSerialBaud`, best-scored first. */
+export interface BaudCandidate {
+  baudRate: number
+  /** 0..1 confidence that this is the device's real rate. */
+  score: number
+  /** Bytes received during the probe window (0 = the device said nothing). */
+  bytes: number
+  /** Printable preview of what the device sent (non-printables as '.'). */
+  sample: string
+}
+
 /** A saved SSH local-port-forwarding tunnel definition (persisted config). */
 export interface TunnelConfig {
   /** Stable id (uuid) used to match a definition to its running tunnel. */

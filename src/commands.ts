@@ -12,6 +12,7 @@ import type {
   TargetRef,
   SerialPortView,
   SerialConfig,
+  BaudCandidate,
   TelnetConfig,
   ContainerInfo,
   ToolCallEvent,
@@ -120,6 +121,37 @@ export async function connectSerial(
 /** Send raw bytes to an open serial port. */
 export async function serialSendInput(tabId: number, data: string): Promise<boolean> {
   return await invoke<boolean>('serial_send_input', { tabId, data })
+}
+
+/**
+ * Best-effort auto-detect a serial device's baud rate.
+ *
+ * There is no way to read the peer's real rate (UART has no clock line and no
+ * negotiation), so the backend brute-forces the common rates, listens on each
+ * one (nudging with `\r\n` when the device stays silent) and scores how much
+ * the received bytes look like terminal text. Results are sorted best-first;
+ * a top score near 0 means nothing usable was detected.
+ *
+ * The port must not be open elsewhere while this runs.
+ */
+export async function detectSerialBaud(args: {
+  portName: string
+  dataBits: number
+  stopBits: number
+  parity: string
+  flowControl: string
+  probeMs?: number
+  sendProbeNewline?: boolean
+}): Promise<BaudCandidate[]> {
+  return await invoke<BaudCandidate[]>('detect_serial_baud', {
+    portName: args.portName,
+    dataBits: args.dataBits,
+    stopBits: args.stopBits,
+    parity: args.parity,
+    flowControl: args.flowControl,
+    probeMs: args.probeMs ?? 700,
+    sendProbeNewline: args.sendProbeNewline ?? true,
+  })
 }
 
 /** Open a Telnet session (plain TCP + IAC negotiation). */

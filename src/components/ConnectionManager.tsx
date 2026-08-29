@@ -1,7 +1,15 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { ConnectionConfig, LocalTerminalEntry, SerialPortView, TunnelConfig, TunnelInfo } from '../types'
+import { listen } from '@tauri-apps/api/event'
+import type {
+  ConnectionConfig,
+  LocalTerminalEntry,
+  SerialPortView,
+  BaudCandidate,
+  TunnelConfig,
+  TunnelInfo,
+} from '../types'
 import {
   saveConnection as saveConn,
   deleteConnection,
@@ -14,6 +22,7 @@ import {
   updateTunnel,
   stopTunnel,
   listSerialPorts,
+  detectSerialBaud,
 } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
@@ -1349,6 +1358,17 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [stopBits, setStopBits] = useState(connection?.stopBits || 1)
   const [parity, setParity] = useState(connection?.parity || 'none')
   const [flowControl, setFlowControl] = useState(connection?.flowControl || 'none')
+  // Baud-rate auto-detection. UART cannot report the peer's rate (no clock
+  // line, no negotiation), so the backend brute-forces the common rates and
+  // scores how much each one's received bytes look like real terminal text.
+  const [detectingBaud, setDetectingBaud] = useState(false)
+  const [baudProgress, setBaudProgress] = useState<{
+    index: number
+    total: number
+    baud: number
+  } | null>(null)
+  const [baudCandidates, setBaudCandidates] = useState<BaudCandidate[] | null>(null)
+  const [baudDetectError, setBaudDetectError] = useState<string | null>(null)
   // Custom serial-port combobox: the native <datalist> does not render the
   // option `label`/description reliably across Chromium builds, so we render
   // our own suggestion list (port name + friendly description, both visible).
@@ -1357,9 +1377,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     const q = portName.trim().toLowerCase()
     if (!q) return serialPorts
     return serialPorts.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        (p.description || '').toLowerCase().includes(q),
+      (p) => p.name.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q),
     )
   }, [serialPorts, portName])
 
@@ -1384,11 +1402,51 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     }
   }
 
+  const handleDetectBaud = async () => {
+    const port = portName.trim()
+    if (!port || detectingBaud) return
+    setDetectingBaud(true)
+    setBaudDetectError(null)
+    setBaudCandidates(null)
+    setBaudProgress(null)
+    let unlisten: (() => void) | undefined
+    try {
+      unlisten = await listen<{ index: number; total: number; baudRate: number }>(
+        'baud-detect-progress',
+        (ev) =>
+          setBaudProgress({
+            index: ev.payload.index,
+            total: ev.payload.total,
+            baud: ev.payload.baudRate,
+          }),
+      )
+      const candidates = await detectSerialBaud({
+        portName: port,
+        dataBits,
+        stopBits,
+        parity,
+        flowControl,
+      })
+      setBaudCandidates(candidates)
+      // Only auto-apply a reasonably confident match; otherwise show the list
+      // and let the user choose.
+      const best = candidates[0]
+      if (best && best.score >= 0.15) {
+        setBaudRate(best.baudRate)
+      }
+    } catch (e) {
+      setBaudDetectError(typeof e === 'string' ? e : String(e))
+    } finally {
+      unlisten?.()
+      setDetectingBaud(false)
+      setBaudProgress(null)
+    }
+  }
+
   const handleSave = () => {
     const isSerial = kind === 'serial'
     const isTelnet = kind === 'telnet'
-    const finalName =
-      name.trim() || (isSerial ? portName.trim() : host.trim()) || 'Unnamed'
+    const finalName = name.trim() || (isSerial ? portName.trim() : host.trim()) || 'Unnamed'
     if (isSerial) {
       if (!portName.trim()) {
         alert('Please select a serial port')
@@ -1526,13 +1584,78 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 </div>
                 <div className="form-group">
                   <label>Baud rate</label>
-                  <input
-                    type="number"
-                    value={baudRate}
-                    onChange={(e) => setBaudRate(Number(e.target.value))}
-                  />
+                  <div className="dir-row">
+                    <input
+                      type="number"
+                      value={baudRate}
+                      onChange={(e) => setBaudRate(Number(e.target.value))}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleDetectBaud}
+                      disabled={detectingBaud || !portName.trim()}
+                      title={
+                        portName.trim()
+                          ? 'Probe the common baud rates and score what the device sends'
+                          : 'Select a port first'
+                      }
+                    >
+                      {detectingBaud ? 'Detecting…' : 'Detect'}
+                    </button>
+                  </div>
                 </div>
               </div>
+              {(detectingBaud || baudDetectError || baudCandidates) && (
+                <div className="baud-detect-result">
+                  {detectingBaud && (
+                    <div className="baud-detect-hint">
+                      Probing {baudProgress?.total ?? 12} common rates…
+                      {baudProgress
+                        ? ` (${baudProgress.index + 1}/${baudProgress.total}: ${baudProgress.baud})`
+                        : ''}
+                    </div>
+                  )}
+                  {baudDetectError && <div className="baud-detect-error">{baudDetectError}</div>}
+                  {!detectingBaud && baudCandidates && (
+                    <>
+                      {baudCandidates.every((c) => c.bytes === 0) ? (
+                        <div className="baud-detect-hint">
+                          No data received at any probed rate — the device may be silent, need a
+                          specific handshake, or use a rate outside the probed list. Set it
+                          manually.
+                        </div>
+                      ) : (
+                        <>
+                          <div className="baud-detect-hint">
+                            Best match <strong>{baudCandidates[0].baudRate}</strong> (
+                            {Math.round(baudCandidates[0].score * 100)}% confidence)
+                            {baudCandidates[0].score >= 0.15
+                              ? ' — applied.'
+                              : ' — too weak to apply, pick one below.'}
+                          </div>
+                          <ul className="baud-candidate-list">
+                            {baudCandidates.map((c) => (
+                              <li
+                                key={c.baudRate}
+                                className={c.baudRate === baudRate ? 'active' : ''}
+                                onClick={() => setBaudRate(c.baudRate)}
+                                title={c.sample || 'No data received'}
+                              >
+                                <span className="baud-value">{c.baudRate}</span>
+                                <span className="baud-bar">
+                                  <span style={{ width: `${Math.round(c.score * 100)}%` }} />
+                                </span>
+                                <span className="baud-score">{Math.round(c.score * 100)}%</span>
+                                <span className="baud-sample">{c.sample || '—'}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               <div className="form-row">
                 <div className="form-group">
                   <label>Data bits</label>
@@ -1594,25 +1717,25 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             </>
           )}
           {kind !== 'serial' && (
-          <div className="form-row">
-            <div className="form-group">
-              <label>{t('host')}</label>
-              <input
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
-                placeholder="192.168.1.100"
-              />
+            <div className="form-row">
+              <div className="form-group">
+                <label>{t('host')}</label>
+                <input
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  placeholder="192.168.1.100"
+                />
+              </div>
+              <div className="form-group">
+                <label>{t('port')}</label>
+                <input
+                  type="number"
+                  value={port}
+                  onChange={(e) => setPort(Number(e.target.value))}
+                  placeholder={kind === 'telnet' ? '23' : '22'}
+                />
+              </div>
             </div>
-            <div className="form-group">
-              <label>{t('port')}</label>
-              <input
-                type="number"
-                value={port}
-                onChange={(e) => setPort(Number(e.target.value))}
-                placeholder={kind === 'telnet' ? '23' : '22'}
-              />
-            </div>
-          </div>
           )}
           <div className="form-group">
             <label>{t('connectionName')}</label>
@@ -1623,14 +1746,14 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             />
           </div>
           {kind !== 'serial' && (
-          <div className="form-group">
-            <label>{t('username')}</label>
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="root"
-            />
-          </div>
+            <div className="form-group">
+              <label>{t('username')}</label>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="root"
+              />
+            </div>
           )}
           <div className="form-group">
             <label>
@@ -1676,115 +1799,117 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             />
           </div>
           {kind === 'ssh' && (
-          <div className="form-group">
-            <label>{t('startupDir')}</label>
-            <input
-              value={startupDir}
-              onChange={(e) => setStartupDir(e.target.value)}
-              placeholder={t('startupDirPlaceholder')}
-              spellCheck={false}
-            />
-          </div>
+            <div className="form-group">
+              <label>{t('startupDir')}</label>
+              <input
+                value={startupDir}
+                onChange={(e) => setStartupDir(e.target.value)}
+                placeholder={t('startupDirPlaceholder')}
+                spellCheck={false}
+              />
+            </div>
           )}
 
           {kind !== 'serial' && (
-          <>
-          {/* Telnet is password-only — no SSH-key toggle. */}
-          {kind === 'ssh' && (
-          <div className="auth-type-toggle">
-            <label>
-              <input
-                type="radio"
-                checked={authType === 'password'}
-                onChange={() => setAuthType('password')}
-              />
-              {t('authPassword')}
-            </label>
-            <label>
-              <input
-                type="radio"
-                checked={authType === 'key'}
-                onChange={() => setAuthType('key')}
-              />
-              {t('sshKey')}
-            </label>
-          </div>
-          )}
-
-          {authType === 'password' || kind === 'telnet' ? (
-            <div className="form-group">
-              <label>{t('password')}</label>
-              <div className="input-with-icon">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t('password')}
-                />
-                <button
-                  type="button"
-                  className="input-icon-btn"
-                  onClick={() => setShowPassword((v) => !v)}
-                  aria-label={showPassword ? t('hidePassword') : t('showPassword')}
-                >
-                  <Icon name={showPassword ? 'eyeOff' : 'eye'} size={16} />
-                </button>
-              </div>
-            </div>
-          ) : (
             <>
-              <div className="form-group">
-                <label>{t('keyPath')}</label>
-                <div className="dir-row">
-                  <input
-                    value={keyPath}
-                    onChange={(e) => setKeyPath(e.target.value)}
-                    placeholder="~/.ssh/id_rsa (default)"
-                  />
-                  <button type="button" onClick={handleBrowseKey}>
-                    {t('browse')}
-                  </button>
+              {/* Telnet is password-only — no SSH-key toggle. */}
+              {kind === 'ssh' && (
+                <div className="auth-type-toggle">
+                  <label>
+                    <input
+                      type="radio"
+                      checked={authType === 'password'}
+                      onChange={() => setAuthType('password')}
+                    />
+                    {t('authPassword')}
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      checked={authType === 'key'}
+                      onChange={() => setAuthType('key')}
+                    />
+                    {t('sshKey')}
+                  </label>
                 </div>
-              </div>
-              <div className="form-group">
-                <label>{t('passphrase')}</label>
-                <div className="input-with-icon">
-                  <input
-                    type={showPassphrase ? 'text' : 'password'}
-                    value={passphrase}
-                    onChange={(e) => setPassphrase(e.target.value)}
-                    placeholder={t('passphrase')}
-                  />
-                  <button
-                    type="button"
-                    className="input-icon-btn"
-                    onClick={() => setShowPassphrase((v) => !v)}
-                    aria-label={showPassphrase ? 'Hide passphrase' : 'Show passphrase'}
-                  >
-                    <Icon name={showPassphrase ? 'eyeOff' : 'eye'} size={16} />
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
+              )}
 
-          {kind === 'telnet' && (
-            <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'normal' }}>
-                <input
-                  type="checkbox"
-                  checked={autoLogin}
-                  onChange={(e) => setAutoLogin(e.target.checked)}
-                />
-                Auto-login with the saved username / password
-              </label>
-              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
-                Best-effort: matches <code>login:</code> / <code>Password:</code> prompts. Telnet is
-                unencrypted — credentials travel in plain text.
-              </div>
-            </div>
-          )}
-          </>
+              {authType === 'password' || kind === 'telnet' ? (
+                <div className="form-group">
+                  <label>{t('password')}</label>
+                  <div className="input-with-icon">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={t('password')}
+                    />
+                    <button
+                      type="button"
+                      className="input-icon-btn"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? t('hidePassword') : t('showPassword')}
+                    >
+                      <Icon name={showPassword ? 'eyeOff' : 'eye'} size={16} />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label>{t('keyPath')}</label>
+                    <div className="dir-row">
+                      <input
+                        value={keyPath}
+                        onChange={(e) => setKeyPath(e.target.value)}
+                        placeholder="~/.ssh/id_rsa (default)"
+                      />
+                      <button type="button" onClick={handleBrowseKey}>
+                        {t('browse')}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label>{t('passphrase')}</label>
+                    <div className="input-with-icon">
+                      <input
+                        type={showPassphrase ? 'text' : 'password'}
+                        value={passphrase}
+                        onChange={(e) => setPassphrase(e.target.value)}
+                        placeholder={t('passphrase')}
+                      />
+                      <button
+                        type="button"
+                        className="input-icon-btn"
+                        onClick={() => setShowPassphrase((v) => !v)}
+                        aria-label={showPassphrase ? 'Hide passphrase' : 'Show passphrase'}
+                      >
+                        <Icon name={showPassphrase ? 'eyeOff' : 'eye'} size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {kind === 'telnet' && (
+                <div className="form-group">
+                  <label
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'normal' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={autoLogin}
+                      onChange={(e) => setAutoLogin(e.target.checked)}
+                    />
+                    Auto-login with the saved username / password
+                  </label>
+                  <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+                    Best-effort: matches <code>login:</code> / <code>Password:</code> prompts.
+                    Telnet is unencrypted — credentials travel in plain text.
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
         <div className="modal-footer">
