@@ -809,8 +809,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       )}
 
       {confirmDelete && (
-        <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal">
             <div className="modal-title">{confirmDelete.title}</div>
             <div className="modal-body" style={{ padding: '12px 20px' }}>
               {confirmDelete.message}
@@ -833,8 +833,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       )}
 
       {tunnelForm && (
-        <div className="modal-overlay" onClick={() => !tunnelStarting && setTunnelForm(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal">
             <div className="modal-title">
               {tunnelEditTarget ? t('editTunnel') : t('addTunnel')} — {tunnelForm.name}
             </div>
@@ -1116,8 +1116,8 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
       )}
 
       {modalOpen && (
-        <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal local-term-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal local-term-modal">
             <div className="modal-title">
               {editing ? t('editLocalTerminal') : t('addLocalTerminal')}
             </div>
@@ -1234,8 +1234,8 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
       )}
 
       {confirmLocalDelete && (
-        <div className="modal-overlay" onClick={() => setConfirmLocalDelete(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal">
             <div className="modal-title">{t('deleteLocalTerminal')}</div>
             <div className="modal-body" style={{ padding: '12px 20px' }}>
               {t('deleteLocalTerminalConfirm', { name: confirmLocalDelete.name })}

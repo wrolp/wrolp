@@ -29,10 +29,7 @@ function extractVariables(command: string): string[] {
 }
 
 /** Replace every occurrence of `${name}` with `value` for the provided values. */
-function applyVariables(
-  command: string,
-  values: Record<string, string>,
-): string {
+function applyVariables(command: string, values: Record<string, string>): string {
   return command.replace(VAR_REGEX, (match, name: string) =>
     name in values ? values[name] : match,
   )
@@ -552,7 +549,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                   <span className="cmd-list-command">{truncate(s.command)}</span>
                   {extractVariables(s.command).length > 0 && (
                     <span className="cmd-list-var-badge" title={t('cmdVarManager')}>
-                      {'$'}{extractVariables(s.command).length}
+                      {'$'}
+                      {extractVariables(s.command).length}
                     </span>
                   )}
                 </div>
@@ -636,10 +634,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         )}
 
         {editing && (
-          <div className="modal-overlay" onClick={closeDialog}>
+          <div className="modal-overlay">
             <div
               className="modal cmd-list-modal-drag"
-              onClick={(e) => e.stopPropagation()}
               style={
                 dialogPos
                   ? { transform: `translate(${dialogPos.x}px, ${dialogPos.y}px)` }
@@ -758,8 +755,8 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
 }) => {
   const { t } = useI18n()
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal snip-fill-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay">
+      <div className="modal snip-fill-modal">
         <div className="modal-header">
           <h3>{t('snippetFillVarsTitle')}</h3>
           <span
@@ -841,10 +838,7 @@ const VariableManagerDialog: React.FC<VariableManagerDialogProps> = ({
   }
 
   const addRow = () => {
-    setRows((cur) => [
-      ...cur,
-      { origName: null, name: '', defaultValue: '', description: '' },
-    ])
+    setRows((cur) => [...cur, { origName: null, name: '', defaultValue: '', description: '' }])
   }
 
   const removeRow = (idx: number) => {
@@ -904,8 +898,8 @@ const VariableManagerDialog: React.FC<VariableManagerDialogProps> = ({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal cmd-var-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay">
+      <div className="modal cmd-var-modal">
         <div className="modal-header">
           <h3>{t('cmdVarManager')}</h3>
           <span

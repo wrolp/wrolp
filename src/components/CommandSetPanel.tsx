@@ -116,9 +116,11 @@ export const CommandSetPanel: React.FC<CommandSetPanelProps> = ({
               <div className="cmd-set-row-info">
                 <span className="cmd-set-name">{cs.name}</span>
                 <span className="cmd-set-meta">
-                  {cs.commands.length} {t('cmds')} · {cs.connectionId
+                  {cs.commands.length} {t('cmds')} ·{' '}
+                  {cs.connectionId
                     ? connections.find((c) => c.id === cs.connectionId)?.name || t('unknown')
-                    : t('general')} · {formatDate(cs.updatedAt)}
+                    : t('general')}{' '}
+                  · {formatDate(cs.updatedAt)}
                 </span>
               </div>
               <div className="cmd-set-row-actions">
@@ -127,7 +129,11 @@ export const CommandSetPanel: React.FC<CommandSetPanelProps> = ({
                   title={t('executeInTerminal')}
                   disabled={executing !== null || activeTabId === null}
                 >
-                  {executing === cs.id ? <Icon name="refresh" className="spin" /> : <Icon name="play" />}
+                  {executing === cs.id ? (
+                    <Icon name="refresh" className="spin" />
+                  ) : (
+                    <Icon name="play" />
+                  )}
                 </button>
                 <button
                   onClick={() => {
@@ -213,11 +219,15 @@ const CommandSetEditor: React.FC<CommandSetEditorProps> = ({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay">
+      <div className="modal">
         <div className="modal-header">
           <h3>{cmdSet ? t('editCommandSet') : t('newCommandSetDialog')}</h3>
-          <span onClick={onClose} style={{ cursor: 'pointer', fontSize: '18px', color: '#888' }} title={t('close')}>
+          <span
+            onClick={onClose}
+            style={{ cursor: 'pointer', fontSize: '18px', color: '#888' }}
+            title={t('close')}
+          >
             ✕
           </span>
         </div>
@@ -233,13 +243,12 @@ const CommandSetEditor: React.FC<CommandSetEditorProps> = ({
           </div>
           <div className="form-group">
             <label>{t('cmdSetConnection')}</label>
-            <select
-              value={connectionId}
-              onChange={(e) => setConnectionId(e.target.value)}
-            >
+            <select value={connectionId} onChange={(e) => setConnectionId(e.target.value)}>
               <option value="">{t('cmdSetGeneral')}</option>
               {connections.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
             </select>
           </div>
@@ -255,7 +264,9 @@ const CommandSetEditor: React.FC<CommandSetEditorProps> = ({
           </div>
         </div>
         <div className="modal-footer">
-          <button className="btn-cancel" onClick={onClose}>{t('cancel')}</button>
+          <button className="btn-cancel" onClick={onClose}>
+            {t('cancel')}
+          </button>
           <button className="btn-primary" onClick={handleSave}>
             {cmdSet ? t('update') : t('create')}
           </button>

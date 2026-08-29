@@ -686,8 +686,18 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       // shell-reported cwd (remoteCwd) describes the container shell's working
       // directory, and a cached browse path from an earlier visit is not
       // restored either; the container's file list always starts at "/".
-      const startPath = target.kind === 'docker' ? '/' : targetChanged && cached ? cached.currentPath : remoteCwd ?? defaultPath
-      const startRoot = target.kind === 'docker' ? '/' : targetChanged && cached ? cached.rootPath : remoteCwd ?? defaultPath
+      const startPath =
+        target.kind === 'docker'
+          ? '/'
+          : targetChanged && cached
+            ? cached.currentPath
+            : (remoteCwd ?? defaultPath)
+      const startRoot =
+        target.kind === 'docker'
+          ? '/'
+          : targetChanged && cached
+            ? cached.rootPath
+            : (remoteCwd ?? defaultPath)
       setCurrentPath(startPath)
       setRootPath(startRoot)
       // Non-session targets (jump/docker) can be addressed through a freshly
@@ -2559,8 +2569,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {/* Custom rename dialog */}
       {renameTarget && (
-        <div className="modal-overlay" onClick={() => setRenameTarget(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal">
             <div className="modal-title">Rename {renameTarget.isDir ? 'directory' : 'file'}</div>
             <div className="modal-body" style={{ padding: '12px 20px' }}>
               <input
@@ -2589,8 +2599,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {/* Custom copy-rename prompt (name clash on remote-internal paste) */}
       {copyRename && (
-        <div className="modal-overlay" onClick={() => setCopyRename(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal">
             <div className="modal-title">Name conflict</div>
             <div className="modal-body" style={{ padding: '12px 20px' }}>
               <div style={{ marginBottom: 8 }}>
@@ -2630,8 +2640,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {/* Custom New File / New Folder dialog */}
       {createModal && (
-        <div className="modal-overlay" onClick={() => setCreateModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal">
             <div className="modal-title">
               {createModal.kind === 'folder' ? 'New Folder' : 'New File'}
             </div>
@@ -2667,8 +2677,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {/* Custom delete confirmation */}
       {deleteTarget && (
-        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay">
+          <div className="modal">
             <div className="modal-title">Delete</div>
             <div className="modal-body" style={{ padding: '12px 20px' }}>
               {deleteTarget.isDir

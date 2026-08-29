@@ -1821,8 +1821,8 @@ export default function AiChatPanel({
 
       {/* Template manager modal (Plan B) */}
       {showTemplateManager && (
-        <div className="ai-tmpl-overlay" onClick={() => setShowTemplateManager(false)}>
-          <div className="ai-tmpl-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="ai-tmpl-overlay">
+          <div className="ai-tmpl-modal">
             <div className="ai-tmpl-modal-head">
               <span className="ai-tmpl-modal-title">
                 {tmplFormOpen

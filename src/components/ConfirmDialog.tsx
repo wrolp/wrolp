@@ -33,8 +33,8 @@ export function ConfirmDialog({
   }, [onCancel])
 
   return (
-    <div className="modal-overlay" onMouseDown={onCancel}>
-      <div className="modal confirm-dialog" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="modal-overlay">
+      <div className="modal confirm-dialog">
         <div className="modal-header">
           <h3>{title}</h3>
         </div>
