@@ -1537,15 +1537,11 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </span>
         </div>
         <div className="modal-body">
-          {/* Connection type: SSH, Serial or Telnet */}
+          {/* Connection type: SSH, Telnet or Serial */}
           <div className="auth-type-toggle" style={{ marginBottom: 12 }}>
             <label>
               <input type="radio" checked={kind === 'ssh'} onChange={() => setKind('ssh')} />
               SSH
-            </label>
-            <label>
-              <input type="radio" checked={kind === 'serial'} onChange={() => setKind('serial')} />
-              Serial
             </label>
             <label>
               <input
@@ -1559,6 +1555,10 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 }}
               />
               Telnet
+            </label>
+            <label>
+              <input type="radio" checked={kind === 'serial'} onChange={() => setKind('serial')} />
+              Serial
             </label>
           </div>
           {kind === 'serial' && (
