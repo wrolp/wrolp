@@ -4240,19 +4240,40 @@ export default function App() {
               ITS OWN SSH session (leaf.tabId) — files opened in one workspace
               tab never appear in another. The tabs follow the pane itself (not
               focus) so switching splits keeps the editor's tab bar visible. */}
-          {(sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) && (
-            <div className="term-pane-file-tabs">
-              <div
-                className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (leaf.tabId != null) setShellViewFor(leaf.tabId, 'terminal')
-                }}
-                title={t('shellTerminal')}
-              >
-                <Icon name="terminal" size={11} />
-                <span>{t('shellTerminal')}</span>
-              </div>
+          <div className="term-pane-file-tabs">
+            <div
+              className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (leaf.tabId != null) setShellViewFor(leaf.tabId, 'terminal')
+              }}
+              title={t('shellTerminal')}
+            >
+              <Icon name="terminal" size={11} />
+              <span>{t('shellTerminal')}</span>
+            </div>
+            <span
+              className="term-pane-float"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                floatPane(leaf.id)
+              }}
+              title={t('floatPane')}
+            >
+              ⤢
+            </span>
+            <span
+              className="term-pane-close"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                closePane(leaf.id)
+              }}
+              title="Close pane"
+            >
+              ×
+            </span>
               {sessionEditorTabs
                 .filter((et) => !isOverlayFloated(et.key))
                 .map((et) => (
@@ -4330,29 +4351,6 @@ export default function App() {
                   </div>
                 ))}
             </div>
-          )}
-          <span
-            className="term-pane-float"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              floatPane(leaf.id)
-            }}
-            title={t('floatPane')}
-          >
-            ⤢
-          </span>
-          <span
-            className="term-pane-close"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              closePane(leaf.id)
-            }}
-            title="Close pane"
-          >
-            ×
-          </span>
         </div>
         <div
           className="term-pane-body"
