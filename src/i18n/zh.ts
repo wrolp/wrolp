@@ -303,7 +303,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatInputHint: 'AI 可在已连接的服务器上使用工具。破坏性命令会被阻止。',
   aiConfigRequired: '尚未配置 AI 接口，请先在设置中配置 AI 接口后使用。',
   aiOpenSettings: '打开设置',
-  aiReadOnly: '只读模式（默认）',
+  aiReadOnly: '只读模式',
   aiReadOnlyDesc:
     '启用后，AI 默认以只读模式启动，只能运行查看类命令（状态、日志、文件读取），修改类命令会被阻止。可在面板顶部分别切换。',
   aiReadOnlyOn: '只读',
