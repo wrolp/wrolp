@@ -365,10 +365,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // unrelated program output that merely ends in a prompt-like token (e.g.
   // `echo "price is $10"`).
   const expectingEchoRef = useRef(false)
-  // Telnet/Serial sessions start at a login prompt. Live input coloring relies
-  // on shell-prompt heuristics that misidentify "login:" / "Password:" and
-  // corrupt the echoed first character. Stay disabled until a real shell prompt
-  // appears; SSH/local shells are assumed ready from the start.
+  // Telnet/Serial sessions start at a login prompt, and local shells may run
+  // interactive programs (ssh host-key confirmation, sudo, password prompts...).
+  // Live input coloring relies on shell-prompt heuristics that misidentify those
+  // lines and corrupt the echoed first character. Stay disabled (Telnet/Serial
+  // start disabled; local starts enabled) until a real shell prompt appears, or
+  // while an interactive prompt is on screen.
   const shellReadyRef = useRef(!isTelnet && !isSerial)
 
   const resetTableCapture = () => {
@@ -421,6 +423,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }
   function looksLikeShellPrompt(line: string): boolean {
     return /[$#%>❯]\s*$/.test(line.trimEnd())
+  }
+  // An interactive program (ssh host-key confirmation, yes/no questions, password
+  // prompts, ...) is not a shell command line, so recoloring it corrupts the
+  // echoed first character. Treat such lines as prompts and suspend live coloring
+  // until a real shell prompt returns.
+  function looksLikeInteractivePrompt(line: string): boolean {
+    const plain = line.trimEnd()
+    if (!plain) return false
+    if (/are you sure you want to continue connecting/i.test(plain)) return true
+    if (/\(yes\/no(?:\/[^)]+)?\)\s*\?*\s*$/i.test(plain)) return true
+    if (/\[\s*y\s*\/\s*n\s*\]\s*\?*\s*$/i.test(plain)) return true
+    if (/\b(password|passphrase|passcode|pin)\b.*:\s*$/i.test(plain)) return true
+    if (/\?\s*$/.test(plain)) return true
+    return false
   }
 
   // Start a table capture for known table commands (df/ps/free/ss/...). Only
@@ -1002,11 +1018,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // Telnet/Serial: detect login vs shell-prompt state from the latest output.
     // Login/password prompts disable live coloring so the echoed first character
     // isn't duplicated; a real shell prompt re-enables it. This also handles sudo
-    // password prompts or nested session logins inside an already-colored session.
-    if (isTelnet || isSerial) {
+    // password prompts, nested session logins, and interactive prompts inside a
+    // local shell (e.g. `ssh` host-key confirmation) inside an already-colored
+    // session.
+    if (isTelnet || isSerial || isLocal) {
       const lines = stripAnsi(chunk).split(/[\r\n]+/)
       const last = lines[lines.length - 1] || ''
-      if (looksLikeLoginPrompt(last)) {
+      if (looksLikeLoginPrompt(last) || looksLikeInteractivePrompt(last)) {
         shellReadyRef.current = false
       } else if (looksLikeShellPrompt(last)) {
         shellReadyRef.current = true
