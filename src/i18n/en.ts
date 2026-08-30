@@ -278,6 +278,7 @@ const en = {
   aiChatError: 'Error',
   aiChatEmptyTitle: 'How can I help you today?',
   aiTermRunning: 'AI running',
+  aiRunning: 'Running',
   aiTermDone: 'Done',
   aiTermTruncated: 'output truncated',
   aiTermMayStillRun: 'may still be running',

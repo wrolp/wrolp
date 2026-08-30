@@ -278,6 +278,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatError: '错误',
   aiChatEmptyTitle: '今天我能帮你做什么？',
   aiTermRunning: 'AI 执行中',
+  aiRunning: '运行中',
   aiTermDone: '完成',
   aiTermTruncated: '输出已截断',
   aiTermMayStillRun: '可能仍在运行',

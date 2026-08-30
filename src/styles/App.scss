@@ -6033,6 +6033,50 @@ input[type='password']::-ms-clear {
   white-space: nowrap;
 }
 
+.ai-chat-running {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+
+  .ai-chat-running-text {
+    background-color: $text-secondary;
+    background-image: linear-gradient(
+      90deg,
+      $text-secondary 0%,
+      $text-secondary 22%,
+      #ffffff 50%,
+      $text-secondary 78%,
+      $text-secondary 100%
+    );
+    background-size: 200% 100%;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    animation: ai-running-shimmer 3.6s linear infinite;
+  }
+}
+
+@keyframes ai-running-shimmer {
+  // 0%: glow off the left edge. 65%: glow has swept fully across and exited off
+  // the right edge (all gray again). 65%-100%: hold off-screen (pause) so the next
+  // round clearly restarts from the left. Decreasing background-position moves the
+  // glow left -> right.
+  0% {
+    background-position: 150% 0;
+  }
+  65% {
+    background-position: -150% 0;
+  }
+  100% {
+    background-position: -150% 0;
+  }
+}
+
 .ai-chat-subtitle {
   font-size: 10.5px;
   color: $text-muted;
@@ -7028,6 +7072,9 @@ input[type='password']::-ms-clear {
   padding-left: 2px;
   cursor: pointer;
   user-select: none;
+  // Keep "Tools used (2)" on a single line — the trailing "(n)" must not wrap
+  // to a new line when the card is collapsed in a narrow panel.
+  white-space: nowrap;
 
   &:hover {
     color: $text-primary;

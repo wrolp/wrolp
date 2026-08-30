@@ -1591,46 +1591,37 @@ export default function AiChatPanel({
           </div>
         )}
 
-        {/* Tool-call cards in-flight (the current streaming turn). Finished
-            turns are attached to their assistant message instead. */}
-        {streaming && toolCalls.length > 0 && (
-          <ToolCallList tools={toolCalls} onConfirm={confirmAndResume} />
-        )}
-
-        {/* Streaming indicator */}
-        {streaming && streamingText && (
+        {}
+        {streaming && (
           <div className="ai-chat-msg ai-chat-msg-assistant">
             <div className="ai-chat-msg-head">
               <div className="ai-chat-msg-avatar" aria-hidden>
                 <Icon name="sparkles" size={14} />
               </div>
               <span className="ai-chat-msg-role">{t('aiChatRoleAi')}</span>
+              <span className="ai-chat-running" title={t('aiRunning')}>
+                <span className="ai-chat-running-text">{t('aiRunning')}</span>
+              </span>
             </div>
             <div className="ai-chat-msg-body">
-              <div className="ai-chat-msg-content streaming">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                  {streamingText}
-                </ReactMarkdown>
-                <span className="ai-chat-cursor" />
-              </div>
-            </div>
-          </div>
-        )}
-        {streaming && !streamingText && toolCalls.length === 0 && (
-          <div className="ai-chat-msg ai-chat-msg-assistant">
-            <div className="ai-chat-msg-head">
-              <div className="ai-chat-msg-avatar" aria-hidden>
-                <Icon name="sparkles" size={14} />
-              </div>
-              <span className="ai-chat-msg-role">{t('aiChatRoleAi')}</span>
-            </div>
-            <div className="ai-chat-msg-body">
-              <div className="ai-chat-msg-content">
-                <span className="ai-chat-typing">
-                  {t('aiChatThinking')}
+              {toolCalls.length > 0 && (
+                <ToolCallList tools={toolCalls} onConfirm={confirmAndResume} />
+              )}
+              {streamingText ? (
+                <div className="ai-chat-msg-content streaming">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                    {streamingText}
+                  </ReactMarkdown>
                   <span className="ai-chat-cursor" />
-                </span>
-              </div>
+                </div>
+              ) : toolCalls.length === 0 ? (
+                <div className="ai-chat-msg-content">
+                  <span className="ai-chat-typing">
+                    {t('aiChatThinking')}
+                    <span className="ai-chat-cursor" />
+                  </span>
+                </div>
+              ) : null}
             </div>
           </div>
         )}
