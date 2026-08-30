@@ -7986,15 +7986,31 @@ input[type='password']::-ms-clear {
   min-height: 240px;
   display: flex;
   flex-direction: column;
-  background: $bg-secondary;
+  background: transparent;
   border: 1px solid $border;
   border-radius: 10px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
   overflow: hidden;
+  // Establish a stacking context so the opacity background layer (::before)
+  // stays contained and never bleeds behind the app.
+  isolation: isolate;
   // Container query so the header toggle labels adapt to the *panel's* width
   // (the panel is resizable), not the viewport.
   container-type: inline-size;
   container-name: cmdlist;
+}
+
+// Background-only opacity layer. The opacity slider adjusts --cmd-opacity, but
+// only this layer fades — the text and controls above stay fully opaque.
+.cmd-list-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: $bg-secondary;
+  opacity: var(--cmd-opacity, 1);
+  border-radius: inherit;
+  z-index: -1;
+  pointer-events: none;
 }
 
 .cmd-list-header {

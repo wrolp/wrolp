@@ -461,7 +461,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const panelSizeStyle: React.CSSProperties = {
     width: size ? `${size.w}px` : undefined,
     height: size ? `${size.h}px` : undefined,
-    opacity: panelOpacity,
+    // Opacity is applied to the background layer (::before) only, so the text
+    // and controls stay fully readable.
+    ['--cmd-opacity' as string]: panelOpacity,
   }
 
   return (
