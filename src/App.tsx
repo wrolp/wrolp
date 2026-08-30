@@ -691,6 +691,10 @@ export default function App() {
   const [aiMaxRoundsText, setAiMaxRoundsText] = useState('200')
   const [aiFetchingModels, setAiFetchingModels] = useState(false)
   const [aiModelManual, setAiModelManual] = useState(false)
+  // Which endpoint accordion section is expanded. Only the active (expanded)
+  // endpoint reveals its editable config fields.
+  const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null)
+  const didInitExpand = useRef(false)
   // AI conversation state is keyed per tab (tabId) so each shell tab keeps its
   // own conversation, and survives tab switches / panel remounts.
   type AiConv = {
@@ -901,6 +905,14 @@ export default function App() {
   const activeProfile =
     aiConfig?.profiles.find((p) => p.id === aiConfig.activeId) ?? aiConfig?.profiles[0] ?? null
 
+  // Expand the active endpoint's accordion section once, on first load.
+  useEffect(() => {
+    if (aiConfig && !didInitExpand.current) {
+      didInitExpand.current = true
+      setExpandedProfileId(activeProfile?.id ?? null)
+    }
+  }, [aiConfig, activeProfile?.id])
+
   // Whether a usable AI endpoint is configured (endpoint + model + saved key).
   const aiConfigured =
     !!activeProfile &&
@@ -931,12 +943,15 @@ export default function App() {
     })
   }, [])
 
-  // Reload the key input from the active profile's encrypted key whenever the
-  // active profile changes, so each endpoint keeps and shows its own key.
+  // Reload the key input from the *expanded* (being-edited) profile's encrypted
+  // key whenever the expanded profile changes, so each endpoint keeps and shows
+  // its own key. Depends only on `expandedProfileId` (not `aiConfig`) so typing in
+  // the key field isn't clobbered by unrelated edits to that same profile.
   useEffect(() => {
     let cancelled = false
-    if (activeProfile?.apiKeyEnc) {
-      decryptApiKey(activeProfile.apiKeyEnc)
+    const editProfile = aiConfig?.profiles.find((x) => x.id === expandedProfileId) ?? null
+    if (editProfile?.apiKeyEnc) {
+      decryptApiKey(editProfile.apiKeyEnc)
         .then((dec) => {
           if (!cancelled) setAiApiKeyInput(dec)
         })
@@ -949,7 +964,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [activeProfile?.id])
+  }, [expandedProfileId])
   const [maxScrollback, setMaxScrollback] = useState<number | ''>(() => {
     try {
       const v = localStorage.getItem('wrolp-maxScrollback')
@@ -3568,50 +3583,382 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="ai-profile-list">
-                        {aiConfig.profiles.map((p) => (
-                          <div
-                            key={p.id}
-                            className={
-                              'ai-profile-item' + (p.id === activeProfile?.id ? ' active' : '')
-                            }
-                            onClick={() => {
-                              setAiConfig((prev) => {
-                                if (!prev) return prev
-                                const next = { ...prev, activeId: p.id }
-                                saveAiConfig(next).catch(() => {})
-                                return next
-                              })
-                              setAiModels([])
-                              setAiModelManual(false)
-                            }}
-                          >
-                            <div className="ai-profile-info">
-                              <span className="ai-profile-name">{p.name || 'Untitled'}</span>
-                              <span className="ai-profile-endpoint">{p.endpoint}</span>
-                            </div>
-                            <button
-                              type="button"
-                              className="ai-profile-del"
-                              title="Delete endpoint"
-                              disabled={aiConfig.profiles.length <= 1}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setAiConfig((prev) => {
-                                  if (!prev) return prev
-                                  const profiles = prev.profiles.filter((x) => x.id !== p.id)
-                                  const activeId =
-                                    prev.activeId === p.id ? (profiles[0]?.id ?? '') : prev.activeId
-                                  const next = { ...prev, profiles, activeId }
-                                  saveAiConfig(next).catch(() => {})
-                                  return next
-                                })
-                              }}
+                      <div className="ai-accordion">
+                        {aiConfig.profiles.map((p) => {
+                          const isActive = p.id === activeProfile?.id
+                          const open = expandedProfileId === p.id
+                          const wasActive = activeProfile?.id === p.id
+                          return (
+                            <div
+                              key={p.id}
+                              className={
+                                'ai-acc-item' +
+                                (isActive ? ' active' : '') +
+                                (open ? ' open' : '')
+                              }
                             >
-                              <Icon name="x" size={13} />
-                            </button>
-                          </div>
-                        ))}
+                              <div
+                                className="ai-acc-header"
+                                onClick={() => {
+                                  setExpandedProfileId(open ? null : p.id)
+                                  if (!open) {
+                                    setAiModels([])
+                                    setAiModelManual(false)
+                                  }
+                                }}
+                              >
+                                <span className={'ai-acc-chevron' + (open ? ' open' : '')}>
+                                  <Icon name="chevronDown" size={14} />
+                                </span>
+                                <div className="ai-profile-info">
+                                  <span className="ai-profile-name">{p.name || 'Untitled'}</span>
+                                  <span className="ai-profile-endpoint">{p.endpoint}</span>
+                                </div>
+                                {isActive ? (
+                                  <span className="ai-acc-badge">{t('activeEndpoint')}</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="ai-acc-setactive"
+                                    title={t('setActiveEndpoint')}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setAiConfig((prev) => {
+                                        if (!prev) return prev
+                                        const next = { ...prev, activeId: p.id }
+                                        saveAiConfig(next).catch(() => {})
+                                        return next
+                                      })
+                                    }}
+                                  >
+                                    {t('setActiveEndpoint')}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="ai-profile-del"
+                                  title={t('deleteEndpoint')}
+                                  disabled={aiConfig.profiles.length <= 1}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    const remaining = aiConfig.profiles.filter((x) => x.id !== p.id)
+                                    setAiConfig((prev) => {
+                                      if (!prev) return prev
+                                      const profiles = remaining
+                                      const activeId =
+                                        prev.activeId === p.id
+                                          ? (profiles[0]?.id ?? '')
+                                          : prev.activeId
+                                      const next = { ...prev, profiles, activeId }
+                                      saveAiConfig(next).catch(() => {})
+                                      return next
+                                    })
+                                    if (wasActive) setExpandedProfileId(remaining[0]?.id ?? null)
+                                  }}
+                                >
+                                  <Icon name="x" size={13} />
+                                </button>
+                              </div>
+
+                              {open && (
+                                <div className="ai-acc-body">
+                                  <p className="settings-card-desc">
+                                    Works with OpenAI, Anthropic (via compatible proxy), Ollama, vLLM,
+                                    and any OpenAI-compatible endpoint. The assistant can run
+                                    read-only tools on your connected servers to give accurate
+                                    answers.
+                                  </p>
+
+                                  <div className="settings-fields">
+                                    <div className="settings-field">
+                                      <label htmlFor="ai-name" className="settings-label">
+                                        <Icon name="sparkles" size={13} /> {t('connectionName')}
+                                      </label>
+                                      <input
+                                        id="ai-name"
+                                        type="text"
+                                        className="settings-input"
+                                        value={p.name}
+                                        onChange={(e) =>
+                                          setAiConfig((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  profiles: prev.profiles.map((x) =>
+                                                    x.id === p.id
+                                                      ? { ...x, name: e.target.value }
+                                                      : x,
+                                                  ),
+                                                }
+                                              : prev,
+                                          )
+                                        }
+                                        placeholder="My Endpoint"
+                                      />
+                                    </div>
+
+                                    <div className="settings-field">
+                                      <label htmlFor="ai-endpoint" className="settings-label">
+                                        <Icon name="link" size={13} /> {t('baseUrl')}
+                                      </label>
+                                      <input
+                                        id="ai-endpoint"
+                                        type="text"
+                                        className="settings-input"
+                                        value={p.endpoint}
+                                        onChange={(e) =>
+                                          setAiConfig((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  profiles: prev.profiles.map((x) =>
+                                                    x.id === p.id
+                                                      ? { ...x, endpoint: e.target.value }
+                                                      : x,
+                                                  ),
+                                                }
+                                              : prev,
+                                          )
+                                        }
+                                        placeholder="https://api.openai.com/v1"
+                                      />
+                                      <span className="settings-help">
+                                        Base URL including the <code>/v1</code> path.
+                                      </span>
+                                    </div>
+
+                                    <div className="settings-field">
+                                      <label htmlFor="ai-key" className="settings-label">
+                                        <Icon name="lock" size={13} /> {t('apiKey')}
+                                      </label>
+                                      <div className="settings-input-with-btn">
+                                        <input
+                                          id="ai-key"
+                                          type={aiShowKey ? 'text' : 'password'}
+                                          className="settings-input"
+                                          value={aiApiKeyInput}
+                                          onChange={(e) => setAiApiKeyInput(e.target.value)}
+                                          placeholder="sk-..."
+                                          autoComplete="off"
+                                        />
+                                        <button
+                                          type="button"
+                                          className="settings-icon-btn"
+                                          onClick={() => setAiShowKey(!aiShowKey)}
+                                          title={aiShowKey ? t('off') : t('on')}
+                                        >
+                                          <Icon name={aiShowKey ? 'eyeOff' : 'eye'} size={15} />
+                                        </button>
+                                      </div>
+                                      <span className="settings-help">
+                                        Stored encrypted locally; never sent anywhere except your
+                                        endpoint.
+                                      </span>
+                                    </div>
+
+                                    <div className="settings-field">
+                                      <label htmlFor="ai-model" className="settings-label">
+                                        <Icon name="terminal" size={13} /> {t('model')}
+                                      </label>
+                                      {aiModelManual || aiModels.length === 0 ? (
+                                        <input
+                                          id="ai-model"
+                                          type="text"
+                                          className="settings-input"
+                                          value={p.model}
+                                          onChange={(e) =>
+                                            setAiConfig((prev) =>
+                                              prev
+                                                ? {
+                                                    ...prev,
+                                                    profiles: prev.profiles.map((x) =>
+                                                      x.id === p.id
+                                                        ? { ...x, model: e.target.value }
+                                                        : x,
+                                                    ),
+                                                  }
+                                                : prev,
+                                            )
+                                          }
+                                          placeholder="gpt-4o"
+                                        />
+                                      ) : (
+                                        <select
+                                          id="ai-model"
+                                          className="settings-input"
+                                          value={p.model}
+                                          onChange={(e) =>
+                                            setAiConfig((prev) =>
+                                              prev
+                                                ? {
+                                                    ...prev,
+                                                    profiles: prev.profiles.map((x) =>
+                                                      x.id === p.id
+                                                        ? { ...x, model: e.target.value }
+                                                        : x,
+                                                    ),
+                                                  }
+                                                : prev,
+                                            )
+                                          }
+                                        >
+                                          {!aiModels.includes(p.model) && p.model && (
+                                            <option value={p.model}>
+                                              {p.model} (current)
+                                            </option>
+                                          )}
+                                          {aiModels.map((m) => (
+                                            <option key={m} value={m}>
+                                              {m}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="settings-model-fetch"
+                                        disabled={aiFetchingModels || !p.endpoint}
+                                        onClick={async () => {
+                                          setAiFetchingModels(true)
+                                          try {
+                                            const keyEnc = aiApiKeyInput
+                                              ? await encryptApiKey(aiApiKeyInput)
+                                              : ''
+                                            const models = await listAiModels(keyEnc, p.endpoint)
+                                            setAiModels(models)
+                                            setAiModelManual(false)
+                                          } catch (e) {
+                                            setAiModels([])
+                                            setAiModelManual(true)
+                                            alert(
+                                              'Failed to fetch models from /v1/models: ' +
+                                                String(e) +
+                                                '\n\nYou can type the model name manually.',
+                                            )
+                                          } finally {
+                                            setAiFetchingModels(false)
+                                          }
+                                        }}
+                                      >
+                                        {aiFetchingModels ? t('downloading') : t('fetchModelsFromV1')}
+                                      </button>
+                                      {aiModels.length > 0 && (
+                                        <label className="settings-checkbox-label">
+                                          <input
+                                            type="checkbox"
+                                            checked={aiModelManual}
+                                            onChange={(e) => setAiModelManual(e.target.checked)}
+                                          />
+                                          Type model name manually
+                                        </label>
+                                      )}
+                                      <span className="settings-help">
+                                        {aiModels.length > 0
+                                          ? 'Select a model from the dropdown, or tick the box to enter one manually.'
+                                          : 'Click to list models from the endpoint. You can type the model name manually.'}
+                                      </span>
+                                    </div>
+
+                                    <div className="settings-field">
+                                      <label htmlFor="ai-tool-call-format" className="settings-label">
+                                        <Icon name="settings" size={13} /> Tool Call Format
+                                      </label>
+                                      <select
+                                        id="ai-tool-call-format"
+                                        className="settings-input"
+                                        value={p.toolCallFormat ?? 'nested'}
+                                        onChange={(e) =>
+                                          setAiConfig((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  profiles: prev.profiles.map((x) =>
+                                                    x.id === p.id
+                                                      ? {
+                                                          ...x,
+                                                          toolCallFormat: e.target
+                                                            .value as 'flat' | 'nested',
+                                                        }
+                                                      : x,
+                                                  ),
+                                                }
+                                              : prev,
+                                          )
+                                        }
+                                      >
+                                        <option value="nested">nested (standard)</option>
+                                        <option value="flat">flat</option>
+                                      </select>
+                                      <span className="settings-help">
+                                        How the endpoint returns tool calls: <code>nested</code> =
+                                        standard OpenAI{' '}
+                                        <code>tool_calls[].function.{'{name,arguments}'}</code>;{' '}
+                                        <code>flat</code> = <code>tool_calls[]</code> items carry{' '}
+                                        <code>name</code>/<code>arguments</code> directly.
+                                      </span>
+                                    </div>
+
+                                    <div className="settings-field">
+                                      <label htmlFor="ai-system-prompt" className="settings-label">
+                                        <Icon name="edit" size={13} /> System Prompt
+                                      </label>
+                                      <textarea
+                                        id="ai-system-prompt"
+                                        className="settings-input settings-textarea"
+                                        value={p.systemPrompt}
+                                        onChange={(e) =>
+                                          setAiConfig((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  profiles: prev.profiles.map((x) =>
+                                                    x.id === p.id
+                                                      ? { ...x, systemPrompt: e.target.value }
+                                                      : x,
+                                                  ),
+                                                }
+                                              : prev,
+                                          )
+                                        }
+                                        rows={3}
+                                      />
+                                      <span className="settings-help">
+                                        Optional instructions that shape the assistant's behavior.
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="settings-actions">
+                                    <button
+                                      className="settings-save-btn"
+                                      onClick={async () => {
+                                        if (!aiConfig) return
+                                        try {
+                                          const keyEnc = await encryptApiKey(aiApiKeyInput)
+                                          const toSave: AiConfig = {
+                                            ...aiConfig,
+                                            profiles: aiConfig.profiles.map((x) =>
+                                              x.id === p.id
+                                                ? { ...x, apiKeyEnc: keyEnc }
+                                                : x,
+                                            ),
+                                          }
+                                          await saveAiConfig(toSave)
+                                          setAiConfig(toSave)
+                                          setSaveFlash('ai')
+                                        } catch (e) {
+                                          alert('Failed to save: ' + String(e))
+                                        }
+                                      }}
+                                    >
+                                      {saveFlash === 'ai' ? 'Saved ✓' : 'Save AI Settings'}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
 
                       <button
@@ -3641,301 +3988,11 @@ export default function App() {
                             return next
                           })
                           setAiApiKeyInput('')
+                          setExpandedProfileId(id)
                         }}
                       >
                         <Icon name="plus" size={14} /> {t('addEndpoint')}
                       </button>
-                    </div>
-                  )}
-
-                  {activeProfile && (
-                    <div className="settings-card ai-settings-card">
-                      <p className="settings-card-desc">
-                        Works with OpenAI, Anthropic (via compatible proxy), Ollama, vLLM, and any
-                        OpenAI-compatible endpoint. The assistant can run read-only tools on your
-                        connected servers to give accurate answers.
-                      </p>
-
-                      <div className="settings-fields">
-                        <div className="settings-field">
-                          <label htmlFor="ai-name" className="settings-label">
-                            <Icon name="sparkles" size={13} /> {t('connectionName')}
-                          </label>
-                          <input
-                            id="ai-name"
-                            type="text"
-                            className="settings-input"
-                            value={activeProfile.name}
-                            onChange={(e) =>
-                              setAiConfig((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      profiles: prev.profiles.map((p) =>
-                                        p.id === activeProfile.id
-                                          ? { ...p, name: e.target.value }
-                                          : p,
-                                      ),
-                                    }
-                                  : prev,
-                              )
-                            }
-                            placeholder="My Endpoint"
-                          />
-                        </div>
-
-                        <div className="settings-field">
-                          <label htmlFor="ai-endpoint" className="settings-label">
-                            <Icon name="link" size={13} /> {t('baseUrl')}
-                          </label>
-                          <input
-                            id="ai-endpoint"
-                            type="text"
-                            className="settings-input"
-                            value={activeProfile.endpoint}
-                            onChange={(e) =>
-                              setAiConfig((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      profiles: prev.profiles.map((p) =>
-                                        p.id === activeProfile.id
-                                          ? { ...p, endpoint: e.target.value }
-                                          : p,
-                                      ),
-                                    }
-                                  : prev,
-                              )
-                            }
-                            placeholder="https://api.openai.com/v1"
-                          />
-                          <span className="settings-help">
-                            Base URL including the <code>/v1</code> path.
-                          </span>
-                        </div>
-
-                        <div className="settings-field">
-                          <label htmlFor="ai-key" className="settings-label">
-                            <Icon name="lock" size={13} /> {t('apiKey')}
-                          </label>
-                          <div className="settings-input-with-btn">
-                            <input
-                              id="ai-key"
-                              type={aiShowKey ? 'text' : 'password'}
-                              className="settings-input"
-                              value={aiApiKeyInput}
-                              onChange={(e) => setAiApiKeyInput(e.target.value)}
-                              placeholder="sk-..."
-                              autoComplete="off"
-                            />
-                            <button
-                              type="button"
-                              className="settings-icon-btn"
-                              onClick={() => setAiShowKey(!aiShowKey)}
-                              title={aiShowKey ? t('off') : t('on')}
-                            >
-                              <Icon name={aiShowKey ? 'eyeOff' : 'eye'} size={15} />
-                            </button>
-                          </div>
-                          <span className="settings-help">
-                            Stored encrypted locally; never sent anywhere except your endpoint.
-                          </span>
-                        </div>
-
-                        <div className="settings-field">
-                          <label htmlFor="ai-model" className="settings-label">
-                            <Icon name="terminal" size={13} /> {t('model')}
-                          </label>
-                          {aiModelManual || aiModels.length === 0 ? (
-                            <input
-                              id="ai-model"
-                              type="text"
-                              className="settings-input"
-                              value={activeProfile.model}
-                              onChange={(e) =>
-                                setAiConfig((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        profiles: prev.profiles.map((p) =>
-                                          p.id === activeProfile.id
-                                            ? { ...p, model: e.target.value }
-                                            : p,
-                                        ),
-                                      }
-                                    : prev,
-                                )
-                              }
-                              placeholder="gpt-4o"
-                            />
-                          ) : (
-                            <select
-                              id="ai-model"
-                              className="settings-input"
-                              value={activeProfile.model}
-                              onChange={(e) =>
-                                setAiConfig((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        profiles: prev.profiles.map((p) =>
-                                          p.id === activeProfile.id
-                                            ? { ...p, model: e.target.value }
-                                            : p,
-                                        ),
-                                      }
-                                    : prev,
-                                )
-                              }
-                            >
-                              {!aiModels.includes(activeProfile.model) && activeProfile.model && (
-                                <option value={activeProfile.model}>
-                                  {activeProfile.model} (current)
-                                </option>
-                              )}
-                              {aiModels.map((m) => (
-                                <option key={m} value={m}>
-                                  {m}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                          <button
-                            type="button"
-                            className="settings-model-fetch"
-                            disabled={aiFetchingModels || !activeProfile.endpoint}
-                            onClick={async () => {
-                              setAiFetchingModels(true)
-                              try {
-                                const keyEnc = aiApiKeyInput
-                                  ? await encryptApiKey(aiApiKeyInput)
-                                  : ''
-                                const models = await listAiModels(keyEnc, activeProfile.endpoint)
-                                setAiModels(models)
-                                setAiModelManual(false)
-                              } catch (e) {
-                                setAiModels([])
-                                setAiModelManual(true)
-                                alert(
-                                  'Failed to fetch models from /v1/models: ' +
-                                    String(e) +
-                                    '\n\nYou can type the model name manually.',
-                                )
-                              } finally {
-                                setAiFetchingModels(false)
-                              }
-                            }}
-                          >
-                            {aiFetchingModels ? t('downloading') : t('fetchModelsFromV1')}
-                          </button>
-                          {aiModels.length > 0 && (
-                            <label className="settings-checkbox-label">
-                              <input
-                                type="checkbox"
-                                checked={aiModelManual}
-                                onChange={(e) => setAiModelManual(e.target.checked)}
-                              />
-                              Type model name manually
-                            </label>
-                          )}
-                          <span className="settings-help">
-                            {aiModels.length > 0
-                              ? 'Select a model from the dropdown, or tick the box to enter one manually.'
-                              : 'Click to list models from the endpoint. You can type the model name manually.'}
-                          </span>
-                        </div>
-
-                        <div className="settings-field">
-                          <label htmlFor="ai-tool-call-format" className="settings-label">
-                            <Icon name="settings" size={13} /> Tool Call Format
-                          </label>
-                          <select
-                            id="ai-tool-call-format"
-                            className="settings-input"
-                            value={activeProfile.toolCallFormat ?? 'nested'}
-                            onChange={(e) =>
-                              setAiConfig((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      profiles: prev.profiles.map((p) =>
-                                        p.id === activeProfile.id
-                                          ? {
-                                              ...p,
-                                              toolCallFormat: e.target.value as 'flat' | 'nested',
-                                            }
-                                          : p,
-                                      ),
-                                    }
-                                  : prev,
-                              )
-                            }
-                          >
-                            <option value="nested">nested (standard)</option>
-                            <option value="flat">flat</option>
-                          </select>
-                          <span className="settings-help">
-                            How the endpoint returns tool calls: <code>nested</code> = standard
-                            OpenAI <code>tool_calls[].function.{'{name,arguments}'}</code>;{' '}
-                            <code>flat</code> = <code>tool_calls[]</code> items carry{' '}
-                            <code>name</code>/<code>arguments</code> directly.
-                          </span>
-                        </div>
-
-                        <div className="settings-field">
-                          <label htmlFor="ai-system-prompt" className="settings-label">
-                            <Icon name="edit" size={13} /> System Prompt
-                          </label>
-                          <textarea
-                            id="ai-system-prompt"
-                            className="settings-input settings-textarea"
-                            value={activeProfile.systemPrompt}
-                            onChange={(e) =>
-                              setAiConfig((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      profiles: prev.profiles.map((p) =>
-                                        p.id === activeProfile.id
-                                          ? { ...p, systemPrompt: e.target.value }
-                                          : p,
-                                      ),
-                                    }
-                                  : prev,
-                              )
-                            }
-                            rows={3}
-                          />
-                          <span className="settings-help">
-                            Optional instructions that shape the assistant's behavior.
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="settings-actions">
-                        <button
-                          className="settings-save-btn"
-                          onClick={async () => {
-                            if (!aiConfig || !activeProfile) return
-                            try {
-                              const keyEnc = await encryptApiKey(aiApiKeyInput)
-                              const toSave: AiConfig = {
-                                ...aiConfig,
-                                profiles: aiConfig.profiles.map((p) =>
-                                  p.id === activeProfile.id ? { ...p, apiKeyEnc: keyEnc } : p,
-                                ),
-                              }
-                              await saveAiConfig(toSave)
-                              setAiConfig(toSave)
-                              setSaveFlash('ai')
-                            } catch (e) {
-                              alert('Failed to save: ' + String(e))
-                            }
-                          }}
-                        >
-                          {saveFlash === 'ai' ? 'Saved ✓' : 'Save AI Settings'}
-                        </button>
-                      </div>
                     </div>
                   )}
                 </div>

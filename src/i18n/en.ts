@@ -237,6 +237,7 @@ const en = {
   endpoints: 'Endpoints',
   endpointsDesc: 'Select the active endpoint or add a new one',
   activeEndpoint: 'Active Endpoint',
+  setActiveEndpoint: 'Set as active',
   apiKey: 'API Key',
   baseUrl: 'Base URL',
   model: 'Model',

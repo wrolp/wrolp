@@ -237,6 +237,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   endpoints: '端点',
   endpointsDesc: '选择活动端点或新增一个',
   activeEndpoint: '活动端点',
+  setActiveEndpoint: '设为活动端点',
   apiKey: 'API 密钥',
   baseUrl: '基础地址',
   model: '模型',

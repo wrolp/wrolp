@@ -7880,40 +7880,105 @@ input[type='password']::-ms-clear {
   }
 }
 
-.ai-profile-list {
+.ai-accordion {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
-.ai-profile-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 9px 11px;
+.ai-acc-item {
   border: 1px solid $border;
   border-radius: 8px;
   background: $bg-primary;
-  cursor: pointer;
+  overflow: hidden;
   transition:
     border-color 0.15s,
     background 0.15s;
 
-  &:hover {
-    border-color: rgba($accent, 0.45);
-  }
-
   &.active {
     border-color: $accent;
-    background: rgba($accent, 0.1);
   }
+
+  &.open {
+    background: rgba($accent, 0.04);
+  }
+}
+
+.ai-acc-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: rgba($accent, 0.06);
+  }
+}
+
+.ai-acc-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: $text-muted;
+  transition: transform 0.15s ease;
+  transform: rotate(-90deg);
+
+  &.open {
+    transform: rotate(0deg);
+  }
+}
+
+.ai-acc-badge {
+  flex-shrink: 0;
+  margin-left: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: $accent;
+  background: rgba($accent, 0.14);
+  border: 1px solid rgba($accent, 0.35);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.ai-acc-setactive {
+  flex-shrink: 0;
+  margin-left: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: $text-muted;
+  background: transparent;
+  border: 1px solid $border;
+  border-radius: 999px;
+  padding: 1px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+
+  &:hover {
+    color: $accent;
+    border-color: rgba($accent, 0.5);
+    background: rgba($accent, 0.08);
+  }
+}
+
+.ai-acc-body {
+  padding: 4px 14px 14px;
+  border-top: 1px solid $border;
 }
 
 .ai-profile-info {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
