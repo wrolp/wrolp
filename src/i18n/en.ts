@@ -315,8 +315,9 @@ const en = {
   aiRunInTerminalOn: 'Run in terminal',
   aiMaxRounds: 'Max rounds per AI run',
   aiMaxRoundsDesc:
-    'Caps the number of "assistant reply + tool calls" rounds in a single AI conversation (one agent loop), preventing the model from looping forever. Range 1–1000, default 200. Each AI chat can override its own value.',
+    'Caps the number of "assistant reply + tool calls" rounds in a single AI conversation (one agent loop), preventing the model from looping forever. Range 0–1000, default 200. Set to 0 for unlimited. Each AI chat can override its own value.',
   aiMaxRoundsUnit: 'rounds',
+  aiMaxRoundsUnlimited: 'Unlimited',
   aiReadOnlyHint: 'Read-only mode: only inspection commands run',
   aiFullModeHint: 'Full access: modifying commands allowed',
   aiChatResizeInput: 'Drag to resize input area',

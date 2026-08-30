@@ -1284,7 +1284,7 @@ export default function AiChatPanel({
                         title="Max rounds per run"
                       >
                         <Icon name="refresh" size={13} />
-                        Max rounds: {maxAgentRounds}
+                        Max rounds: {maxAgentRounds === 0 ? t('aiMaxRoundsUnlimited') : maxAgentRounds}
                       </button>
                     </div>
                   )}
@@ -1344,12 +1344,12 @@ export default function AiChatPanel({
               <input
                 ref={maxRoundsInputRef}
                 type="number"
-                min={1}
+                min={0}
                 max={1000}
                 value={maxAgentRounds}
                 onChange={(e) => {
                   const v = parseInt(e.target.value, 10)
-                  if (v >= 1 && v <= 1000) setMaxAgentRounds(v)
+                  if (v >= 0 && v <= 1000) setMaxAgentRounds(v)
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') setShowMaxRoundsPopup(false)

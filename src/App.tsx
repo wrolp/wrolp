@@ -3521,14 +3521,18 @@ export default function App() {
                     <label className="settings-number-label">
                       <input
                         type="number"
-                        min={1}
+                        min={0}
                         max={1000}
                         value={aiMaxRoundsText}
                         onChange={(e) => {
                           const raw = e.target.value
                           setAiMaxRoundsText(raw)
                           if (raw === '') return
-                          const n = Math.max(1, Math.min(1000, parseInt(raw, 10) || 200))
+                          const parsed = parseInt(raw, 10)
+                          const n = Math.max(
+                            0,
+                            Math.min(1000, Number.isNaN(parsed) ? 200 : parsed),
+                          )
                           setAiConfig((prev) => {
                             if (!prev) return prev
                             const next = { ...prev, maxAgentRounds: n }

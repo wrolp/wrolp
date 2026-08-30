@@ -1138,7 +1138,12 @@ pub async fn run_agent_stream(
   // Working message list carries the full conversation (incl. tool calls).
   let mut messages: Vec<AiMessage> = initial_messages;
 
-  for round in 0..max_rounds {
+  // `max_rounds == 0` means unlimited — the loop terminates on the model's
+  // final answer (a turn with no tool calls), so it cannot run forever under
+  // normal operation.
+  let round_limit = if max_rounds == 0 { usize::MAX } else { max_rounds };
+
+  for round in 0..round_limit {
     let wire = to_openai_messages(&messages, tool_call_format);
     let request_body = OpenAiRequest {
       model: config.model.clone(),
