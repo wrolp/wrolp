@@ -942,6 +942,16 @@ export default function App() {
       return 5000
     }
   })
+  // Max file size (in MB) that can be opened in the editor. Defaults to 5 MB,
+  // matching the Rust `DEFAULT_MAX_EDIT_SIZE`.
+  const [maxFileOpenSizeMB, setMaxFileOpenSizeMB] = useState(() => {
+    try {
+      const v = localStorage.getItem('wrolp-maxFileOpenSizeMB')
+      return v ? Number(v) : 5
+    } catch {
+      return 5
+    }
+  })
   // Docker log viewer preferences (persisted; apply to new viewers).
   const [dockerWordWrap, setDockerWordWrap] = useState(() => {
     try {
@@ -1704,7 +1714,9 @@ export default function App() {
     setActiveEditorKeyFor(legacyTabId, key)
     setShellViewFor(legacyTabId, key)
     try {
-      const fc = await fsReadFileContent(target, path)
+      const fc = await fsReadFileContent(target, path, {
+        maxSize: maxFileOpenSizeMB * 1024 * 1024,
+      })
       setEditorTabs((prev) =>
         prev.map((t) =>
           t.key === key
@@ -1881,6 +1893,7 @@ export default function App() {
       try {
         const fc = await fsReadFileContent(tabTarget(target), target.path, {
           encoding,
+          maxSize: maxFileOpenSizeMB * 1024 * 1024,
         })
         if (fc.isBinary || fc.isTooLarge) return
         setEditorTabs((prev) =>
@@ -3075,6 +3088,33 @@ export default function App() {
                           }}
                         />
                         <span className="settings-help">{t('appliesToNewTabs')}</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label className="settings-label" htmlFor="maxFileOpenSize">
+                          {t('maxFileOpenSize')}
+                        </label>
+                        <input
+                          id="maxFileOpenSize"
+                          type="number"
+                          min={1}
+                          max={500}
+                          step={1}
+                          className="settings-input"
+                          style={{ width: '100px' }}
+                          value={maxFileOpenSizeMB}
+                          onChange={(e) => {
+                            const v = Math.max(
+                              1,
+                              Math.min(500, Number(e.target.value) || 5),
+                            )
+                            setMaxFileOpenSizeMB(v)
+                            try {
+                              localStorage.setItem('wrolp-maxFileOpenSizeMB', String(v))
+                            } catch {}
+                          }}
+                        />
+                        <span className="settings-help">{t('maxFileOpenSizeDesc')}</span>
                       </div>
 
                       <div className="settings-field checkbox-field">

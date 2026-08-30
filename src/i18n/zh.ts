@@ -211,6 +211,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   currentPercent: '当前：{val}%',
   maxScrollbackLines: '最大回滚行数',
   appliesToNewTabs: '适用于新标签页。',
+  maxFileOpenSize: '可打开文件最大大小（MB）',
+  maxFileOpenSizeDesc: '超过此大小的文件将无法在内置编辑器中打开。',
   updates: '更新',
   checkForUpdates: '检查更新',
   newVersion: '新版本 v{ver}',

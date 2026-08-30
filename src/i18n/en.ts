@@ -210,6 +210,8 @@ const en = {
   currentPercent: 'Current: {val}%',
   maxScrollbackLines: 'Max Scrollback Lines',
   appliesToNewTabs: 'Applies to new tabs.',
+  maxFileOpenSize: 'Max File Open Size (MB)',
+  maxFileOpenSizeDesc: 'Files larger than this cannot be opened in the editor.',
   updates: 'Updates',
   checkForUpdates: 'Check for Updates',
   newVersion: 'New version v{ver}',
