@@ -365,6 +365,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // unrelated program output that merely ends in a prompt-like token (e.g.
   // `echo "price is $10"`).
   const expectingEchoRef = useRef(false)
+  // Telnet/Serial sessions start at a login prompt. Live input coloring relies
+  // on shell-prompt heuristics that misidentify "login:" / "Password:" and
+  // corrupt the echoed first character. Stay disabled until a real shell prompt
+  // appears; SSH/local shells are assumed ready from the start.
+  const shellReadyRef = useRef(!isTelnet && !isSerial)
 
   const resetTableCapture = () => {
     const c = tableCaptureRef.current
@@ -407,6 +412,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     expectingEchoRef.current = false
   }
 
+  // Heuristics for Telnet/Serial login detection. We disable live input coloring
+  // while the remote is showing login/password prompts, then enable it once a
+  // real shell prompt appears. SSH/local sessions bypass this (shellReadyRef is
+  // initialized to true).
+  function looksLikeLoginPrompt(line: string): boolean {
+    return /\b(?:login|user(?:name| name|-name)?|password|passwort|passcode|pin|passwd)\s*[:：]\s*$/i.test(line)
+  }
+  function looksLikeShellPrompt(line: string): boolean {
+    return /[$#%>❯]\s*$/.test(line.trimEnd())
+  }
 
   // Start a table capture for known table commands (df/ps/free/ss/...). Only
   // one command runs at a time, so clears the print/ls captures first to avoid
@@ -984,14 +999,27 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // A newline means a command started producing output — we're no longer
     // awaiting a typed-line echo, so drop the gate to avoid recoloring output.
     if (chunk.includes('\n') || chunk.includes('\r')) expectingEchoRef.current = false
+    // Telnet/Serial: detect login vs shell-prompt state from the latest output.
+    // Login/password prompts disable live coloring so the echoed first character
+    // isn't duplicated; a real shell prompt re-enables it. This also handles sudo
+    // password prompts or nested session logins inside an already-colored session.
+    if (isTelnet || isSerial) {
+      const lines = stripAnsi(chunk).split(/[\r\n]+/)
+      const last = lines[lines.length - 1] || ''
+      if (looksLikeLoginPrompt(last)) {
+        shellReadyRef.current = false
+      } else if (looksLikeShellPrompt(last)) {
+        shellReadyRef.current = true
+      }
+    }
     // Recolor the live input line after the echo is written: this colors the
     // newest keystroke (which arrives a frame after the per-keystroke highlight
     // in onData). recolorLiveLine is gated by expectingEchoRef, so
     // it only fires while we're awaiting a keystroke echo — program output is
     // never recolored, which keeps input working.
-    // Skip for serial: login:/Password: prompts are not shell prompts and the
-    // prompt-recognition heuristics can rewrite/corrupt them.
-    if (!isSerial) recolorLiveLine()
+    // For Telnet/Serial this is also gated by shellReadyRef so login/password
+    // prompts are not corrupted by the prompt-recognition heuristics.
+    if (shellReadyRef.current) recolorLiveLine()
   }
 
   const startPrintCapture = (lang: string, highlighter: (t: string) => string[], prompt: string) => {
@@ -1521,7 +1549,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // we just highlighted above; stop awaiting it so stray output isn't
         // mistaken for a typed line.
         expectingEchoRef.current = false
-        commitSubmittedCommands(term, data, currentTabId)
+        if (shellReadyRef.current) {
+          commitSubmittedCommands(term, data, currentTabId)
+        }
         // A lone Enter submits a single command: detect print-style commands
         // (`cat`/`head`/`tail`) and `ls`-style listings for their respective
         // capture machines. The prompt is captured from the same buffer line so
@@ -1598,7 +1628,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // F1: recolor the typed command (and, if the PS1 is uncolored, its
           // trailing symbol) right before the shell processes the Enter. The line
           // is already on screen uncolored; we rewrite it in place.
-          highlightCurrentCommandLine(term)
+          // Skip for Telnet/Serial until the shell prompt is detected.
+          if (shellReadyRef.current) {
+            highlightCurrentCommandLine(term)
+          }
           // NOTE: do NOT clearLsLinks() on Enter. A previous `ls` listing stays
           // visible on screen across ordinary commands (Enter, `cd`, `cat`, a
           // new `ls`…) and should remain clickable throughout. The link provider
@@ -1625,9 +1658,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // in writeOutput knows the line is a typed command (not program output).
       // Coloring is done ONLY once the echo is written back (race-free with the
       // async SSH echo — no rAF rewrite that could erase in-flight characters).
-      // Skip for serial: login:/Password: prompts are not shell prompts and the
-      // recolor logic misidentifies/corrupts them.
-      if (!isSerial && !/^[\r\n]+$/.test(data)) {
+      // For Telnet/Serial only start expecting echoes after a real shell prompt
+      // has been detected, so login/password prompts are not corrupted.
+      if (shellReadyRef.current && !/^[\r\n]+$/.test(data)) {
         expectingEchoRef.current = true
       }
       if (isLocal) {
@@ -2100,6 +2133,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     aiMarkRef.current = null
     resetLsCapture()
     clearLsLinks()
+    // Reset login-state detection so Telnet/Serial re-enter the login prompt
+    // without live coloring until the shell prompt reappears.
+    shellReadyRef.current = !isTelnet && !isSerial
 
     const term = termRef.current
     if (!term) return
