@@ -666,8 +666,8 @@ export default function App() {
   const [autoRecord, setAutoRecordState] = useState(false)
   // SSH keepalive settings (Settings page). Read on startup, persisted to
   // window.json so future connect() calls in Rust pick them up.
-  const [keepaliveInterval, setKeepaliveInterval] = useState(30)
-  const [keepaliveMax, setKeepaliveMax] = useState(3)
+  const [keepaliveInterval, setKeepaliveInterval] = useState<number | ''>(30)
+  const [keepaliveMax, setKeepaliveMax] = useState<number | ''>(3)
   // Per-tab recording indicator (map from tabId → recording on/off). Loaded
   // from the backend so the button reflects the actual state after reconnect.
   const [recordingByTab, setRecordingByTab] = useState<Record<number, boolean>>({})
@@ -685,6 +685,10 @@ export default function App() {
   const [aiApiKeyInput, setAiApiKeyInput] = useState('')
   const [aiShowKey, setAiShowKey] = useState(false)
   const [aiModels, setAiModels] = useState<string[]>([])
+  // Local draft for the "Max rounds per AI run" input so it can be cleared
+  // (empty) without writing an invalid value into aiConfig; resets to the
+  // default (200) on blur.
+  const [aiMaxRoundsText, setAiMaxRoundsText] = useState('200')
   const [aiFetchingModels, setAiFetchingModels] = useState(false)
   const [aiModelManual, setAiModelManual] = useState(false)
   // AI conversation state is keyed per tab (tabId) so each shell tab keeps its
@@ -781,9 +785,13 @@ export default function App() {
   // SSH keepalive settings (Settings). Persists to window.json so future
   // connect() calls in Rust pick them up. Minimums enforced (interval >= 10,
   // count >= 2) on both frontend and backend.
-  const handleKeepaliveChange = useCallback((interval: number, max: number) => {
-    const i = Number.isFinite(interval) ? Math.max(10, Math.floor(interval)) : 30
-    const m = Number.isFinite(max) ? Math.max(2, Math.floor(max)) : 3
+  const handleKeepaliveChange = useCallback((interval: number | '', max: number | '') => {
+    const i = typeof interval === 'number' && Number.isFinite(interval)
+      ? Math.max(10, Math.floor(interval))
+      : 30
+    const m = typeof max === 'number' && Number.isFinite(max)
+      ? Math.max(2, Math.floor(max))
+      : 3
     setKeepaliveInterval(i)
     setKeepaliveMax(m)
     setKeepalive(i, m).catch(() => {})
@@ -881,6 +889,14 @@ export default function App() {
       .catch(() => setAiConfig(null))
   }, [])
 
+  // Keep the max-rounds draft in sync when aiConfig changes externally
+  // (initial load, profile switch, reset, etc.).
+  useEffect(() => {
+    if (aiConfig?.maxAgentRounds != null) {
+      setAiMaxRoundsText(String(aiConfig.maxAgentRounds))
+    }
+  }, [aiConfig?.maxAgentRounds])
+
   // The profile currently being edited / used (falls back to first profile).
   const activeProfile =
     aiConfig?.profiles.find((p) => p.id === aiConfig.activeId) ?? aiConfig?.profiles[0] ?? null
@@ -934,7 +950,7 @@ export default function App() {
       cancelled = true
     }
   }, [activeProfile?.id])
-  const [maxScrollback, setMaxScrollback] = useState(() => {
+  const [maxScrollback, setMaxScrollback] = useState<number | ''>(() => {
     try {
       const v = localStorage.getItem('wrolp-maxScrollback')
       return v ? Number(v) : 5000
@@ -943,8 +959,8 @@ export default function App() {
     }
   })
   // Max file size (in MB) that can be opened in the editor. Defaults to 5 MB,
-  // matching the Rust `DEFAULT_MAX_EDIT_SIZE`.
-  const [maxFileOpenSizeMB, setMaxFileOpenSizeMB] = useState(() => {
+  // matching the Rust `DEFAULT_MAX_EDIT_SIZE`. Empty string means "use default".
+  const [maxFileOpenSizeMB, setMaxFileOpenSizeMB] = useState<number | ''>(() => {
     try {
       const v = localStorage.getItem('wrolp-maxFileOpenSizeMB')
       return v ? Number(v) : 5
@@ -1715,7 +1731,7 @@ export default function App() {
     setShellViewFor(legacyTabId, key)
     try {
       const fc = await fsReadFileContent(target, path, {
-        maxSize: maxFileOpenSizeMB * 1024 * 1024,
+        maxSize: (typeof maxFileOpenSizeMB === 'number' ? maxFileOpenSizeMB : 5) * 1024 * 1024,
       })
       setEditorTabs((prev) =>
         prev.map((t) =>
@@ -1893,7 +1909,7 @@ export default function App() {
       try {
         const fc = await fsReadFileContent(tabTarget(target), target.path, {
           encoding,
-          maxSize: maxFileOpenSizeMB * 1024 * 1024,
+          maxSize: (typeof maxFileOpenSizeMB === 'number' ? maxFileOpenSizeMB : 5) * 1024 * 1024,
         })
         if (fc.isBinary || fc.isTooLarge) return
         setEditorTabs((prev) =>
@@ -2950,7 +2966,7 @@ export default function App() {
               dockerContainer={tab.dockerContainer}
               localCwd={tab.localShellCwd}
               localShellType={tab.localShellType}
-              maxScrollback={maxScrollback}
+              maxScrollback={typeof maxScrollback === 'number' ? maxScrollback : 5000}
               onStatusChange={(status, errorMessage) => {
                 setTabs((prev) =>
                   prev.map((t) => (t.tabId === tab.tabId ? { ...t, status, errorMessage } : t)),
@@ -3077,14 +3093,30 @@ export default function App() {
                           style={{ width: '140px' }}
                           value={maxScrollback}
                           onChange={(e) => {
+                            const raw = e.target.value
+                            if (raw === '') {
+                              setMaxScrollback('')
+                              try {
+                                localStorage.removeItem('wrolp-maxScrollback')
+                              } catch {}
+                              return
+                            }
                             const v = Math.max(
                               100,
-                              Math.min(100000, Number(e.target.value) || 5000),
+                              Math.min(100000, Number(raw) || 5000),
                             )
                             setMaxScrollback(v)
                             try {
                               localStorage.setItem('wrolp-maxScrollback', String(v))
                             } catch {}
+                          }}
+                          onBlur={() => {
+                            if (maxScrollback === '') {
+                              setMaxScrollback(5000)
+                              try {
+                                localStorage.setItem('wrolp-maxScrollback', '5000')
+                              } catch {}
+                            }
                           }}
                         />
                         <span className="settings-help">{t('appliesToNewTabs')}</span>
@@ -3104,14 +3136,27 @@ export default function App() {
                           style={{ width: '100px' }}
                           value={maxFileOpenSizeMB}
                           onChange={(e) => {
-                            const v = Math.max(
-                              1,
-                              Math.min(500, Number(e.target.value) || 5),
-                            )
+                            const raw = e.target.value
+                            if (raw === '') {
+                              setMaxFileOpenSizeMB('')
+                              try {
+                                localStorage.removeItem('wrolp-maxFileOpenSizeMB')
+                              } catch {}
+                              return
+                            }
+                            const v = Math.max(1, Math.min(500, Number(raw) || 5))
                             setMaxFileOpenSizeMB(v)
                             try {
                               localStorage.setItem('wrolp-maxFileOpenSizeMB', String(v))
                             } catch {}
+                          }}
+                          onBlur={() => {
+                            if (maxFileOpenSizeMB === '') {
+                              setMaxFileOpenSizeMB(5)
+                              try {
+                                localStorage.setItem('wrolp-maxFileOpenSizeMB', '5')
+                              } catch {}
+                            }
                           }}
                         />
                         <span className="settings-help">{t('maxFileOpenSizeDesc')}</span>
@@ -3142,9 +3187,25 @@ export default function App() {
                           className="settings-input"
                           style={{ width: '100px' }}
                           value={keepaliveInterval}
-                          onChange={(e) =>
-                            handleKeepaliveChange(Number(e.target.value), keepaliveMax)
-                          }
+                          onChange={(e) => {
+                            const raw = e.target.value
+                            if (raw === '') {
+                              setKeepaliveInterval('')
+                              return
+                            }
+                            handleKeepaliveChange(
+                              Number(raw),
+                              typeof keepaliveMax === 'number' ? keepaliveMax : 3,
+                            )
+                          }}
+                          onBlur={() => {
+                            if (keepaliveInterval === '') {
+                              handleKeepaliveChange(
+                                30,
+                                typeof keepaliveMax === 'number' ? keepaliveMax : 3,
+                              )
+                            }
+                          }}
                         />
                         <span className="settings-help">{t('keepaliveIntervalDesc')}</span>
                       </div>
@@ -3161,9 +3222,25 @@ export default function App() {
                           className="settings-input"
                           style={{ width: '100px' }}
                           value={keepaliveMax}
-                          onChange={(e) =>
-                            handleKeepaliveChange(keepaliveInterval, Number(e.target.value))
-                          }
+                          onChange={(e) => {
+                            const raw = e.target.value
+                            if (raw === '') {
+                              setKeepaliveMax('')
+                              return
+                            }
+                            handleKeepaliveChange(
+                              typeof keepaliveInterval === 'number' ? keepaliveInterval : 30,
+                              Number(raw),
+                            )
+                          }}
+                          onBlur={() => {
+                            if (keepaliveMax === '') {
+                              handleKeepaliveChange(
+                                typeof keepaliveInterval === 'number' ? keepaliveInterval : 30,
+                                3,
+                              )
+                            }
+                          }}
                         />
                         <span className="settings-help">{t('keepaliveMaxDesc')}</span>
                       </div>
@@ -3446,18 +3523,29 @@ export default function App() {
                         type="number"
                         min={1}
                         max={1000}
-                        value={aiConfig?.maxAgentRounds ?? 200}
+                        value={aiMaxRoundsText}
                         onChange={(e) => {
+                          const raw = e.target.value
+                          setAiMaxRoundsText(raw)
+                          if (raw === '') return
+                          const n = Math.max(1, Math.min(1000, parseInt(raw, 10) || 200))
                           setAiConfig((prev) => {
                             if (!prev) return prev
-                            const n = Math.max(
-                              1,
-                              Math.min(1000, parseInt(e.target.value || '200', 10) || 200),
-                            )
                             const next = { ...prev, maxAgentRounds: n }
                             saveAiConfig(next).catch(() => {})
                             return next
                           })
+                        }}
+                        onBlur={() => {
+                          if (aiMaxRoundsText.trim() === '') {
+                            setAiMaxRoundsText('200')
+                            setAiConfig((prev) => {
+                              if (!prev) return prev
+                              const next = { ...prev, maxAgentRounds: 200 }
+                              saveAiConfig(next).catch(() => {})
+                              return next
+                            })
+                          }
                         }}
                       />
                       <span>{t('aiMaxRoundsUnit')}</span>

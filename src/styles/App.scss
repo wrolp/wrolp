@@ -7743,6 +7743,63 @@ input[type='password']::-ms-clear {
   &::placeholder {
     color: $text-dim;
   }
+
+  // Hide the native up/down spinner buttons so number fields look like plain
+  // text inputs.
+  &[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+  }
+}
+
+// The "Max rounds per AI run" input in the AI settings card has no
+// `.settings-input` class, so we replicate the same visual treatment here.
+.settings-number-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  input[type='number'] {
+    width: 90px;
+    background: $bg-input;
+    border: 1px solid $border;
+    color: $text-primary;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 11px;
+    border-radius: 8px;
+    outline: none;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
+
+    &:focus {
+      border-color: rgba($accent, 0.5);
+      box-shadow: 0 0 0 2px rgba($accent, 0.12);
+    }
+
+    // Hide native spinner buttons.
+    -moz-appearance: textfield;
+    appearance: textfield;
+
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+  }
+
+  span {
+    color: $text-dim;
+    font-size: 13px;
+    white-space: nowrap;
+  }
 }
 
 .settings-textarea {
