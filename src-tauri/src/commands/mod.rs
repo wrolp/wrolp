@@ -249,6 +249,7 @@ pub(crate) fn shell_quote_arg(s: &str) -> String {
 // --- Submodules -----------------------------------------------------------
 
 pub(crate) mod connections;
+pub(crate) mod network_scan;
 pub(crate) mod serial;
 pub(crate) mod telnet;
 pub(crate) mod ssh;
@@ -263,6 +264,7 @@ pub(crate) mod tunnels;
 
 // Re-export every command so `crate::commands::<name>` keeps working from lib.rs.
 pub use connections::*;
+pub use network_scan::*;
 pub use telnet::*;
 pub use ssh::*;
 pub use local_shell::*;

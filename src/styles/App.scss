@@ -8757,3 +8757,277 @@ input[type='password']::-ms-clear {
   font-size: 11px;
   color: $text-dim;
 }
+
+// ===== Network scan dialog =====
+.scan-dialog {
+  width: 720px;
+
+  .form-group {
+    margin-bottom: 10px;
+  }
+
+  .btn-secondary {
+    padding: 7px 18px;
+    border-radius: 4px;
+    border: 1px solid $border;
+    background: $bg-input;
+    color: $text-primary;
+    cursor: pointer;
+    font-size: 13px;
+
+    &:hover {
+      background: #4c4c4c;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  .scan-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+
+    .btn-primary {
+      padding: 7px 20px;
+      background: $success;
+      color: #fff;
+
+      &:hover {
+        background: lighten($success, 8%);
+      }
+
+      &:disabled {
+        background: $success;
+        opacity: 0.6;
+      }
+    }
+
+    &:disabled {
+      opacity: 0.6;
+    }
+  }
+
+  .scan-advanced-toggle {
+    margin-left: auto;
+    font-size: 12px;
+    color: $text-secondary;
+    cursor: pointer;
+    user-select: none;
+
+    &:hover {
+      color: $accent-hover;
+    }
+  }
+
+  .scan-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    color: $text-dim;
+  }
+
+  .scan-error {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba($danger, 0.12);
+    border: 1px solid rgba($danger, 0.4);
+    border-radius: 4px;
+    font-size: 12px;
+    color: #e57368;
+    word-break: break-all;
+  }
+
+  .scan-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 12px;
+    color: $text-secondary;
+
+    .scan-progress-bar {
+      flex: 1;
+      height: 4px;
+      background: $bg-input;
+      border-radius: 2px;
+      overflow: hidden;
+
+      .scan-progress-fill {
+        height: 100%;
+        background: $accent;
+        transition: width 0.15s ease;
+      }
+    }
+  }
+
+  .scan-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba($accent, 0.3);
+    border-top-color: $accent;
+    border-radius: 50%;
+    animation: scan-spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .scan-results {
+    margin-top: 14px;
+
+    .scan-results-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: $text-secondary;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 6px;
+
+      .scan-results-count {
+        background: $bg-input;
+        border-radius: 8px;
+        padding: 0 7px;
+        font-size: 11px;
+        color: $text-primary;
+      }
+    }
+
+    .scan-empty {
+      padding: 18px;
+      text-align: center;
+      font-size: 12px;
+      color: $text-dim;
+      border: 1px dashed $border;
+      border-radius: 4px;
+    }
+  }
+
+  .scan-table-wrap {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid $border;
+    border-radius: 4px;
+
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: #424242;
+      border-radius: 4px;
+    }
+
+    &::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
+  }
+
+  .scan-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12.5px;
+
+    th,
+    td {
+      text-align: left;
+      padding: 6px 8px;
+      border-bottom: 1px solid $border;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: $bg-secondary;
+      color: $text-muted;
+      font-weight: 500;
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    tbody tr:hover {
+      background: $bg-hover;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .scan-open-cell {
+      width: 30px;
+    }
+
+    .scan-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: $success;
+      box-shadow: 0 0 4px rgba($success, 0.6);
+    }
+
+    .scan-banner {
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: $text-secondary;
+      font-family: $font-mono;
+      font-size: 11.5px;
+    }
+
+    .scan-service {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 600;
+
+      &.service-ssh {
+        background: rgba($accent, 0.18);
+        color: #6cb8e8;
+      }
+
+      &.service-telnet {
+        background: rgba($warning, 0.16);
+        color: #d8c06a;
+      }
+
+      &.service-unknown {
+        background: $bg-input;
+        color: $text-muted;
+      }
+    }
+
+    .scan-add-btn {
+      padding: 2px 10px;
+      border-radius: 3px;
+      border: 1px solid $accent;
+      background: none;
+      color: $accent-hover;
+      cursor: pointer;
+      font-size: 12px;
+
+      &:hover {
+        background: rgba($accent, 0.15);
+      }
+    }
+
+    .scan-added {
+      font-size: 11.5px;
+      color: $success;
+    }
+  }
+}
+
+@keyframes scan-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

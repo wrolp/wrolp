@@ -26,6 +26,7 @@ import type {
   StartTunnelArgs,
   TunnelConfig,
   KeepaliveConfig,
+  ScanResult,
 } from './types'
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
@@ -35,6 +36,24 @@ export async function listConnections(): Promise<ConnectionConfig[]> {
 
 export async function saveConnection(config: ConnectionConfig): Promise<void> {
   await invoke('save_connection', { config })
+}
+
+/**
+ * Probe a target (CIDR / single IP / last-octet range) for open SSH / Telnet
+ * services. Results are also streamed as `scan-start` / `scan-progress` Tauri
+ * events while the scan runs; this promise resolves with the full list.
+ */
+export async function scanNetwork(args: {
+  target: string
+  ports?: number[]
+  timeoutMs?: number
+  concurrency?: number
+}): Promise<ScanResult[]> {
+  const request: Record<string, unknown> = { target: args.target }
+  if (args.ports && args.ports.length > 0) request.ports = args.ports
+  if (args.timeoutMs !== undefined) request.timeoutMs = args.timeoutMs
+  if (args.concurrency !== undefined) request.concurrency = args.concurrency
+  return await invoke<ScanResult[]>('scan_network', { request })
 }
 
 export async function deleteConnection(id: string): Promise<boolean> {

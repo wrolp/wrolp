@@ -30,6 +30,7 @@ import type { IconName } from './Icon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { ClearableInput } from './ClearableInput'
+import { NetworkScanDialog } from './NetworkScanDialog'
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[]
@@ -130,6 +131,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 }) => {
   const { t } = useI18n()
   const [showModal, setShowModal] = useState(false)
+  const [scanOpen, setScanOpen] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
   const [localModalOpen, setLocalModalOpen] = useState(false)
   const [localEditing, setLocalEditing] = useState<LocalTerminalEntry | null>(null)
@@ -525,21 +527,38 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           />
           <span style={{ flex: 1 }}>{t('connections')}</span>
           {expanded && (
-            <button
-              onClick={() => {
-                setEditing(null)
-                setShowModal(true)
-              }}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#007acc',
-                cursor: 'pointer',
-                fontSize: '16px',
-              }}
-            >
-              +
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <button
+                onClick={() => setScanOpen(true)}
+                title={t('scanNetwork')}
+                aria-label={t('scanNetwork')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#007acc',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  padding: 2,
+                }}
+              >
+                <Icon name="search" size={14} />
+              </button>
+              <button
+                onClick={() => {
+                  setEditing(null)
+                  setShowModal(true)
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#007acc',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                }}
+              >
+                +
+              </button>
+            </div>
           )}
         </div>
         {expanded && (
@@ -770,6 +789,17 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             setEditing(null)
             setDefaultGroup('')
           }}
+        />
+      )}
+
+      {scanOpen && (
+        <NetworkScanDialog
+          onClose={() => setScanOpen(false)}
+          onSaved={onConnectionChange}
+          defaultGroup={defaultGroup}
+          existingGroups={Array.from(
+            new Set(connections.map((c) => c.group?.trim()).filter((g): g is string => !!g)),
+          )}
         />
       )}
 

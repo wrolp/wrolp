@@ -85,6 +85,20 @@ export interface BaudCandidate {
   sample: string
 }
 
+/** One probed `ip:port` pair returned by `scanNetwork`. */
+export interface ScanResult {
+  ip: string
+  port: number
+  /** Whether a TCP connection could be established. */
+  open: boolean
+  /** Service identified from the first bytes: "ssh" | "telnet" | "unknown". */
+  service: 'ssh' | 'telnet' | 'unknown'
+  /** First line of the service banner (e.g. "SSH-2.0-OpenSSH_9.6"). */
+  banner?: string
+  /** Time to establish the TCP connection, in milliseconds. */
+  latencyMs?: number
+}
+
 /** A saved SSH local-port-forwarding tunnel definition (persisted config). */
 export interface TunnelConfig {
   /** Stable id (uuid) used to match a definition to its running tunnel. */

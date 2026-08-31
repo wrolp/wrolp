@@ -178,6 +178,7 @@ pub fn run() {
     })
     .invoke_handler(generate_handler![
       commands::list_connections,
+      commands::scan_network,
       commands::save_connection,
       commands::delete_connection,
       commands::reorder_connections,
