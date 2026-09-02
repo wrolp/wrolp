@@ -7,6 +7,7 @@ import {
 } from '../commands'
 import { parseAnsiToHtml, highlightPlainLog } from '../ansi'
 import { useI18n } from '../i18n'
+import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 
 interface DockerLogViewerProps {
   tabId: number
@@ -65,6 +66,9 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   const [follow, setFollow] = useState(defaultFollow)
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const logsRef = useRef<HTMLPreElement>(null)
+  // Widens the log scrollbar while the pointer is near it (see `.sb-grab` styles).
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const nearScrollbar = useScrollbarGrabZone(bodyRef)
   const userAtBottomRef = useRef(true)
 
   // When new logs arrive while the user is scrolled up, we anchor the view so the
@@ -387,7 +391,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
         </div>
       </div>
 
-      <div className="dlv-body">
+      <div className={'dlv-body' + (nearScrollbar ? ' sb-grab' : '')} ref={bodyRef}>
         {error ? (
           <div className="dlv-error">{error}</div>
         ) : logs ? (

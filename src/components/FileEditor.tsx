@@ -3,6 +3,7 @@ import monaco from '../editor/monacoSetup'
 import { LANGUAGE_OPTIONS_SORTED, ENCODING_OPTIONS } from '../editor/languages'
 import type { TargetRef } from '../types'
 import HexViewer from './HexViewer'
+import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 
 export interface EditorTab {
   key: string
@@ -73,6 +74,10 @@ export function FileEditor({
   const [tabSize, setTabSize] = useState(2)
 
   const active = tabs.find((t) => t.key === activeKey) || null
+
+  // Monaco's scrollbar is a 4px sliver by default — widen it while the pointer
+  // is in the grab zone so it can actually be grabbed and dragged.
+  const nearScrollbar = useScrollbarGrabZone(containerRef)
 
   // Create / recreate editor when active tab changes
   useEffect(() => {
@@ -165,6 +170,18 @@ export function FileEditor({
     if (!editor) return
     editor.updateOptions({ tabSize })
   }, [tabSize])
+
+  // Widen the scrollbar while the pointer is in the grab zone (4px → 10px) so it
+  // is comfortable to drag. `active?.key` is a dependency because switching tabs
+  // builds a brand-new editor that starts at the default width.
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    const size = nearScrollbar ? 10 : 4
+    editor.updateOptions({
+      scrollbar: { verticalScrollbarSize: size, horizontalScrollbarSize: size },
+    })
+  }, [nearScrollbar, active?.key])
 
   if (tabs.length === 0) return null
 

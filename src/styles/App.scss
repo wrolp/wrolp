@@ -2075,7 +2075,34 @@ body.resizing-v {
   bottom: 0;
   width: 4px;
   z-index: 10;
+  // The track must stay click-through so terminal links and text selection
+  // underneath keep working — but a 4px thumb is a painful drag target. An
+  // invisible strip reaching leftwards from the track supplies a much larger
+  // grab zone; hovering it (or dragging) widens the bar so it is easy to grab.
   pointer-events: none;
+  transition: width 0.12s ease;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 14px; // grab zone — this is what actually receives :hover
+    pointer-events: auto;
+  }
+
+  // Pointer anywhere in the grab zone, or a drag in progress (the pointer
+  // regularly strays outside the zone mid-drag) → widen track and thumb.
+  &:hover,
+  &.is-dragging {
+    width: 10px;
+  }
+  &:hover .term-scrollbar-thumb,
+  &.is-dragging .term-scrollbar-thumb {
+    width: 10px;
+    background: rgba(128, 128, 128, 0.55);
+  }
 }
 
 .term-scrollbar-thumb {
@@ -2087,7 +2114,7 @@ body.resizing-v {
   width: 4px;
   min-height: 20px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: width 0.12s ease, background 0.15s;
 
   &:hover,
   &:active {
@@ -5822,21 +5849,34 @@ input[type='password']::-ms-clear {
     border: 0;
     border-radius: 0;
 
-    // Scrollbar styling
+    // Scrollbar: the TRACK is always 10px wide so that widening the thumb on
+    // hover never reflows the log text (animating ::-webkit-scrollbar's width
+    // would shift the whole <pre>). The thumb is inset back to 5px by a
+    // transparent border until the pointer enters the grab zone — see the
+    // `.dlv-body.sb-grab` rule below, which drops the border.
     &::-webkit-scrollbar {
-      width: 5px;
-      height: 5px;
+      width: 10px;
+      height: 10px;
     }
     &::-webkit-scrollbar-track {
       background: transparent;
     }
     &::-webkit-scrollbar-thumb {
       background: #444;
-      border-radius: 3px;
+      background-clip: content-box;
+      border: 2.5px solid transparent;
+      border-radius: 5px;
       &:hover {
         background: #666;
       }
     }
+  }
+
+  // Pointer is in the scrollbar grab zone → let the thumb fill the full 10px
+  // track so it is comfortable to grab and drag.
+  .dlv-body.sb-grab .dlv-output::-webkit-scrollbar-thumb {
+    border-width: 0;
+    background: #666;
   }
 
   .dlv-output-wrap {

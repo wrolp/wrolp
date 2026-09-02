@@ -307,6 +307,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
   // ---- custom overlay scrollbar (B13: terminal needs a visible scrollbar) ----
   const [scrollThumb, setScrollThumb] = useState({ h: 0, t: 0, show: false })
+  // Keep the overlay scrollbar widened for the whole drag: the pointer routinely
+  // strays outside the grab zone mid-drag, where CSS :hover alone would drop it.
+  const [thumbDragging, setThumbDragging] = useState(false)
   const scrollThumbDragging = useRef(false)
   const scrollThumbDragY = useRef(0)
   const scrollThumbDragStart = useRef(0)
@@ -2554,6 +2557,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const handleThumbMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     scrollThumbDragging.current = true
+    // Keep the bar wide for the whole gesture even if the pointer strays out of
+    // the grab zone — CSS :hover alone would collapse it mid-drag.
+    setThumbDragging(true)
     scrollThumbDragY.current = e.clientY
     const vp = viewportRef.current
     if (vp) scrollThumbDragStart.current = vp.scrollTop
@@ -2571,6 +2577,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     const onUp = () => {
       scrollThumbDragging.current = false
+      setThumbDragging(false)
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
     }
@@ -2586,7 +2593,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       />
       {/* Overlay custom scrollbar (B13) */}
       {scrollThumb.show && scrollThumb.h > 0 && (
-        <div className="term-scrollbar" data-term-scrollbar={tabId}>
+        <div
+          className={'term-scrollbar' + (thumbDragging ? ' is-dragging' : '')}
+          data-term-scrollbar={tabId}
+        >
           <div
             className="term-scrollbar-thumb"
             style={{ top: `${scrollThumb.t}px`, height: `${scrollThumb.h}px` }}
