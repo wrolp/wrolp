@@ -8797,7 +8797,7 @@ input[type='password']::-ms-clear {
       color: #fff;
 
       &:hover {
-        background: lighten($success, 8%);
+        background: color.adjust($success, $lightness: 8%);
       }
 
       &:disabled {

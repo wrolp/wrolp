@@ -35,31 +35,76 @@ export function getCurrentCommandLine(term: Terminal): string {
   return text
 }
 
+// Upper bound on a plausible prompt length. A marker found beyond this point is
+// far more likely to be command syntax (a redirect, a `$VAR`, a glob) than the
+// terminator of a shell prompt.
+const MAX_PROMPT_LEN = 96
+
+// Leftmost occurrence of any marker, searched only within the first `maxPos`
+// characters. Returns the match position and the matched marker's length.
+const findLeftmostMarker = (
+  text: string,
+  markers: string[],
+  maxPos: number,
+): { pos: number; len: number } | null => {
+  let best = -1
+  let bestLen = 0
+  for (const m of markers) {
+    const pos = text.indexOf(m)
+    if (pos >= 0 && pos < maxPos && (best < 0 || pos < best)) {
+      best = pos
+      bestLen = m.length
+    }
+  }
+  return best >= 0 ? { pos: best, len: bestLen } : null
+}
+
+// Prompts terminated by a closing bracket instead of a classic symbol, e.g.
+// `[root@host:~] ` or `(venv) `. The head up to (and including) the bracket must
+// be space-free and start with the matching opener, which rules out ordinary
+// command text such as `echo [a-z] file`.
+const findBracketPrompt = (text: string): { pos: number; len: number } | null => {
+  const pairs: Array<[string, string]> = [
+    ['[', ']'],
+    ['(', ')'],
+    ['{', '}'],
+  ]
+  for (const [open, close] of pairs) {
+    const pos = text.indexOf(close + ' ')
+    if (pos <= 0 || pos >= MAX_PROMPT_LEN) continue
+    const head = text.slice(0, pos + 1)
+    if (!head.startsWith(open) || /\s/.test(head)) continue
+    return { pos, len: 2 }
+  }
+  return null
+}
+
 // Remove ANSI escape sequences and split a submitted buffer line into its
 // leading shell prompt (plain text) and the command that follows.
 export function splitPromptCommand(line: string): { prompt: string; command: string } {
   const noAnsi = line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-  // Markers in both "with trailing space" and bare forms: PowerShell / cmd
-  // prompts end in `>` (often WITHOUT a trailing space — `PS C:\path>`),
-  // bash/zsh use `$ ` / `# ` / `% ` / `❯ ` (usually WITH a space). Taking the
-  // rightmost match keeps user-typed `>`/`$` inside an actual command intact
-  // enough for the "is there already input?" check: a bare prompt yields an
-  // empty command, a prompt + typed text yields the text.
-  const markers = ['$ ', '# ', '% ', '> ', '❯ ', '$', '#', '%', '>', '❯']
-  let idx = -1
-  let matched = ''
-  for (const m of markers) {
-    const pos = noAnsi.lastIndexOf(m)
-    if (pos > idx) {
-      idx = pos
-      matched = m
-    }
-  }
-  if (idx >= 0) {
-    return {
-      prompt: noAnsi.slice(0, idx + matched.length),
-      command: noAnsi.slice(idx + matched.length).trimEnd(),
-    }
+  // The prompt always PRECEDES the command, so scan left-to-right and keep the
+  // FIRST plausible terminator. (The previous rightmost-match rule swallowed the
+  // head of the command: in `[root@host:~]# ls > out.txt` the `> ` redirect sits
+  // further right than the real `# `, so `ls > ` was classed as prompt and never
+  // recolored.)
+  //
+  // Pass 1 — "marker + space" (`$ `, `# `, `% `, `> `, `❯ `): how virtually every
+  //   shell terminates its prompt. Most reliable, so it wins outright. Covers
+  //   PowerShell / cmd prompts that DO end in `> `.
+  // Pass 2 — bare marker (`PS C:\path>` often carries no trailing space), trusted
+  //   only within MAX_PROMPT_LEN.
+  // Pass 3 — bracket-terminated prompts (`[root@host:~] `), which carry no
+  //   classic symbol at all. Without this the whole prompt is recolored as if it
+  //   were command text.
+  const spaced = findLeftmostMarker(noAnsi, ['$ ', '# ', '% ', '> ', '❯ '], MAX_PROMPT_LEN)
+  const bare = spaced
+    ? null
+    : findLeftmostMarker(noAnsi, ['$', '#', '%', '>', '❯'], MAX_PROMPT_LEN)
+  const hit = spaced ?? bare ?? findBracketPrompt(noAnsi)
+  if (hit) {
+    const end = hit.pos + hit.len
+    return { prompt: noAnsi.slice(0, end), command: noAnsi.slice(end).trimEnd() }
   }
   return { prompt: '', command: noAnsi.trim() }
 }
