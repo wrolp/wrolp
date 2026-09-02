@@ -109,6 +109,16 @@ export function splitPromptCommand(line: string): { prompt: string; command: str
   return { prompt: '', command: noAnsi.trim() }
 }
 
+// Pager prompts that network CLIs print at the bottom of a full screen: Cisco
+// `--More--`, Huawei/H3C `---- More ----`, HP `-- MORE --`, and the bracketed
+// `---(more)---` variant. These are command OUTPUT waiting for a keypress, NOT a
+// command line — they carry no prompt marker, so `splitPromptCommand` returns them
+// whole as `command`, and tokenizing them paints the dashes as green options and
+// wipes the device's own rendering with the trailing `\x1b[K`.
+const PAGER_PROMPT_RE = /-{2,}\s*\(?\s*more\s*\)?\s*-{2,}/i
+
+export const isPagerPrompt = (line: string): boolean => PAGER_PROMPT_RE.test(line)
+
 // Remove ANSI escape sequences and strip a leading shell prompt so only the
 // command itself remains.
 export function stripPrompt(line: string): string {
@@ -140,6 +150,8 @@ export function highlightCurrentCommandLine(term: Terminal) {
   // alternate buffer and manage their own styling; rewriting a line here strips
   // their colors and corrupts indentation.
   if (term.buffer.active.type === 'alternate') return
+  // A pager prompt (`---- More ----`) is device output, not a typed command.
+  if (isPagerPrompt(plain)) return
   const buffer = term.buffer.active
   const cols = term.cols
   const lastRow = buffer.baseY + buffer.cursorY
@@ -207,6 +219,8 @@ export function getInputLineAtCursorEnd(term: Terminal): { prompt: string; comma
   // Full-screen programs (vi/nano/less/tmux/etc.) use the alternate buffer. Every
   // line there is program output, not a shell command line, so never recolor it.
   if (buffer.type === 'alternate') return null
+  // A pager prompt (`---- More ----`) sits on an output line, not an input one.
+  if (isPagerPrompt(plain)) return null
   const cols = term.cols
   const logicalLen = prompt.length + command.length
   const row = buffer.baseY + buffer.cursorY
@@ -230,7 +244,9 @@ export function getInputLineAtCursorEnd(term: Terminal): { prompt: string; comma
 export function commitSubmittedCommands(term: Terminal, data: string, tabId: number) {
   if (/^[\r\n]+$/.test(data)) {
     const cmd = stripPrompt(getCurrentCommandLine(term))
-    if (cmd.trim().length > 0) {
+    // Never record a pager prompt (`---- More ----`) as a submitted command —
+    // paging through long device output would otherwise flood the command history.
+    if (cmd.trim().length > 0 && !isPagerPrompt(cmd)) {
       commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
     }
     return
