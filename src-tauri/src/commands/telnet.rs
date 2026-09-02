@@ -628,6 +628,12 @@ pub async fn connect_telnet(
         if let Ok(mut sessions) = st.telnet_sessions.lock() {
           sessions.remove(&tab_id);
         }
+        // Drop any AI capture sink left behind by a command still running when
+        // the session died — a stale sink would permanently block new AI
+        // commands on this tab (same guard as SSH's connect-time cleanup).
+        if let Ok(mut caps) = st.ai_captures.lock() {
+          caps.remove(&tab_id);
+        }
       }
       let _ = app_handle.emit("connection-closed", serde_json::json!({ "tabId": tab_id }));
     }

@@ -18,6 +18,10 @@ enum LiveShell {
   Ssh,
   /// Local PTY-backed process (`AppState::local_shells`).
   Local,
+  /// Interactive Telnet session (`AppState::telnet_sessions`). Telnet has no
+  /// PTY, but it is still a live bidirectional stream we can type into and read
+  /// back, which is all the AI terminal path needs.
+  Telnet,
 }
 
 /// Wait at most this long for the *first* byte of output after sending.
@@ -60,6 +64,13 @@ fn live_shell_kind(state: &AppState, tab_id: u32) -> Option<LiveShell> {
       return Some(LiveShell::Ssh);
     }
   }
+  // Telnet: the session entry exists only while the reader task is alive, and
+  // `write_tx` is always present, so membership alone means "live".
+  if let Ok(telnet) = state.telnet_sessions.lock() {
+    if telnet.contains_key(&tab_id) {
+      return Some(LiveShell::Telnet);
+    }
+  }
   None
 }
 
@@ -71,7 +82,9 @@ fn live_shell_kind(state: &AppState, tab_id: u32) -> Option<LiveShell> {
 /// the caller must bail out instead of overwriting the sink.
 fn ai_capture_start(state: &AppState, tab_id: u32, kind: LiveShell) -> bool {
   match kind {
-    LiveShell::Ssh => match state.ai_captures.lock() {
+    // Telnet tees into the same `ai_captures` map as SSH (see
+    // `commands::telnet`), so both share this arm.
+    LiveShell::Ssh | LiveShell::Telnet => match state.ai_captures.lock() {
       Ok(mut caps) => {
         if caps.contains_key(&tab_id) {
           return false;
@@ -102,7 +115,7 @@ fn ai_capture_start(state: &AppState, tab_id: u32, kind: LiveShell) -> bool {
 /// Current size of the capture sink; used to detect "the stream went quiet".
 fn ai_capture_len(state: &AppState, tab_id: u32, kind: LiveShell) -> usize {
   match kind {
-    LiveShell::Ssh => state
+    LiveShell::Ssh | LiveShell::Telnet => state
       .ai_captures
       .lock()
       .ok()
@@ -124,7 +137,7 @@ fn ai_capture_len(state: &AppState, tab_id: u32, kind: LiveShell) -> usize {
 /// Remove the sink and return everything it captured.
 fn ai_capture_finish(state: &AppState, tab_id: u32, kind: LiveShell) -> String {
   match kind {
-    LiveShell::Ssh => state
+    LiveShell::Ssh | LiveShell::Telnet => state
       .ai_captures
       .lock()
       .ok()
@@ -172,6 +185,20 @@ fn type_into_shell(
         .map_err(|e| format!("Failed to write to local shell: {}", e))?;
       let _ = sh.writer.flush();
       Ok(())
+    }
+    LiveShell::Telnet => {
+      // Telnet bytes must be IAC-escaped (a literal 0xFF is doubled) and a bare
+      // CR expanded to CRLF — the NVT end-of-line — before they hit the wire.
+      // `escape_input` already does both for ordinary user typing, so reuse it.
+      let tx = {
+        let sessions = state.telnet_sessions.lock().map_err(|e| e.to_string())?;
+        sessions
+          .get(&tab_id)
+          .map(|s| s.write_tx.clone())
+          .ok_or("Telnet session not found")?
+      };
+      tx.send(crate::commands::telnet::escape_input(data))
+        .map_err(|e| format!("Failed to send input: {}", e))
     }
   }
 }
@@ -293,7 +320,11 @@ fn emit_ai_term_mark(
     "ai-term-mark",
     serde_json::json!({
       "tabId": tab_id,
-      "kind": match kind { LiveShell::Ssh => "ssh", LiveShell::Local => "local" },
+      "kind": match kind {
+        LiveShell::Ssh => "ssh",
+        LiveShell::Local => "local",
+        LiveShell::Telnet => "telnet",
+      },
       "command": command,
       "mark": mark,
       "seq": seq,
@@ -355,7 +386,8 @@ async fn run_command_on_terminal(
   // desyncs ConPTY / readline repaints, which address the screen with absolute
   // cursor positioning.
   match kind {
-    LiveShell::Ssh => {
+    // Telnet output lands in `output_buffers` too, so it shares the SSH arm.
+    LiveShell::Ssh | LiveShell::Telnet => {
       if let Ok(mut buffers) = state.output_buffers.lock() {
         buffers
           .entry(tab_id)
@@ -465,7 +497,11 @@ async fn run_command_on_terminal(
     serde_json::json!({
       "ranOnTerminal": true,
       "tabId": tab_id,
-      "shell": match kind { LiveShell::Ssh => "ssh", LiveShell::Local => "local" },
+      "shell": match kind {
+        LiveShell::Ssh => "ssh",
+        LiveShell::Local => "local",
+        LiveShell::Telnet => "telnet",
+      },
       "command": cmd,
       "output": output,
       "truncated": truncated,

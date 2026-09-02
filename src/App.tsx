@@ -4219,22 +4219,26 @@ export default function App() {
               <span className="term-pane-record-dot" />
             </button>
           )}
-          {(tab?.tabType === 'terminal' || tab?.tabType === 'localShell') && leaf.tabId != null && (
-            <button
-              className={'term-pane-ai-toggle' + (showAiByTab[leaf.tabId] ? ' active' : '')}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation()
-                setShowAiByTab((prev) => ({
-                  ...prev,
-                  [leaf.tabId as number]: !prev[leaf.tabId as number],
-                }))
-              }}
-              title="Toggle AI chat for this shell"
-            >
-              🤖 AI
-            </button>
-          )}
+          {(tab?.tabType === 'terminal' ||
+            tab?.tabType === 'localShell' ||
+            tab?.tabType === 'telnet' ||
+            tab?.tabType === 'serial') &&
+            leaf.tabId != null && (
+              <button
+                className={'term-pane-ai-toggle' + (showAiByTab[leaf.tabId] ? ' active' : '')}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowAiByTab((prev) => ({
+                    ...prev,
+                    [leaf.tabId as number]: !prev[leaf.tabId as number],
+                  }))
+                }}
+                title={t('aiToggleTitle')}
+              >
+                🤖 {t('aiToggle')}
+              </button>
+            )}
           {/* Open files and docker logs live on the same pane-header panel as
               the AI button. Each pane shows only the files/logs that belong to
               ITS OWN SSH session (leaf.tabId) — files opened in one workspace
@@ -4420,7 +4424,10 @@ export default function App() {
           {/* Docked AI chat attached to this pane's shell tab. Hidden while the
               pane is showing a file editor / docker log overlay so the AI panel
               doesn't follow along next to the editor. */}
-          {(tab?.tabType === 'terminal' || tab?.tabType === 'localShell') &&
+          {(tab?.tabType === 'terminal' ||
+            tab?.tabType === 'localShell' ||
+            tab?.tabType === 'telnet' ||
+            tab?.tabType === 'serial') &&
             leaf.tabId != null &&
             activeProfile &&
             sv === 'terminal' &&

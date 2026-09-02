@@ -469,6 +469,8 @@ const en = {
   splitTerminal: 'Split Terminal',
   closeTerminal: 'Close Terminal',
   shellTerminal: 'Terminal',
+  aiToggle: 'AI Chat',
+  aiToggleTitle: 'Toggle AI chat for this terminal',
   noActiveConnection: 'No active connection',
   updateAvailable: 'available',
 

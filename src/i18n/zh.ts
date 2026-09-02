@@ -464,6 +464,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   splitTerminal: '拆分终端',
   closeTerminal: '关闭终端',
   shellTerminal: '终端',
+  aiToggle: 'AI 对话',
+  aiToggleTitle: '切换此终端的 AI 对话',
   noActiveConnection: '无活动连接',
   updateAvailable: '可用',
 

@@ -667,12 +667,25 @@ pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: u32) -> Resul
 
   // Telnet sessions — signal the reader task to stop.
   {
-    let mut sessions = state.telnet_sessions.lock().map_err(|e| e.to_string())?;
-    if let Some(s) = sessions.get_mut(&tab_id) {
-      if let Some(tx) = s.shutdown_tx.take() {
-        let _ = tx.send(());
-        return Ok(true);
+    // Take the shutdown signal out first and drop the `telnet_sessions` guard
+    // before touching `ai_captures`, so the lock order here (telnet → ai_captures)
+    // doesn't invert the one in `run_command_on_terminal` (ai_captures → telnet)
+    // and risk a deadlock.
+    let tx = {
+      let mut sessions = state.telnet_sessions.lock().map_err(|e| e.to_string())?;
+      sessions
+        .get_mut(&tab_id)
+        .and_then(|s| s.shutdown_tx.take())
+    };
+    if let Some(tx) = tx {
+      let _ = tx.send(());
+      // Drop any AI capture sink left behind by a command still running when the
+      // session died — a stale sink would permanently block new AI commands on
+      // this tab (same guard as SSH's connect-time cleanup).
+      if let Ok(mut caps) = state.ai_captures.lock() {
+        caps.remove(&tab_id);
       }
+      return Ok(true);
     }
   }
 
