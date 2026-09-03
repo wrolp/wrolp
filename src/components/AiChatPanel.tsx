@@ -174,9 +174,9 @@ interface AiChatPanelProps {
   onOpenSettings?: () => void
   /** Save selected text as a command snippet (floating command list). */
   onAddCommandSnippet?: (text: string) => void
-  /** Default AI read-only mode, taken from the global AI setting. The panel can
+  /** Default AI chat mode, taken from the global AI setting. The panel can
    *  toggle away from it at runtime. */
-  defaultReadOnly?: boolean
+  defaultMode?: 'chat' | 'command' | 'read_only'
   /** Default maximum agent-loop rounds, taken from the global AI setting. */
   defaultMaxAgentRounds?: number
 }
@@ -246,7 +246,7 @@ export default function AiChatPanel({
   onInputHeightChange,
   onOpenSettings,
   onAddCommandSnippet,
-  defaultReadOnly,
+  defaultMode,
   defaultMaxAgentRounds,
 }: AiChatPanelProps) {
   const { t } = useI18n()
@@ -261,9 +261,11 @@ export default function AiChatPanel({
     toolCallFormat,
   } = conv
 
-  // AI mode: read-only (inspection commands only) vs full (modifying commands
-  // allowed). Starts from the global default and can be toggled at runtime.
-  const [readOnly, setReadOnly] = useState<boolean>(defaultReadOnly ?? false)
+  // AI chat mode: "chat" (plain text only, no tools), "command" (full access,
+  // all commands allowed), or "read_only" (inspection commands only).
+  const [chatMode, setChatMode] = useState<'chat' | 'command' | 'read_only'>(
+    defaultMode ?? 'command',
+  )
 
   // Maximum agent-loop rounds for a single run. Starts from the global default.
   const [maxAgentRounds, setMaxAgentRounds] = useState<number>(defaultMaxAgentRounds ?? 200)
@@ -278,10 +280,9 @@ export default function AiChatPanel({
   // ---- responsive header: controls progressively collapse into "More" ----
   // Tier thresholds (cumulative — wider thresholds include narrower tiers).
   // Priority: close(X) always visible > float/dock always > clear > maxRounds
-  // > readOnly > toolCallFormat.
+  // > toolCallFormat.
   const COLLAPSE_CLEAR = 380
   const COLLAPSE_MAX_ROUNDS = 510
-  const COLLAPSE_READ_ONLY = 610
   const COLLAPSE_TOOL_FORMAT = 710
 
   const headerRef = useRef<HTMLDivElement | null>(null)
@@ -298,17 +299,10 @@ export default function AiChatPanel({
   }, [])
 
   const compactToolFormat = headerWidth < COLLAPSE_TOOL_FORMAT
-  // When in "Full access" mode the readOnly toggle label is wider; keep the
-  // nested/flat select inline instead of pushing it into More.
-  const effectiveCompactToolFormat = readOnly ? compactToolFormat : false
-  const compactReadOnly = headerWidth < COLLAPSE_READ_ONLY
   const compactMaxRounds = headerWidth < COLLAPSE_MAX_ROUNDS
   const compactClear = headerWidth < COLLAPSE_CLEAR
-  // The nested/flat select is hidden from the header whenever the readOnly
-  // toggle is compacted (per "show nested/flat only when Full/Read is visible")
-  // OR when it is itself compacted. In both cases it must move into More so it
-  // never disappears.
-  const toolFormatInMore = compactReadOnly || effectiveCompactToolFormat
+  // The nested/flat select is hidden from the header when it is compacted.
+  const toolFormatInMore = compactToolFormat
   // More dropdown visible only when at least one control is actually compacted.
   const showMoreBtn = toolFormatInMore || compactMaxRounds || compactClear
 
@@ -815,11 +809,11 @@ export default function AiChatPanel({
             : tc,
         ),
       )
-      confirmAiTool(id, approved, readOnly, maxAgentRounds)
+      confirmAiTool(id, approved, chatMode, maxAgentRounds)
         .then(() => startPolling(id))
         .catch((e) => setError(String(e)))
     },
-    [chatId, setToolCalls, setError, startPolling],
+    [chatId, setToolCalls, setError, startPolling, chatMode],
   )
 
   const runAgent = useCallback(
@@ -843,7 +837,7 @@ export default function AiChatPanel({
         apiMessages,
         tabId,
         config ?? undefined,
-        readOnly,
+        chatMode,
         maxAgentRounds,
         toolCallFormat,
       )
@@ -857,7 +851,7 @@ export default function AiChatPanel({
           finalizeAssistant('', String(e))
         })
     },
-    [mergeToolEvents, finalizeAssistant, tabId, config, toolCallFormat],
+    [mergeToolEvents, finalizeAssistant, tabId, config, toolCallFormat, chatMode, maxAgentRounds],
   )
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1182,21 +1176,11 @@ export default function AiChatPanel({
             value={toolCallFormat}
             onChange={(e) => setToolCallFormat(e.target.value as 'flat' | 'nested')}
             title={t('aiToolCallFormat')}
-            style={{ display: effectiveCompactToolFormat || compactReadOnly ? 'none' : undefined }}
+            style={{ display: compactToolFormat ? 'none' : undefined }}
           >
             <option value="nested">nested</option>
             <option value="flat">flat</option>
           </select>
-          {/* readOnly */}
-          <button
-            className={'ai-readonly-toggle' + (readOnly ? ' active' : '')}
-            onClick={() => setReadOnly((v) => !v)}
-            title={readOnly ? t('aiReadOnlyHint') : t('aiFullModeHint')}
-            style={{ display: compactReadOnly ? 'none' : undefined }}
-          >
-            <span className="ai-readonly-dot" />
-            {readOnly ? t('aiReadOnlyOn') : t('aiReadOnlyOff')}
-          </button>
           {/* Max rounds */}
           <button
             className="ai-chat-clear-btn"
@@ -1256,21 +1240,6 @@ export default function AiChatPanel({
                         <option value="nested">nested</option>
                         <option value="flat">flat</option>
                       </select>
-                    </div>
-                  )}
-                  {compactReadOnly && (
-                    <div className="ai-chat-more-item">
-                      <button
-                        className={'ai-readonly-toggle' + (readOnly ? ' active' : '')}
-                        onClick={() => {
-                          setReadOnly((v) => !v)
-                          setShowMoreMenu(false)
-                        }}
-                        title={readOnly ? t('aiReadOnlyHint') : t('aiFullModeHint')}
-                      >
-                        <span className="ai-readonly-dot" />
-                        {readOnly ? t('aiReadOnlyOn') : t('aiReadOnlyOff')}
-                      </button>
                     </div>
                   )}
                   {compactMaxRounds && (
@@ -1690,6 +1659,17 @@ export default function AiChatPanel({
           />
           <div className="ai-chat-input-actions">
             <div className="ai-chat-input-actions-left">
+              <select
+                className="ai-chat-mode-select"
+                value={chatMode}
+                onChange={(e) => setChatMode(e.target.value as 'chat' | 'command' | 'read_only')}
+                disabled={streaming}
+                title={t('aiModeLabel')}
+              >
+                <option value="chat">{t('aiModeChat')}</option>
+                <option value="command">{t('aiModeCommand')}</option>
+                <option value="read_only">{t('aiModeReadOnly')}</option>
+              </select>
               <button
                 type="button"
                 className="ai-chat-action-btn"

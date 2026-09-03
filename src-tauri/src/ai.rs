@@ -7,7 +7,7 @@
 //! The API key is encrypted using the same AES-256-GCM vault as connections.
 
 use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 
 // ---- AI Config ----
@@ -71,12 +71,14 @@ pub struct AiConfig {
   /// Id of the active profile. If empty/invalid, the first profile is used.
   #[serde(default)]
   pub active_id: String,
-  /// Default AI mode when a chat is opened. When true, the agent starts in
-  /// read-only mode and may only run inspection commands (configurable in the
-  /// global AI settings; the per-chat panel can toggle it). Defaults to false
-  /// so a fresh install starts with full access (can run modifying commands).
-  #[serde(default = "default_false", alias = "aiReadOnly")]
-  pub read_only: bool,
+  /// Default AI chat mode when a chat is opened. "chat" (plain text only, no
+  /// tools), "command" (full access, all commands allowed), or "read_only"
+  /// (inspection commands only). Configurable in the global AI settings; the
+  /// per-chat panel can change it. Defaults to "command" so a fresh install
+  /// starts with full access. Accepts the legacy `readOnly` bool field for
+  /// backward compatibility: `true` → "read_only", `false` → "command".
+  #[serde(default = "default_mode_command", deserialize_with = "deserialize_mode_compat")]
+  pub default_mode: String,
   /// When true, `run_command` types the command into the tab's live terminal
   /// (visible on screen + captured in the session recording) instead of running
   /// it silently on a separate exec channel. Falls back to the silent path
@@ -94,9 +96,28 @@ fn default_true() -> bool {
   true
 }
 
-/// Serde default for boolean `AiConfig` flags that are off by default.
-fn default_false() -> bool {
-  false
+/// Serde default for the `default_mode` field.
+fn default_mode_command() -> String {
+  "command".to_string()
+}
+
+/// Custom deserializer for `default_mode` that accepts both the new string
+/// values ("chat", "command", "read_only") and the legacy boolean `readOnly`
+/// field: `true` maps to "read_only", `false` maps to "command". This lets
+/// existing config files deserialize correctly after the rename.
+fn deserialize_mode_compat<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+  D: Deserializer<'de>,
+{
+  let val = serde_json::Value::deserialize(deserializer)?;
+  match val {
+    serde_json::Value::String(s) => Ok(s),
+    serde_json::Value::Bool(b) => Ok(if b { "read_only".to_string() } else { "command".to_string() }),
+    _ => Err(serde::de::Error::custom(format!(
+      "default_mode: expected string or bool, got {:?}",
+      val
+    ))),
+  }
 }
 
 /// Serde default for `max_agent_rounds`.
@@ -133,7 +154,7 @@ impl AiConfig {
     Self {
       profiles: vec![profile],
       active_id,
-      read_only: false,
+      default_mode: "command".to_string(),
       run_in_terminal: true,
       max_agent_rounds: default_max_agent_rounds(),
     }
@@ -230,7 +251,7 @@ pub fn load_ai_config_in(base_dir: Option<&std::path::Path>) -> Result<AiConfig,
           Ok(AiConfig {
             profiles: vec![profile],
             active_id,
-            read_only: false,
+            default_mode: "command".to_string(),
             run_in_terminal: true,
             max_agent_rounds: default_max_agent_rounds(),
           })
@@ -1124,6 +1145,7 @@ pub async fn run_agent_stream(
   ) -> futures_util::future::BoxFuture<'static, Vec<ToolResult>>,
   mut on_confirm_required: impl FnMut(Vec<AiMessage>, Vec<OpenAiToolCall>),
   max_rounds: usize,
+  tools_enabled: bool,
 ) -> Result<AiMessage, String> {
   let api_key = crate::vault::open_secret(&config.api_key_enc)
     .map_err(|e| format!("Failed to decrypt API key: {}", e))?;
@@ -1133,7 +1155,7 @@ pub async fn run_agent_stream(
     .build()
     .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-  let tools = tool_definitions();
+  let tools = if tools_enabled { Some(tool_definitions()) } else { None };
 
   // Working message list carries the full conversation (incl. tool calls).
   let mut messages: Vec<AiMessage> = initial_messages;
@@ -1151,7 +1173,7 @@ pub async fn run_agent_stream(
       stream: true,
       max_tokens: Some(4096),
       temperature: Some(0.7),
-      tools: Some(tools.clone()),
+      tools: tools.clone(),
     };
 
     let started = std::time::Instant::now();

@@ -3475,25 +3475,29 @@ export default function App() {
                         <Icon name="lock" size={16} />
                       </div>
                       <div>
-                        <h3 className="settings-card-title">{t('aiReadOnly')}</h3>
-                        <p className="settings-card-sub">{t('aiReadOnlyDesc')}</p>
+                        <h3 className="settings-card-title">{t('aiModeTitle')}</h3>
+                        <p className="settings-card-sub">{t('aiModeDesc')}</p>
                       </div>
                     </div>
-                    <label className="settings-checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={aiConfig?.readOnly ?? false}
-                        onChange={(e) => {
-                          setAiConfig((prev) => {
-                            if (!prev) return prev
-                            const next = { ...prev, readOnly: e.target.checked }
-                            saveAiConfig(next).catch(() => {})
-                            return next
-                          })
-                        }}
-                      />
-                      <span>{t('aiReadOnlyOn')}</span>
-                    </label>
+                    <select
+                      className="settings-select"
+                      value={aiConfig?.defaultMode ?? 'command'}
+                      onChange={(e) => {
+                        setAiConfig((prev) => {
+                          if (!prev) return prev
+                          const next = {
+                            ...prev,
+                            defaultMode: e.target.value as 'chat' | 'command' | 'read_only',
+                          }
+                          saveAiConfig(next).catch(() => {})
+                          return next
+                        })
+                      }}
+                    >
+                      <option value="chat">{t('aiModeChat')}</option>
+                      <option value="command">{t('aiModeCommand')}</option>
+                      <option value="read_only">{t('aiModeReadOnly')}</option>
+                    </select>
                   </div>
 
                   <div className="settings-card">
@@ -4634,7 +4638,7 @@ export default function App() {
                       inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
-                      defaultReadOnly={aiConfig?.readOnly ?? false}
+                      defaultMode={aiConfig?.defaultMode ?? 'command'}
                       defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
                     />
                   </div>
@@ -5414,7 +5418,7 @@ export default function App() {
                       inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
-                      defaultReadOnly={aiConfig?.readOnly ?? false}
+                      defaultMode={aiConfig?.defaultMode ?? 'command'}
                       defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
                     />
                   </div>
@@ -5584,7 +5588,7 @@ export default function App() {
                       inputHeight={aiInputHeight}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
-                      defaultReadOnly={aiConfig?.readOnly ?? false}
+                      defaultMode={aiConfig?.defaultMode ?? 'command'}
                       defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
                       onAddCommandSnippet={handleAddCommandSnippet}
                     />

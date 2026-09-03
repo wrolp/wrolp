@@ -574,10 +574,18 @@ pub async fn start_ai_agent(
   messages: Vec<crate::ai::AiMessage>,
   tab_id: Option<u32>,
   profile: Option<crate::ai::AiEndpointProfile>,
-  read_only: bool,
+  ai_mode: String,
   max_agent_rounds: u32,
   tool_call_format: Option<String>,
 ) -> Result<String, String> {
+  // Parse the mode string: only "chat" disables tools; everything else keeps tools enabled.
+  let tools_enabled = ai_mode != "chat";
+  // Normalize ai_mode for downstream use
+  let ai_mode = match ai_mode.as_str() {
+    "chat" => "chat".to_string(),
+    "read_only" => "read_only".to_string(),
+    _ => "command".to_string(),
+  };
   let chat_id = {
     let state = app.state::<AppState>();
     let cid = Uuid::new_v4().to_string();
@@ -621,18 +629,23 @@ pub async fn start_ai_agent(
   let current_server_context =
     current_tab_id.and_then(|tid| build_current_server_context(&app, tid));
 
-  // Inject the current server context (and, in read-only mode, a mode note)
+  // Inject the current server context (and, depending on mode, a mode note)
   // into the system message so the model always knows which server this
-  // conversation is bound to and whether it may modify the system.
-  let mode_note = if read_only {
-    Some(
+  // conversation is bound to and whether it may run tools / modify the system.
+  let mode_note = match ai_mode.as_str() {
+    "chat" => Some(
+      "MODE: Chat-only mode is ENABLED. Tool execution is DISABLED. You MUST respond with \
+             plain text only — do NOT attempt to call any tools or run any commands. \
+             If the user asks you to run a command, explain that you cannot in this mode."
+        .to_string(),
+    ),
+    "read_only" => Some(
       "MODE: Read-only mode is ENABLED. You may ONLY run read-only / inspection commands \
              (status, logs, file reads, analysis). Do NOT attempt to modify the system: no writes, \
              no installs, no service changes, no file edits, and no destructive commands."
         .to_string(),
-    )
-  } else {
-    None
+    ),
+    _ => None,
   };
   let messages_with_context: Vec<crate::ai::AiMessage> = {
     let mut extra = String::new();
@@ -682,8 +695,9 @@ pub async fn start_ai_agent(
     let conf2 = config.clone();
     let fmt = tool_call_format.clone();
     let tab = current_tab_id;
+    let mode = ai_mode.clone();
     move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-      save_pending(&app2, &cid2, &conf2, msgs, calls, read_only, &fmt, tab);
+      save_pending(&app2, &cid2, &conf2, msgs, calls, mode.clone(), &fmt, tab);
     }
   };
   spawn_agent(
@@ -693,9 +707,10 @@ pub async fn start_ai_agent(
     tool_call_format,
     messages_with_context,
     current_tab_id,
-    read_only,
+    ai_mode,
     on_confirm,
     max_agent_rounds as usize,
+    tools_enabled,
   );
 
   Ok(chat_id)
@@ -710,7 +725,7 @@ fn save_pending(
   config: &crate::ai::AiEndpointProfile,
   messages: Vec<crate::ai::AiMessage>,
   calls: Vec<crate::ai::OpenAiToolCall>,
-  read_only: bool,
+  ai_mode: String,
   tool_call_format: &str,
   current_tab_id: Option<u32>,
 ) {
@@ -723,7 +738,7 @@ fn save_pending(
         config: config.clone(),
         messages,
         calls,
-        read_only,
+        ai_mode,
         tool_call_format: tool_call_format.to_string(),
         current_tab_id,
       });
@@ -753,10 +768,13 @@ fn spawn_agent(
   tool_call_format: String,
   messages: Vec<crate::ai::AiMessage>,
   current_tab_id: Option<u32>,
-  read_only: bool,
+  ai_mode: String,
   on_confirm: impl Fn(Vec<crate::ai::AiMessage>, Vec<crate::ai::OpenAiToolCall>) + Send + 'static,
   max_rounds: usize,
+  tools_enabled: bool,
 ) {
+  // Parse mode → read_only flag for tool execution.
+  let read_only = ai_mode == "read_only";
   tauri::async_runtime::spawn(async move {
     let result = crate::ai::run_agent_stream(
       &config,
@@ -783,6 +801,7 @@ fn spawn_agent(
       },
       on_confirm,
       max_rounds,
+      tools_enabled,
     )
     .await;
 
@@ -809,7 +828,7 @@ pub async fn confirm_ai_tool(
   app: tauri::AppHandle,
   chat_id: String,
   approved: bool,
-  read_only: bool,
+  ai_mode: String,
   max_agent_rounds: u32,
 ) -> Result<(), String> {
   let state = app.state::<AppState>();
@@ -820,6 +839,11 @@ pub async fn confirm_ai_tool(
   if pending.chat_id != chat_id {
     return Err("Chat id mismatch for pending confirmation.".into());
   }
+
+  // Parse mode → read_only flag.
+  let read_only = ai_mode == "read_only";
+  // tools_enabled: in chat mode tools should never have been called, but handle gracefully.
+  let tools_enabled = ai_mode != "chat";
 
   // Resolve each pending call: execute if approved (force), else reject.
   // Note: read-only mode still blocks modifying commands even when approved —
@@ -871,10 +895,10 @@ pub async fn confirm_ai_tool(
     let app2 = app.clone();
     let cid2 = chat_id.clone();
     let conf2 = pending.config.clone();
-    let ro = read_only;
+    let mode = ai_mode.clone();
     let fmt = pending.tool_call_format.clone();
     move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-      save_pending(&app2, &cid2, &conf2, msgs, calls, ro, &fmt, pending_tab);
+      save_pending(&app2, &cid2, &conf2, msgs, calls, mode.clone(), &fmt, pending_tab);
     }
   };
   spawn_agent(
@@ -884,9 +908,10 @@ pub async fn confirm_ai_tool(
     pending.tool_call_format,
     messages,
     None,
-    read_only,
+    ai_mode,
     on_confirm,
     max_agent_rounds as usize,
+    tools_enabled,
   );
   Ok(())
 }

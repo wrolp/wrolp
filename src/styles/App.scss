@@ -6220,6 +6220,12 @@ input[type='password']::-ms-clear {
     opacity: 0.6;
     cursor: default;
   }
+
+  // Keep the expanded option popup dark (OS/WebView defaults to white).
+  option {
+    background: $bg-secondary;
+    color: $text-primary;
+  }
 }
 
 .ai-chat-model-input {
@@ -7698,6 +7704,39 @@ input[type='password']::-ms-clear {
   gap: 6px;
 }
 
+.ai-chat-mode-select {
+  height: 34px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  // Use a solid (non-transparent) dark background: the native option popup
+  // inherits the control's background, so this keeps the expanded dropdown dark
+  // instead of flashing bright white on hover.
+  background: $bg-input;
+  color: $text-secondary;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover:not(:disabled) {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  // Force the popup items to a dark background with light text (the OS/WebView
+  // default is a white popup). Hover highlight is painted natively and can't be
+  // fully overridden, but this removes the white flash.
+  option {
+    background: $bg-secondary;
+    color: $text-primary;
+  }
+}
+
 .ai-chat-action-btn {
   width: 34px;
   height: 34px;
@@ -8198,6 +8237,21 @@ input[type='password']::-ms-clear {
 
   input {
     cursor: pointer;
+  }
+}
+
+.settings-select {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid $border;
+  border-radius: 6px;
+  background: $bg-secondary;
+  color: $text-primary;
+  font-size: 13px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: $accent;
   }
 }
 

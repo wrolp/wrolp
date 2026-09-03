@@ -19,10 +19,10 @@ pub struct AiPendingConfirm {
   /// fall back to the bound terminal when the model passes a bogus tabId).
   /// Preserved across the confirmation pause.
   pub current_tab_id: Option<u32>,
-  /// Whether the agent is running in read-only mode (restricts `run_command` to
-  /// inspection commands). Preserved across the confirmation pause so a resumed
-  /// session keeps the same mode.
-  pub read_only: bool,
+  /// AI mode: "chat" (no tools), "command" (full access), "read_only" (inspection
+  /// commands only). Preserved across the confirmation pause so a resumed session
+  /// keeps the same mode.
+  pub ai_mode: String,
   /// Tool-call wire format chosen for this conversation ("nested" or "flat").
   /// Preserved across the confirmation pause so a resumed session keeps the
   /// same format.

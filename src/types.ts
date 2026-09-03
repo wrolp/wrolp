@@ -533,10 +533,11 @@ export interface AiConfig {
   profiles: AiEndpointProfile[]
   /** Id of the active profile. Falls back to the first profile if invalid. */
   activeId: string
-  /** Default AI mode when a chat is opened: start in read-only mode (only
-   *  inspection commands allowed). Configurable in the global AI settings;
-   *  the per-chat panel can toggle it. */
-  readOnly: boolean
+  /** Default AI chat mode when a chat is opened: "chat" (plain text only, no
+   *  tools), "command" (full access, all commands allowed), or "read_only"
+   *  (inspection commands only). Configurable in the global AI settings; the
+   *  per-chat panel can change it. */
+  defaultMode: 'chat' | 'command' | 'read_only'
   /** When true, `run_command` types the command into the tab's live terminal
    *  (visible on screen + saved in the session recording) instead of running it
    *  silently on a separate channel. Automatically falls back to the silent

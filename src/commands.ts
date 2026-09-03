@@ -862,7 +862,7 @@ export async function startAiAgent(
   messages: AiMessage[],
   tabId?: number,
   profile?: AiEndpointProfile,
-  readOnly?: boolean,
+  aiMode?: string,
   maxAgentRounds?: number,
   toolCallFormat?: 'flat' | 'nested',
 ): Promise<string> {
@@ -870,7 +870,7 @@ export async function startAiAgent(
     messages,
     tabId: tabId ?? null,
     profile: profile ?? null,
-    readOnly: readOnly ?? false,
+    aiMode: aiMode ?? 'command',
     maxAgentRounds: maxAgentRounds ?? 12,
     toolCallFormat: toolCallFormat ?? null,
   })
@@ -879,13 +879,13 @@ export async function startAiAgent(
 export async function confirmAiTool(
   chatId: string,
   approved: boolean,
-  readOnly?: boolean,
+  aiMode?: string,
   maxAgentRounds?: number,
 ): Promise<void> {
   return await invoke<void>('confirm_ai_tool', {
     chatId,
     approved,
-    readOnly: readOnly ?? false,
+    aiMode: aiMode ?? 'command',
     maxAgentRounds: maxAgentRounds ?? 12,
   })
 }
