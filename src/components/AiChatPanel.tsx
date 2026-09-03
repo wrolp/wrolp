@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent, AiPromptTemplate } from '../types'
@@ -533,18 +533,19 @@ export default function AiChatPanel({
   // highlight and make selecting feel sluggish.
   const mdComponents = useMemo(() => makeMarkdownComponents(handleSendToShell), [handleSendToShell])
 
-  // Capture the current text selection within the chat and position a floating
-  // "send to terminal" toolbar above it.
-  const handleSelectionMouseUp = useCallback(() => {
+  // Right-click context menu for a text selection inside the chat.
+  const messagesRef = useRef<HTMLDivElement>(null)
+  const ctxMenuRef = useRef<HTMLDivElement>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; text: string } | null>(null)
+
+  const handleMessagesContextMenu = useCallback((e: React.MouseEvent) => {
+    const container = messagesRef.current
+    if (!container) return
     const sel = window.getSelection()
     const text = sel?.toString().trim() ?? ''
-    const container = messagesRef.current
-    if (!sel || !container || text.length === 0) {
-      setSelection(null)
-      return
-    }
-    // Ignore selections that start outside the chat messages container.
-    let node: Node | null = sel.anchorNode
+    if (text.length === 0) return // no selection → keep the native menu
+    // Only react to selections that live inside the chat messages container.
+    let node: Node | null = sel?.anchorNode ?? null
     let inside = false
     while (node) {
       if (node === container) {
@@ -553,23 +554,63 @@ export default function AiChatPanel({
       }
       node = node.parentNode
     }
-    if (!inside) {
-      setSelection(null)
-      return
-    }
-    const range = sel.getRangeAt(0)
-    const rect = range.getBoundingClientRect()
-    setSelection({
-      text,
-      top: rect.top - 8,
-      left: rect.left + rect.width / 2,
-    })
+    if (!inside) return
+    e.preventDefault()
+    e.stopPropagation()
+    setCtxMenu({ x: e.clientX, y: e.clientY, text })
   }, [])
 
-  const clearSelection = useCallback(() => {
-    setSelection(null)
-    window.getSelection()?.removeAllRanges()
-  }, [])
+  // Close the context menu on any outside interaction.
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = () => setCtxMenu(null)
+    document.addEventListener('click', close)
+    document.addEventListener('scroll', close, true)
+    document.addEventListener('contextmenu', close)
+    return () => {
+      document.removeEventListener('click', close)
+      document.removeEventListener('scroll', close, true)
+      document.removeEventListener('contextmenu', close)
+    }
+  }, [ctxMenu])
+
+  // Keep the menu on-screen when it would overflow the viewport.
+  useLayoutEffect(() => {
+    if (!ctxMenu || !ctxMenuRef.current) return
+    const rect = ctxMenuRef.current.getBoundingClientRect()
+    const overflowX = ctxMenu.x + rect.width - window.innerWidth
+    const overflowY = ctxMenu.y + rect.height - window.innerHeight
+    if (overflowX > 0 || overflowY > 0) {
+      setCtxMenu((m) =>
+        m
+          ? {
+              ...m,
+              x: overflowX > 0 ? m.x - overflowX - 4 : m.x,
+              y: overflowY > 0 ? m.y - rect.height - 4 : m.y,
+            }
+          : m,
+      )
+    }
+  }, [ctxMenu])
+
+  const handleCtxCopy = useCallback(() => {
+    if (!ctxMenu) return
+    navigator.clipboard.writeText(ctxMenu.text).catch(() => {})
+    setCtxMenu(null)
+  }, [ctxMenu])
+
+  const handleCtxSend = useCallback(() => {
+    if (!ctxMenu) return
+    handleSendToShell(ctxMenu.text)
+    setCtxMenu(null)
+  }, [ctxMenu])
+
+  const handleCtxAdd = useCallback(() => {
+    if (!ctxMenu) return
+    const text = ctxMenu.text.trim()
+    if (text.length > 0) onAddCommandSnippet?.(text)
+    setCtxMenu(null)
+  }, [ctxMenu, onAddCommandSnippet])
 
   // Alias setters that operate on the per-tab conversation object so the rest
   // of the logic (runAgent / handleSend) stays unchanged.
@@ -595,12 +636,8 @@ export default function AiChatPanel({
 
   // "Copy whole message" feedback: id of the message currently marked copied.
   const [msgCopied, setMsgCopied] = useState<string | null>(null)
-  // Floating toolbar shown when the user selects text inside the chat: the
-  // selected text plus its position (relative to the messages container).
-  const messagesRef = useRef<HTMLDivElement>(null)
-  const [selection, setSelection] = useState<{ text: string; top: number; left: number } | null>(
-    null,
-  )
+  // (messages ref + right-click context-menu state are declared above, near the
+  //  selection/copy handlers)
   const copyMessage = useCallback((id: string, text: string) => {
     const write = async () => {
       try {
@@ -1338,8 +1375,8 @@ export default function AiChatPanel({
       <div
         className="ai-chat-messages"
         ref={messagesRef}
-        onMouseUp={handleSelectionMouseUp}
-        onScroll={() => setSelection(null)}
+        onContextMenu={handleMessagesContextMenu}
+        onScroll={() => setCtxMenu(null)}
       >
         {!hasContent && (
           <div className="ai-chat-empty">
@@ -1517,46 +1554,28 @@ export default function AiChatPanel({
           </div>
         ))}
 
-        {/* Floating toolbar for a text selection inside the chat */}
-        {selection && (
+        {/* Right-click context menu for a text selection inside the chat */}
+        {ctxMenu && (
           <div
-            className="ai-chat-selection-bar"
-            style={{
-              top: selection.top,
-              left: selection.left,
-              transform: selection.top < 28 ? 'translate(-50%, 8px)' : 'translate(-50%, -100%)',
-            }}
-            onMouseDown={(e) => e.preventDefault()}
+            ref={ctxMenuRef}
+            className="context-menu"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.stopPropagation()}
           >
-            <button
-              type="button"
-              className="ai-chat-selection-send"
-              title={t('sendToShell')}
-              onClick={() => {
-                // Prefer the live selection (still highlighted); fall back to the
-                // captured text so it works even if the highlight was cleared.
-                const live = window.getSelection()?.toString().trim() ?? ''
-                handleSendToShell(live.length > 0 ? live : selection.text)
-                clearSelection()
-              }}
-            >
-              <Icon name="send" size={12} />
+            <div className="context-menu-item" onClick={handleCtxCopy}>
+              <Icon name="copy" size={14} />
+              {t('copy')}
+            </div>
+            <div className="context-menu-divider" />
+            <div className="context-menu-item" onClick={handleCtxSend}>
+              <Icon name="send" size={14} />
               {t('sendToShell')}
-            </button>
-            <button
-              type="button"
-              className="ai-chat-selection-send"
-              title={t('addToCommandList')}
-              onClick={() => {
-                const live = window.getSelection()?.toString().trim() ?? ''
-                const text = (live.length > 0 ? live : selection.text).trim()
-                if (text.length > 0) onAddCommandSnippet?.(text)
-                clearSelection()
-              }}
-            >
-              <Icon name="plus" size={12} />
+            </div>
+            <div className="context-menu-item" onClick={handleCtxAdd}>
+              <Icon name="plus" size={14} />
               {t('addToCommandList')}
-            </button>
+            </div>
           </div>
         )}
 

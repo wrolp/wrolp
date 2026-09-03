@@ -6870,35 +6870,6 @@ input[type='password']::-ms-clear {
   }
 }
 
-.ai-chat-selection-bar {
-  position: fixed;
-  transform: translate(-50%, -100%);
-  z-index: 9999;
-  pointer-events: auto;
-
-  .ai-chat-selection-send {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #fff;
-    background: $accent;
-    border: none;
-    border-radius: 4px;
-    padding: 3px 8px;
-    cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-    white-space: nowrap;
-
-    &:hover {
-      filter: brightness(1.1);
-    }
-  }
-}
-
 .ai-chat-msg-content {
   padding: 10px 14px;
   border-radius: 10px;
