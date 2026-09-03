@@ -4673,16 +4673,7 @@ input[type='password']::-ms-clear {
     flex-direction: column;
   }
 
-  .docker-name-row {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    min-width: 0;
-  }
-
   .docker-name {
-    flex: 1;
-    min-width: 0;
     font-size: 12px;
     color: $text-primary;
     white-space: nowrap;
@@ -4690,8 +4681,10 @@ input[type='password']::-ms-clear {
     text-overflow: ellipsis;
   }
 
-  // Short (12-char) container ID shown beside the name, so containers stay
-  // identifiable even when names are duplicated or truncated in the panel.
+  // Short (12-char) container ID. Sits as a direct child of `.docker-item`
+  // (next to the state badge) so the row's `align-items: center` centers it
+  // against the whole item — the same vertical position as the `running` badge —
+  // instead of nesting it in the name/image column.
   .docker-id {
     flex-shrink: 0;
     font-family: $font-mono;
