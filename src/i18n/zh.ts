@@ -419,6 +419,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   showAllContainersHint: '同时显示已停止的容器',
   rightClickStart: '右键 → 启动容器',
   noRunningContainers: '没有运行中的容器（勾选“全部”可查看已停止的容器）',
+  containerId: '容器 ID',
   // Local terminal
   localTerminal: '本地终端',
   openLocalShell: '打开本地终端',

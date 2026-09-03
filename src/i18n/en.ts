@@ -422,6 +422,7 @@ const en = {
   showAllContainersHint: 'Show stopped containers too',
   rightClickStart: 'Right-click → Start container',
   noRunningContainers: 'No running containers (toggle "All" to see stopped ones)',
+  containerId: 'Container ID',
   // Local terminal
   localTerminal: 'Local Terminal',
   openLocalShell: 'Open Local Terminal',
