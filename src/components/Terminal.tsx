@@ -68,6 +68,7 @@ import {
   highlightCurrentCommandLine,
   getInputLineAtCursorEnd,
   commitSubmittedCommands,
+  isPagerPrompt,
 } from './terminal/promptLine'
 import { commandHighlighter } from './terminal/langHighlight'
 import type { TableCaptureState } from './terminal/tableCapture'
@@ -1579,6 +1580,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // capture can end precisely when the next prompt arrives.
         if (/^[\r\n]+$/.test(data)) {
           const { prompt, command } = splitPromptCommand(getCurrentCommandLine(term))
+          // A pager prompt (`---- More ----`, `--More--`, `-- MORE --`, `---(more)---`)
+          // is device OUTPUT awaiting a keypress, not a submitted command. Skip the
+          // command-processing block (cwd tracking / capture machines / echo recolor) so
+          // paging through long output isn't mistaken for a command input. This mirrors
+          // the guard in `commitSubmittedCommands`; without it a fast Enter on a pager
+          // prompt still got classified as a command. The keystroke itself is still
+          // forwarded to the device below — only the bookkeeping is skipped.
+          if (!isPagerPrompt(command)) {
           // Track directory changes (local AND ssh) by following cd/Set-Location.
           // The backend never updates LocalShell.cwd on `cd`, and SSH prompts only
           // show a *relative* cwd, so we keep the real (absolute) cwd here for `ls`
@@ -1673,6 +1682,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // opened — skip the clickable-link capture entirely for it.
           if (!isTelnet) startLsCaptureIfMatch(command, prompt) // 保留：原 ls/dir 着色+可点击
           // startTableCaptureIfMatch(command, prompt)     // 命令输出高亮：df/ps/free/netstat/...
+          }
         }
       }
       // Mark that we are awaiting this keystroke's echo so the post-echo recolor

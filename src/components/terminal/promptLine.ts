@@ -146,6 +146,10 @@ export function highlightCurrentCommandLine(term: Terminal) {
   const plain = stripAnsi(rawLine)
   const { prompt, command } = splitPromptCommand(plain)
   if (!command && !prompt) return
+  // No prompt marker was found — this is program output, not a shell command line.
+  // Recoloring it would strip indentation and color unrelated text (e.g. network
+  // device help listings like "  install     Perform ...").
+  if (!prompt) return
   // Never recolor full-screen TUI screens (vi/nano/less/tmux/etc.). Those use the
   // alternate buffer and manage their own styling; rewriting a line here strips
   // their colors and corrupts indentation.
@@ -215,6 +219,8 @@ export function getInputLineAtCursorEnd(term: Terminal): { prompt: string; comma
   if (!rawLine) return null
   const plain = stripAnsi(rawLine)
   const { prompt, command } = splitPromptCommand(plain)
+  // No prompt marker — not a live shell command line.
+  if (!prompt) return null
   const buffer = term.buffer.active
   // Full-screen programs (vi/nano/less/tmux/etc.) use the alternate buffer. Every
   // line there is program output, not a shell command line, so never recolor it.
@@ -243,10 +249,15 @@ export function getInputLineAtCursorEnd(term: Terminal): { prompt: string; comma
 // commits each pasted line directly.
 export function commitSubmittedCommands(term: Terminal, data: string, tabId: number) {
   if (/^[\r\n]+$/.test(data)) {
-    const cmd = stripPrompt(getCurrentCommandLine(term))
+    const rawLine = getCurrentCommandLine(term)
+    if (!rawLine) return
+    const { prompt, command } = splitPromptCommand(rawLine)
+    // No prompt marker — not a submitted command (e.g. pager output / help text).
+    if (!prompt) return
+    const cmd = command.trim()
     // Never record a pager prompt (`---- More ----`) as a submitted command —
     // paging through long device output would otherwise flood the command history.
-    if (cmd.trim().length > 0 && !isPagerPrompt(cmd)) {
+    if (cmd.length > 0 && !isPagerPrompt(cmd)) {
       commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
     }
     return
