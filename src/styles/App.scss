@@ -99,7 +99,8 @@ body.resize-v * {
 .settings-btn,
 .ai-chat-btn,
 .pin-btn,
-.cmd-list-btn {
+.cmd-list-btn,
+.net-tools-btn {
   width: 20px;
   height: 20px;
 
@@ -122,6 +123,14 @@ body.resize-v * {
 
   &:hover {
     color: #a5d8ff;
+  }
+}
+
+.net-tools-btn {
+  color: #4ec9b0;
+
+  &:hover {
+    color: #6fe0c4;
   }
 }
 

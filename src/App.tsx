@@ -16,6 +16,7 @@ import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
 import { CommandListPanel } from './components/CommandListPanel'
+import NetToolsPanel from './components/nettools/NetToolsPanel'
 import { Icon } from './components/Icon'
 import FloatingWindow from './components/FloatingWindow'
 import type { FileTreeHandle } from './components/FilePanel'
@@ -164,6 +165,7 @@ export default function App() {
     setCwdByTab((prev) => (prev[tabId] === cwd ? prev : { ...prev, [tabId]: cwd }))
   }, [])
   const [commandListOpen, setCommandListOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('default')
@@ -1717,7 +1719,9 @@ export default function App() {
   const openInEditor = useCallback(async (target: TargetRef, path: string) => {
     const key = `${JSON.stringify(target)}:${path}`
     const legacyTabId =
-      target.kind === 'session' || target.kind === 'local' ? target.tabId : target.jumpTabId
+      target.kind === 'session' || target.kind === 'local' || target.kind === 'ftp'
+        ? target.tabId
+        : target.jumpTabId
     setEditorTabs((prev) => {
       if (prev.some((t) => t.key === key)) return prev
       return [
@@ -5249,6 +5253,7 @@ export default function App() {
         onSettings={handleOpenSettings}
         onAiChat={() => handleOpenAiChat()}
         onCommandList={() => setCommandListOpen((prev) => !prev)}
+        onNetTools={() => setToolsOpen((prev) => !prev)}
       />
 
       <div className="main-content">
@@ -5804,6 +5809,9 @@ export default function App() {
         activeTabId={focusedLeafTabId}
         onSendToTerminal={handleSendSnippetToTerminal}
       />
+
+      {/* Built-in FTP / HTTP / TFTP file servers + TFTP client */}
+      <NetToolsPanel open={toolsOpen} onClose={() => setToolsOpen(false)} />
 
       {/* Ask before closing an editor tab with unsaved changes */}
       {pendingCloseEditorKey && (

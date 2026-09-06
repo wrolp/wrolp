@@ -7,9 +7,16 @@ interface TitlebarProps {
   onAiChat?: () => void
   /** Toggle the floating command list. */
   onCommandList?: () => void
+  /** Open the built-in FTP/HTTP/TFTP tools window. */
+  onNetTools?: () => void
 }
 
-export const Titlebar: React.FC<TitlebarProps> = ({ onSettings, onAiChat, onCommandList }) => {
+export const Titlebar: React.FC<TitlebarProps> = ({
+  onSettings,
+  onAiChat,
+  onCommandList,
+  onNetTools,
+}) => {
   const { t } = useI18n()
   const [isMaximized, setIsMaximized] = useState(false)
   const [alwaysOnTop, setAlwaysOnTop] = useState(false)
@@ -124,6 +131,28 @@ export const Titlebar: React.FC<TitlebarProps> = ({ onSettings, onAiChat, onComm
                 fill="currentColor"
                 stroke="none"
               />
+            </svg>
+          </button>
+        )}
+        {onNetTools && (
+          <button
+            className="titlebar-btn net-tools-btn"
+            onClick={onNetTools}
+            title={t('netToolTitle')}
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="2" y1="12" x2="22" y2="12" />
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
             </svg>
           </button>
         )}

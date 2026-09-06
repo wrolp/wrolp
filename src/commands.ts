@@ -27,7 +27,77 @@ import type {
   TunnelConfig,
   KeepaliveConfig,
   ScanResult,
+  FtpServerArgs,
+  HttpServerArgs,
+  HttpGenCertResult,
+  TftpServerArgs,
+  TftpStartArgs,
+  TftpRow,
+  AppServerStatus,
+  FtpConnectArgs,
+  FtpConnectResult,
 } from './types'
+
+// ==================== In-app network file tools ====================
+
+// ---- FTP client sessions ----
+export async function connectFtp(args: FtpConnectArgs): Promise<FtpConnectResult> {
+  return invoke('connect_ftp', { args })
+}
+export async function disconnectFtp(tabId: number): Promise<void> {
+  await invoke('disconnect_ftp', { tabId })
+}
+
+// ---- Built-in FTP server ----
+export async function ftpServerStatus(): Promise<AppServerStatus> {
+  return invoke('ftp_server_status')
+}
+export async function startFtpServer(cfg: FtpServerArgs): Promise<AppServerStatus> {
+  return invoke('start_ftp_server', { args: cfg })
+}
+export async function stopFtpServer(): Promise<void> {
+  await invoke('stop_ftp_server')
+}
+
+// ---- Built-in HTTP(S) file server ----
+export async function httpServerStatus(): Promise<AppServerStatus> {
+  return invoke('http_server_status')
+}
+export async function startHttpServer(cfg: HttpServerArgs): Promise<AppServerStatus> {
+  return invoke('start_http_server', { args: cfg })
+}
+export async function stopHttpServer(): Promise<void> {
+  await invoke('stop_http_server')
+}
+/** Generate a self-signed PEM certificate/key for HTTPS mode. */
+export async function httpGenerateCert(): Promise<HttpGenCertResult> {
+  return invoke('http_generate_cert')
+}
+
+// ---- Built-in TFTP server ----
+export async function tftpServerStatus(): Promise<AppServerStatus> {
+  return invoke('tftp_server_status')
+}
+export async function startTftpServer(cfg: TftpServerArgs): Promise<AppServerStatus> {
+  return invoke('start_tftp_server', { args: cfg })
+}
+export async function stopTftpServer(): Promise<void> {
+  await invoke('stop_tftp_server')
+}
+
+// ---- TFTP client transfers ----
+export async function tftpStart(args: TftpStartArgs): Promise<TftpRow> {
+  return invoke('tftp_start', { args })
+}
+export async function tftpCancel(rowId: number): Promise<void> {
+  await invoke('tftp_cancel', { rowId })
+}
+export async function tftpRows(kind?: 'client' | 'server'): Promise<TftpRow[]> {
+  return invoke('tftp_rows', { kind: kind ?? null })
+}
+export async function tftpClearRows(kind?: 'client' | 'server'): Promise<void> {
+  await invoke('tftp_clear_rows', { kind: kind ?? null })
+}
 
 export async function listConnections(): Promise<ConnectionConfig[]> {
   const result = await invoke<string>('list_connections')

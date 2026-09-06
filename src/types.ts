@@ -314,6 +314,7 @@ export type TargetRef =
   | { kind: 'docker'; jumpTabId: number; container: string; user?: string }
   | { kind: 'dockerSsh'; jumpTabId: number; host: string; port: number; auth: TargetAuth }
   | { kind: 'local'; tabId: number }
+  | { kind: 'ftp'; tabId: number }
 
 /** A Docker container discovered via `docker ps` on a connected (jump) host. */
 export interface ContainerInfo {
@@ -463,6 +464,8 @@ export function targetLabel(target: TargetRef): string {
       return `docker-ssh:${target.host}:${target.port}`
     case 'local':
       return 'Local machine'
+    case 'ftp':
+      return 'FTP'
   }
 }
 
@@ -683,4 +686,99 @@ export function mergeLayout(base: WorkspaceLayout, override: unknown): Workspace
     return result as T
   }
   return deepMerge(base, override)
+}
+
+// ===== In-app file servers / TFTP transfers (tools) =====
+
+/** Shared config for starting the built-in FTP server. */
+export interface FtpServerArgs {
+  rootDir: string
+  port: number
+  readOnly: boolean
+  anonymous: boolean
+  username?: string
+  password?: string
+}
+
+/** Shared config for starting the built-in HTTP(S) file server. */
+export interface HttpServerArgs {
+  rootDir: string
+  port: number
+  readOnly: boolean
+  requireAuth: boolean
+  token?: string
+  enableTls: boolean
+  certPath?: string
+  keyPath?: string
+  maxUploadSize?: number
+}
+
+/** Shared config for starting the built-in TFTP server. */
+export interface TftpServerArgs {
+  bindIp?: string
+  port: number
+  rootDir: string
+}
+
+/** Paths returned by `http_generate_cert`. */
+export interface HttpGenCertResult {
+  certPath: string
+  keyPath: string
+}
+
+/** Status snapshot returned by the *_server_status commands. */
+export interface AppServerStatus {
+  running: boolean
+  kind: string
+  port: number
+  startedAtMs: number
+}
+
+/** Direction of a TFTP transfer from the client's point of view. */
+export type TftpDirection = 'upload' | 'download'
+
+/** Arguments for starting a single TFTP client transfer. */
+export interface TftpStartArgs {
+  serverHost: string
+  serverPort?: number
+  remoteName: string
+  localPath: string
+  direction: TftpDirection
+}
+
+/** One TFTP transfer row (client or server) shown in the tools panel. */
+export interface TftpRow {
+  id: number
+  /** "client" | "server" */
+  kind: string
+  /** Remote file name */
+  name: string
+  /** Remote peer (ip:port) */
+  peer: string
+  /** "send" | "recv" for server rows, "upload" | "download" for client rows */
+  direction: string
+  transferred: number
+  total: number
+  status: 'running' | 'done' | 'error' | 'canceled' | string
+  message: string
+  startedMs: number
+  localPath: string
+}
+
+/** Arguments for connecting an FTP client session (target kind "ftp"). */
+export interface FtpConnectArgs {
+  host: string
+  port?: number
+  username: string
+  password?: string
+  /** "none" | "explicit" | "implicit" */
+  encryption?: 'none' | 'explicit' | 'implicit'
+  tabId: number
+  skipVerify?: boolean
+}
+
+/** Result of a successful `connect_ftp` call. */
+export interface FtpConnectResult {
+  status: string
+  tabId: number
 }

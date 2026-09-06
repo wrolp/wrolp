@@ -261,6 +261,11 @@ pub(crate) mod recordings;
 pub(crate) mod ai_chat;
 pub(crate) mod ai_term;
 pub(crate) mod tunnels;
+pub(crate) mod ftp;
+pub(crate) mod ftp_server;
+pub(crate) mod http_server;
+pub(crate) mod tftp;
+pub(crate) mod tftp_server;
 
 // Re-export every command so `crate::commands::<name>` keeps working from lib.rs.
 pub use connections::*;
@@ -275,3 +280,8 @@ pub use recordings::*;
 pub use ai_chat::*;
 pub use ai_term::*;
 pub use tunnels::*;
+pub use ftp::*;
+pub use ftp_server::*;
+pub use http_server::*;
+pub use tftp::*;
+pub use tftp_server::*;

@@ -596,6 +596,12 @@ pub enum TargetRef {
     #[serde(rename = "tabId")]
     tab_id: u32,
   },
+  /// An active FTP connection (no terminal — only remote file browsing).
+  #[serde(rename = "ftp")]
+  Ftp {
+    #[serde(rename = "tabId")]
+    tab_id: u32,
+  },
 }
 
 /// A Docker container discovered via `docker ps` on the jump host.
@@ -684,6 +690,20 @@ pub struct AppState {
   pub serial_sessions: StdMutex<HashMap<u32, SerialSession>>,
   /// Active Telnet terminal sessions: tab_id → session.
   pub telnet_sessions: StdMutex<HashMap<u32, TelnetSession>>,
+  /// Active FTP client sessions: tab_id → control stream (no terminal, file panel only).
+  pub ftp_sessions: StdMutex<HashMap<u32, crate::ftp_fs::FtpSession>>,
+  /// Running in-app FTP server (tools panel).
+  pub ftp_server: StdMutex<Option<crate::commands::ftp_server::FtpServerRuntime>>,
+  /// Running in-app HTTP(S) file server (tools panel).
+  pub http_server: StdMutex<Option<crate::commands::http_server::HttpServerRuntime>>,
+  /// Running in-app TFTP server (tools panel).
+  pub tftp_server: StdMutex<Option<crate::commands::tftp_server::TftpServerRuntime>>,
+  /// All in-flight TFTP transfers (client + server) for the tools panels.
+  pub tftp_transfers: StdMutex<HashMap<u64, TransferRow>>,
+  /// Next TFTP transfer row id.
+  pub next_tftp_id: AtomicU64,
+  /// Cancel channels for in-flight TFTP transfers: row_id → sender.
+  pub tftp_cancels: StdMutex<HashMap<u64, tokio::sync::oneshot::Sender<()>>>,
   /// Polling output buffer: tab_id → pending text chunks (frontend polls every 100ms)
   pub output_buffers: StdMutex<HashMap<u32, Vec<String>>>,
   /// AI output capture sinks for SSH tabs: tab_id → accumulated output.
@@ -797,6 +817,42 @@ pub struct LocalShellDir {
   pub last_used: u64,
 }
 
+// ==================== Tools: TFTP transfers & in-app file servers ==========
+
+/// One TFTP transfer row (client and server) shown in the tools panels.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferRow {
+  pub id: u64,
+  /// "client" or "server".
+  pub kind: String,
+  /// Remote file name.
+  pub name: String,
+  /// Peer address (server panel: the remote client; client panel: the server).
+  pub peer: String,
+  /// "download" or "upload" from the panel's point of view.
+  pub direction: String,
+  pub transferred: u64,
+  /// 0 while unknown (TFTP has no pre-transfer size unless a server advertises tsize).
+  pub total: u64,
+  /// running / done / error / canceled
+  pub status: String,
+  pub message: String,
+  pub started_ms: u64,
+  /// Absolute local path for client-side transfers ("" for server rows).
+  pub local_path: String,
+}
+
+/// Status snapshot for a running in-app server (FTP / HTTP / TFTP server).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppServerStatus {
+  pub running: bool,
+  pub kind: String,
+  pub port: u16,
+  pub started_at_ms: u64,
+}
+
 impl AppState {
   /// Build state bound to the real user config dir (normal app behaviour).
   pub fn new(db: DbConn) -> Self {
@@ -819,6 +875,13 @@ impl AppState {
       sessions: StdMutex::new(HashMap::new()),
       serial_sessions: StdMutex::new(HashMap::new()),
       telnet_sessions: StdMutex::new(HashMap::new()),
+      ftp_sessions: StdMutex::new(HashMap::new()),
+      ftp_server: StdMutex::new(None),
+      http_server: StdMutex::new(None),
+      tftp_server: StdMutex::new(None),
+      tftp_transfers: StdMutex::new(HashMap::new()),
+      next_tftp_id: AtomicU64::new(1),
+      tftp_cancels: StdMutex::new(HashMap::new()),
       output_buffers: StdMutex::new(HashMap::new()),
       ai_captures: StdMutex::new(HashMap::new()),
       next_ai_term_seq: AtomicU64::new(1),

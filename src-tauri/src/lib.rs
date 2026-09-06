@@ -7,10 +7,12 @@ pub mod commands;
 pub mod db;
 mod docker_analysis;
 mod docker_fs;
+mod ftp_fs;
 mod host_analysis;
 mod local_fs;
 mod remote_fs;
 pub mod ssh_session;
+mod tftp_proto;
 mod vault;
 #[cfg(windows)]
 mod webview_drop;
@@ -312,6 +314,22 @@ pub fn run() {
       commands::add_tunnel,
       commands::update_tunnel,
       commands::remove_tunnel,
+      commands::connect_ftp,
+      commands::disconnect_ftp,
+      commands::start_ftp_server,
+      commands::stop_ftp_server,
+      commands::ftp_server_status,
+      commands::start_http_server,
+      commands::stop_http_server,
+      commands::http_server_status,
+      commands::http_generate_cert,
+      commands::tftp_start,
+      commands::tftp_cancel,
+      commands::tftp_rows,
+      commands::tftp_clear_rows,
+      commands::start_tftp_server,
+      commands::stop_tftp_server,
+      commands::tftp_server_status,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

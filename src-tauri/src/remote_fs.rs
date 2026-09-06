@@ -240,6 +240,9 @@ pub async fn build_sftp(
     TargetRef::Local { .. } => {
       Err("Target is a local target and does not support SFTP streaming upload".into())
     }
+    TargetRef::Ftp { .. } => {
+      Err("Target is an FTP connection and does not support SFTP streaming upload".into())
+    }
   }
 }
 
@@ -262,6 +265,13 @@ pub async fn build_fs(
       )))
     }
     TargetRef::Local { .. } => Ok(Box::new(crate::local_fs::LocalFs::new())),
+    TargetRef::Ftp { tab_id } => {
+      let sessions = state.ftp_sessions.lock().map_err(|e| e.to_string())?;
+      let session = sessions
+        .get(tab_id)
+        .ok_or_else(|| format!("FTP session {tab_id} not connected"))?;
+      Ok(Box::new(crate::ftp_fs::FtpFs::new(session.stream.clone())))
+    }
     _ => {
       let sftp = build_sftp(app, state, target).await?;
       Ok(Box::new(SftpFs::new(sftp)))

@@ -344,6 +344,7 @@ pub async fn target_download_directory(
   let start = std::time::Instant::now();
   let tab_id = match &target {
     TargetRef::Session { tab_id } | TargetRef::Local { tab_id } => *tab_id,
+    TargetRef::Ftp { tab_id } => *tab_id,
     TargetRef::JumpRemote { jump_tab_id, .. }
     | TargetRef::DockerSsh { jump_tab_id, .. }
     | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
@@ -779,6 +780,7 @@ pub async fn target_upload_local_dir(
 ) -> Result<DirUploadSummary, String> {
   let tab_id = match &target {
     TargetRef::Session { tab_id } | TargetRef::Local { tab_id } => *tab_id,
+    TargetRef::Ftp { tab_id } => *tab_id,
     TargetRef::JumpRemote { jump_tab_id, .. }
     | TargetRef::DockerSsh { jump_tab_id, .. }
     | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
