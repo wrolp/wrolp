@@ -910,6 +910,34 @@ export default function AiChatPanel({
     e.target.value = ''
   }, [])
 
+  // Paste image(s) directly from the clipboard into the pending attachments.
+  // When the clipboard holds an image we hijack the paste so plain-text typing
+  // isn't disturbed for non-image pastes.
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const imageItems = Array.from(items).filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+    if (imageItems.length === 0) return
+    e.preventDefault()
+    const readers = imageItems.map(
+      (it) =>
+        new Promise<string>((resolve, reject) => {
+          const file = it.getAsFile()
+          if (!file) {
+            reject(new Error('empty image'))
+            return
+          }
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(file)
+        }),
+    )
+    Promise.all(readers)
+      .then((urls) => setPendingImages((prev) => [...prev, ...urls]))
+      .catch(() => {})
+  }, [])
+
   // Fill the input box with text (e.g. a clicked template) instead of sending it,
   // so the user can review/edit before asking.
   const fillInput = useCallback((text: string) => {
@@ -1672,6 +1700,7 @@ export default function AiChatPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={t('aiChatPlaceholder')}
             rows={1}
             disabled={streaming}
