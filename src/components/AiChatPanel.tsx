@@ -9,6 +9,9 @@ import {
   listAiModels,
   confirmAiTool,
   sendInput,
+  localSendInput,
+  serialSendInput,
+  telnetSendInput,
   listAiPromptTemplates,
   saveAiPromptTemplate,
   deleteAiPromptTemplate,
@@ -174,6 +177,12 @@ interface AiChatPanelProps {
   onOpenSettings?: () => void
   /** Save selected text as a command snippet (floating command list). */
   onAddCommandSnippet?: (text: string) => void
+  /** Connection type of the terminal tab this chat is attached to, so that
+   *  "send to terminal" routes to the correct input channel. When omitted it
+   *  defaults to SSH (the original behavior). */
+  isLocal?: boolean
+  isSerial?: boolean
+  isTelnet?: boolean
   /** Default AI chat mode, taken from the global AI setting. The panel can
    *  toggle away from it at runtime. */
   defaultMode?: 'chat' | 'command' | 'read_only'
@@ -248,6 +257,9 @@ export default function AiChatPanel({
   onAddCommandSnippet,
   defaultMode,
   defaultMaxAgentRounds,
+  isLocal = false,
+  isSerial = false,
+  isTelnet = false,
 }: AiChatPanelProps) {
   const { t } = useI18n()
   const {
@@ -519,12 +531,25 @@ export default function AiChatPanel({
     (text: string) => {
       const trimmed = text.replace(/\s+$/, '')
       if (trimmed.length === 0) return
-      sendInput(tabId, trimmed)
+      // Only insert the text — never auto-execute. Backends write raw bytes
+      // with no trailing newline, and we deliberately don't add a CR, so the
+      // user can review/edit the line and press Enter themselves (regardless
+      // of connection type: SSH / local / serial / telnet).
+      const data = trimmed
+      const sent = isLocal
+        ? localSendInput(tabId, data)
+        : isSerial
+          ? serialSendInput(tabId, data)
+          : isTelnet
+            ? telnetSendInput(tabId, data)
+            : // default: SSH session
+              sendInput(tabId, data)
+      Promise.resolve(sent).catch((e) => console.error('send to terminal error:', e))
       // Return keyboard focus to the terminal so the user can keep working in
       // the shell without clicking it again.
       focusTerminal(tabId)
     },
-    [tabId],
+    [tabId, isLocal, isSerial, isTelnet],
   )
 
   // Memoize the markdown component map so unrelated re-renders (e.g. the

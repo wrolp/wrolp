@@ -2928,6 +2928,14 @@ export default function App() {
     [loadTunnels, handleConnectionChange],
   )
 
+  // Resolve which input channel "send to terminal" should use for a tab's
+  // connection type (mirrors the dispatch inside Terminal.tsx).
+  const connFlagsForType = (type?: string): { isLocal: boolean; isSerial: boolean; isTelnet: boolean } => ({
+    isLocal: type === 'localShell',
+    isSerial: type === 'serial',
+    isTelnet: type === 'telnet',
+  })
+
   const renderTerminalForTab = (tab: TabInfo, isFocused: boolean, leafId?: string) => {
     const connectConfig = tab.connectionId
       ? (() => {
@@ -4623,6 +4631,9 @@ export default function App() {
                   >
                     <AiChatPanel
                       tabId={tid}
+                      isLocal={connFlagsForType(tab?.tabType).isLocal}
+                      isSerial={connFlagsForType(tab?.tabType).isSerial}
+                      isTelnet={connFlagsForType(tab?.tabType).isTelnet}
                       config={activeProfile}
                       profiles={aiConfig?.profiles ?? []}
                       onSelectProfile={handleSelectAiProfile}
@@ -5403,6 +5414,9 @@ export default function App() {
                   <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                     <AiChatPanel
                       tabId={activeTerminalTab.tabId}
+                      isLocal={connFlagsForType(activeTerminalTab.tabType).isLocal}
+                      isSerial={connFlagsForType(activeTerminalTab.tabType).isSerial}
+                      isTelnet={connFlagsForType(activeTerminalTab.tabType).isTelnet}
                       config={activeProfile}
                       profiles={aiConfig?.profiles ?? []}
                       onSelectProfile={handleSelectAiProfile}
@@ -5571,6 +5585,9 @@ export default function App() {
                   <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                     <AiChatPanel
                       tabId={aiFloatingTabId}
+                      isLocal={connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType).isLocal}
+                      isSerial={connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType).isSerial}
+                      isTelnet={connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType).isTelnet}
                       config={activeProfile}
                       profiles={aiConfig?.profiles ?? []}
                       onSelectProfile={handleSelectAiProfile}
