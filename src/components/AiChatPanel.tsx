@@ -1706,7 +1706,12 @@ export default function AiChatPanel({
             <div className="ai-chat-image-previews">
               {pendingImages.map((url, i) => (
                 <div className="ai-chat-image-chip" key={i}>
-                  <img src={url} alt="" />
+                  <img
+                    src={url}
+                    alt=""
+                    onClick={() => setPreviewImage(url)}
+                    title={t('aiChatViewImage')}
+                  />
                   <button
                     type="button"
                     className="ai-chat-image-remove"
