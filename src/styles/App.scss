@@ -4218,6 +4218,17 @@ input[type='password']::-ms-clear {
   color: $text-muted;
 }
 
+.session-loc {
+  display: inline-block;
+  color: $accent;
+  margin-right: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+  vertical-align: middle;
+}
+
 .rename-input {
   font-size: 13px;
   padding: 1px 4px;

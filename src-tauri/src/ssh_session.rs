@@ -655,12 +655,26 @@ pub struct UploadSession {
   pub control: Arc<TransferControl>,
 }
 
-/// Active session recording — accumulates events in memory, flushed to SQLite periodically
+/// Active session recording — accumulates events in memory, appended to a
+/// per-session NDJSON file under `<data-root>/recordings/<ws>/<group>/<conn>/`
+/// (see `rec_file.rs`); SQLite keeps only the session index row. The legacy
+/// `session_events` table is no longer written for new recordings, only read
+/// for old sessions whose `events_file` column is NULL.
 pub struct ActiveRecording {
   pub session_id: String,
   pub session_version: u64,
   pub connection_id: String,
   pub connection_name: String,
+  /// Snapshot of the workspace name taken at connect (events-file folder
+  /// layer 1). Falls back to the workspace id, then to "default".
+  pub workspace_name: Option<String>,
+  /// Snapshot of the connection group taken at connect (folder layer 2);
+  /// None means the connection is ungrouped (`__ungrouped__` folder).
+  pub group_name: Option<String>,
+  /// Absolute events-file path snapshot, derived once at connect. The file is
+  /// only created lazily on the first non-empty flush — sessions that record
+  /// nothing never leave a file or empty folders behind.
+  pub events_file: Option<std::path::PathBuf>,
   pub started_at: std::time::Instant,
   pub started_at_iso: String,
   pub seq_counter: u64,

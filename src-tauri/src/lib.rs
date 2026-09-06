@@ -11,6 +11,7 @@ mod docker_fs;
 mod ftp_fs;
 mod host_analysis;
 mod local_fs;
+mod rec_file;
 mod remote_fs;
 pub mod ssh_session;
 #[cfg(test)]
@@ -262,6 +263,10 @@ pub fn run() {
       commands::get_session_events,
       commands::delete_session,
       commands::delete_all_sessions,
+      commands::reveal_session_file,
+      commands::export_legacy_sessions,
+      commands::rescan_recording_files,
+      commands::export_session_cast,
       commands::rename_session,
       commands::extract_commands,
       commands::commit_command,
@@ -286,6 +291,8 @@ pub fn run() {
       commands::set_keepalive,
       commands::get_data_root,
       commands::set_data_root,
+      commands::get_key_follow_option,
+      commands::set_key_follow_option,
       commands::set_recording_enabled,
       commands::get_recording_enabled,
       commands::analyze_host,

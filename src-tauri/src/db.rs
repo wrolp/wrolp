@@ -17,6 +17,14 @@ pub struct SessionSummary {
   pub duration_seconds: Option<i64>,
   pub title: Option<String>,
   pub event_count: i64,
+  /// Workspace/group folder segments (from the events-file path layout),
+  /// filled in by `list_sessions`; `None` for legacy rows still stored in
+  /// `session_events`.
+  pub workspace_name: Option<String>,
+  pub group_name: Option<String>,
+  /// Absolute events-file path when the file exists (enables "reveal in
+  /// folder" / breadcrumb); `None` for legacy or stale-index rows.
+  pub events_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,25 +101,48 @@ pub fn init_db(data_dir: &std::path::Path) -> Result<DbConn, String> {
     .execute_batch(SCHEMA)
     .map_err(|e| format!("Schema init failed: {}", e))?;
   // Migration: older DBs lack the `category` column on ai_prompt_templates.
-  let has_category: bool = conn
-    .prepare("PRAGMA table_info(ai_prompt_templates)")
-    .map_err(|e| e.to_string())?
-    .query_map([], |row| row.get::<_, String>(1))
-    .map_err(|e| e.to_string())?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|e| e.to_string())?
-    .iter()
-    .any(|name| name == "category");
-  if !has_category {
+  if !has_column(&conn, "ai_prompt_templates", "category")? {
     conn
       .execute_batch("ALTER TABLE ai_prompt_templates ADD COLUMN category TEXT NOT NULL DEFAULT ''")
       .map_err(|e| format!("Migration failed (category column): {}", e))?;
   }
+  // Migration (recording → files): older DBs lack the snapshot / events-file
+  // columns on `sessions`. `events_file` stays NULL for legacy recordings,
+  // which keeps reading from `session_events` (backward compatible).
+  for (column, ddl) in [
+    ("workspace_id", "TEXT"),
+    ("group_name", "TEXT"),
+    ("events_file", "TEXT"),
+  ] {
+    if !has_column(&conn, "sessions", column)? {
+      let sql = format!("ALTER TABLE sessions ADD COLUMN {} {}", column, ddl);
+      conn
+        .execute_batch(&sql)
+        .map_err(|e| format!("Migration failed (sessions.{}): {}", column, e))?;
+    }
+  }
   Ok(Arc::new(StdMutex::new(conn)))
+}
+
+/// Whether `column` exists on `table` (via `PRAGMA table_info`). Table/column
+/// names come from fixed internal constants, never from user input.
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+  let mut stmt = conn
+    .prepare(&format!("PRAGMA table_info({})", table))
+    .map_err(|e| e.to_string())?;
+  let names = stmt
+    .query_map([], |row| row.get::<_, String>(1))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(names.iter().any(|name| name == column))
 }
 
 // ==================== Session Queries ====================
 
+/// Insert a session index row. `workspace_id`/`group_name` are the connection's
+/// snapshot at record time (folder layers 1-2); `events_file` starts NULL and
+/// is back-filled on the first non-empty flush (see `update_event_count_delta`).
 pub fn create_session(
   conn: &Connection,
   id: &str,
@@ -119,14 +150,63 @@ pub fn create_session(
   connection_name: &str,
   tab_id: u32,
   started_at: &str,
+  workspace_id: Option<&str>,
+  group_name: Option<&str>,
 ) -> Result<(), String> {
   conn
     .execute(
-      "INSERT INTO sessions (id, connection_id, connection_name, tab_id, started_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-      params![id, connection_id, connection_name, tab_id, started_at],
+      "INSERT INTO sessions (id, connection_id, connection_name, tab_id, started_at, workspace_id, group_name) \
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      params![id, connection_id, connection_name, tab_id, started_at, workspace_id, group_name],
     )
     .map_err(|e| e.to_string())?;
   Ok(())
+}
+
+/// Increment `event_count` by `delta` after events were appended to the events
+/// file, and back-fill `events_file` on its first write (`COALESCE` keeps an
+/// already-stored path untouched). `events_file` is an absolute path.
+pub fn update_event_count_delta(
+  conn: &Connection,
+  session_id: &str,
+  delta: i64,
+  events_file: &str,
+) -> Result<(), String> {
+  conn
+    .execute(
+      "UPDATE sessions SET event_count = event_count + ?1, events_file = COALESCE(events_file, ?2) \
+       WHERE id = ?3",
+      params![delta, events_file, session_id],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Read the session's current `event_count` (incrementally maintained column).
+pub fn session_event_count(conn: &Connection, session_id: &str) -> Result<i64, String> {
+  conn
+    .query_row(
+      "SELECT event_count FROM sessions WHERE id = ?1",
+      params![session_id],
+      |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// The session's events-file absolute path (column may be NULL for legacy
+/// recordings still stored in `session_events`).
+pub fn session_events_file(conn: &Connection, session_id: &str) -> Result<Option<String>, String> {
+  let mut stmt = conn
+    .prepare("SELECT events_file FROM sessions WHERE id = ?1")
+    .map_err(|e| e.to_string())?;
+  let file = stmt
+    .query_map(params![session_id], |row| row.get::<_, Option<String>>(0))
+    .map_err(|e| e.to_string())?
+    .next()
+    .transpose()
+    .map_err(|e| e.to_string())?
+    .flatten();
+  Ok(file)
 }
 
 pub fn finalize_session(
@@ -176,7 +256,7 @@ pub fn list_sessions(
   connection_id: Option<&str>,
   limit: u32,
 ) -> Result<Vec<SessionSummary>, String> {
-  let mut sql = String::from("SELECT id, connection_id, connection_name, started_at, ended_at, duration_seconds, title, event_count FROM sessions");
+  let mut sql = String::from("SELECT id, connection_id, connection_name, started_at, ended_at, duration_seconds, title, event_count, events_file FROM sessions");
   let mut filters: Vec<String> = Vec::new();
   if connection_id.is_some() {
     filters.push("connection_id = ?1".to_string());
@@ -216,6 +296,12 @@ fn map_session_row(row: &rusqlite::Row) -> rusqlite::Result<SessionSummary> {
     duration_seconds: row.get(5)?,
     title: row.get(6)?,
     event_count: row.get(7)?,
+    // Breadcrumb segments are derived by the caller from the events-file path
+    // (the DB only stores the raw snapshot columns); events_file comes straight
+    // from the row so the caller can check existence and resolve folders.
+    workspace_name: None,
+    group_name: None,
+    events_file: row.get(8)?,
   })
 }
 
@@ -243,7 +329,10 @@ pub fn get_session_events(
   Ok(rows)
 }
 
-pub fn delete_session(conn: &Connection, session_id: &str) -> Result<(), String> {
+/// Delete a session row (and any legacy `session_events` rows) and return the
+/// events-file path that was recorded on it, so the caller can remove the file.
+pub fn delete_session(conn: &Connection, session_id: &str) -> Result<Option<String>, String> {
+  let events_file = session_events_file(conn, session_id)?;
   conn
     .execute(
       "DELETE FROM session_events WHERE session_id = ?1",
@@ -253,17 +342,27 @@ pub fn delete_session(conn: &Connection, session_id: &str) -> Result<(), String>
   conn
     .execute("DELETE FROM sessions WHERE id = ?1", params![session_id])
     .map_err(|e| e.to_string())?;
-  Ok(())
+  Ok(events_file)
 }
 
-pub fn delete_all_sessions(conn: &Connection) -> Result<(), String> {
+/// Delete every session row (and legacy events) and return the events-file
+/// paths of all deleted sessions, so the caller can remove those files.
+pub fn delete_all_sessions(conn: &Connection) -> Result<Vec<String>, String> {
+  let mut stmt = conn
+    .prepare("SELECT events_file FROM sessions WHERE events_file IS NOT NULL")
+    .map_err(|e| e.to_string())?;
+  let files = stmt
+    .query_map([], |row| row.get::<_, String>(0))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
   conn
     .execute("DELETE FROM session_events", [])
     .map_err(|e| e.to_string())?;
   conn
     .execute("DELETE FROM sessions", [])
     .map_err(|e| e.to_string())?;
-  Ok(())
+  Ok(files)
 }
 
 pub fn rename_session(conn: &Connection, session_id: &str, title: &str) -> Result<(), String> {
@@ -280,6 +379,129 @@ pub fn count_session_events(conn: &Connection, session_id: &str) -> Result<i64, 
   conn
     .query_row(
       "SELECT COUNT(*) FROM session_events WHERE session_id = ?1",
+      params![session_id],
+      |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+// ==================== Recording Maintenance (export / rescan) ====================
+
+/// One session whose event stream is still in the legacy `session_events`
+/// table (`events_file` IS NULL). A candidate for the one-click export
+/// migration to the file layout.
+#[derive(Debug, Clone)]
+pub struct LegacySessionRow {
+  pub id: String,
+  pub connection_name: Option<String>,
+  pub started_at: String,
+  pub workspace_id: Option<String>,
+  pub group_name: Option<String>,
+  pub event_count: i64,
+}
+
+/// Sessions still backed by `session_events` (no events file yet), oldest first.
+pub fn list_legacy_sessions(conn: &Connection) -> Result<Vec<LegacySessionRow>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT id, connection_name, started_at, workspace_id, group_name, event_count \
+       FROM sessions WHERE events_file IS NULL AND event_count > 0 ORDER BY started_at",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map([], |row| {
+      Ok(LegacySessionRow {
+        id: row.get(0)?,
+        connection_name: row.get(1)?,
+        started_at: row.get(2)?,
+        workspace_id: row.get(3)?,
+        group_name: row.get(4)?,
+        event_count: row.get(5)?,
+      })
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+/// Atomically point a session at its new events file and drop the migrated
+/// legacy rows (one-way: the file becomes the single source of truth).
+pub fn migrate_session_to_file(
+  conn: &Connection,
+  session_id: &str,
+  events_file: &str,
+  event_count: i64,
+) -> Result<(), String> {
+  let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+  tx.execute(
+    "UPDATE sessions SET events_file = ?1, event_count = ?2 WHERE id = ?3",
+    params![events_file, event_count, session_id],
+  )
+  .map_err(|e| e.to_string())?;
+  tx.execute(
+    "DELETE FROM session_events WHERE session_id = ?1",
+    params![session_id],
+  )
+  .map_err(|e| e.to_string())?;
+  tx.commit().map_err(|e| e.to_string())
+}
+
+/// Absolute events-file paths currently referenced by the sessions index (the
+/// recordings rescan uses this set to distinguish orphan files from indexed).
+pub fn all_events_files(conn: &Connection) -> Result<Vec<String>, String> {
+  let mut stmt = conn
+    .prepare("SELECT events_file FROM sessions WHERE events_file IS NOT NULL")
+    .map_err(|e| e.to_string())?;
+  let files = stmt
+    .query_map([], |row| row.get::<_, String>(0))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(files)
+}
+
+/// A sessions row reconstructed by the recordings rescan from an orphan
+/// events file. `connection_id` is the matched connection when one exists,
+/// otherwise a best-effort placeholder; snapshot columns may be `None`.
+pub struct ScannedSession<'a> {
+  pub id: &'a str,
+  pub connection_id: &'a str,
+  pub connection_name: Option<&'a str>,
+  pub workspace_id: Option<&'a str>,
+  pub group_name: Option<&'a str>,
+  pub started_at: &'a str,
+  pub event_count: i64,
+  pub events_file: &'a str,
+}
+
+pub fn insert_scanned_session(conn: &Connection, s: &ScannedSession) -> Result<(), String> {
+  conn
+    .execute(
+      "INSERT INTO sessions (id, connection_id, connection_name, tab_id, started_at, \
+       event_count, workspace_id, group_name, events_file) \
+       VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8)",
+      params![
+        s.id,
+        s.connection_id,
+        s.connection_name,
+        s.started_at,
+        s.event_count,
+        s.workspace_id,
+        s.group_name,
+        s.events_file
+      ],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// A session's `started_at` RFC3339 timestamp (the row may be gone — caller
+/// filters first).
+pub fn session_started_at(conn: &Connection, session_id: &str) -> Result<String, String> {
+  conn
+    .query_row(
+      "SELECT started_at FROM sessions WHERE id = ?1",
       params![session_id],
       |row| row.get(0),
     )

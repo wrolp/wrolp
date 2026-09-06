@@ -10,7 +10,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at        TEXT,
   duration_seconds INTEGER,
   title           TEXT,
-  event_count     INTEGER DEFAULT 0
+  event_count     INTEGER DEFAULT 0,
+  -- Snapshot of the connection's workspace/group at record time (nullable for
+  -- legacy rows / failed lookups); folder layers 1-2 of the events file.
+  workspace_id    TEXT,
+  group_name      TEXT,
+  -- Absolute path to the session's NDJSON events file; NULL = legacy data
+  -- stored in `session_events`. New recordings only write to this file.
+  events_file     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS session_events (

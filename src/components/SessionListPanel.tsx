@@ -6,7 +6,12 @@ import {
   deleteAllSessions,
   renameSession,
   extractCommands,
+  revealSessionFile,
+  exportLegacySessions,
+  rescanRecordingFiles,
+  exportSessionCast,
 } from '../commands'
+import { save } from '@tauri-apps/plugin-dialog'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -32,6 +37,7 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
     title: string
     message: string
     danger: boolean
+    confirmLabel?: string
     onConfirm: () => void
   } | null>(null)
 
@@ -94,6 +100,93 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
     }
   }
 
+  const handleReveal = async (id: string) => {
+    try {
+      await revealSessionFile(id)
+    } catch (e) {
+      console.error('Failed to reveal session file:', e)
+    }
+  }
+
+  const failedText = (failed: string[]) =>
+    failed.length
+      ? '\n\n' + t('failedItems') + '\n' + failed.slice(0, 5).join('\n') + (failed.length > 5 ? '\n…' : '')
+      : ''
+
+  /** FUT1: one-click export of legacy SQLite-backed sessions into files. */
+  const runLegacyMigration = async () => {
+    setConfirm(null)
+    try {
+      const r = await exportLegacySessions()
+      reload()
+      setConfirm({
+        title: t('migrateLegacyDoneTitle'),
+        message:
+          r.migrated === 0
+            ? t('migrateLegacyNone') + failedText(r.failed)
+            : t('migrateLegacyDone', { m: r.migrated, e: r.events }) + failedText(r.failed),
+        danger: r.failed.length > 0,
+        confirmLabel: t('ok'),
+        onConfirm: () => setConfirm(null),
+      })
+    } catch (e) {
+      console.error('Legacy migration failed:', e)
+      setConfirm(null)
+    }
+  }
+
+  /** FUT2: scan `recordings/` and rebuild session rows for orphan files. */
+  const handleMigrateLegacy = () => {
+    setConfirm({
+      title: t('migrateLegacy'),
+      message: t('migrateLegacyConfirm'),
+      danger: true,
+      confirmLabel: t('confirmMigrate'),
+      onConfirm: runLegacyMigration,
+    })
+  }
+
+  const runRescan = async () => {
+    try {
+      const r = await rescanRecordingFiles()
+      reload()
+      setConfirm({
+        title: t('rescanDoneTitle'),
+        message:
+          (r.restored > 0
+            ? t('rescanDone', { restored: r.restored, empty: r.removedEmpty })
+            : t('rescanNone')) + failedText(r.failed),
+        danger: r.failed.length > 0,
+        confirmLabel: t('ok'),
+        onConfirm: () => setConfirm(null),
+      })
+    } catch (e) {
+      console.error('Recording rescan failed:', e)
+    }
+  }
+
+  /** FUT3: export one session as an asciinema v2 `.cast` file. */
+  const handleExportCast = async (s: SessionSummary) => {
+    try {
+      const target = await save({
+        title: t('exportCastTitle'),
+        defaultPath: `session-${s.startedAt.slice(0, 10)}.cast`,
+        filters: [{ name: 'asciinema', extensions: ['cast'] }],
+      })
+      if (!target) return
+      const r = await exportSessionCast(s.id, target)
+      setConfirm({
+        title: t('exportCastDoneTitle'),
+        message: t('exportCastDone', { lines: r.lines, path: r.path }),
+        danger: false,
+        confirmLabel: t('ok'),
+        onConfirm: () => setConfirm(null),
+      })
+    } catch (e) {
+      console.error('Cast export failed:', e)
+    }
+  }
+
   const formatDuration = (seconds: number | null) => {
     if (!seconds) return '-'
     const h = Math.floor(seconds / 3600)
@@ -128,6 +221,12 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
           ))}
         </select>
         <button onClick={reload} className="refresh-btn" title={t('refresh')}><Icon name="refresh" /></button>
+        <button onClick={handleMigrateLegacy} className="refresh-btn" title={t('migrateLegacy')}>
+          <Icon name="upload" />
+        </button>
+        <button onClick={runRescan} className="refresh-btn" title={t('rescanRecordings')}>
+          <Icon name="search" />
+        </button>
         <button onClick={handleDeleteAll} className="delete-all-btn" title={t('deleteAllSessions')}>
           <Icon name="trash" />
         </button>
@@ -167,7 +266,13 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
                   </span>
                 )}
                 <span className="session-meta">
-                  {formatDate(s.startedAt)} · {formatDuration(s.durationSeconds)} · {s.eventCount} {t('events')}
+                  {s.workspaceName && s.groupName && (
+                    <span className="session-loc">
+                      {s.workspaceName} / {s.groupName}
+                    </span>
+                  )}
+                  {formatDate(s.startedAt)} · {formatDuration(s.durationSeconds)} · {s.eventCount}{' '}
+                  {t('events')}
                 </span>
               </div>
               <div className="session-row-actions">
@@ -181,6 +286,25 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
                 <button onClick={() => handleExtract(s.id)} title={t('extractCommands')}>
                   <Icon name="clipboard" />
                 </button>
+                <button
+                  onClick={() => handleExportCast(s)}
+                  title={t('exportCast')}
+                  disabled={s.eventCount === 0}
+                >
+                  <Icon name="download" />
+                </button>
+                {s.eventsFile && (
+                  <button
+                    onClick={() => handleReveal(s.id)}
+                    title={
+                      s.eventsFile
+                        ? t('recordingFilePath', { path: s.eventsFile })
+                        : t('showInFolder')
+                    }
+                  >
+                    <Icon name="folderOpen" />
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setEditingId(s.id)
@@ -204,7 +328,7 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
           title={confirm.title}
           message={confirm.message}
           danger={confirm.danger}
-          confirmLabel={t('deleteSessionBtn')}
+          confirmLabel={confirm.confirmLabel ?? t('deleteSessionBtn')}
           onConfirm={confirm.onConfirm}
           onCancel={() => setConfirm(null)}
         />

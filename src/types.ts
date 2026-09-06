@@ -127,6 +127,13 @@ export interface SessionSummary {
   durationSeconds: number | null
   title: string | null
   eventCount: number
+  /** Workspace / group folder breadcrumb (resolved from the events file's
+   *  actual location); null for legacy DB-backed sessions. */
+  workspaceName: string | null
+  groupName: string | null
+  /** Absolute path of the recording file when it exists (enables "reveal in
+   *  folder"); null when the file is missing or the session is legacy. */
+  eventsFile: string | null
 }
 
 export interface SessionEventDto {
@@ -342,6 +349,29 @@ export interface KeepaliveConfig {
 export interface DataRootInfo {
   path: string
   isDefault: boolean
+  /** Whether the next data-dir migration also carries `vault.key` along. */
+  keyFollows: boolean
+}
+
+/** FUT1: result of exporting legacy SQLite sessions into events files. */
+export interface LegacyMigrateResult {
+  migrated: number
+  events: number
+  failed: string[]
+}
+
+/** FUT2: result of scanning `recordings/` to rebuild the sessions index. */
+export interface RescanResult {
+  restored: number
+  removedEmpty: number
+  skipped: number
+  failed: string[]
+}
+
+/** FUT3: result of exporting a session as asciinema v2. */
+export interface CastExportResult {
+  path: string
+  lines: number
 }
 
 export interface LocalTerminalEntry {

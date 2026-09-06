@@ -119,6 +119,22 @@ pub async fn set_keepalive(
 pub struct DataRootInfo {
   pub path: String,
   pub is_default: bool,
+  /// Whether the next migration should also bring `vault.key` along.
+  pub key_follows: bool,
+}
+
+/// Read the "vault.key follows data" option (Settings page).
+#[tauri::command]
+pub async fn get_key_follow_option() -> Result<bool, String> {
+  Ok(crate::data_root::key_follows_enabled())
+}
+
+/// Set the "vault.key follows data" option. Persisted in the data-root anchor;
+/// it takes effect on the next launch, when the data-dir copy migration runs.
+#[tauri::command]
+pub async fn set_key_follow_option(enabled: bool) -> Result<bool, String> {
+  crate::data_root::set_key_follows(enabled)?;
+  Ok(crate::data_root::key_follows_enabled())
 }
 
 fn current_data_root(state: &tauri::State<'_, AppState>) -> Result<std::path::PathBuf, String> {
@@ -133,6 +149,7 @@ pub async fn get_data_root(state: tauri::State<'_, AppState>) -> Result<DataRoot
   Ok(DataRootInfo {
     path: path.to_string_lossy().to_string(),
     is_default: crate::data_root::same_dir(&path, &crate::data_root::default_data_dir()),
+    key_follows: crate::data_root::key_follows_enabled(),
   })
 }
 
@@ -145,6 +162,7 @@ pub async fn set_data_root(
   path: Option<String>,
 ) -> Result<DataRootInfo, String> {
   let current = current_data_root(&state)?;
+  let key_follows = crate::data_root::key_follows_enabled();
   match path {
     Some(p) => {
       let target = crate::data_root::validate_custom_dir(&p)?;
@@ -152,6 +170,7 @@ pub async fn set_data_root(
       Ok(DataRootInfo {
         path: target.to_string_lossy().to_string(),
         is_default: crate::data_root::same_dir(&target, &crate::data_root::default_data_dir()),
+        key_follows,
       })
     }
     None => {
@@ -160,6 +179,7 @@ pub async fn set_data_root(
       Ok(DataRootInfo {
         path: default.to_string_lossy().to_string(),
         is_default: true,
+        key_follows,
       })
     }
   }

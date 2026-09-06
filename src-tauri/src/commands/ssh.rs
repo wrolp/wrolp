@@ -599,6 +599,37 @@ pub async fn connect(
       Err(_) => load_window_config_auto_record(state.base_dir.as_deref()),
     };
 
+    // Snapshot the workspace name for the events-file folder layout (folder
+    // layer 1). Look it up once at connect; later workspace renames do not
+    // re-shuffle already-recorded files.
+    let workspace_name = {
+      let list = state.workspaces.lock();
+      match list {
+        Ok(ws) => config
+          .workspace_id
+          .as_deref()
+          .and_then(|id| ws.iter().find(|w| w.id == id).map(|w| w.name.clone()))
+          .or_else(|| config.workspace_id.clone())
+          .unwrap_or_else(|| "default".to_string()),
+        Err(_) => config
+          .workspace_id
+          .clone()
+          .unwrap_or_else(|| "default".to_string()),
+      }
+    };
+    // Absolute events-file path snapshot (RF3). Deriving it here, at connect,
+    // freezes the workspace/group/connection/start-time layout the whole
+    // recording will live under; the file itself is only created lazily on the
+    // first non-empty flush.
+    let events_file = crate::rec_file::events_file_for(
+      state.base_dir.as_deref(),
+      Some(&workspace_name),
+      config.group.as_deref(),
+      &config.name,
+      &started_at_iso,
+      &session_uuid,
+    );
+
     // Create in-memory recording buffer. Only persist a session row to SQLite
     // when recording is actually enabled — otherwise connections that never
     // started recording would leave empty "sessions" in the list.
@@ -612,6 +643,8 @@ pub async fn connect(
           &config.name,
           tab_id,
           &started_at_iso,
+          config.workspace_id.as_deref(),
+          config.group.as_deref(),
         );
       }
     }
@@ -622,6 +655,9 @@ pub async fn connect(
       session_version: session_id,
       connection_id: config.id.clone(),
       connection_name: config.name.clone(),
+      workspace_name: Some(workspace_name),
+      group_name: config.group.clone(),
+      events_file: Some(events_file),
       started_at: std::time::Instant::now(),
       started_at_iso,
       seq_counter: 0,

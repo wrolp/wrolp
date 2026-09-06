@@ -56,6 +56,7 @@ import {
   setKeepalive,
   getDataRoot,
   setDataRoot,
+  setKeyFollowOption,
   setRecordingEnabled,
   getRecordingEnabled,
   fsReadFileContent,
@@ -830,6 +831,17 @@ export default function App() {
       const info = await setDataRoot(null)
       setDataRootState(info)
       setDataRootMsg(t('dataRootApplied'))
+    } catch (e) {
+      setDataRootMsg(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  /** FUT4: opt into / out of carrying `vault.key` with the next migration. */
+  const handleKeyFollowToggle = async (enabled: boolean) => {
+    try {
+      const ok = await setKeyFollowOption(enabled)
+      setDataRootState((s) => (s ? { ...s, keyFollows: ok } : s))
+      setDataRootMsg(t('keyFollowApplied'))
     } catch (e) {
       setDataRootMsg(e instanceof Error ? e.message : String(e))
     }
@@ -3339,6 +3351,20 @@ export default function App() {
                         </div>
                         <span className="settings-help">{t('dataRootDesc')}</span>
                         <span className="settings-help">{t('dataRootRestartHint')}</span>
+                        <div
+                          className="settings-check-row"
+                          style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '4px 0' }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!dataRoot?.keyFollows}
+                            onChange={(e) => handleKeyFollowToggle(e.target.checked)}
+                          />
+                          <label className="settings-help" style={{ margin: 0 }}>
+                            {t('keyFollow')}
+                          </label>
+                        </div>
+                        <span className="settings-help">{t('keyFollowDesc')}</span>
                         {dataRootMsg && (
                           <span className="settings-help" style={{ margin: '2px 0 0', color: '#4caf50' }}>
                             {dataRootMsg}

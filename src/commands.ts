@@ -27,6 +27,9 @@ import type {
   TunnelConfig,
   KeepaliveConfig,
   DataRootInfo,
+  LegacyMigrateResult,
+  RescanResult,
+  CastExportResult,
   ScanResult,
   FtpServerArgs,
   HttpServerArgs,
@@ -430,6 +433,16 @@ export async function setDataRoot(path: string | null): Promise<DataRootInfo> {
   return await invoke<DataRootInfo>('set_data_root', { path })
 }
 
+/** FUT4: whether the next data-dir migration also carries `vault.key` along. */
+export async function getKeyFollowOption(): Promise<boolean> {
+  return await invoke<boolean>('get_key_follow_option')
+}
+
+/** FUT4: opt into / out of "vault.key follows the data dir". */
+export async function setKeyFollowOption(enabled: boolean): Promise<boolean> {
+  return await invoke<boolean>('set_key_follow_option', { enabled })
+}
+
 export async function setRecordingEnabled(tabId: number, enabled: boolean): Promise<boolean> {
   return await invoke<boolean>('set_recording_enabled', { tabId, enabled })
 }
@@ -514,6 +527,29 @@ export async function renameSession(sessionId: string, title: string): Promise<v
 
 export async function extractCommands(sessionId: string): Promise<string[]> {
   return await invoke<string[]>('extract_commands', { sessionId })
+}
+
+/** Show/select the session's recording file in the OS file manager. */
+export async function revealSessionFile(sessionId: string): Promise<void> {
+  await invoke<void>('reveal_session_file', { sessionId })
+}
+
+/** FUT1: one-click export of legacy SQLite-backed session events into files. */
+export async function exportLegacySessions(): Promise<LegacyMigrateResult> {
+  return await invoke<LegacyMigrateResult>('export_legacy_sessions')
+}
+
+/** FUT2: scan `recordings/` and rebuild session rows for orphan files. */
+export async function rescanRecordingFiles(): Promise<RescanResult> {
+  return await invoke<RescanResult>('rescan_recording_files')
+}
+
+/** FUT3: export a session as an asciinema v2 `.cast` file. */
+export async function exportSessionCast(
+  sessionId: string,
+  targetPath: string,
+): Promise<CastExportResult> {
+  return await invoke<CastExportResult>('export_session_cast', { sessionId, targetPath })
 }
 
 export async function commitCommand(tabId: number, command: string): Promise<boolean> {

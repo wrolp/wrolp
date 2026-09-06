@@ -8,6 +8,7 @@
 use crate::commands;
 use crate::db::{self, CommandSetDto, CommandSnippetDto, GlobalVariable, RecordedEvent};
 use crate::ssh_session::{ActiveRecording, AppState, ConnectionConfig};
+use std::fs;
 use tauri::Manager;
 
 /// A mock Tauri app plus the temp dir that backs its `AppState`.
@@ -382,11 +383,32 @@ async fn global_variables_crud() {
 async fn session_recording_flush_and_extract_commands() {
   let app = build_test_app();
 
+  // The events-file snapshot mirrors what connect would derive: absolute path
+  // under `<base>/recordings/<workspace>/<group>/<connection>/<time>_<id>.jsonl`.
+  let events_file = crate::rec_file::events_file_for(
+    app.state().base_dir.as_deref(),
+    Some("wsA"),
+    Some("grp1"),
+    "Web",
+    "2026-08-28T00:00:00Z",
+    "s1",
+  );
+
   // Seed the session row (recording was switched on, so the row exists).
   {
     let state = app.state();
     let conn = state.db.lock().expect("db lock");
-    db::create_session(&conn, "s1", "c1", "Web", 1, "2026-08-28T00:00:00Z").expect("create");
+    db::create_session(
+      &conn,
+      "s1",
+      "c1",
+      "Web",
+      1,
+      "2026-08-28T00:00:00Z",
+      None,
+      Some("grp1"),
+    )
+    .expect("create");
   }
 
   // Populate an in-memory recording and flush it.
@@ -400,6 +422,9 @@ async fn session_recording_flush_and_extract_commands() {
         session_version: 1,
         connection_id: "c1".into(),
         connection_name: "Web".into(),
+        workspace_name: Some("wsA".into()),
+        group_name: Some("grp1".into()),
+        events_file: Some(events_file.clone()),
         started_at: std::time::Instant::now(),
         started_at_iso: "2026-08-28T00:00:00Z".into(),
         seq_counter: 3,
@@ -429,6 +454,8 @@ async fn session_recording_flush_and_extract_commands() {
     );
   }
   commands::flush_all_recordings(app.state().inner());
+  // The flush appended the events to the NDJSON file.
+  assert!(events_file.exists(), "events file must exist after flush");
 
   // The disconnect path finalizes the session row (sets duration/event_count);
   // `list_sessions` filters on `event_count > 0`.
@@ -451,19 +478,220 @@ async fn session_recording_flush_and_extract_commands() {
     .expect("extract");
   assert_eq!(cmds, vec!["ls -la", "git status"]);
 
+  // Playback now reads from the events file (via the loader), not the DB.
   let events = commands::get_session_events(app.state(), "s1".into())
     .await
     .expect("events");
   assert_eq!(events.len(), 3);
   assert_eq!(events[1].content, "git status");
 
+  // The DB index row stores the events-file path (back-filled on flush).
+  {
+    let state = app.state();
+    let conn = state.db.lock().expect("db lock");
+    assert_eq!(
+      db::session_events_file(&conn, "s1").expect("events file"),
+      Some(events_file.to_string_lossy().to_string())
+    );
+  }
+
+  // Deleting the session removes the file and prunes empty folders.
   commands::delete_session(app.state(), "s1".into())
     .await
     .expect("delete session");
+  assert!(
+    !events_file.exists(),
+    "events file must be removed on delete"
+  );
+  assert!(
+    !events_file.parent().unwrap().exists(),
+    "empty conn dir must be pruned"
+  );
   assert!(commands::list_sessions(app.state(), None, None)
     .await
     .expect("list")
     .is_empty());
+}
+
+#[tokio::test]
+async fn recording_zero_events_leaves_no_row_and_no_file() {
+  let app = build_test_app();
+  let events_file = crate::rec_file::events_file_for(
+    app.state().base_dir.as_deref(),
+    Some("wsA"),
+    None,
+    "Web",
+    "2026-08-28T00:00:01Z",
+    "s2",
+  );
+  {
+    let state = app.state();
+    let conn = state.db.lock().expect("db lock");
+    db::create_session(
+      &conn,
+      "s2",
+      "c1",
+      "Web",
+      2,
+      "2026-08-28T00:00:01Z",
+      None,
+      None,
+    )
+    .expect("create");
+    let mut recordings = state.recordings.lock().expect("recordings lock");
+    recordings.insert(
+      2,
+      ActiveRecording {
+        session_id: "s2".into(),
+        session_version: 1,
+        connection_id: "c1".into(),
+        connection_name: "Web".into(),
+        workspace_name: Some("wsA".into()),
+        group_name: None,
+        events_file: Some(events_file),
+        started_at: std::time::Instant::now(),
+        started_at_iso: "2026-08-28T00:00:01Z".into(),
+        seq_counter: 0,
+        events: vec![],
+        recording_enabled: true,
+        db_saved: true,
+      },
+    );
+  }
+  {
+    let state = app.state();
+    let conn = state.db.lock().expect("db lock");
+    let rec = state.recordings.lock().expect("recordings lock");
+    commands::finalize_recording(&conn, rec.get(&2).expect("recording present"));
+  }
+  // Recording produced nothing: no session row survives…
+  let sessions = commands::list_sessions(app.state(), None, None)
+    .await
+    .expect("list");
+  assert!(sessions.is_empty());
+  // …and no events file/dir was ever created (recording never appended).
+  let recordings_dir = app.state().base_dir.as_deref().unwrap().join("recordings");
+  assert!(!recordings_dir.exists() || fs::read_dir(&recordings_dir).unwrap().count() == 0);
+}
+
+#[tokio::test]
+async fn legacy_db_events_still_readable_when_no_events_file() {
+  let app = build_test_app();
+  // A session from before the file layout: events_file NULL, events in the
+  // legacy `session_events` table. The loader must fall back to the DB.
+  {
+    let state = app.state();
+    let conn = state.db.lock().expect("db lock");
+    db::create_session(
+      &conn,
+      "old1",
+      "c1",
+      "Web",
+      3,
+      "2026-07-01T00:00:00Z",
+      None,
+      None,
+    )
+    .expect("create");
+    db::insert_events(
+      &conn,
+      "old1",
+      &[RecordedEvent {
+        seq: 0,
+        timestamp_ms: 10,
+        direction: "command".into(),
+        content: "ping -c 1 h".into(),
+      }],
+    )
+    .expect("insert legacy events");
+  }
+  let events = commands::get_session_events(app.state(), "old1".into())
+    .await
+    .expect("events");
+  assert_eq!(events.len(), 1);
+  assert_eq!(events[0].content, "ping -c 1 h");
+  let cmds = commands::extract_commands(app.state(), "old1".into())
+    .await
+    .expect("extract");
+  assert_eq!(cmds, vec!["ping -c 1 h"]);
+}
+
+#[tokio::test]
+async fn delete_all_sessions_removes_files_and_rows() {
+  let app = build_test_app();
+  // Two sessions with files, then delete_all: rows AND files must go away.
+  let mut files = Vec::new();
+  for (i, sid) in ["sa", "sb"].iter().enumerate() {
+    let f = crate::rec_file::events_file_for(
+      app.state().base_dir.as_deref(),
+      Some("wsX"),
+      Some("grpY"),
+      "Web",
+      "2026-08-28T10:00:00Z",
+      sid,
+    );
+    {
+      let state = app.state();
+      let conn = state.db.lock().expect("db lock");
+      db::create_session(
+        &conn,
+        sid,
+        "c1",
+        "Web",
+        i as u32,
+        "2026-08-28T10:00:00Z",
+        None,
+        Some("grpY"),
+      )
+      .expect("create");
+      let mut recordings = state.recordings.lock().expect("recordings lock");
+      recordings.insert(
+        i as u32,
+        ActiveRecording {
+          session_id: sid.to_string(),
+          session_version: 1,
+          connection_id: "c1".into(),
+          connection_name: "Web".into(),
+          workspace_name: Some("wsX".into()),
+          group_name: Some("grpY".into()),
+          events_file: Some(f.clone()),
+          started_at: std::time::Instant::now(),
+          started_at_iso: "2026-08-28T10:00:00Z".into(),
+          seq_counter: 1,
+          events: vec![RecordedEvent {
+            seq: 0,
+            timestamp_ms: 0,
+            direction: "command".into(),
+            content: format!("echo {}", sid),
+          }],
+          recording_enabled: true,
+          db_saved: true,
+        },
+      );
+    }
+    files.push(f);
+  }
+  commands::flush_all_recordings(app.state().inner());
+  for f in &files {
+    assert!(f.exists());
+  }
+  assert_eq!(
+    commands::list_sessions(app.state(), None, None)
+      .await
+      .expect("list")
+      .len(),
+    2
+  );
+  commands::delete_all_sessions(app.state())
+    .await
+    .expect("delete all");
+  assert!(commands::list_sessions(app.state(), None, None)
+    .await
+    .expect("list")
+    .is_empty());
+  for f in &files {
+    assert!(!f.exists(), "events file removed: {}", f.display());
+  }
 }
 
 // ==================== poll_output buffer drain ====================
