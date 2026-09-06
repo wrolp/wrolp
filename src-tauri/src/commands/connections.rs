@@ -2,7 +2,10 @@ use super::*;
 #[tauri::command]
 pub async fn list_connections(state: tauri::State<'_, AppState>) -> Result<String, String> {
   let connections = state.connections.lock().map_err(|e| e.to_string())?;
-  let active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+  let active_id = state
+    .active_workspace_id
+    .lock()
+    .map_err(|e| e.to_string())?;
   let filtered: Vec<&ConnectionConfig> = connections
     .iter()
     .filter(|c| c.workspace_id.as_deref() == Some(&active_id))
@@ -17,7 +20,10 @@ pub async fn save_connection(
 ) -> Result<String, String> {
   {
     let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
-    let active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+    let active_id = state
+      .active_workspace_id
+      .lock()
+      .map_err(|e| e.to_string())?;
     // Auto-assign to the active workspace on save (both create and update).
     config.workspace_id = Some(active_id.clone());
     let found = connections.iter_mut().find(|c| c.id == config.id);
@@ -94,11 +100,12 @@ pub async fn reorder_connections(
 // ==================== Workspace management ====================
 
 #[tauri::command]
-pub async fn list_workspaces(
-  state: tauri::State<'_, AppState>,
-) -> Result<String, String> {
+pub async fn list_workspaces(state: tauri::State<'_, AppState>) -> Result<String, String> {
   let workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
-  let active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+  let active_id = state
+    .active_workspace_id
+    .lock()
+    .map_err(|e| e.to_string())?;
   serde_json::to_string(&serde_json::json!({
     "workspaces": &*workspaces,
     "activeWorkspaceId": &*active_id,
@@ -140,7 +147,10 @@ pub async fn delete_workspace(
     let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
     connections.retain(|c| c.workspace_id.as_deref() != Some(&workspace_id));
     // If we deleted the active workspace, switch to default.
-    let mut active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+    let mut active_id = state
+      .active_workspace_id
+      .lock()
+      .map_err(|e| e.to_string())?;
     if *active_id == workspace_id {
       *active_id = "default".to_string();
     }
@@ -171,7 +181,10 @@ pub async fn switch_workspace(
   workspace_id: String,
 ) -> Result<bool, String> {
   {
-    let mut active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+    let mut active_id = state
+      .active_workspace_id
+      .lock()
+      .map_err(|e| e.to_string())?;
     *active_id = workspace_id;
   }
   persist_connections(&state).await?;

@@ -54,6 +54,8 @@ import {
   setAutoRecord,
   getKeepalive,
   setKeepalive,
+  getDataRoot,
+  setDataRoot,
   setRecordingEnabled,
   getRecordingEnabled,
   fsReadFileContent,
@@ -95,8 +97,10 @@ import type {
   TunnelInfo,
   TunnelConfig,
   WorkspaceInfo,
+  DataRootInfo,
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { detectLanguage } from './editor/languages'
@@ -670,6 +674,10 @@ export default function App() {
   // window.json so future connect() calls in Rust pick them up.
   const [keepaliveInterval, setKeepaliveInterval] = useState<number | ''>(30)
   const [keepaliveMax, setKeepaliveMax] = useState<number | ''>(3)
+  // Data directory (storage location) shown in Settings. Relocating it only
+  // writes an anchor file — the move happens on the next launch (data_root.rs).
+  const [dataRoot, setDataRootState] = useState<DataRootInfo | null>(null)
+  const [dataRootMsg, setDataRootMsg] = useState('')
   // Per-tab recording indicator (map from tabId → recording on/off). Loaded
   // from the backend so the button reflects the actual state after reconnect.
   const [recordingByTab, setRecordingByTab] = useState<Record<number, boolean>>({})
@@ -802,6 +810,30 @@ export default function App() {
     setKeepaliveMax(m)
     setKeepalive(i, m).catch(() => {})
   }, [])
+
+  // Data directory (Settings): pick a custom folder via the native dialog, or
+  // reset to default. Only persists the choice — the move happens next launch.
+  const handleDataRootBrowse = async () => {
+    try {
+      const sel = await openDialog({ directory: true, multiple: false, title: t('dataRootBrowse') })
+      if (typeof sel === 'string' && sel) {
+        const info = await setDataRoot(sel)
+        setDataRootState(info)
+        setDataRootMsg(t('dataRootApplied'))
+      }
+    } catch (e) {
+      setDataRootMsg(e instanceof Error ? e.message : String(e))
+    }
+  }
+  const handleDataRootReset = async () => {
+    try {
+      const info = await setDataRoot(null)
+      setDataRootState(info)
+      setDataRootMsg(t('dataRootApplied'))
+    } catch (e) {
+      setDataRootMsg(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   // Toggle session recording for one pane (the record button in the pane
   // header). Only meaningful for SSH sessions; the button is hidden otherwise.
@@ -1245,6 +1277,9 @@ export default function App() {
         setKeepaliveInterval(k.interval)
         setKeepaliveMax(k.max)
       })
+      .catch(() => {})
+    getDataRoot()
+      .then(setDataRootState)
       .catch(() => {})
   }, [])
 
@@ -3270,6 +3305,45 @@ export default function App() {
                           }}
                         />
                         <span className="settings-help">{t('keepaliveMaxDesc')}</span>
+                      </div>
+
+                      <div
+                        className="settings-field"
+                        style={{ flexDirection: 'column', alignItems: 'flex-start' }}
+                      >
+                        <label className="settings-label">{t('dataRoot')}</label>
+                        <div
+                          className="settings-data-root-row"
+                          style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '4px 0' }}
+                        >
+                          <button
+                            className="settings-save-btn"
+                            style={{ width: 'auto', padding: '4px 14px' }}
+                            onClick={handleDataRootBrowse}
+                          >
+                            {t('dataRootBrowse')}
+                          </button>
+                          {dataRoot && !dataRoot.isDefault && (
+                            <button
+                              className="settings-save-btn"
+                              style={{ width: 'auto', padding: '4px 14px' }}
+                              onClick={handleDataRootReset}
+                            >
+                              {t('dataRootReset')}
+                            </button>
+                          )}
+                          <span className="settings-help" style={{ margin: 0, wordBreak: 'break-all' }}>
+                            {dataRoot ? dataRoot.path : ''}
+                            {dataRoot?.isDefault ? ` ${t('dataRootDefault')}` : ''}
+                          </span>
+                        </div>
+                        <span className="settings-help">{t('dataRootDesc')}</span>
+                        <span className="settings-help">{t('dataRootRestartHint')}</span>
+                        {dataRootMsg && (
+                          <span className="settings-help" style={{ margin: '2px 0 0', color: '#4caf50' }}>
+                            {dataRootMsg}
+                          </span>
+                        )}
                       </div>
 
                       <div className="settings-field">

@@ -32,7 +32,10 @@ fn resolve_local_shell(spec: &str) -> (String, Vec<String>) {
     }
     // WSL: `wsl.exe` has no `--login` flag (that's a bash option). Run bash as
     // a login+interactive shell inside the distro instead.
-    "wsl" => ("wsl.exe".to_string(), vec!["bash".to_string(), "-li".to_string()]),
+    "wsl" => (
+      "wsl.exe".to_string(),
+      vec!["bash".to_string(), "-li".to_string()],
+    ),
     // Anything else (cmd, pwsh, powershell, bash, or an explicit path) is used as-is.
     other => (other.to_string(), vec![]),
   }
@@ -104,7 +107,10 @@ pub async fn open_local_shell(
   // Sink for AI-issued commands; `None` while no AI command is in flight.
   // Owned here (not in `AppState`) for the same reason as `output`.
   let ai_capture = Arc::new(StdMutex::new(None::<String>));
-  eprintln!("[open_local_shell] starting '{}' (tab={})", shell_cmd, tab_id);
+  eprintln!(
+    "[open_local_shell] starting '{}' (tab={})",
+    shell_cmd, tab_id
+  );
 
   // Create the PTY at the actual terminal size up front. If the size is left at
   // the default 80x24, the shell lays out its prompt/wrapping using the wrong
@@ -156,8 +162,6 @@ pub async fn open_local_shell(
   )
   .await
   .map_err(|e| format!("spawn_blocking join error: {}", e))??;
-
-
 
   // On some Windows builds ConPTY ignores the size passed to `openpty` and only
   // honors an explicit resize issued *after* the child is spawned. Without this,

@@ -4,6 +4,7 @@ mod ai;
 // `commands`/`db`/`ssh_session` are `pub` so `src-tauri/tests/` integration
 // tests can drive the `#[tauri::command]` handlers via `tauri::test`.
 pub mod commands;
+mod data_root;
 pub mod db;
 mod docker_analysis;
 mod docker_fs;
@@ -12,12 +13,12 @@ mod host_analysis;
 mod local_fs;
 mod remote_fs;
 pub mod ssh_session;
+#[cfg(test)]
+mod tests;
 mod tftp_proto;
 mod vault;
 #[cfg(windows)]
 mod webview_drop;
-#[cfg(test)]
-mod tests;
 
 use ssh_session::AppState;
 use tauri::generate_handler;
@@ -33,10 +34,11 @@ pub fn run() {
     .plugin(tauri_plugin_shell::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
-      // Initialize SQLite database
-      let data_dir = dirs::config_dir()
-        .map(|p| p.join("wrolp-terminal"))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+      // Initialize SQLite database. The data directory may be relocated via
+      // Settings (anchor `data_root.json` in the default config dir); resolve
+      // it once here and bind AppState to the effective root so every
+      // on-disk artifact (db, connections, recordings, ...) follows it.
+      let data_dir = data_root::resolve_data_root();
       let db_conn = db::init_db(&data_dir).unwrap_or_else(|e| {
         eprintln!("[db] init failed: {}, using in-memory fallback", e);
         // Fallback: try in-memory database so app still runs
@@ -45,7 +47,7 @@ pub fn run() {
         std::sync::Arc::new(std::sync::Mutex::new(conn))
       });
 
-      let state = AppState::new(db_conn);
+      let state = AppState::new_with_base(db_conn, Some(data_dir.clone()));
       app.manage(state);
 
       // Spawn periodic recording flush task (every 5 seconds)
@@ -117,7 +119,7 @@ pub fn run() {
         // now-disconnected secondary display, or off-screen due to a DPI
         // offset), center the window instead, so it does not end up outside
         // the screen (a taskbar entry exists but nothing shows on the desktop).
-        let config_path = commands::get_window_config_path();
+        let config_path = Some(data_dir.join("window.json"));
         if let Some(ref path) = config_path {
           if let Ok(content) = std::fs::read_to_string(path) {
             if let Ok(config) = serde_json::from_str::<commands::WindowConfig>(&content) {
@@ -282,6 +284,8 @@ pub fn run() {
       commands::set_auto_record,
       commands::get_keepalive,
       commands::set_keepalive,
+      commands::get_data_root,
+      commands::set_data_root,
       commands::set_recording_enabled,
       commands::get_recording_enabled,
       commands::analyze_host,

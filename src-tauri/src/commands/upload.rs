@@ -189,7 +189,8 @@ pub async fn upload_chunk(
   check_pause(&sess.control).await?;
 
   let result = async {
-    sess.file
+    sess
+      .file
       .write_all(&chunk)
       .await
       .map_err(|e| format!("Failed to write chunk: {}", e))?;
@@ -221,10 +222,7 @@ pub async fn upload_chunk(
 
 /// Finish a streaming upload: close the remote handle and release pause state.
 #[tauri::command]
-pub async fn upload_end(
-  state: tauri::State<'_, AppState>,
-  upload_id: u64,
-) -> Result<(), String> {
+pub async fn upload_end(state: tauri::State<'_, AppState>, upload_id: u64) -> Result<(), String> {
   let sess = {
     let mut sessions = state.upload_sessions.lock().map_err(|e| e.to_string())?;
     sessions.remove(&upload_id)
@@ -696,11 +694,21 @@ async fn stream_upload_local_dir(
         Ok::<u64, String>(written)
       });
     }
-    for (res, rel) in futures_util::future::join_all(tasks).await.into_iter().zip(rels) {
+    for (res, rel) in futures_util::future::join_all(tasks)
+      .await
+      .into_iter()
+      .zip(rels)
+    {
       let written = res?;
       done_bytes += written;
       done_files += 1;
-      on_progress(&rel, done_bytes, total_bytes, done_files as u64, total_files as u64)?;
+      on_progress(
+        &rel,
+        done_bytes,
+        total_bytes,
+        done_files as u64,
+        total_files as u64,
+      )?;
     }
   }
 
@@ -764,7 +772,14 @@ pub async fn upload_local_dir(
       );
       Ok(())
     };
-  stream_upload_local_dir(&sftp, &local_dir, &remote_parent, Some(&control), &mut on_progress).await
+  stream_upload_local_dir(
+    &sftp,
+    &local_dir,
+    &remote_parent,
+    Some(&control),
+    &mut on_progress,
+  )
+  .await
 }
 
 /// Same as `upload_local_dir` but for an arbitrary target (ProxyJump remote /
@@ -1040,7 +1055,11 @@ pub async fn target_copy_file(
   // With an explicit name we refuse to overwrite an existing entry (the
   // frontend prompts the user to rename); otherwise uniquify so we never
   // clobber.
-  let final_dest = if dest_name.as_deref().map(|n| !n.trim().is_empty()).unwrap_or(false) {
+  let final_dest = if dest_name
+    .as_deref()
+    .map(|n| !n.trim().is_empty())
+    .unwrap_or(false)
+  {
     if fs.metadata(&final_dest).await.is_ok() {
       return Err(format!(
         "A file or folder named '{}' already exists",

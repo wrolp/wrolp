@@ -77,7 +77,10 @@ pub struct AiConfig {
   /// per-chat panel can change it. Defaults to "command" so a fresh install
   /// starts with full access. Accepts the legacy `readOnly` bool field for
   /// backward compatibility: `true` → "read_only", `false` → "command".
-  #[serde(default = "default_mode_command", deserialize_with = "deserialize_mode_compat")]
+  #[serde(
+    default = "default_mode_command",
+    deserialize_with = "deserialize_mode_compat"
+  )]
   pub default_mode: String,
   /// When true, `run_command` types the command into the tab's live terminal
   /// (visible on screen + captured in the session recording) instead of running
@@ -112,7 +115,11 @@ where
   let val = serde_json::Value::deserialize(deserializer)?;
   match val {
     serde_json::Value::String(s) => Ok(s),
-    serde_json::Value::Bool(b) => Ok(if b { "read_only".to_string() } else { "command".to_string() }),
+    serde_json::Value::Bool(b) => Ok(if b {
+      "read_only".to_string()
+    } else {
+      "command".to_string()
+    }),
     _ => Err(serde::de::Error::custom(format!(
       "default_mode: expected string or bool, got {:?}",
       val
@@ -602,15 +609,15 @@ fn chat_url(endpoint: &str) -> String {
 // with ANSI escapes. Set the `NO_COLOR` env var to disable colors.
 
 const C_RESET: &str = "\x1b[0m";
-const C_KEY: &str = "\x1b[36m";   // JSON keys
-const C_STR: &str = "\x1b[32m";   // JSON string values
-const C_NUM: &str = "\x1b[33m";   // JSON numbers / booleans
-const C_NULL: &str = "\x1b[35m";  // JSON null
+const C_KEY: &str = "\x1b[36m"; // JSON keys
+const C_STR: &str = "\x1b[32m"; // JSON string values
+const C_NUM: &str = "\x1b[33m"; // JSON numbers / booleans
+const C_NULL: &str = "\x1b[35m"; // JSON null
 const C_PUNCT: &str = "\x1b[90m"; // JSON punctuation
-const C_HEAD: &str = "\x1b[36m";  // log header lines
-const C_OK: &str = "\x1b[32m";    // successful result
-const C_ERR: &str = "\x1b[31m";   // error result
-const C_WARN: &str = "\x1b[33m";  // warnings / tool names
+const C_HEAD: &str = "\x1b[36m"; // log header lines
+const C_OK: &str = "\x1b[32m"; // successful result
+const C_ERR: &str = "\x1b[31m"; // error result
+const C_WARN: &str = "\x1b[33m"; // warnings / tool names
 
 /// ANSI colors are only emitted when not disabled via the `NO_COLOR` env var.
 fn colors_enabled() -> bool {
@@ -659,7 +666,13 @@ fn colorize_json(json: &str) -> String {
           is_key = pc == ':';
           break;
         }
-        let _ = write!(out, "{}{}{}", if is_key { C_KEY } else { C_STR }, s, C_RESET);
+        let _ = write!(
+          out,
+          "{}{}{}",
+          if is_key { C_KEY } else { C_STR },
+          s,
+          C_RESET
+        );
       }
       '0'..='9' | '-' => {
         let mut num = String::new();
@@ -755,13 +768,7 @@ fn log_ai_request(tag: &str, config: &AiEndpointProfile, body: &OpenAiRequest) {
 }
 
 /// Log an AI request outcome (status, elapsed, output size, tool calls).
-fn log_ai_result(
-  tag: &str,
-  status: &str,
-  elapsed_ms: u128,
-  out_chars: usize,
-  tool_calls: usize,
-) {
+fn log_ai_result(tag: &str, status: &str, elapsed_ms: u128, out_chars: usize, tool_calls: usize) {
   let (color, arrow) = if status.starts_with("ok") {
     (C_OK, "←")
   } else if status.starts_with("error") {
@@ -895,7 +902,13 @@ pub async fn ai_chat_sync(
     } else {
       format!("API error ({}): {}", status, body_text)
     };
-    log_ai_result("chat_sync", &format!("HTTP {}", status), started.elapsed().as_millis(), 0, 0);
+    log_ai_result(
+      "chat_sync",
+      &format!("HTTP {}", status),
+      started.elapsed().as_millis(),
+      0,
+      0,
+    );
     return Err(msg);
   }
 
@@ -908,7 +921,13 @@ pub async fn ai_chat_sync(
     .map(|c| c.message.content.clone())
     .unwrap_or_default();
 
-  log_ai_result("chat_sync", "ok", started.elapsed().as_millis(), content.len(), 0);
+  log_ai_result(
+    "chat_sync",
+    "ok",
+    started.elapsed().as_millis(),
+    content.len(),
+    0,
+  );
 
   Ok(content)
 }
@@ -972,7 +991,13 @@ pub async fn execute_streaming_chat(
     } else {
       format!("API error ({}): {}", status, body_text)
     };
-    log_ai_result("stream_chat", &format!("HTTP {}", status), started.elapsed().as_millis(), 0, 0);
+    log_ai_result(
+      "stream_chat",
+      &format!("HTTP {}", status),
+      started.elapsed().as_millis(),
+      0,
+      0,
+    );
     return Err(msg);
   }
 
@@ -993,7 +1018,13 @@ pub async fn execute_streaming_chat(
       if let Some(data) = line.strip_prefix("data: ") {
         let data = data.trim();
         if data == "[DONE]" {
-          log_ai_result("stream_chat", "ok", started.elapsed().as_millis(), out_chars, 0);
+          log_ai_result(
+            "stream_chat",
+            "ok",
+            started.elapsed().as_millis(),
+            out_chars,
+            0,
+          );
           return Ok(());
         }
         if let Ok(chunk) = serde_json::from_str::<OpenAiStreamChunk>(data) {
@@ -1014,7 +1045,13 @@ pub async fn execute_streaming_chat(
   }
 
   // Stream ended without explicit [DONE] — treat as success
-  log_ai_result("stream_chat", "ok", started.elapsed().as_millis(), out_chars, 0);
+  log_ai_result(
+    "stream_chat",
+    "ok",
+    started.elapsed().as_millis(),
+    out_chars,
+    0,
+  );
   Ok(())
 }
 
@@ -1059,10 +1096,7 @@ fn openai_content(m: &AiMessage) -> Option<serde_json::Value> {
 ///   - `nested` (default): standard OpenAI — `{id, type:"function",
 ///     function:{name, arguments}}`
 ///   - `flat`: fields at the top level — `{id, type:"function", name, arguments}`
-fn wire_tool_calls(
-  tcs: &[OpenAiToolCall],
-  tool_call_format: &str,
-) -> Vec<serde_json::Value> {
+fn wire_tool_calls(tcs: &[OpenAiToolCall], tool_call_format: &str) -> Vec<serde_json::Value> {
   tcs
     .iter()
     .map(|tc| {
@@ -1155,7 +1189,11 @@ pub async fn run_agent_stream(
     .build()
     .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-  let tools = if tools_enabled { Some(tool_definitions()) } else { None };
+  let tools = if tools_enabled {
+    Some(tool_definitions())
+  } else {
+    None
+  };
 
   // Working message list carries the full conversation (incl. tool calls).
   let mut messages: Vec<AiMessage> = initial_messages;
@@ -1163,7 +1201,11 @@ pub async fn run_agent_stream(
   // `max_rounds == 0` means unlimited — the loop terminates on the model's
   // final answer (a turn with no tool calls), so it cannot run forever under
   // normal operation.
-  let round_limit = if max_rounds == 0 { usize::MAX } else { max_rounds };
+  let round_limit = if max_rounds == 0 {
+    usize::MAX
+  } else {
+    max_rounds
+  };
 
   for round in 0..round_limit {
     let wire = to_openai_messages(&messages, tool_call_format);
@@ -1314,9 +1356,17 @@ pub async fn run_agent_stream(
 
     log_ai_result(
       &format!("agent_round{}", round + 1),
-      if saw_tool_call { "ok(tools)" } else { "ok(done)" },
+      if saw_tool_call {
+        "ok(tools)"
+      } else {
+        "ok(done)"
+      },
       started.elapsed().as_millis(),
-      assistant_msg.content.as_ref().map(|c| c.chars().count()).unwrap_or(0),
+      assistant_msg
+        .content
+        .as_ref()
+        .map(|c| c.chars().count())
+        .unwrap_or(0),
       calls.len(),
     );
 
@@ -1362,7 +1412,11 @@ pub async fn run_agent_stream(
       "{}",
       paint(
         C_HEAD,
-        &format!("[ai] agent_round{} executed {} tool call(s):", round + 1, calls.len()),
+        &format!(
+          "[ai] agent_round{} executed {} tool call(s):",
+          round + 1,
+          calls.len()
+        ),
       )
     );
     for call in &calls {
@@ -1371,10 +1425,8 @@ pub async fn run_agent_stream(
         paint(C_WARN, &call.name),
         paint(C_PUNCT, &format!("(id={})", call.id)),
       );
-      let mut args_value =
-        serde_json::from_str::<serde_json::Value>(&call.arguments).unwrap_or_else(|_| {
-          serde_json::Value::String(call.arguments.clone())
-        });
+      let mut args_value = serde_json::from_str::<serde_json::Value>(&call.arguments)
+        .unwrap_or_else(|_| serde_json::Value::String(call.arguments.clone()));
       truncate_json_for_log(&mut args_value);
       let args_pretty = serde_json::to_string_pretty(&args_value).unwrap_or_default();
       eprintln!("{}", colorize_json(&args_pretty));

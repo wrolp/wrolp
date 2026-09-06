@@ -674,11 +674,14 @@ pub struct ActiveRecording {
 
 /// Global application state
 pub struct AppState {
-  /// Optional override for the app config directory (`%APPDATA%\wrolp-terminal`
-  /// by default). When set, every on-disk artifact (connections.json,
-  /// window.json, local_terminals.json, ai_config.json, vault.key, SQLite db)
-  /// is resolved under this base dir instead — used by tests so they never
-  /// touch the real user config.
+  /// The effective data directory (data root) this launch is bound to.
+  /// `None` resolves every on-disk artifact (connections.json, window.json,
+  /// local_terminals.json, ai_config.json, SQLite db) from
+  /// `dirs::config_dir()/wrolp-terminal`; `Some(dir)` redirects all
+  /// persistence under `dir`. In production this is always `Some` — resolved
+  /// at startup from the `data_root.json` anchor (see `data_root.rs`), so a
+  /// user-relocated data directory works everywhere. Integration tests inject
+  /// `Some(temp_dir)` so they never touch the real user config.
   pub base_dir: Option<std::path::PathBuf>,
   pub connections: StdMutex<Vec<ConnectionConfig>>,
   /// Available workspaces (owned by this app instance).
@@ -859,12 +862,14 @@ impl AppState {
     Self::new_with_base(db, None)
   }
 
-  /// Build state with an explicit config base dir. `None` resolves every path
-  /// from `dirs::config_dir()/wrolp-terminal`; `Some(dir)` redirects all
-  /// persistence under `dir` (used by `tauri::test` integration tests so they
-  /// never read or write the real user config).
+  /// Build state with an explicit data root. `Some(dir)` redirects all
+  /// persistence under `dir`; `None` falls back to `dirs::config_dir()/
+  /// wrolp-terminal`. Production resolves the root from the `data_root.json`
+  /// anchor before calling this (always `Some`); `tauri::test` integration
+  /// tests inject `Some(temp_dir)` so they never touch the real user config.
   pub fn new_with_base(db: DbConn, base_dir: Option<std::path::PathBuf>) -> Self {
-    let (connections, workspaces, active_workspace_id) = get_initial_connections(base_dir.as_deref());
+    let (connections, workspaces, active_workspace_id) =
+      get_initial_connections(base_dir.as_deref());
     let ai_config = crate::ai::load_ai_config_in(base_dir.as_deref()).ok();
     let local_terminals = get_initial_local_terminals(base_dir.as_deref());
     Self {
@@ -989,7 +994,9 @@ fn load_connections_content(
       let mut out = Vec::with_capacity(file.connections.len());
       for p in &file.connections {
         match ConnectionConfig::from_persisted(p) {
-          Ok(c) => { out.push(c); }
+          Ok(c) => {
+            out.push(c);
+          }
           Err(e) => eprintln!("[connections] failed to decrypt a connection: {}", e),
         }
       }

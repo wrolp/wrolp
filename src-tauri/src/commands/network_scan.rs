@@ -70,7 +70,9 @@ pub fn parse_target(target: &str) -> Result<Vec<IpAddr>, String> {
   if let Some((a, b)) = t.split_once('-') {
     return parse_range(a.trim(), b.trim());
   }
-  let ip: IpAddr = t.parse().map_err(|_| format!("invalid IP address: {}", t))?;
+  let ip: IpAddr = t
+    .parse()
+    .map_err(|_| format!("invalid IP address: {}", t))?;
   Ok(vec![ip])
 }
 
@@ -111,15 +113,17 @@ fn parse_range(a: &str, b: &str) -> Result<Vec<IpAddr>, String> {
   let start: Ipv4Addr = a
     .parse()
     .map_err(|_| format!("invalid range start: {}", a))?;
-  let end: Ipv4Addr = b
-    .parse()
-    .map_err(|_| format!("invalid range end: {}", b))?;
+  let end: Ipv4Addr = b.parse().map_err(|_| format!("invalid range end: {}", b))?;
   let oa = start.octets();
   let ob = end.octets();
   if oa[0] != ob[0] || oa[1] != ob[1] || oa[2] != ob[2] {
     return Err("IP range must stay within one subnet (first three octets equal)".to_string());
   }
-  let (lo, hi) = if oa[3] <= ob[3] { (oa[3], ob[3]) } else { (ob[3], oa[3]) };
+  let (lo, hi) = if oa[3] <= ob[3] {
+    (oa[3], ob[3])
+  } else {
+    (ob[3], oa[3])
+  };
   let mut out = Vec::with_capacity((hi - lo + 1) as usize);
   for i in lo..=hi {
     out.push(IpAddr::V4(Ipv4Addr::new(oa[0], oa[1], oa[2], i)));
@@ -130,7 +134,10 @@ fn parse_range(a: &str, b: &str) -> Result<Vec<IpAddr>, String> {
 /// Probe a single `ip:port` and classify the service from the first bytes.
 async fn probe(ip: IpAddr, port: u16, timeout_ms: u32) -> ScanResult {
   let start = std::time::Instant::now();
-  let connect = timeout(Duration::from_millis(timeout_ms as u64), TcpStream::connect((ip, port)));
+  let connect = timeout(
+    Duration::from_millis(timeout_ms as u64),
+    TcpStream::connect((ip, port)),
+  );
   match connect.await {
     Ok(Ok(mut stream)) => {
       let latency = start.elapsed().as_millis() as u64;
@@ -177,7 +184,11 @@ fn classify(bytes: &[u8]) -> (String, Option<String>) {
     let banner = sanitize_banner(bytes);
     return (
       "telnet".to_string(),
-      if banner.is_empty() { None } else { Some(banner) },
+      if banner.is_empty() {
+        None
+      } else {
+        Some(banner)
+      },
     );
   }
   let text = String::from_utf8_lossy(bytes);
@@ -231,7 +242,10 @@ pub async fn scan_network(
     return Ok(vec![]);
   }
   if total > MAX_PROBES {
-    return Err(format!("scan would probe {} targets (max {})", total, MAX_PROBES));
+    return Err(format!(
+      "scan would probe {} targets (max {})",
+      total, MAX_PROBES
+    ));
   }
 
   let _ = app.emit("scan-start", serde_json::json!({ "total": total }));
@@ -242,7 +256,11 @@ pub async fn scan_network(
     for &port in &ports {
       // Bound the number of in-flight probes; the loop parks here when the
       // semaphore is exhausted until a spawned probe completes.
-      let permit = sem.clone().acquire_owned().await.map_err(|e| e.to_string())?;
+      let permit = sem
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| e.to_string())?;
       let app2 = app.clone();
       tasks.push(tokio::spawn(async move {
         let _permit = permit;
@@ -324,11 +342,7 @@ mod tests {
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
       if let Ok((mut sock, _)) = listener.accept().await {
-        let _ = tokio::io::AsyncWriteExt::write_all(
-          &mut sock,
-          b"SSH-2.0-OpenSSH_9.6\r\n",
-        )
-        .await;
+        let _ = tokio::io::AsyncWriteExt::write_all(&mut sock, b"SSH-2.0-OpenSSH_9.6\r\n").await;
         tokio::time::sleep(Duration::from_millis(150)).await;
       }
     });

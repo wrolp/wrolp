@@ -29,7 +29,10 @@ pub async fn start_tunnel(
   // Validate the carrier session and grab its shared handle.
   let handle = get_jump_handle(&state, args.tab_id)?;
 
-  let local_addr_str = args.local_addr.clone().unwrap_or_else(|| "127.0.0.1".to_string());
+  let local_addr_str = args
+    .local_addr
+    .clone()
+    .unwrap_or_else(|| "127.0.0.1".to_string());
   let local_sock: std::net::SocketAddr = format!("{}:{}", local_addr_str, args.local_port)
     .parse()
     .map_err(|e| format!("Invalid local address: {}", e))?;
@@ -79,10 +82,7 @@ pub async fn start_tunnel(
             c
           }
           Err(e) => {
-            eprintln!(
-              "[tunnel] direct-tcpip open FAILED -> {}:{} : {}",
-              rh, rp, e
-            );
+            eprintln!("[tunnel] direct-tcpip open FAILED -> {}:{} : {}", rh, rp, e);
             let err_str = e.to_string();
             // AdministrativelyProhibited means the server forbids this
             // forward outright (AllowTcpForwarding no / PermitOpen limits).

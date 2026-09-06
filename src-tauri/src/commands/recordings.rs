@@ -271,7 +271,10 @@ pub async fn list_command_snippets(
   eprintln!("[command_snippets] list called");
   let conn = state.db.lock().map_err(|e| e.to_string())?;
   let result = db::list_command_snippets(&conn);
-  eprintln!("[command_snippets] list result: {:?}", result.as_ref().map(|v| v.len()));
+  eprintln!(
+    "[command_snippets] list result: {:?}",
+    result.as_ref().map(|v| v.len())
+  );
   result
 }
 

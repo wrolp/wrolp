@@ -21,11 +21,7 @@ pub struct TftpStartArgs {
   pub direction: String,
 }
 
-fn update_row(
-  app: &tauri::AppHandle,
-  id: u64,
-  upd: impl FnOnce(&mut TransferRow),
-) {
+fn update_row(app: &tauri::AppHandle, id: u64, upd: impl FnOnce(&mut TransferRow)) {
   let st = app.state::<AppState>();
   let locked = st.tftp_transfers.lock();
   if let Ok(mut rows) = locked {
@@ -63,7 +59,9 @@ pub async fn tftp_start(
     "download".to_string()
   };
 
-  let id = state.next_tftp_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+  let id = state
+    .next_tftp_id
+    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
   let now = crate::commands::now_ms();
   let row = TransferRow {
     id,
@@ -78,10 +76,18 @@ pub async fn tftp_start(
     started_ms: now,
     local_path: args.local_path.clone(),
   };
-  state.tftp_transfers.lock().map_err(|e| e.to_string())?.insert(id, row.clone());
+  state
+    .tftp_transfers
+    .lock()
+    .map_err(|e| e.to_string())?
+    .insert(id, row.clone());
 
   let (tx, rx) = oneshot::channel();
-  state.tftp_cancels.lock().map_err(|e| e.to_string())?.insert(id, tx);
+  state
+    .tftp_cancels
+    .lock()
+    .map_err(|e| e.to_string())?
+    .insert(id, tx);
 
   let local_path = std::path::PathBuf::from(&args.local_path);
   let app2 = app.clone();
@@ -155,10 +161,7 @@ pub async fn tftp_start(
 }
 
 #[tauri::command]
-pub async fn tftp_cancel(
-  state: tauri::State<'_, AppState>,
-  row_id: u64,
-) -> Result<(), String> {
+pub async fn tftp_cancel(state: tauri::State<'_, AppState>, row_id: u64) -> Result<(), String> {
   let sender = state
     .tftp_cancels
     .lock()
@@ -177,8 +180,16 @@ pub async fn tftp_rows(
 ) -> Result<Vec<TransferRow>, String> {
   let rows = state.tftp_transfers.lock().map_err(|e| e.to_string())?;
   let mut out: Vec<TransferRow> = match kind.as_deref() {
-    Some("server") => rows.values().filter(|r| r.kind == "server").cloned().collect(),
-    Some("client") => rows.values().filter(|r| r.kind == "client").cloned().collect(),
+    Some("server") => rows
+      .values()
+      .filter(|r| r.kind == "server")
+      .cloned()
+      .collect(),
+    Some("client") => rows
+      .values()
+      .filter(|r| r.kind == "client")
+      .cloned()
+      .collect(),
     _ => rows.values().cloned().collect(),
   };
   out.sort_by_key(|r| std::cmp::Reverse(r.id));

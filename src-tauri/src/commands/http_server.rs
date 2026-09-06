@@ -22,7 +22,7 @@ use axum::Router;
 use rcgen::{CertificateParams, DnType, Ia5String, KeyPair, SanType};
 use time::{Duration, OffsetDateTime};
 
-use crate::ssh_session::{AppState, AppServerStatus};
+use crate::ssh_session::{AppServerStatus, AppState};
 
 /// Handle to the running HTTP server task.
 pub struct HttpServerRuntime {
@@ -70,11 +70,18 @@ struct Srv {
 }
 
 fn html_escape(s: &str) -> String {
-  s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+  s.replace('&', "&amp;")
+    .replace('<', "&lt;")
+    .replace('>', "&gt;")
+    .replace('"', "&quot;")
 }
 
 fn mime_for(p: &Path) -> &'static str {
-  match p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()) {
+  match p
+    .extension()
+    .and_then(|e| e.to_str())
+    .map(|e| e.to_ascii_lowercase())
+  {
     Some(ext) if ext == "html" || ext == "htm" => "text/html; charset=utf-8",
     Some(ext) if ext == "css" => "text/css; charset=utf-8",
     Some(ext) if ext == "js" || ext == "mjs" => "text/javascript; charset=utf-8",
@@ -135,12 +142,7 @@ fn auth_fail() -> Response {
     .into_response()
 }
 
-fn page_html(
-  srv: &Srv,
-  rel: &str,
-  entries: Vec<(bool, String, u64)>,
-  token_q: &str,
-) -> String {
+fn page_html(srv: &Srv, rel: &str, entries: Vec<(bool, String, u64)>, token_q: &str) -> String {
   let mut rows = String::new();
   for (is_dir, name, size) in entries {
     let enc = html_escape(&name);
@@ -286,15 +288,22 @@ async fn handle_browse(
     match tokio::fs::read(&path).await {
       Ok(bytes) => {
         let mut resp = Response::new(Body::from(bytes));
-        resp.headers_mut()
+        resp
+          .headers_mut()
           .insert(header::CONTENT_TYPE, mime_for(&path).parse().unwrap());
         resp.headers_mut().insert(
           header::CONTENT_DISPOSITION,
-          format!("inline; filename=\"{}\"", html_escape(&rel)).parse().unwrap(),
+          format!("inline; filename=\"{}\"", html_escape(&rel))
+            .parse()
+            .unwrap(),
         );
         resp
       }
-      Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("read failed: {e}")).into_response(),
+      Err(e) => (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("read failed: {e}"),
+      )
+        .into_response(),
     }
   } else {
     (StatusCode::NOT_FOUND, "Not found").into_response()
@@ -437,7 +446,11 @@ pub async fn start_http_server(
   if args.require_auth && args.token.as_deref().unwrap_or("").is_empty() {
     return Err("Token must be provided when authentication is enabled".into());
   }
-  let token = if args.require_auth { args.token.clone() } else { None };
+  let token = if args.require_auth {
+    args.token.clone()
+  } else {
+    None
+  };
   let srv = Srv {
     root,
     read_only: args.read_only,
@@ -449,8 +462,14 @@ pub async fn start_http_server(
   let started_ms = crate::commands::now_ms();
 
   let handle = if args.enable_tls {
-    let cert_path = args.cert_path.clone().ok_or("certPath is required for HTTPS")?;
-    let key_path = args.key_path.clone().ok_or("keyPath is required for HTTPS")?;
+    let cert_path = args
+      .cert_path
+      .clone()
+      .ok_or("certPath is required for HTTPS")?;
+    let key_path = args
+      .key_path
+      .clone()
+      .ok_or("keyPath is required for HTTPS")?;
     let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
       .await
       .map_err(|e| format!("Cannot load TLS certificate/key: {e}"))?;
@@ -540,7 +559,9 @@ pub fn http_generate_cert(state: tauri::State<'_, AppState>) -> Result<Generated
   let key_path = dir.join("https-selfsigned.key");
 
   let mut params = CertificateParams::default();
-  params.distinguished_name.push(DnType::CommonName, "wrolp-terminal HTTPS");
+  params
+    .distinguished_name
+    .push(DnType::CommonName, "wrolp-terminal HTTPS");
   params.subject_alt_names = vec![
     SanType::DnsName(Ia5String::try_from("localhost").expect("localhost is ASCII")),
     SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)),

@@ -16,7 +16,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 
-use crate::ssh_session::{AppState, AppServerStatus};
+use crate::ssh_session::{AppServerStatus, AppState};
 
 /// Handle to the running FTP server task.
 pub struct FtpServerRuntime {
@@ -100,7 +100,11 @@ fn real_path(cfg: &FtpCfg, virt: &str) -> Result<PathBuf, String> {
   Ok(cand)
 }
 
-async fn reply(wr: &mut tokio::net::tcp::OwnedWriteHalf, code: u16, text: &str) -> std::io::Result<()> {
+async fn reply(
+  wr: &mut tokio::net::tcp::OwnedWriteHalf,
+  code: u16,
+  text: &str,
+) -> std::io::Result<()> {
   wr.write_all(format!("{code} {text}\r\n").as_bytes()).await
 }
 
@@ -112,7 +116,10 @@ fn mlsd_line(is_dir: bool, size: u64, name: &str) -> String {
 /// Unix-style LIST fallback line.
 fn list_line(is_dir: bool, size: u64, name: &str) -> String {
   let perm = if is_dir { "drwxr-xr-x" } else { "-rw-r--r--" };
-  format!("{perm}   1 owner  group  {size:>12} Jan 01 00:00 {name}{}\r\n", if is_dir { "/" } else { "" })
+  format!(
+    "{perm}   1 owner  group  {size:>12} Jan 01 00:00 {name}{}\r\n",
+    if is_dir { "/" } else { "" }
+  )
 }
 
 async fn run_listing(
@@ -143,9 +150,17 @@ async fn run_listing(
     vec![real.clone()]
   };
   let listener = st.pending_data.take().ok_or("Use PASV or EPSV first")?;
-  reply(wr, 150, if use_mlsd { "Opening data connection for MLSD" } else { "Opening data connection for LIST" })
-    .await
-    .map_err(|e| e.to_string())?;
+  reply(
+    wr,
+    150,
+    if use_mlsd {
+      "Opening data connection for MLSD"
+    } else {
+      "Opening data connection for LIST"
+    },
+  )
+  .await
+  .map_err(|e| e.to_string())?;
   let (mut ds, _peer) = timeout(Duration::from_secs(20), listener.accept())
     .await
     .map_err(|_| "data connection timeout")?
@@ -170,7 +185,9 @@ async fn run_listing(
   }
   ds.write_all(&buf).await.map_err(|e| e.to_string())?;
   ds.shutdown().await.map_err(|e| e.to_string())?;
-  reply(wr, 226, "Directory send OK").await.map_err(|e| e.to_string())?;
+  reply(wr, 226, "Directory send OK")
+    .await
+    .map_err(|e| e.to_string())?;
   Ok(())
 }
 
@@ -180,7 +197,11 @@ async fn do_retr(
   cfg: &Arc<FtpCfg>,
   path_arg: &str,
 ) -> Result<(), String> {
-  let target = if path_arg.is_empty() { st.cwd.clone() } else { virt_normalize(&st.cwd, path_arg)? };
+  let target = if path_arg.is_empty() {
+    st.cwd.clone()
+  } else {
+    virt_normalize(&st.cwd, path_arg)?
+  };
   let real = real_path(cfg, &target)?;
   if real.is_dir() {
     return Err("550 is a directory".into());
@@ -190,7 +211,9 @@ async fn do_retr(
     .map_err(|e| format!("550 open failed: {e}"))?;
   let len = f.metadata().await.map(|m| m.len()).unwrap_or(0);
   let listener = st.pending_data.take().ok_or("425 Use PASV or EPSV first")?;
-  reply(wr, 150, &format!("Opening data connection, {len} bytes")).await.map_err(|e| e.to_string())?;
+  reply(wr, 150, &format!("Opening data connection, {len} bytes"))
+    .await
+    .map_err(|e| e.to_string())?;
   let (mut ds, _peer) = timeout(Duration::from_secs(20), listener.accept())
     .await
     .map_err(|_| "data connection timeout")?
@@ -207,7 +230,9 @@ async fn do_retr(
   }
   let _ = left;
   ds.shutdown().await.map_err(|e| e.to_string())?;
-  reply(wr, 226, "Transfer complete").await.map_err(|e| e.to_string())?;
+  reply(wr, 226, "Transfer complete")
+    .await
+    .map_err(|e| e.to_string())?;
   Ok(())
 }
 
@@ -220,18 +245,28 @@ async fn do_stor(
   if cfg.read_only {
     return Err("550 server is read-only".into());
   }
-  let target = if path_arg.is_empty() { st.cwd.clone() } else { virt_normalize(&st.cwd, path_arg)? };
+  let target = if path_arg.is_empty() {
+    st.cwd.clone()
+  } else {
+    virt_normalize(&st.cwd, path_arg)?
+  };
   let real = real_path(cfg, &target)?;
   if let Some(parent) = real.parent() {
-    tokio::fs::create_dir_all(parent).await.map_err(|e| format!("550 {e}"))?;
+    tokio::fs::create_dir_all(parent)
+      .await
+      .map_err(|e| format!("550 {e}"))?;
   }
   let listener = st.pending_data.take().ok_or("425 Use PASV or EPSV first")?;
-  reply(wr, 150, "Opening data connection for STOR").await.map_err(|e| e.to_string())?;
+  reply(wr, 150, "Opening data connection for STOR")
+    .await
+    .map_err(|e| e.to_string())?;
   let (mut ds, _peer) = timeout(Duration::from_secs(20), listener.accept())
     .await
     .map_err(|_| "data connection timeout")?
     .map_err(|e| e.to_string())?;
-  let mut f = tokio::fs::File::create(&real).await.map_err(|e| format!("550 create failed: {e}"))?;
+  let mut f = tokio::fs::File::create(&real)
+    .await
+    .map_err(|e| format!("550 create failed: {e}"))?;
   let mut total: u64 = 0;
   let mut chunk = vec![0u8; 65536];
   loop {
@@ -243,7 +278,9 @@ async fn do_stor(
     total += n as u64;
   }
   f.flush().await.map_err(|e| e.to_string())?;
-  reply(wr, 226, &format!("Transfer complete ({total} bytes)")).await.map_err(|e| e.to_string())?;
+  reply(wr, 226, &format!("Transfer complete ({total} bytes)"))
+    .await
+    .map_err(|e| e.to_string())?;
   Ok(())
 }
 
@@ -282,16 +319,22 @@ async fn dispatch(
     "USER" => {
       st.user = arg;
       st.logged_in = false;
-      reply(wr, 331, "Password required").await.map_err(|e| e.to_string())
+      reply(wr, 331, "Password required")
+        .await
+        .map_err(|e| e.to_string())
     }
     "PASS" => {
-      let ok = cfg.anonymous
-        || (st.user.eq_ignore_ascii_case(&cfg.username) && arg == cfg.password);
+      let ok =
+        cfg.anonymous || (st.user.eq_ignore_ascii_case(&cfg.username) && arg == cfg.password);
       if ok {
         st.logged_in = true;
-        reply(wr, 230, "Login successful").await.map_err(|e| e.to_string())
+        reply(wr, 230, "Login successful")
+          .await
+          .map_err(|e| e.to_string())
       } else {
-        reply(wr, 530, "Login incorrect").await.map_err(|e| e.to_string())
+        reply(wr, 530, "Login incorrect")
+          .await
+          .map_err(|e| e.to_string())
       }
     }
     "QUIT" => {
@@ -299,10 +342,14 @@ async fn dispatch(
       Ok(())
     }
     "NOOP" => reply(wr, 200, "NOOP ok").await.map_err(|e| e.to_string()),
-    "SYST" => reply(wr, 215, "UNIX Type: L8").await.map_err(|e| e.to_string()),
+    "SYST" => reply(wr, 215, "UNIX Type: L8")
+      .await
+      .map_err(|e| e.to_string()),
     "FEAT" => {
       let features = "211-Extensions supported:\r\n MLST type*;size*;modify*;\r\n SIZE\r\n MDTM\r\n MLSD\r\n EPSV\r\n PASV\r\n UTF8\r\n TVFS\r\n211 End";
-      wr.write_all(features.as_bytes()).await.map_err(|e| e.to_string())?;
+      wr.write_all(features.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
       wr.write_all(b"\r\n").await.map_err(|e| e.to_string())?;
       Ok(())
     }
@@ -315,40 +362,60 @@ async fn dispatch(
       reply(wr, 200, "Type set").await.map_err(|e| e.to_string())
     }
     "PWD" => {
-      let canon = if st.cwd == "/" { "/".to_string() } else { st.cwd.clone() };
-      reply(wr, 257, &format!("\"{canon}\" is current directory")).await.map_err(|e| e.to_string())
+      let canon = if st.cwd == "/" {
+        "/".to_string()
+      } else {
+        st.cwd.clone()
+      };
+      reply(wr, 257, &format!("\"{canon}\" is current directory"))
+        .await
+        .map_err(|e| e.to_string())
     }
-    "CWD" => {
-      match virt_normalize(&st.cwd, &arg) {
-        Ok(nv) => {
-          if real_path(cfg, &nv)?.is_dir() {
-            st.cwd = nv;
-            reply(wr, 250, "Directory changed").await.map_err(|e| e.to_string())
-          } else {
-            Err("550 directory does not exist".into())
-          }
+    "CWD" => match virt_normalize(&st.cwd, &arg) {
+      Ok(nv) => {
+        if real_path(cfg, &nv)?.is_dir() {
+          st.cwd = nv;
+          reply(wr, 250, "Directory changed")
+            .await
+            .map_err(|e| e.to_string())
+        } else {
+          Err("550 directory does not exist".into())
         }
-        Err(e) => Err(format!("550 {e}")),
       }
-    }
+      Err(e) => Err(format!("550 {e}")),
+    },
     "CDUP" => {
       let nv = virt_normalize(&st.cwd, "..")?;
       st.cwd = nv;
-      reply(wr, 250, "Directory changed").await.map_err(|e| e.to_string())
+      reply(wr, 250, "Directory changed")
+        .await
+        .map_err(|e| e.to_string())
     }
     "PASV" => match local_ip {
       std::net::IpAddr::V4(v4) => {
-        let ls = TcpListener::bind(std::net::SocketAddr::new(local_ip, 0)).await.map_err(|e| e.to_string())?;
+        let ls = TcpListener::bind(std::net::SocketAddr::new(local_ip, 0))
+          .await
+          .map_err(|e| e.to_string())?;
         let port = ls.local_addr().map_err(|e| e.to_string())?.port();
         st.pending_data = Some(Arc::new(ls));
         let oct = v4.octets();
-        let msg = format!("227 Entering Passive Mode ({},{},{},{},{},{})", oct[0], oct[1], oct[2], oct[3], port / 256, port % 256);
+        let msg = format!(
+          "227 Entering Passive Mode ({},{},{},{},{},{})",
+          oct[0],
+          oct[1],
+          oct[2],
+          oct[3],
+          port / 256,
+          port % 256
+        );
         reply(wr, 227, &msg).await.map_err(|e| e.to_string())
       }
       _ => Err("425 PASV requires IPv4, use EPSV".into()),
     },
     "EPSV" => {
-      let ls = TcpListener::bind(std::net::SocketAddr::new(local_ip, 0)).await.map_err(|e| e.to_string())?;
+      let ls = TcpListener::bind(std::net::SocketAddr::new(local_ip, 0))
+        .await
+        .map_err(|e| e.to_string())?;
       let port = ls.local_addr().map_err(|e| e.to_string())?.port();
       st.pending_data = Some(Arc::new(ls));
       let msg = format!("229 Entering Extended Passive Mode (|||{port}|)");
@@ -360,8 +427,12 @@ async fn dispatch(
       if real.is_dir() {
         Err("550 not a regular file".into())
       } else {
-        let size = std::fs::metadata(&real).map(|m| m.len()).map_err(|e| format!("550 {e}"))?;
-        reply(wr, 213, &size.to_string()).await.map_err(|e| e.to_string())
+        let size = std::fs::metadata(&real)
+          .map(|m| m.len())
+          .map_err(|e| format!("550 {e}"))?;
+        reply(wr, 213, &size.to_string())
+          .await
+          .map_err(|e| e.to_string())
       }
     }
     "MDTM" => {
@@ -394,7 +465,9 @@ async fn dispatch(
       } else {
         let real = real_path(cfg, &arg)?;
         std::fs::create_dir_all(&real).map_err(|e| format!("550 {e}"))?;
-        reply(wr, 257, "Directory created").await.map_err(|e| e.to_string())
+        reply(wr, 257, "Directory created")
+          .await
+          .map_err(|e| e.to_string())
       }
     }
     "RMD" => {
@@ -411,7 +484,9 @@ async fn dispatch(
         Err("550 server is read-only".into())
       } else {
         st.rnfr = Some(arg);
-        reply(wr, 350, "Ready for RNTO").await.map_err(|e| e.to_string())
+        reply(wr, 350, "Ready for RNTO")
+          .await
+          .map_err(|e| e.to_string())
       }
     }
     "RNTO" => {
@@ -427,7 +502,9 @@ async fn dispatch(
     }
     "ABOR" => {
       st.pending_data = None;
-      reply(wr, 226, "Abort successful").await.map_err(|e| e.to_string())
+      reply(wr, 226, "Abort successful")
+        .await
+        .map_err(|e| e.to_string())
     }
     "REST" | "APPE" | "SITE" | "STAT" => Err("502 not implemented".into()),
     _ => Err("500 command not understood".into()),
@@ -435,11 +512,7 @@ async fn dispatch(
 }
 
 /// Handle one FTP control connection until EOF.
-async fn handle_conn(
-  stream: TcpStream,
-  cfg: Arc<FtpCfg>,
-  peer: SocketAddr,
-) {
+async fn handle_conn(stream: TcpStream, cfg: Arc<FtpCfg>, peer: SocketAddr) {
   let mut st = ConnState {
     logged_in: false,
     user: String::new(),

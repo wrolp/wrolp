@@ -335,12 +335,14 @@ pub fn get_app_version() -> AppVersion {
   }
 }
 
-/// Open the application config directory in the system file manager
-/// (e.g. Explorer on Windows). Avoids the frontend shell-plugin `open` scope
-/// which only allows URLs by default.
+/// Open the application data directory (the effective data root, honoring a
+/// relocated data directory) in the system file manager (e.g. Explorer on
+/// Windows). Avoids the frontend shell-plugin `open` scope which only allows
+/// URLs by default.
 #[tauri::command]
-pub fn open_config_dir() -> Result<(), String> {
-  let dir = get_data_dir().ok_or_else(|| "Config directory not found".to_string())?;
+pub fn open_config_dir(state: tauri::State<'_, AppState>) -> Result<(), String> {
+  let dir = data_dir_for(state.base_dir.as_deref())
+    .ok_or_else(|| "Config directory not found".to_string())?;
   if !dir.exists() {
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create config dir: {}", e))?;
   }
@@ -898,7 +900,16 @@ pub async fn confirm_ai_tool(
     let mode = ai_mode.clone();
     let fmt = pending.tool_call_format.clone();
     move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-      save_pending(&app2, &cid2, &conf2, msgs, calls, mode.clone(), &fmt, pending_tab);
+      save_pending(
+        &app2,
+        &cid2,
+        &conf2,
+        msgs,
+        calls,
+        mode.clone(),
+        &fmt,
+        pending_tab,
+      );
     }
   };
   spawn_agent(

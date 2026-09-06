@@ -122,7 +122,9 @@ async fn run_session_loop(
   //   - probe succeeds again      -> "connection-ok"       (back to green)
   //   - max consecutive failures   -> break, connect() emits "connection-closed"
   //                                    (red dot) and tears the session down.
-  let (ka_interval, ka_max) = load_keepalive().unwrap_or((std::time::Duration::from_secs(30), 3u64));
+  let base_dir = app.try_state::<AppState>().and_then(|s| s.base_dir.clone());
+  let (ka_interval, ka_max) =
+    load_keepalive(base_dir.as_deref()).unwrap_or((std::time::Duration::from_secs(30), 3u64));
   let mut ka_timer = tokio::time::interval(ka_interval);
   ka_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
   // Eat the immediate first tick so probing starts after one full interval.
@@ -594,7 +596,7 @@ pub async fn connect(
     // WROLP_RECORDING environment variable (1/true/0/false).
     let recording_enabled = match std::env::var("WROLP_RECORDING") {
       Ok(v) => v != "0" && v != "false",
-      Err(_) => load_window_config_auto_record(),
+      Err(_) => load_window_config_auto_record(state.base_dir.as_deref()),
     };
 
     // Create in-memory recording buffer. Only persist a session row to SQLite
@@ -673,9 +675,7 @@ pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: u32) -> Resul
     // and risk a deadlock.
     let tx = {
       let mut sessions = state.telnet_sessions.lock().map_err(|e| e.to_string())?;
-      sessions
-        .get_mut(&tab_id)
-        .and_then(|s| s.shutdown_tx.take())
+      sessions.get_mut(&tab_id).and_then(|s| s.shutdown_tx.take())
     };
     if let Some(tx) = tx {
       let _ = tx.send(());

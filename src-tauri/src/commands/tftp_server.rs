@@ -10,7 +10,7 @@ use tauri::Manager;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 
-use crate::ssh_session::{AppState, AppServerStatus, TransferRow};
+use crate::ssh_session::{AppServerStatus, AppState, TransferRow};
 use crate::tftp_proto;
 
 /// Handle to the running TFTP server task.
@@ -88,7 +88,9 @@ pub async fn start_tftp_server(
       let path = match tftp_proto::resolve_path(&root, &clean) {
         Ok(p) => p,
         Err(e) => {
-          let _ = listener.send_to(&tftp_proto::build_error(0, &e), peer).await;
+          let _ = listener
+            .send_to(&tftp_proto::build_error(0, &e), peer)
+            .await;
           continue;
         }
       };
@@ -100,7 +102,10 @@ pub async fn start_tftp_server(
       }
       if op == tftp_proto::WRQ && path.is_dir() {
         let _ = listener
-          .send_to(&tftp_proto::build_error(2, "cannot write to a directory"), peer)
+          .send_to(
+            &tftp_proto::build_error(2, "cannot write to a directory"),
+            peer,
+          )
           .await;
         continue;
       }
@@ -118,7 +123,12 @@ pub async fn start_tftp_server(
           kind: "server".into(),
           name: clean.clone(),
           peer: peer.to_string(),
-          direction: if op == tftp_proto::RRQ { "send" } else { "recv" }.into(),
+          direction: if op == tftp_proto::RRQ {
+            "send"
+          } else {
+            "recv"
+          }
+          .into(),
           transferred: 0,
           total: 0,
           status: "running".into(),

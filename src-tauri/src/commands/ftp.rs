@@ -4,10 +4,10 @@
 
 use super::*;
 use crate::ftp_fs::{FtpSession, FtpStreamOps};
+use suppaftp::async_native_tls::TlsConnector;
 use suppaftp::tokio::{
   AsyncFtpStream, AsyncNativeTlsConnector, AsyncNativeTlsStream, ImplAsyncFtpStream, TokioTlsStream,
 };
-use suppaftp::async_native_tls::TlsConnector;
 use suppaftp::types::FileType;
 
 #[derive(Debug, serde::Deserialize)]
@@ -52,9 +52,7 @@ fn build_connector(skip_verify: bool) -> TlsConnector {
   c
 }
 
-async fn make_boxed(
-  args: &ConnectFtpArgs,
-) -> Result<Box<dyn FtpStreamOps + Send>, String> {
+async fn make_boxed(args: &ConnectFtpArgs) -> Result<Box<dyn FtpStreamOps + Send>, String> {
   let host = args.host.trim();
   let port = args.port.unwrap_or(21);
   let username = args.username.trim();
@@ -83,9 +81,10 @@ async fn make_boxed(
       )
     }
     "implicit" => {
-      let secure = ImplAsyncFtpStream::<AsyncNativeTlsStream>::connect_secure_implicit(&addr, connector, host)
-        .await
-        .map_err(|e| format!("implicit FTPS connect failed: {e}"))?;
+      let secure =
+        ImplAsyncFtpStream::<AsyncNativeTlsStream>::connect_secure_implicit(&addr, connector, host)
+          .await
+          .map_err(|e| format!("implicit FTPS connect failed: {e}"))?;
       Box::new(finish_login(secure, username, password).await?)
     }
     _ => {
@@ -111,10 +110,7 @@ pub async fn connect_ftp(
     .ftp_sessions
     .lock()
     .map_err(|e| e.to_string())?
-    .insert(
-      args.tab_id,
-      FtpSession::new(args.tab_id, stream),
-    );
+    .insert(args.tab_id, FtpSession::new(args.tab_id, stream));
   Ok(ConnectResult {
     status: "connected".into(),
     tab_id: args.tab_id,
@@ -122,10 +118,7 @@ pub async fn connect_ftp(
 }
 
 #[tauri::command]
-pub async fn disconnect_ftp(
-  state: tauri::State<'_, AppState>,
-  tab_id: u32,
-) -> Result<(), String> {
+pub async fn disconnect_ftp(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<(), String> {
   let session = state
     .ftp_sessions
     .lock()

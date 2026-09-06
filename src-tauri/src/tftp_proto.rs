@@ -100,7 +100,8 @@ pub fn parse_request(buf: &[u8]) -> Result<(u16, String, TftpOptions), (u16, Str
     opts.push((parts[i].clone(), parts[i + 1].clone()));
     i += 2;
   }
-  Ok((op, filename, opts))}
+  Ok((op, filename, opts))
+}
 
 /// Reject ".." traversal and Windows-style separators in a file name coming
 /// from the wire. Returns a safe relative path string.
@@ -227,10 +228,7 @@ pub async fn send_file(
   let mut block: u16 = 0;
   let mut total: u64 = 0;
   loop {
-    let n = f
-      .read(&mut buf)
-      .await
-      .map_err(|e| format!("read: {e}"))?;
+    let n = f.read(&mut buf).await.map_err(|e| format!("read: {e}"))?;
     if n == 0 {
       return Ok(total);
     }
@@ -467,7 +465,11 @@ pub async fn client_upload(
   let mut last_pkt = Vec::new();
   loop {
     let mut rbuf = [0u8; 65536];
-    let resend = if negotiated { last_pkt.as_slice() } else { req.as_slice() };
+    let resend = if negotiated {
+      last_pkt.as_slice()
+    } else {
+      req.as_slice()
+    };
     let (n, from) = recv_retry(sock, &server, &mut rbuf, &mut cancel, resend).await?;
     if let Some(m) = err_msg(&rbuf[..n]) {
       return Err(m);
@@ -519,7 +521,11 @@ pub async fn client_upload(
     if op == ACK {
       let ack_block = be16(&rbuf[2..4]);
       // Determine last sent block number from last_pkt.
-      let last_block = if last_pkt.len() >= 4 { be16(&last_pkt[2..4]) } else { 0 };
+      let last_block = if last_pkt.len() >= 4 {
+        be16(&last_pkt[2..4])
+      } else {
+        0
+      };
       if ack_block != last_block {
         continue;
       }

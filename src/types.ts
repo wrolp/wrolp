@@ -338,6 +338,12 @@ export interface KeepaliveConfig {
   max: number
 }
 
+/** Effective data directory reported to the Settings page. */
+export interface DataRootInfo {
+  path: string
+  isDefault: boolean
+}
+
 export interface LocalTerminalEntry {
   id: string
   name: string

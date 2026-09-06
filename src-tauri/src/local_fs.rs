@@ -16,9 +16,8 @@ impl LocalFs {
     Self {
       // An empty path (e.g. a local terminal entry without a configured
       // directory) resolves to the user's home directory.
-      root: dirs::home_dir().unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-      }),
+      root: dirs::home_dir()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
     }
   }
 

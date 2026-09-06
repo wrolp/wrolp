@@ -82,7 +82,9 @@ async fn connections_crud_roundtrips_to_disk() {
 
   let mut c = conn("c1", "Web");
   c.group = Some("Prod".into());
-  commands::save_connection(app.state(), c.clone()).await.expect("save");
+  commands::save_connection(app.state(), c.clone())
+    .await
+    .expect("save");
   assert_eq!(list_conns(&app).await.len(), 1);
 
   // Persisted under the temp dir (not the real config dir).
@@ -92,12 +94,16 @@ async fn connections_crud_roundtrips_to_disk() {
 
   // Update keeps a single entry.
   c.name = "Web Renamed".into();
-  commands::save_connection(app.state(), c.clone()).await.expect("save update");
+  commands::save_connection(app.state(), c.clone())
+    .await
+    .expect("save update");
   let conns = list_conns(&app).await;
   assert_eq!(conns.len(), 1);
   assert_eq!(conns[0].name, "Web Renamed");
 
-  assert!(commands::delete_connection(app.state(), c.id).await.expect("delete"));
+  assert!(commands::delete_connection(app.state(), c.id)
+    .await
+    .expect("delete"));
   assert!(list_conns(&app).await.is_empty());
 }
 
@@ -108,10 +114,14 @@ async fn workspace_switch_filters_connections() {
   let ws_id = commands::create_workspace(app.state(), "Work".into())
     .await
     .expect("create ws");
-  commands::switch_workspace(app.state(), ws_id.clone()).await.expect("switch");
+  commands::switch_workspace(app.state(), ws_id.clone())
+    .await
+    .expect("switch");
 
   let c = conn("c1", "OnlyInWork");
-  commands::save_connection(app.state(), c).await.expect("save in Work");
+  commands::save_connection(app.state(), c)
+    .await
+    .expect("save in Work");
   assert_eq!(list_conns(&app).await.len(), 1);
 
   // Back to default: the connection belongs to the other workspace.
@@ -137,15 +147,25 @@ async fn reorder_and_group_rename_ungroup() {
   b.group = Some("G1".into());
   let mut c = conn("c", "Gamma");
   c.group = Some("G2".into());
-  commands::save_connection(app.state(), a.clone()).await.unwrap();
-  commands::save_connection(app.state(), b.clone()).await.unwrap();
-  commands::save_connection(app.state(), c.clone()).await.unwrap();
+  commands::save_connection(app.state(), a.clone())
+    .await
+    .unwrap();
+  commands::save_connection(app.state(), b.clone())
+    .await
+    .unwrap();
+  commands::save_connection(app.state(), c.clone())
+    .await
+    .unwrap();
 
   // Reorder: c, a, b.
   commands::reorder_connections(app.state(), vec!["c".into(), "a".into(), "b".into()], None)
     .await
     .expect("reorder");
-  let order: Vec<String> = list_conns(&app).await.iter().map(|x| x.id.clone()).collect();
+  let order: Vec<String> = list_conns(&app)
+    .await
+    .iter()
+    .map(|x| x.id.clone())
+    .collect();
   assert_eq!(order, vec!["c", "a", "b"]);
 
   // Rename group G1 -> G1x; drag a into G2 via group_updates.
@@ -164,11 +184,19 @@ async fn reorder_and_group_rename_ungroup() {
   .await
   .expect("reorder with group updates");
   let conns = list_conns(&app).await;
-  assert_eq!(conns.iter().find(|x| x.id == "a").unwrap().group.as_deref(), Some("G2"));
-  assert_eq!(conns.iter().find(|x| x.id == "b").unwrap().group.as_deref(), Some("G1x"));
+  assert_eq!(
+    conns.iter().find(|x| x.id == "a").unwrap().group.as_deref(),
+    Some("G2")
+  );
+  assert_eq!(
+    conns.iter().find(|x| x.id == "b").unwrap().group.as_deref(),
+    Some("G1x")
+  );
 
   // delete_group ungroups every member.
-  assert!(commands::delete_group(app.state(), "G2".into()).await.expect("delete group"));
+  assert!(commands::delete_group(app.state(), "G2".into())
+    .await
+    .expect("delete group"));
   let conns = list_conns(&app).await;
   assert_eq!(conns.iter().find(|x| x.id == "a").unwrap().group, None);
   assert_eq!(conns.iter().find(|x| x.id == "c").unwrap().group, None);
@@ -181,19 +209,31 @@ async fn window_config_roundtrip_and_keepalive_clamping() {
   let app = build_test_app();
 
   // Defaults.
-  let k = commands::get_keepalive(app.state()).await.expect("get_keepalive");
+  let k = commands::get_keepalive(app.state())
+    .await
+    .expect("get_keepalive");
   assert_eq!(k.interval, 30);
   assert_eq!(k.max, 3);
-  assert!(!commands::get_auto_record(app.state()).await.expect("get_auto_record"));
+  assert!(!commands::get_auto_record(app.state())
+    .await
+    .expect("get_auto_record"));
 
   // Clamping: interval 5 -> 10, max 1 -> 2.
-  commands::set_keepalive(app.state(), 5, 1).await.expect("set_keepalive");
-  let k = commands::get_keepalive(app.state()).await.expect("get_keepalive");
+  commands::set_keepalive(app.state(), 5, 1)
+    .await
+    .expect("set_keepalive");
+  let k = commands::get_keepalive(app.state())
+    .await
+    .expect("get_keepalive");
   assert_eq!(k.interval, 10);
   assert_eq!(k.max, 2);
 
-  commands::set_auto_record(app.state(), true).await.expect("set_auto_record");
-  assert!(commands::get_auto_record(app.state()).await.expect("get_auto_record"));
+  commands::set_auto_record(app.state(), true)
+    .await
+    .expect("set_auto_record");
+  assert!(commands::get_auto_record(app.state())
+    .await
+    .expect("get_auto_record"));
 
   // save_window_config -> load_window_config round-trip.
   let cfg = commands::WindowConfig {
@@ -212,13 +252,17 @@ async fn window_config_roundtrip_and_keepalive_clamping() {
   commands::save_window_config(app.state(), cfg.clone())
     .await
     .expect("save window config");
-  let loaded = commands::load_window_config(app.state()).await.expect("load window config");
+  let loaded = commands::load_window_config(app.state())
+    .await
+    .expect("load window config");
   assert_eq!(loaded.x, 100);
   assert_eq!(loaded.opacity, 0.9);
   assert_eq!(loaded.keepalive_interval, 42);
   assert_eq!(loaded.collapsed_groups, vec!["g1"]);
   // Same values surfaced through get_keepalive.
-  let k = commands::get_keepalive(app.state()).await.expect("get_keepalive");
+  let k = commands::get_keepalive(app.state())
+    .await
+    .expect("get_keepalive");
   assert_eq!(k.interval, 42);
   assert_eq!(k.max, 7);
 }
@@ -229,7 +273,10 @@ async fn window_config_roundtrip_and_keepalive_clamping() {
 async fn command_snippets_crud() {
   let app = build_test_app();
 
-  assert!(commands::list_command_snippets(app.state()).await.expect("list").is_empty());
+  assert!(commands::list_command_snippets(app.state())
+    .await
+    .expect("list")
+    .is_empty());
 
   let snip = CommandSnippetDto {
     id: "snip1".into(),
@@ -241,10 +288,14 @@ async fn command_snippets_crud() {
     created_at: "2026-08-28T00:00:00Z".into(),
     updated_at: "2026-08-28T00:00:00Z".into(),
   };
-  let id = commands::save_command_snippet(app.state(), snip).await.expect("save");
+  let id = commands::save_command_snippet(app.state(), snip)
+    .await
+    .expect("save");
   assert_eq!(id, "snip1");
 
-  let list = commands::list_command_snippets(app.state()).await.expect("list");
+  let list = commands::list_command_snippets(app.state())
+    .await
+    .expect("list");
   assert_eq!(list.len(), 1);
   assert_eq!(list[0].command, "docker ps");
   assert!(list[0].favorite);
@@ -252,7 +303,10 @@ async fn command_snippets_crud() {
   commands::delete_command_snippet(app.state(), "snip1".into())
     .await
     .expect("delete");
-  assert!(commands::list_command_snippets(app.state()).await.expect("list").is_empty());
+  assert!(commands::list_command_snippets(app.state())
+    .await
+    .expect("list")
+    .is_empty());
 }
 
 #[tokio::test]
@@ -267,7 +321,9 @@ async fn command_sets_crud() {
     created_at: "2026-08-28T00:00:00Z".into(),
     updated_at: "2026-08-28T00:00:00Z".into(),
   };
-  commands::save_command_set(app.state(), set).await.expect("save set");
+  commands::save_command_set(app.state(), set)
+    .await
+    .expect("save set");
 
   // Scoped query returns it; other connections don't.
   let scoped = commands::list_command_sets(app.state(), Some("c1".into()))
@@ -280,8 +336,13 @@ async fn command_sets_crud() {
     .expect("list other");
   assert!(other.is_empty());
 
-  commands::delete_command_set(app.state(), "set1".into()).await.expect("delete");
-  assert!(commands::list_command_sets(app.state(), None).await.expect("list all").is_empty());
+  commands::delete_command_set(app.state(), "set1".into())
+    .await
+    .expect("delete");
+  assert!(commands::list_command_sets(app.state(), None)
+    .await
+    .expect("list all")
+    .is_empty());
 }
 
 #[tokio::test]
@@ -295,9 +356,13 @@ async fn global_variables_crud() {
     created_at: "2026-08-28T00:00:00Z".into(),
     updated_at: "2026-08-28T00:00:00Z".into(),
   };
-  commands::save_global_variable(app.state(), v).await.expect("save var");
+  commands::save_global_variable(app.state(), v)
+    .await
+    .expect("save var");
 
-  let list = commands::list_global_variables(app.state()).await.expect("list");
+  let list = commands::list_global_variables(app.state())
+    .await
+    .expect("list");
   assert_eq!(list.len(), 1);
   assert_eq!(list[0].name, "host");
   assert_eq!(list[0].default_value, "web01");
@@ -305,7 +370,10 @@ async fn global_variables_crud() {
   commands::delete_global_variable(app.state(), "host".into())
     .await
     .expect("delete");
-  assert!(commands::list_global_variables(app.state()).await.expect("list").is_empty());
+  assert!(commands::list_global_variables(app.state())
+    .await
+    .expect("list")
+    .is_empty());
 }
 
 // ==================== Session recording flush + command extraction ====================
@@ -336,9 +404,24 @@ async fn session_recording_flush_and_extract_commands() {
         started_at_iso: "2026-08-28T00:00:00Z".into(),
         seq_counter: 3,
         events: vec![
-          RecordedEvent { seq: 0, timestamp_ms: 0, direction: "command".into(), content: "ls -la".into() },
-          RecordedEvent { seq: 1, timestamp_ms: 50, direction: "input".into(), content: "git status".into() },
-          RecordedEvent { seq: 2, timestamp_ms: 120, direction: "command".into(), content: "git status".into() },
+          RecordedEvent {
+            seq: 0,
+            timestamp_ms: 0,
+            direction: "command".into(),
+            content: "ls -la".into(),
+          },
+          RecordedEvent {
+            seq: 1,
+            timestamp_ms: 50,
+            direction: "input".into(),
+            content: "git status".into(),
+          },
+          RecordedEvent {
+            seq: 2,
+            timestamp_ms: 120,
+            direction: "command".into(),
+            content: "git status".into(),
+          },
         ],
         recording_enabled: true,
         db_saved: true,
@@ -356,20 +439,31 @@ async fn session_recording_flush_and_extract_commands() {
     commands::finalize_recording(&conn, rec.get(&1).expect("recording present"));
   }
 
-  let sessions = commands::list_sessions(app.state(), None, None).await.expect("list sessions");
+  let sessions = commands::list_sessions(app.state(), None, None)
+    .await
+    .expect("list sessions");
   assert_eq!(sessions.len(), 1);
   assert_eq!(sessions[0].event_count, 3);
 
   // extract_commands prefers precise "command" events and dedupes.
-  let cmds = commands::extract_commands(app.state(), "s1".into()).await.expect("extract");
+  let cmds = commands::extract_commands(app.state(), "s1".into())
+    .await
+    .expect("extract");
   assert_eq!(cmds, vec!["ls -la", "git status"]);
 
-  let events = commands::get_session_events(app.state(), "s1".into()).await.expect("events");
+  let events = commands::get_session_events(app.state(), "s1".into())
+    .await
+    .expect("events");
   assert_eq!(events.len(), 3);
   assert_eq!(events[1].content, "git status");
 
-  commands::delete_session(app.state(), "s1".into()).await.expect("delete session");
-  assert!(commands::list_sessions(app.state(), None, None).await.expect("list").is_empty());
+  commands::delete_session(app.state(), "s1".into())
+    .await
+    .expect("delete session");
+  assert!(commands::list_sessions(app.state(), None, None)
+    .await
+    .expect("list")
+    .is_empty());
 }
 
 // ==================== poll_output buffer drain ====================
@@ -388,6 +482,8 @@ async fn poll_output_drains_the_buffer() {
   assert_eq!(chunks, vec!["hello\r\n", "world"]);
 
   // Drained — next poll is empty.
-  let chunks = commands::poll_output(app.state(), 7).await.expect("poll again");
+  let chunks = commands::poll_output(app.state(), 7)
+    .await
+    .expect("poll again");
   assert!(chunks.is_empty());
 }

@@ -77,7 +77,11 @@ fn join_remote(base: &str, name: &str) -> String {
   if base.is_empty() || base == "." || base == "/" {
     return format!("/{}", name.trim_start_matches('/'));
   }
-  format!("{}/{}", base.trim_end_matches('/'), name.trim_start_matches('/'))
+  format!(
+    "{}/{}",
+    base.trim_end_matches('/'),
+    name.trim_start_matches('/')
+  )
 }
 
 /// Parse an RFC 3659 `mlsd` response line (facts; name).
@@ -207,19 +211,13 @@ where
       .transfer_type(suppaftp::types::FileType::Image)
       .await
       .map_err(ftp_err)?;
-    let mut stream = self
-      .retr_as_stream(path)
-      .await
-      .map_err(ftp_err)?;
+    let mut stream = self.retr_as_stream(path).await.map_err(ftp_err)?;
     let mut bytes = Vec::new();
     stream
       .read_to_end(&mut bytes)
       .await
       .map_err(|e| format!("read data stream: {e}"))?;
-    self
-      .finalize_retr_stream(stream)
-      .await
-      .map_err(ftp_err)?;
+    self.finalize_retr_stream(stream).await.map_err(ftp_err)?;
     Ok(bytes)
   }
 

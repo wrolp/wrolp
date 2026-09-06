@@ -102,7 +102,9 @@ fn ai_capture_start(state: &AppState, tab_id: u32, kind: LiveShell) -> bool {
         Err(_) => None,
       };
       let Some(sink) = sink else { return false };
-      let Ok(mut cap) = sink.lock() else { return false };
+      let Ok(mut cap) = sink.lock() else {
+        return false;
+      };
       if cap.is_some() {
         return false;
       }
@@ -126,9 +128,12 @@ fn ai_capture_len(state: &AppState, tab_id: u32, kind: LiveShell) -> usize {
       .lock()
       .ok()
       .and_then(|shells| {
-        shells
-          .get(&tab_id)
-          .and_then(|sh| sh.ai_capture.lock().ok().map(|c| c.as_ref().map_or(0, |s| s.len())))
+        shells.get(&tab_id).and_then(|sh| {
+          sh.ai_capture
+            .lock()
+            .ok()
+            .map(|c| c.as_ref().map_or(0, |s| s.len()))
+        })
       })
       .unwrap_or(0),
   }
@@ -281,7 +286,11 @@ fn trim_echo_and_prompt(text: &str, command: &str, ended_without_newline: bool) 
   }
   // The first line is `<prompt><echoed command>` on the same row.
   let needle = command.trim();
-  if !needle.is_empty() && lines.first().map_or(false, |l| l.trim_end().ends_with(needle)) {
+  if !needle.is_empty()
+    && lines
+      .first()
+      .map_or(false, |l| l.trim_end().ends_with(needle))
+  {
     lines.remove(0);
   }
   while lines.last().map_or(false, |l| l.trim().is_empty()) {
@@ -356,19 +365,52 @@ async fn run_command_on_terminal(
 ) -> Result<String, String> {
   let cmd = command.trim_end_matches(['\r', '\n']).to_string();
   if cmd.trim().is_empty() {
-    emit_ai_term_mark(app, tab_id, kind, command, "error", 0, false, false, 0, Some("Empty command"));
+    emit_ai_term_mark(
+      app,
+      tab_id,
+      kind,
+      command,
+      "error",
+      0,
+      false,
+      false,
+      0,
+      Some("Empty command"),
+    );
     return Err("Empty command".into());
   }
   // A multi-line command would be executed line by line by the shell and the
   // quiet heuristic cannot tell the pieces apart — reject it explicitly rather
   // than half-running it.
   if cmd.contains('\n') || cmd.contains('\r') {
-    emit_ai_term_mark(app, tab_id, kind, &cmd, "error", 0, false, false, 0, Some("Multi-line commands cannot be typed into an interactive shell"));
+    emit_ai_term_mark(
+      app,
+      tab_id,
+      kind,
+      &cmd,
+      "error",
+      0,
+      false,
+      false,
+      0,
+      Some("Multi-line commands cannot be typed into an interactive shell"),
+    );
     return Err("Multi-line commands cannot be typed into an interactive shell".into());
   }
 
   if !ai_capture_start(state, tab_id, kind) {
-    emit_ai_term_mark(app, tab_id, kind, &cmd, "error", 0, false, false, 0, Some("Another AI command is already running on this terminal"));
+    emit_ai_term_mark(
+      app,
+      tab_id,
+      kind,
+      &cmd,
+      "error",
+      0,
+      false,
+      false,
+      0,
+      Some("Another AI command is already running on this terminal"),
+    );
     return Err("Another AI command is already running on this terminal".into());
   }
 
@@ -415,7 +457,18 @@ async fn run_command_on_terminal(
     let _ = ai_capture_finish(state, tab_id, kind);
     // Typing failed (e.g. shell vanished) — tell the frontend to reset so it
     // does not stay stuck in command-highlight mode, and show the error badge.
-    emit_ai_term_mark(app, tab_id, kind, &cmd, "error", seq, false, false, 0, Some(&e));
+    emit_ai_term_mark(
+      app,
+      tab_id,
+      kind,
+      &cmd,
+      "error",
+      seq,
+      false,
+      false,
+      0,
+      Some(&e),
+    );
     return Err(e);
   }
   record_ai_command(state, tab_id, &cmd);

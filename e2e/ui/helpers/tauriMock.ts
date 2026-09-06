@@ -161,6 +161,13 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return true
           case 'get_auto_record':
             return true
+          case 'get_data_root':
+            return { path: 'C:\\e2e\\data', isDefault: true }
+          case 'set_data_root':
+            return {
+              path: typeof args.path === 'string' ? args.path : 'C:\\e2e\\data',
+              isDefault: false,
+            }
           default:
             return null
         }

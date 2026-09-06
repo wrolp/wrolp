@@ -11,13 +11,14 @@
 #[allow(unused_imports)]
 pub(crate) use super::ssh_session::{
   ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
-  DirUploadSummary, FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SerialSession, SshError,
-  SshHandler, SshSession, SwitchedUser, TargetRef, TelnetSession, TransferControl, TunnelInfo,
-  UploadSession,
+  DirUploadSummary, FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SerialSession,
+  SshError, SshHandler, SshSession, SwitchedUser, TargetRef, TelnetSession, TransferControl,
+  TunnelInfo, UploadSession,
 };
-pub use serial::*;
 #[allow(unused_imports)]
-pub(crate) use crate::db::{self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary};
+pub(crate) use crate::db::{
+  self, AiPromptTemplate, CommandSetDto, SessionEventDto, SessionSummary,
+};
 #[allow(unused_imports)]
 pub(crate) use crate::remote_fs::{
   build_fs, build_sftp, copy_recursive, delete_dir_recursive, get_jump_handle, RemoteFs,
@@ -30,6 +31,7 @@ pub(crate) use russh::client::{self, Handler};
 pub(crate) use russh::ChannelId;
 #[allow(unused_imports)]
 pub(crate) use russh_keys::load_secret_key;
+pub use serial::*;
 #[allow(unused_imports)]
 pub(crate) use std::path::PathBuf;
 #[allow(unused_imports)]
@@ -107,9 +109,9 @@ pub(crate) fn get_data_dir() -> Option<std::path::PathBuf> {
   dirs::config_dir().map(|p| p.join("wrolp-terminal"))
 }
 
-/// Resolve the app data dir, honoring an explicit base-dir override (tests).
-/// `base` takes precedence when present; otherwise falls back to the real
-/// config dir.
+/// Resolve the app data dir. `base` is the effective data directory resolved
+/// at startup (see `data_root.rs`) and takes precedence when present;
+/// otherwise it falls back to the real config dir.
 pub(crate) fn data_dir_for(base: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
   base.map(|b| b.to_path_buf()).or_else(get_data_dir)
 }
@@ -120,14 +122,13 @@ pub(crate) async fn persist_connections(state: &tauri::State<'_, AppState>) -> R
   if let Some(ref path) = path {
     let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
     let workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
-    let active_id = state.active_workspace_id.lock().map_err(|e| e.to_string())?;
+    let active_id = state
+      .active_workspace_id
+      .lock()
+      .map_err(|e| e.to_string())?;
     crate::ssh_session::write_encrypted_connections(path, &all_conns, &workspaces, &active_id)?;
   }
   Ok(())
-}
-
-pub(crate) fn get_window_config_path() -> Option<std::path::PathBuf> {
-  get_data_dir().map(|p| p.join("window.json"))
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -167,7 +168,10 @@ pub(crate) fn image_mime_of(data: &[u8], path: &str) -> Option<String> {
   None
 }
 
-pub(crate) fn decode_file_content(data: &[u8], encoding_name: Option<&str>) -> (String, String, bool) {
+pub(crate) fn decode_file_content(
+  data: &[u8],
+  encoding_name: Option<&str>,
+) -> (String, String, bool) {
   if let Some(name) = encoding_name {
     let encoding: &Encoding = Encoding::for_label(name.as_bytes()).unwrap_or(UTF_8);
     let (cow, _, _had_errors) = encoding.decode(data);
@@ -248,40 +252,40 @@ pub(crate) fn shell_quote_arg(s: &str) -> String {
 
 // --- Submodules -----------------------------------------------------------
 
-pub(crate) mod connections;
-pub(crate) mod network_scan;
-pub(crate) mod serial;
-pub(crate) mod telnet;
-pub(crate) mod ssh;
-pub(crate) mod local_shell;
-pub(crate) mod sftp;
-pub(crate) mod upload;
-pub(crate) mod window;
-pub(crate) mod recordings;
 pub(crate) mod ai_chat;
 pub(crate) mod ai_term;
-pub(crate) mod tunnels;
+pub(crate) mod connections;
 pub(crate) mod ftp;
 pub(crate) mod ftp_server;
 pub(crate) mod http_server;
+pub(crate) mod local_shell;
+pub(crate) mod network_scan;
+pub(crate) mod recordings;
+pub(crate) mod serial;
+pub(crate) mod sftp;
+pub(crate) mod ssh;
+pub(crate) mod telnet;
 pub(crate) mod tftp;
 pub(crate) mod tftp_server;
+pub(crate) mod tunnels;
+pub(crate) mod upload;
+pub(crate) mod window;
 
 // Re-export every command so `crate::commands::<name>` keeps working from lib.rs.
-pub use connections::*;
-pub use network_scan::*;
-pub use telnet::*;
-pub use ssh::*;
-pub use local_shell::*;
-pub use sftp::*;
-pub use upload::*;
-pub use window::*;
-pub use recordings::*;
 pub use ai_chat::*;
 pub use ai_term::*;
-pub use tunnels::*;
+pub use connections::*;
 pub use ftp::*;
 pub use ftp_server::*;
 pub use http_server::*;
+pub use local_shell::*;
+pub use network_scan::*;
+pub use recordings::*;
+pub use sftp::*;
+pub use ssh::*;
+pub use telnet::*;
 pub use tftp::*;
 pub use tftp_server::*;
+pub use tunnels::*;
+pub use upload::*;
+pub use window::*;

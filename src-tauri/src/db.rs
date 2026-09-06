@@ -492,7 +492,10 @@ pub fn save_global_variable(conn: &Connection, var: &GlobalVariable) -> Result<S
 
 pub fn delete_global_variable(conn: &Connection, name: &str) -> Result<(), String> {
   conn
-    .execute("DELETE FROM global_variables WHERE name = ?1", params![name])
+    .execute(
+      "DELETE FROM global_variables WHERE name = ?1",
+      params![name],
+    )
     .map_err(|e| e.to_string())?;
   Ok(())
 }

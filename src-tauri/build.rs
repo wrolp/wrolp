@@ -55,8 +55,8 @@ fn main() {
   // https://github.com/tauri-apps/tauri/pull/4383.
   let attributes = tauri_build::Attributes::new();
   #[cfg(windows)]
-  let attributes = attributes
-    .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+  let attributes =
+    attributes.windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
   tauri_build::try_build(attributes).expect("failed to run tauri-build");
 
   if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")

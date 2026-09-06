@@ -99,7 +99,8 @@ pub fn init(app: &AppHandle, platform: tauri::webview::PlatformWebview) {
   // hand the path to the frontend.
   let app_nav = app.clone();
   let nav_handler = NavigationStartingEventHandler::create(Box::new(
-    move |_sender: Option<ICoreWebView2>, args: Option<ICoreWebView2NavigationStartingEventArgs>| {
+    move |_sender: Option<ICoreWebView2>,
+          args: Option<ICoreWebView2NavigationStartingEventArgs>| {
       if let Some(args) = args {
         if let Some(uri) = read_nav_uri(&args) {
           if let Some(path) = file_uri_to_path(&uri) {
@@ -121,7 +122,8 @@ pub fn init(app: &AppHandle, platform: tauri::webview::PlatformWebview) {
   // WebView2 may also open the dropped item in a new window — intercept it.
   let app_nw = app.clone();
   let nw_handler = NewWindowRequestedEventHandler::create(Box::new(
-    move |_sender: Option<ICoreWebView2>, args: Option<ICoreWebView2NewWindowRequestedEventArgs>| {
+    move |_sender: Option<ICoreWebView2>,
+          args: Option<ICoreWebView2NewWindowRequestedEventArgs>| {
       if let Some(args) = args {
         if let Some(uri) = read_nw_uri(&args) {
           if let Some(path) = file_uri_to_path(&uri) {

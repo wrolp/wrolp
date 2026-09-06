@@ -9,8 +9,9 @@ fn window_config_path_for(state: &tauri::State<'_, AppState>) -> Option<std::pat
 /// Synchronously read the `auto_record_sessions` flag from window.json.
 /// Used inside `connect()` (which is async but runs on the main thread), so we
 /// read the file directly instead of awaiting a command.
-pub(crate) fn load_window_config_auto_record() -> bool {
-  get_window_config_path()
+pub(crate) fn load_window_config_auto_record(base: Option<&std::path::Path>) -> bool {
+  data_dir_for(base)
+    .map(|p| p.join("window.json"))
     .and_then(|p| std::fs::read_to_string(p).ok())
     .and_then(|content| serde_json::from_str::<WindowConfig>(&content).ok())
     .map(|c| c.auto_record_sessions)
@@ -52,12 +53,18 @@ pub async fn set_auto_record(
 /// Used inside `connect()`. Enforces the minimums (interval >= 10s, count >= 2);
 /// values below the minimum are filtered out so a misconfigured file can't
 /// disable keepalive entirely.
-pub(crate) fn load_keepalive() -> Option<(std::time::Duration, u64)> {
-  get_window_config_path()
+pub(crate) fn load_keepalive(base: Option<&std::path::Path>) -> Option<(std::time::Duration, u64)> {
+  data_dir_for(base)
+    .map(|p| p.join("window.json"))
     .and_then(|p| std::fs::read_to_string(p).ok())
     .and_then(|content| serde_json::from_str::<WindowConfig>(&content).ok())
     .filter(|c| c.keepalive_interval >= 10 && c.keepalive_max >= 2)
-    .map(|c| (std::time::Duration::from_secs(c.keepalive_interval), c.keepalive_max))
+    .map(|c| {
+      (
+        std::time::Duration::from_secs(c.keepalive_interval),
+        c.keepalive_max,
+      )
+    })
 }
 
 /// SSH keepalive settings returned to the Settings page.
@@ -98,6 +105,64 @@ pub async fn set_keepalive(
   config.keepalive_max = max.max(2);
   let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
   std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+// ==================== Configurable Data Directory ====================
+// The data directory (wrolp.db, recordings, connections, window config, ...)
+// can be relocated from the Settings page. The choice is persisted in an
+// anchor file pinned to the *default* data directory (see data_root.rs) and
+// only takes effect on the next launch, when the one-time copy migration runs.
+
+/// Data-directory info returned to the Settings page.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataRootInfo {
+  pub path: String,
+  pub is_default: bool,
+}
+
+fn current_data_root(state: &tauri::State<'_, AppState>) -> Result<std::path::PathBuf, String> {
+  data_dir_for(state.base_dir.as_deref())
+    .ok_or_else(|| "Cannot determine config directory".to_string())
+}
+
+/// Return the effective data directory used by the running app.
+#[tauri::command]
+pub async fn get_data_root(state: tauri::State<'_, AppState>) -> Result<DataRootInfo, String> {
+  let path = current_data_root(&state)?;
+  Ok(DataRootInfo {
+    path: path.to_string_lossy().to_string(),
+    is_default: crate::data_root::same_dir(&path, &crate::data_root::default_data_dir()),
+  })
+}
+
+/// Set a custom data directory (`path: Some(abs)`) or reset to default
+/// (`path: None`). Only writes the anchor — the change is applied on the next
+/// launch by the startup migration in `data_root::resolve_data_root`.
+#[tauri::command]
+pub async fn set_data_root(
+  state: tauri::State<'_, AppState>,
+  path: Option<String>,
+) -> Result<DataRootInfo, String> {
+  let current = current_data_root(&state)?;
+  match path {
+    Some(p) => {
+      let target = crate::data_root::validate_custom_dir(&p)?;
+      crate::data_root::set_target(Some(target.to_string_lossy().as_ref()), &current)?;
+      Ok(DataRootInfo {
+        path: target.to_string_lossy().to_string(),
+        is_default: crate::data_root::same_dir(&target, &crate::data_root::default_data_dir()),
+      })
+    }
+    None => {
+      crate::data_root::set_target(None, &current)?;
+      let default = crate::data_root::default_data_dir();
+      Ok(DataRootInfo {
+        path: default.to_string_lossy().to_string(),
+        is_default: true,
+      })
+    }
+  }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -143,10 +208,14 @@ impl Default for WindowConfig {
 }
 
 /// Default SSH keepalive interval (seconds) when not configured.
-fn default_keepalive_interval() -> u64 { 30 }
+fn default_keepalive_interval() -> u64 {
+  30
+}
 
 /// Default SSH keepalive retry count when not configured.
-fn default_keepalive_max() -> u64 { 3 }
+fn default_keepalive_max() -> u64 {
+  3
+}
 
 #[tauri::command]
 pub async fn save_window_config(
@@ -164,9 +233,7 @@ pub async fn save_window_config(
 }
 
 #[tauri::command]
-pub async fn load_window_config(
-  state: tauri::State<'_, AppState>,
-) -> Result<WindowConfig, String> {
+pub async fn load_window_config(state: tauri::State<'_, AppState>) -> Result<WindowConfig, String> {
   let path = window_config_path_for(&state).ok_or("Cannot determine config directory")?;
   if !path.exists() {
     return Ok(WindowConfig::default());

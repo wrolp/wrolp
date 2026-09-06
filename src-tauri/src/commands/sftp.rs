@@ -103,7 +103,9 @@ pub async fn poll_working_dir(
         russh::ChannelMsg::Data { data } => {
           output.push_str(&String::from_utf8_lossy(&data));
         }
-        russh::ChannelMsg::ExitStatus { .. } | russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
+        russh::ChannelMsg::ExitStatus { .. }
+        | russh::ChannelMsg::Eof
+        | russh::ChannelMsg::Close => {
           break;
         }
         _ => {}
@@ -475,7 +477,10 @@ async fn walk_sftp_dir(
     };
     if md.is_dir() {
       dirs.push(child_rel.clone());
-      Box::pin(walk_sftp_dir(sftp, &child_abs, &child_rel, dirs, files, skipped)).await?;
+      Box::pin(walk_sftp_dir(
+        sftp, &child_abs, &child_rel, dirs, files, skipped,
+      ))
+      .await?;
     } else {
       files.push((child_abs, child_rel, md.size.unwrap_or(0)));
     }
@@ -520,7 +525,14 @@ pub async fn download_directory(
   let dir_name = std::path::Path::new(&remote_dir)
     .file_name()
     .map(|n| n.to_string_lossy().to_string())
-    .unwrap_or_else(|| remote_dir.trim_end_matches('/').rsplit('/').next().unwrap_or("download").to_string());
+    .unwrap_or_else(|| {
+      remote_dir
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("download")
+        .to_string()
+    });
   let local_root = std::path::Path::new(&local_dir).join(&dir_name);
 
   // Create local directory skeleton (root + all subdirs).
@@ -546,9 +558,13 @@ pub async fn download_directory(
     if let Some(parent) = local_path.parent() {
       let _ = tokio::fs::create_dir_all(parent).await;
     }
-    let mut out = tokio::fs::File::create(&local_path)
-      .await
-      .map_err(|e| format!("Failed to create local file '{}': {}", local_path.display(), e))?;
+    let mut out = tokio::fs::File::create(&local_path).await.map_err(|e| {
+      format!(
+        "Failed to create local file '{}': {}",
+        local_path.display(),
+        e
+      )
+    })?;
 
     let mut buf = vec![0u8; 65536];
     let mut offset = 0u64;
@@ -910,7 +926,14 @@ pub async fn delete_file(
     let dir_name = std::path::Path::new(&path)
       .file_name()
       .map(|n| n.to_string_lossy().to_string())
-      .unwrap_or_else(|| path.trim_end_matches('/').rsplit('/').next().unwrap_or("delete").to_string());
+      .unwrap_or_else(|| {
+        path
+          .trim_end_matches('/')
+          .rsplit('/')
+          .next()
+          .unwrap_or("delete")
+          .to_string()
+      });
     let start = std::time::Instant::now();
 
     // Recursively delete with per-file progress events (op `delete`). The

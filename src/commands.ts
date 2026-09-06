@@ -26,6 +26,7 @@ import type {
   StartTunnelArgs,
   TunnelConfig,
   KeepaliveConfig,
+  DataRootInfo,
   ScanResult,
   FtpServerArgs,
   HttpServerArgs,
@@ -417,6 +418,16 @@ export async function getKeepalive(): Promise<KeepaliveConfig> {
 
 export async function setKeepalive(interval: number, max: number): Promise<void> {
   await invoke<void>('set_keepalive', { interval, max })
+}
+
+/** Current effective data directory. */
+export async function getDataRoot(): Promise<DataRootInfo> {
+  return await invoke<DataRootInfo>('get_data_root')
+}
+
+/** Configure a custom data directory, or reset to default when `path` is null. */
+export async function setDataRoot(path: string | null): Promise<DataRootInfo> {
+  return await invoke<DataRootInfo>('set_data_root', { path })
 }
 
 export async function setRecordingEnabled(tabId: number, enabled: boolean): Promise<boolean> {

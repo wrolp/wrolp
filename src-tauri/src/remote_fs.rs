@@ -416,11 +416,7 @@ impl RemoteFs for SftpFs {
 /// filesystem. `dest` is the FULL destination path (the caller names it after
 /// the source's basename inside the chosen destination directory). Symlinks are
 /// skipped so a symlink pointing at an ancestor can't cause infinite recursion.
-pub async fn copy_recursive(
-  fs: &dyn RemoteFs,
-  src: &str,
-  dest: &str,
-) -> Result<(), String> {
+pub async fn copy_recursive(fs: &dyn RemoteFs, src: &str, dest: &str) -> Result<(), String> {
   let meta = fs.metadata(src).await?;
   if meta.is_dir {
     fs.create_dir(dest).await?;
@@ -580,7 +576,10 @@ async fn collect_dir_tree(
     }
     if e.is_dir {
       dirs.push(child_rel.clone());
-      Box::pin(collect_dir_tree(fs, &e.path, &child_rel, dirs, files, skipped)).await?;
+      Box::pin(collect_dir_tree(
+        fs, &e.path, &child_rel, dirs, files, skipped,
+      ))
+      .await?;
     } else {
       files.push((e.path, child_rel, e.size));
     }
@@ -619,7 +618,9 @@ pub async fn download_dir_recursive(
     if let Some(parent) = local.parent() {
       let _ = tokio::fs::create_dir_all(parent).await;
     }
-    tokio::fs::write(&local, &data).await.map_err(|e| e.to_string())?;
+    tokio::fs::write(&local, &data)
+      .await
+      .map_err(|e| e.to_string())?;
     done_bytes += size;
     done_files += 1;
     on_file(rel, *size, *size);

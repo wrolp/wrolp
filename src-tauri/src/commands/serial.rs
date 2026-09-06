@@ -108,9 +108,7 @@ fn describe_port(p: &serialport::SerialPortInfo) -> (String, String) {
     serialport::SerialPortType::BluetoothPort => {
       ("Bluetooth Serial".to_string(), "bluetooth".to_string())
     }
-    serialport::SerialPortType::PciPort => {
-      ("PCI Serial".to_string(), "pci".to_string())
-    }
+    serialport::SerialPortType::PciPort => ("PCI Serial".to_string(), "pci".to_string()),
     serialport::SerialPortType::Unknown => (p.port_name.clone(), "unknown".to_string()),
   }
 }
@@ -154,7 +152,12 @@ fn parse_line_settings(
     "software" => serialport::FlowControl::Software,
     "hardware" => serialport::FlowControl::Hardware,
     "" | "none" => serialport::FlowControl::None,
-    other => return Err(format!("Invalid flow control: {} (expect none/software/hardware)", other)),
+    other => {
+      return Err(format!(
+        "Invalid flow control: {} (expect none/software/hardware)",
+        other
+      ))
+    }
   };
   Ok((db, sb, par, fc))
 }
@@ -508,7 +511,10 @@ fn read_window(port: &mut Box<dyn serialport::SerialPort>, window: Duration, out
       break;
     }
     // Re-arm the read timeout in slices so the deadline is honoured.
-    if port.set_timeout(remaining.min(Duration::from_millis(120))).is_err() {
+    if port
+      .set_timeout(remaining.min(Duration::from_millis(120)))
+      .is_err()
+    {
       break;
     }
     match port.read(&mut buf) {
@@ -520,7 +526,8 @@ fn read_window(port: &mut Box<dyn serialport::SerialPort>, window: Duration, out
         }
       }
       Err(e)
-        if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock =>
+        if e.kind() == std::io::ErrorKind::TimedOut
+          || e.kind() == std::io::ErrorKind::WouldBlock =>
       {
         continue;
       }
@@ -561,7 +568,11 @@ fn score_sample(data: &[u8]) -> f64 {
   // One byte dominating the stream means the sampler is not aligned with the
   // bit stream (the classic wall of 'U', 0x00 or 0xFF).
   let dominant = counts.iter().cloned().max().unwrap_or(0) as f64 / total;
-  let repetition_penalty = if dominant > 0.7 { (dominant - 0.7) * 2.0 * 0.5 } else { 0.0 };
+  let repetition_penalty = if dominant > 0.7 {
+    (dominant - 0.7) * 2.0 * 0.5
+  } else {
+    0.0
+  };
 
   let mut score = print_ratio * 0.7 + word_ratio * 0.3;
   score -= bad_ratio * 0.8;
