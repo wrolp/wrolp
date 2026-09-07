@@ -30,9 +30,11 @@
 - 📂 **SFTP 文件管理** — 上传 / 下载支持暂停与续传，远程文件树浏览
 - ✍️ **远程文件编辑器**（Monaco）— 自动识别 UTF-8 / GBK 编码
 - 🔍 **Hex 与图片查看** — 以十六进制转储查看二进制文件，或直接预览图片
-- 🎬 **会话录制** — 存入 SQLite，可在底部面板回放
+- 🎬 **会话录制** — 按会话写入 NDJSON 文件，可在底部面板回放
+- 🌐 **内置 FTP / HTTP / TFTP 工具** — 无需外部客户端即可分享或拉取文件
 - 🐳 **Docker 与主机分析** — 查看容器、流式日志、分析服务器
 - 🤖 **AI 助手** — 支持工具调用 Agent 模式、多模态输入，API Key 加密存储
+- 🗄️ **可迁移的数据目录** — 全部数据可搬到任意位置，并可在设置中查看 / 瘦身 `wrolp.db`
 - 🪟 **浮动窗口与分栏布局** — 自由分割终端区域，并将面板弹出为独立浮动窗口
 - 🪟 **精致体验** — 自定义标题栏、托盘图标、窗口状态记忆、自动更新
 
@@ -59,6 +61,7 @@
 - **PTY**：`xterm-256color` PTY + Shell，支持窗口大小调整。
 - **连接健康状态**：SSH 层保活（间隔与最大重试次数，可在设置中配置）驱动标签状态点 —— 探测失败转黄（`connection-suspect`），重试耗尽转红（`connection-closed`）。通过 **重连** 按钮复用同一标签实例；通过过期的任务守卫（`session_id` 单调递增计数器）防止被取代的后台任务破坏状态。
 - **工作目录同步**：SFTP 操作与在 Shell 中输入的 `cd` 保持同步（`poll_working_dir` 会在一次性 exec 通道上执行 `pwd`）。
+- **网络扫描**：扫描网段内开放 SSH 或 Telnet 端口的主机，并直接从结果创建连接（`network_scan.rs`）。
 
 ### SSH 隧道
 
@@ -96,6 +99,15 @@
 - 在编辑器中打开的二进制文件可以十六进制转储方式查看（`hex_base64` + `HexViewer.tsx`）。
 - 图片文件支持内联预览；后端通过 `image_mime` / `detect_image_mime` 上报 MIME 类型。
 
+### 网络文件工具
+
+- 通过标题栏的「网络文件工具」按钮打开；全部功能在应用内部实现，无需外部客户端。
+- **FTP 服务端** — 通过 FTP 分享本地目录（PASV / EPSV）。
+- **HTTP/HTTPS 文件服务端** — 以内置页面提供目录浏览与上传；HTTPS 可一键生成自签名证书。
+- **TFTP 服务端** — 为老设备 / PXE 场景提供最小化的 TFTP 服务。
+- **FTP 客户端** — 连接远端 FTP 服务器（无 TLS / 显式 / 隐式），浏览、上传与下载文件。
+- **TFTP 客户端** — 通过 TFTP 收发单个文件。
+
 ### 浮动窗口与分栏布局
 - 终端区域采用**分栏树**布局（`splitTree.ts`）：标签可水平或垂直分割，每个叶节点显示终端、Docker 日志或已打开的文件编辑器。
 - 任意面板都可**弹出**为浮动窗口（`floatPane` / `FloatingWindow.tsx`，`position: fixed`，z-index 从 1000 起）。终端浮动会从树中摘下该叶节点（会话保持存活）；文件编辑器 / Docker 日志的浮动以覆盖层形式渲染在依然挂载的 Shell 之上，关闭浮动时恢复 `shellView`。
@@ -103,9 +115,10 @@
 
 ### 会话录制
 - 默认开启录制（可通过 `WROLP_RECORDING=0` / `false` 关闭）。
-- 事件先缓存在内存中，每 5 秒及断开连接时刷入 SQLite 的 `session_events` 表。
+- 事件先缓存在内存中，每 5 秒（以及断开连接时）追加到该会话独立的 NDJSON 文件：`<数据目录>/recordings/<工作空间>/<分组>/<连接>/<YYYYMMDD-HHMMSS>_<会话前8位>.jsonl`。SQLite 的 `sessions` 表只保留索引（`events_file`、`event_count` 以及工作空间 / 分组快照），因此 `wrolp.db` 始终很小。
 - 两类事件：`input`（原始按键）与 `command`（回车时捕获的完整命令行，保留 Tab 补全文本）。
-- 底部面板提供浏览器（`SessionListPanel` / `SessionViewer`），可删除 / 回放录制内容。
+- 底部面板提供浏览器（`SessionListPanel` / `SessionViewer`）：每行显示其「工作空间 / 分组」面包屑，可在文件管理器中显示、导出为 asciinema v2（`.cast`）、回放或删除。
+- 维护操作：一键**迁移**仍存放在 `session_events` 中的旧录制，**重建索引**（扫描 `recordings/` 目录恢复索引，并清理空的孤儿文件）。
 
 ### 命令集
 - 在 SQLite 中保存可复用的命令组（可选绑定到某个连接）。
@@ -122,13 +135,20 @@
 - 聊天面板（`AiChatPanel`），含两种模式：
   - **对话**（非流式，`ai_chat_sync`）。
   - **智能体**（带工具调用的流式模式，`run_agent_stream`）—— 一个完整的智能体循环，可在连接的服务器上调用工具。
-- **多模态输入**：可在消息中附加图片（后端通过 `openai_content` 接受结构化的多段 `content`），让模型能理解截图、示意图等。
+- **多模态输入**：可在消息中附加图片（后端通过 `openai_content` 接受结构化的多段 `content`），让模型能理解截图、示意图等。也支持直接把图片粘贴进输入框，点击缩略图可查看大图。
+- **发送到终端**：把 AI 生成的代码块或选中的文本发送到当前面板，按连接类型（SSH、本地 Shell、串口、Telnet）分流；只插入文本而不自动执行，便于先审阅。
 - **模板与重发**：在图片按钮旁通过模板下拉框插入提示词；可**编辑并重新发送**任意历史消息（基于编辑后的内容重新运行）。
 - **暂停**：通过 `cancel_ai_chat` 中止正在进行的对话 / 智能体生成，并从中断处继续。
 - **多 API 端点**：可保存多个 `AiEndpointProfile`，各自拥有加密的 API Key、端点 URL、模型与系统提示词。可选择一个作为当前激活配置。旧版单端点配置会自动迁移。
 - **模型获取**：`list_ai_models` 调用 `{endpoint}/v1/models` 填充模型下拉框；始终支持手动输入。
 - **智能体工具**（分发到拥有 `AppState` 访问权限的 Rust 后端）：`run_command`、`analyze_server`、`list_directory`、`read_file`、`list_connections`、`search_help` 等。工具调用归组在其对应的助手消息下，以工具卡片形式展示，并带有生命周期事件（`pending` → `executing` → `done`/`error`）。助手消息中的 Bash 代码块提供一键**复制**按钮。
 - **安全性**：API Key 通过 AES-256-GCM 文件保险库加密存储（`encrypt_api_key` / `decrypt_api_key`）。加密密钥为机器专属文件（`vault.key`），不使用操作系统密钥环。
+
+### 数据目录与数据库
+
+- **数据目录可迁移**：在「设置 → 常规」中选择任意目录，`wrolp.db`、`recordings/`、`connections.json` 与窗口配置都会迁移过去。选择会写入 `data_root.json` 锚点文件（固定保存在默认目录），并在下次启动时生效：目标为空则复制现有数据，否则直接使用其中已有内容 —— 不会覆盖任何文件。
+- **密钥跟随选项**：可选在下次迁移时一并携带 `vault.key`，让数据目录可整体搬运；默认关闭，密钥保持锚定本机。
+- **数据库维护**：设置页显示 `wrolp.db` 当前占用与可回收空间，并提供**立即瘦身**（`VACUUM`）。删除会话或迁移旧录制时，空闲页达到一定规模也会自动回收，因此删掉数据后数据库不会再保持原大小。
 
 ### 窗口与系统集成
 - 自定义标题栏（窗口 `decorations: false`）；窗口位置 / 尺寸 / 透明度持久化（`window.json`）。
@@ -245,7 +265,7 @@ E2E_PORT=1430 yarn test:e2e
 - **后端**：Tauri 2 + Rust (tokio) + russh / russh-sftp
 - **SSH**：纯 Rust 异步 SSH 客户端 [`russh`](https://github.com/warp-tech/russh)
 - **IPC**：Tauri `invoke` 命令 + 前端轮询终端输出（Windows 后台线程的权宜之计）。Tauri 事件仅用于少数前端无法轮询的推送通知：`connection-closed`、`connection-suspect`、`connection-ok`、`transfer-progress`、`tunnel-changed`、`ai-term-mark`、`native-drag-drop`、`baud-detect-progress`。
-- **存储**：`window.json`（窗口位置尺寸、透明度、录制与保活设置）以及**加密的** `connections.json`（连接与工作区）+ SQLite（`wrolp.db`，WAL）用于录制与命令集；机密通过 AES-256-GCM 文件保险库加密（不使用 OS 密钥环）。
+- **存储**：所有数据集中在一个可迁移的数据目录下 —— `window.json`（窗口位置尺寸、透明度、录制与保活设置）、**加密的** `connections.json`（连接与工作区）、`wrolp.db`（SQLite，WAL：会话索引、命令集、片段）与 `recordings/`（按会话保存的 NDJSON 事件文件）；机密通过 AES-256-GCM 文件保险库加密（不使用 OS 密钥环）。
 
 ## 约定
 

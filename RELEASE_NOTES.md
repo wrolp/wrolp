@@ -2,6 +2,43 @@
 
 ---
 
+## v0.0.7 — 2026-09-07
+
+Adds serial (COM) and Telnet sessions, built-in FTP/HTTP/TFTP file tools, a relocatable data directory, and file-based session recordings — plus a round of AI and terminal polish.
+
+### Features
+- **Serial port terminal** — connect to COM ports with configurable baud rate, data bits, parity, stop bits, and flow control; each port runs on its own reader thread and shares the same terminal, AI, and recording pipeline as SSH
+- **Baud rate auto-detection** — scan common rates and rank the results with a confidence score (runs off the async runtime so the UI stays responsive), plus a dropdown of common rates and custom values
+- **Telnet client** — Telnet sessions with IAC negotiation (ECHO, SGA, TERMINAL-TYPE, NAWS) and auto-login; terminal resizes are reported through NAWS
+- **Network scanning** — scan a subnet for reachable SSH and Telnet hosts and create connections straight from the results
+- **Built-in file transfer tools** — FTP server, HTTP/HTTPS file server with a browser upload page, TFTP server, and FTP / TFTP clients, all reachable from the new "Network tools" button in the titlebar
+- **HTTPS self-signed certificate** — generate a certificate and key for the HTTP server with one click
+- **Relocatable data directory** — move all app data (database, connections, recordings, config) to a folder of your choice in Settings; the directory is copied on the next start (restart required), with an option to keep `vault.key` next to the data
+- **File-based session recordings** — recording events are appended to NDJSON files under `<data dir>/recordings/<workspace>/<group>/<connection>/…jsonl` instead of the SQLite database, keeping `wrolp.db` small and recordings easy to back up
+- **Recording management** — session list shows a workspace / group breadcrumb and a "Show in folder" action, one-click migration of legacy recordings still stored in the database, a rescan action that rebuilds the index from the recordings folder, and asciinema v2 (`.cast`) export
+- **AI chat improvements** — paste images into the chat input, click thumbnails for a full-size preview, send-to-terminal now works for local shells, serial, and Telnet sessions (text is inserted, not auto-executed), a chat mode selector replaces the read-only flag, endpoint settings live in an accordion, agent rounds can be unlimited, and AI chat is available for Telnet and serial sessions
+- **Editor & UI** — configurable maximum file size for opening files in the editor, short container IDs next to container names, shell-specific icons for local terminals, and an easier grab zone for thin scrollbars
+- **Database maintenance** — Settings shows the current `wrolp.db` footprint and how much of it is reclaimable, with a "Shrink now" button; deleting sessions now returns the freed pages to disk automatically instead of leaving the database at its old size
+
+### Fixes
+- Prevent duplicate terminal tabs for an already-open COM port
+- Show the reconnect button on serial tabs
+- Skip pager prompts when capturing commands and suspend live coloring on interactive prompts
+- Improve prompt / command splitting and recoloring of wrapped command lines
+- Apply command-panel opacity to the background only
+- Allow clearing numeric settings inputs before committing the value
+- Keep the pane terminal tab and its controls visible
+- Prevent baud-rate suggestions from being clipped
+- Stop dialogs from closing when the overlay is clicked, so an accidental click can't discard input
+- Open web links from AI replies (and other markdown) in the OS browser instead of navigating the app's own webview, so there is always a way back to the app
+
+### Internal
+- Split the terminal implementation into focused helper modules and reuse a single `ClearableInput` across connection forms
+- Add a Playwright end-to-end suite that drives the real UI against a mocked Tauri backend
+- Add a user guide and update the README for Telnet, serial, and tunnel support
+
+---
+
 ## v0.0.6 — 2026-08-22
 
 Focused on SSH keepalive reliability, terminal rendering quality, and local shell workflows.

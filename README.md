@@ -30,9 +30,11 @@
 - 📂 **SFTP file manager** — upload/download with pause & resume, remote file tree
 - ✍️ **Remote file editor** (Monaco) with UTF-8/GBK encoding auto-detect
 - 🔍 **Hex & image viewer** — inspect binary files as a hex dump or preview images directly
-- 🎬 **Session recording** to SQLite, replayable from the bottom panel
+- 🎬 **Session recording** to per-session NDJSON files, replayable from the bottom panel
+- 🌐 **Built-in FTP / HTTP / TFTP tools** — serve or fetch files without leaving the app
 - 🐳 **Docker & host analysis** — inspect containers, stream logs, analyze servers
 - 🤖 **AI assistant** with tool-calling agent mode, multimodal input, and encrypted API-key storage
+- 🗄️ **Portable data folder** — move all app data anywhere and monitor / shrink `wrolp.db` from Settings
 - 🪟 **Floating panes & split layout** — split the terminal area any way you like and pop panes out into independent floating windows
 - 🪟 **Polished UX** — custom titlebar, tray icon, window geometry persistence, auto-updater
 
@@ -59,6 +61,7 @@
 - **PTY**: `xterm-256color` PTY + shell, resize support.
 - **Connection health**: an SSH-level keepalive (interval + max retries, configurable in Settings) drives the tab status dot — green → yellow (`connection-suspect`) on a failed probe, red (`connection-closed`) once the retries are exhausted. A **Reconnect** button re-uses the same tab instance; a stale-task guard (`session_id` monotonic counter) prevents a superseded background task from corrupting state.
 - **Working directory sync**: SFTP operations stay in sync with `cd` typed in the shell (`poll_working_dir` runs `pwd` on a throwaway exec channel).
+- **Network scanning**: scan a subnet for hosts with an open SSH or Telnet port and create a connection straight from the results (`network_scan.rs`).
 
 ### SSH tunnels
 
@@ -96,6 +99,15 @@
 - Binary files opened in the editor can be viewed as a **hex dump** (`hex_base64` + `HexViewer.tsx`).
 - Image files are previewed inline; the backend reports the MIME type via `image_mime` / `detect_image_mime`.
 
+### Network file tools
+
+- Opened from the **Network tools** button in the titlebar; everything runs inside the app, so no external client is needed.
+- **FTP server** — share a local folder over FTP (PASV / EPSV).
+- **HTTP/HTTPS file server** — serve a folder with a built-in page for browsing and uploading; HTTPS can use a self-signed certificate generated with one click.
+- **TFTP server** — minimal TFTP serving for legacy / PXE equipment.
+- **FTP client** — connect to a remote FTP server (no TLS, explicit or implicit) and browse, upload and download files.
+- **TFTP client** — get / put single files over TFTP.
+
 ### Floating panes & split layout
 - The terminal area is a **split-tree** layout (`splitTree.ts`): tabs can be split horizontally or vertically, and each leaf shows a terminal, a docker-log, or an open file editor.
 - Any pane can be **popped out** into a floating window (`floatPane` / `FloatingWindow.tsx`, `position: fixed`, z-index starting at 1000). Terminal floats detach the leaf from the tree (the session stays alive); file-editor / docker-log floats render as an overlay above the still-mounted shell and restore `shellView` on close.
@@ -103,9 +115,10 @@
 
 ### Session recording
 - Recording is on by default (disable with `WROLP_RECORDING=0` / `false`).
-- Buffers events in memory, flushed every 5s and on disconnect into a SQLite `session_events` table.
+- Events are buffered in memory and appended every 5s (and on disconnect) to one NDJSON file per session: `<data dir>/recordings/<workspace>/<group>/<connection>/<YYYYMMDD-HHMMSS>_<session8>.jsonl`. The SQLite `sessions` table only keeps the index (`events_file`, `event_count`, plus a workspace/group snapshot), which keeps `wrolp.db` small.
 - Two event kinds: `input` (raw keystrokes) and `command` (full command line captured on Enter, preserving tab-completed text).
-- Browser in the bottom panel (`SessionListPanel` / `SessionViewer`); recordings can be deleted/replayed.
+- Browser in the bottom panel (`SessionListPanel` / `SessionViewer`): each row shows its workspace / group breadcrumb, can be revealed in the file manager, exported as asciinema v2 (`.cast`), replayed or deleted.
+- Maintenance actions: one-click **migration** of legacy recordings still stored in `session_events`, and **rescan** which rebuilds the index from the `recordings/` folder (dropping empty orphan files).
 
 ### Command sets
 - Save reusable groups of commands (optionally scoped to a connection) in SQLite.
@@ -122,13 +135,20 @@
 - Chat panel (`AiChatPanel`) with two modes:
   - **Chat** (non-streaming `ai_chat_sync`).
   - **Agent** (streaming with tool calling, `run_agent_stream`) — a full agent loop that can call tools on the connected servers.
-- **Multimodal input**: attach images to a message (the backend accepts `content` as structured multi-part via `openai_content`), so the model can reason about screenshots, diagrams, etc.
+- **Multimodal input**: attach images to a message (the backend accepts `content` as structured multi-part via `openai_content`), so the model can reason about screenshots, diagrams, etc. Images can also be pasted straight into the chat input; click a thumbnail for a full-size preview.
+- **Send to terminal**: send AI-generated code blocks or selected text to the active pane, routed by connection type (SSH, local shell, serial, Telnet). The text is inserted without being executed, so you can review it first.
 - **Templates & re-send**: insert prompts from a template dropdown next to the image button; **edit and re-send** any previous message (re-runs from the edited content).
 - **Pause**: abort an in-flight agent/chat generation with `cancel_ai_chat` and continue from where it stopped.
 - **Multiple API endpoints**: save several `AiEndpointProfile`s, each with its own encrypted API key, endpoint URL, model, and system prompt. Select/apply one active profile. Legacy single-endpoint configs are migrated automatically.
 - **Model fetching**: `list_ai_models` calls `{endpoint}/v1/models` to populate the model dropdown; manual entry is always available.
 - **Agent tools** (dispatched to the Rust backend, which has `AppState` access): `run_command`, `analyze_server`, `list_directory`, `read_file`, `list_connections`, `search_help`, and more. Tool calls are grouped under their assistant message and surfaced as tool cards with lifecycle events (`pending` → `executing` → `done`/`error`). Bash code blocks in assistant messages get a one-click **copy** button.
 - **Security**: API keys are encrypted at rest via an AES-256-GCM file vault (`encrypt_api_key` / `decrypt_api_key`). The encryption key is a machine-specific file (`vault.key`); no OS keyring is used.
+
+### Data folder & database
+
+- **Relocatable data folder**: pick any directory in Settings → General and `wrolp.db`, `recordings/`, `connections.json` and the window config all move there. The choice is stored in a `data_root.json` anchor (kept in the default location) and applied on the next launch, which copies the data over when the target is empty and otherwise uses what is already there — nothing is overwritten.
+- **Vault key option**: optionally carry `vault.key` along with the data folder on the next migration, making the folder portable as a whole. Off by default, so the key stays machine-anchored.
+- **Database maintenance**: Settings shows the current `wrolp.db` size and how much of it is reclaimable, with a **Shrink now** action (`VACUUM`). Deleting sessions or migrating legacy recordings also releases the freed pages automatically once the freed space is worth a rewrite, so the database no longer keeps its old size after data is removed.
 
 ### Window & shell integration
 - Custom titlebar (window `decorations: false`); window geometry/opacity persisted (`window.json`).
@@ -245,7 +265,7 @@ E2E_PORT=1430 yarn test:e2e
 - **Backend**: Tauri 2 + Rust (tokio) + russh / russh-sftp
 - **SSH**: pure-Rust [`russh`](https://github.com/warp-tech/russh) async SSH client
 - **IPC**: Tauri `invoke` commands + frontend polling for terminal output (Windows background-task workaround). Tauri events are used only for the few push notifications the UI cannot poll: `connection-closed`, `connection-suspect`, `connection-ok`, `transfer-progress`, `tunnel-changed`, `ai-term-mark`, `native-drag-drop`, `baud-detect-progress`.
-- **Storage**: `window.json` (window geometry, opacity, recording and keepalive settings) plus an **encrypted** `connections.json` (connections and workspaces) + SQLite (`wrolp.db`, WAL) for recordings and command sets; encrypted secrets via an AES-256-GCM file vault (no OS keyring).
+- **Storage**: everything lives under one relocatable data folder — `window.json` (window geometry, opacity, recording and keepalive settings), an **encrypted** `connections.json` (connections and workspaces), `wrolp.db` (SQLite, WAL: session index, command sets, snippets) and `recordings/` (per-session NDJSON event files); encrypted secrets via an AES-256-GCM file vault (no OS keyring).
 
 ## Conventions
 
