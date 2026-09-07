@@ -168,6 +168,21 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
               path: typeof args.path === 'string' ? args.path : 'C:\\e2e\\data',
               isDefault: false,
             }
+          case 'get_db_stats':
+            return {
+              path: 'C:\\e2e\\data\\wrolp.db',
+              dbBytes: 65536,
+              walBytes: 0,
+              pageSize: 4096,
+              pageCount: 16,
+              freePages: 0,
+              reclaimableBytes: 0,
+              sessions: 0,
+              legacyEvents: 0,
+              autoVacuum: 2,
+            }
+          case 'vacuum_database':
+            return { beforeBytes: 65536, afterBytes: 65536, freedBytes: 0 }
           default:
             return null
         }

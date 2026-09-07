@@ -585,6 +585,13 @@ pub async fn export_legacy_sessions(
       }
     }
   }
+  // The migration deletes the legacy `session_events` rows: hand their pages
+  // back instead of leaving the database at its old size.
+  if summary.migrated > 0 {
+    if let Ok(conn) = state.db.lock() {
+      db::reclaim_freed_pages(&conn);
+    }
+  }
   Ok(summary)
 }
 

@@ -353,6 +353,32 @@ export interface DataRootInfo {
   keyFollows: boolean
 }
 
+/** Size / free-space figures of `wrolp.db` (Settings → Database). */
+export interface DbStats {
+  /** Absolute path of the database file. */
+  path: string
+  dbBytes: number
+  walBytes: number
+  pageSize: number
+  pageCount: number
+  /** Pages held by deleted rows (reusable by SQLite, still occupying disk). */
+  freePages: number
+  /** Bytes a VACUUM would release right now. */
+  reclaimableBytes: number
+  sessions: number
+  /** Rows still in the legacy `session_events` table. */
+  legacyEvents: number
+  /** PRAGMA auto_vacuum: 0 none, 1 full, 2 incremental. */
+  autoVacuum: number
+}
+
+/** Result of the manual "shrink now" VACUUM. */
+export interface DbVacuumResult {
+  beforeBytes: number
+  afterBytes: number
+  freedBytes: number
+}
+
 /** FUT1: result of exporting legacy SQLite sessions into events files. */
 export interface LegacyMigrateResult {
   migrated: number

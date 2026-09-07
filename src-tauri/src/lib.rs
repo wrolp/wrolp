@@ -293,6 +293,8 @@ pub fn run() {
       commands::set_data_root,
       commands::get_key_follow_option,
       commands::set_key_follow_option,
+      commands::get_db_stats,
+      commands::vacuum_database,
       commands::set_recording_enabled,
       commands::get_recording_enabled,
       commands::analyze_host,

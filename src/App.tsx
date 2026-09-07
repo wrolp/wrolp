@@ -57,6 +57,8 @@ import {
   getDataRoot,
   setDataRoot,
   setKeyFollowOption,
+  getDbStats,
+  vacuumDatabase,
   setRecordingEnabled,
   getRecordingEnabled,
   fsReadFileContent,
@@ -99,6 +101,8 @@ import type {
   TunnelConfig,
   WorkspaceInfo,
   DataRootInfo,
+  DbStats,
+  DbVacuumResult,
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
@@ -113,6 +117,19 @@ let cachedConnections: ConnectionConfig[] = []
 
 // Auto-incrementing tab id counter
 let nextTabId = 1
+
+/** Human-readable byte size (KB / MB / GB) for the Settings → Database row. */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
+}
 
 /** Top-level error boundary: render the error instead of silently freezing the
  *  whole window when a child throws during render. */
@@ -642,7 +659,9 @@ export default function App() {
   const [pendingCloseEditorKey, setPendingCloseEditorKey] = useState<string | null>(null)
   // Set when a tunnel was auto-stopped because the server refused TCP
   // forwarding (AdministrativelyProhibited); shows a fix-it dialog.
-  const [tunnelFatalInfo, setTunnelFatalInfo] = useState<{ host: string; port: string } | null>(null)
+  const [tunnelFatalInfo, setTunnelFatalInfo] = useState<{ host: string; port: string } | null>(
+    null,
+  )
   // Which view occupies the shell pane area, per SSH session (tabId):
   // 'terminal' or the key of the active editor tab (editor replaces the
   // terminal area). Isolated per session so files opened in one tab don't
@@ -679,6 +698,11 @@ export default function App() {
   // writes an anchor file — the move happens on the next launch (data_root.rs).
   const [dataRoot, setDataRootState] = useState<DataRootInfo | null>(null)
   const [dataRootMsg, setDataRootMsg] = useState('')
+  // Database footprint shown in Settings: deleting sessions leaves free pages
+  // behind, which the "shrink now" action (VACUUM) releases back to disk.
+  const [dbStats, setDbStats] = useState<DbStats | null>(null)
+  const [dbBusy, setDbBusy] = useState(false)
+  const [dbMsg, setDbMsg] = useState<{ text: string; ok: boolean } | null>(null)
   // Per-tab recording indicator (map from tabId → recording on/off). Loaded
   // from the backend so the button reflects the actual state after reconnect.
   const [recordingByTab, setRecordingByTab] = useState<Record<number, boolean>>({})
@@ -801,12 +825,11 @@ export default function App() {
   // connect() calls in Rust pick them up. Minimums enforced (interval >= 10,
   // count >= 2) on both frontend and backend.
   const handleKeepaliveChange = useCallback((interval: number | '', max: number | '') => {
-    const i = typeof interval === 'number' && Number.isFinite(interval)
-      ? Math.max(10, Math.floor(interval))
-      : 30
-    const m = typeof max === 'number' && Number.isFinite(max)
-      ? Math.max(2, Math.floor(max))
-      : 3
+    const i =
+      typeof interval === 'number' && Number.isFinite(interval)
+        ? Math.max(10, Math.floor(interval))
+        : 30
+    const m = typeof max === 'number' && Number.isFinite(max) ? Math.max(2, Math.floor(max)) : 3
     setKeepaliveInterval(i)
     setKeepaliveMax(m)
     setKeepalive(i, m).catch(() => {})
@@ -844,6 +867,39 @@ export default function App() {
       setDataRootMsg(t('keyFollowApplied'))
     } catch (e) {
       setDataRootMsg(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  /**
+   * Settings → Database: rewrite wrolp.db (VACUUM) so the pages freed by
+   * deleted sessions are given back to the filesystem.
+   */
+  const handleVacuumDb = async () => {
+    setDbBusy(true)
+    setDbMsg(null)
+    try {
+      const res: DbVacuumResult = await vacuumDatabase()
+      setDbMsg({
+        ok: true,
+        text:
+          res.freedBytes > 0
+            ? t('dbVacuumDone', {
+                size: formatBytes(res.freedBytes),
+                before: formatBytes(res.beforeBytes),
+                after: formatBytes(res.afterBytes),
+              })
+            : t('dbVacuumNone'),
+      })
+    } catch (e) {
+      setDbMsg({
+        ok: false,
+        text: t('dbVacuumFailed', { err: e instanceof Error ? e.message : String(e) }),
+      })
+    } finally {
+      setDbBusy(false)
+      getDbStats()
+        .then(setDbStats)
+        .catch(() => {})
     }
   }
 
@@ -2906,6 +2962,14 @@ export default function App() {
   const aiChatActive = activeTerminalTab?.tabType === 'aiChat'
   const settingsOverlayRef = useRef<HTMLDivElement>(null)
 
+  // Refresh the database figures whenever the Settings tab becomes active.
+  useEffect(() => {
+    if (!settingsActive) return
+    getDbStats()
+      .then(setDbStats)
+      .catch(() => {})
+  }, [settingsActive])
+
   // Map connection id → a connected terminal tab (the tunnel carrier). First
   // tab found per connection that is a connected SSH terminal.
   const tunnelCarrierTabId = useMemo(() => {
@@ -2981,7 +3045,9 @@ export default function App() {
 
   // Resolve which input channel "send to terminal" should use for a tab's
   // connection type (mirrors the dispatch inside Terminal.tsx).
-  const connFlagsForType = (type?: string): { isLocal: boolean; isSerial: boolean; isTelnet: boolean } => ({
+  const connFlagsForType = (
+    type?: string,
+  ): { isLocal: boolean; isSerial: boolean; isTelnet: boolean } => ({
     isLocal: type === 'localShell',
     isSerial: type === 'serial',
     isTelnet: type === 'telnet',
@@ -3175,10 +3241,7 @@ export default function App() {
                               } catch {}
                               return
                             }
-                            const v = Math.max(
-                              100,
-                              Math.min(100000, Number(raw) || 5000),
-                            )
+                            const v = Math.max(100, Math.min(100000, Number(raw) || 5000))
                             setMaxScrollback(v)
                             try {
                               localStorage.setItem('wrolp-maxScrollback', String(v))
@@ -3344,7 +3407,10 @@ export default function App() {
                               {t('dataRootReset')}
                             </button>
                           )}
-                          <span className="settings-help" style={{ margin: 0, wordBreak: 'break-all' }}>
+                          <span
+                            className="settings-help"
+                            style={{ margin: 0, wordBreak: 'break-all' }}
+                          >
                             {dataRoot ? dataRoot.path : ''}
                             {dataRoot?.isDefault ? ` ${t('dataRootDefault')}` : ''}
                           </span>
@@ -3366,8 +3432,51 @@ export default function App() {
                         </div>
                         <span className="settings-help">{t('keyFollowDesc')}</span>
                         {dataRootMsg && (
-                          <span className="settings-help" style={{ margin: '2px 0 0', color: '#4caf50' }}>
+                          <span
+                            className="settings-help"
+                            style={{ margin: '2px 0 0', color: '#4caf50' }}
+                          >
                             {dataRootMsg}
+                          </span>
+                        )}
+                      </div>
+
+                      <div
+                        className="settings-field"
+                        style={{ flexDirection: 'column', alignItems: 'flex-start' }}
+                      >
+                        <label className="settings-label">{t('dbMaintenance')}</label>
+                        <div
+                          style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '4px 0' }}
+                        >
+                          <span className="settings-help" style={{ margin: 0 }}>
+                            {dbStats
+                              ? t('dbSizeValue', {
+                                  size: formatBytes(dbStats.dbBytes + dbStats.walBytes),
+                                })
+                              : '—'}
+                          </span>
+                          {dbStats && dbStats.reclaimableBytes > 0 && (
+                            <span className="settings-help" style={{ margin: 0, color: '#ffb74d' }}>
+                              {t('dbReclaimable', { size: formatBytes(dbStats.reclaimableBytes) })}
+                            </span>
+                          )}
+                          <button
+                            className="settings-save-btn"
+                            style={{ width: 'auto', padding: '4px 14px' }}
+                            onClick={handleVacuumDb}
+                            disabled={dbBusy || !dbStats}
+                          >
+                            {dbBusy ? t('dbVacuuming') : t('dbVacuum')}
+                          </button>
+                        </div>
+                        <span className="settings-help">{t('dbMaintenanceDesc')}</span>
+                        {dbMsg && (
+                          <span
+                            className="settings-help"
+                            style={{ margin: '2px 0 0', color: dbMsg.ok ? '#4caf50' : '#ff8a80' }}
+                          >
+                            {dbMsg.text}
                           </span>
                         )}
                       </div>
@@ -3660,10 +3769,7 @@ export default function App() {
                           setAiMaxRoundsText(raw)
                           if (raw === '') return
                           const parsed = parseInt(raw, 10)
-                          const n = Math.max(
-                            0,
-                            Math.min(1000, Number.isNaN(parsed) ? 200 : parsed),
-                          )
+                          const n = Math.max(0, Math.min(1000, Number.isNaN(parsed) ? 200 : parsed))
                           setAiConfig((prev) => {
                             if (!prev) return prev
                             const next = { ...prev, maxAgentRounds: n }
@@ -3708,9 +3814,7 @@ export default function App() {
                             <div
                               key={p.id}
                               className={
-                                'ai-acc-item' +
-                                (isActive ? ' active' : '') +
-                                (open ? ' open' : '')
+                                'ai-acc-item' + (isActive ? ' active' : '') + (open ? ' open' : '')
                               }
                             >
                               <div
@@ -3779,8 +3883,8 @@ export default function App() {
                               {open && (
                                 <div className="ai-acc-body">
                                   <p className="settings-card-desc">
-                                    Works with OpenAI, Anthropic (via compatible proxy), Ollama, vLLM,
-                                    and any OpenAI-compatible endpoint. The assistant can run
+                                    Works with OpenAI, Anthropic (via compatible proxy), Ollama,
+                                    vLLM, and any OpenAI-compatible endpoint. The assistant can run
                                     read-only tools on your connected servers to give accurate
                                     answers.
                                   </p>
@@ -3919,9 +4023,7 @@ export default function App() {
                                           }
                                         >
                                           {!aiModels.includes(p.model) && p.model && (
-                                            <option value={p.model}>
-                                              {p.model} (current)
-                                            </option>
+                                            <option value={p.model}>{p.model} (current)</option>
                                           )}
                                           {aiModels.map((m) => (
                                             <option key={m} value={m}>
@@ -3956,7 +4058,9 @@ export default function App() {
                                           }
                                         }}
                                       >
-                                        {aiFetchingModels ? t('downloading') : t('fetchModelsFromV1')}
+                                        {aiFetchingModels
+                                          ? t('downloading')
+                                          : t('fetchModelsFromV1')}
                                       </button>
                                       {aiModels.length > 0 && (
                                         <label className="settings-checkbox-label">
@@ -3976,7 +4080,10 @@ export default function App() {
                                     </div>
 
                                     <div className="settings-field">
-                                      <label htmlFor="ai-tool-call-format" className="settings-label">
+                                      <label
+                                        htmlFor="ai-tool-call-format"
+                                        className="settings-label"
+                                      >
                                         <Icon name="settings" size={13} /> Tool Call Format
                                       </label>
                                       <select
@@ -3992,8 +4099,9 @@ export default function App() {
                                                     x.id === p.id
                                                       ? {
                                                           ...x,
-                                                          toolCallFormat: e.target
-                                                            .value as 'flat' | 'nested',
+                                                          toolCallFormat: e.target.value as
+                                                            | 'flat'
+                                                            | 'nested',
                                                         }
                                                       : x,
                                                   ),
@@ -4054,9 +4162,7 @@ export default function App() {
                                           const toSave: AiConfig = {
                                             ...aiConfig,
                                             profiles: aiConfig.profiles.map((x) =>
-                                              x.id === p.id
-                                                ? { ...x, apiKeyEnc: keyEnc }
-                                                : x,
+                                              x.id === p.id ? { ...x, apiKeyEnc: keyEnc } : x,
                                             ),
                                           }
                                           await saveAiConfig(toSave)
@@ -4394,83 +4500,83 @@ export default function App() {
             >
               ×
             </span>
-              {sessionEditorTabs
-                .filter((et) => !isOverlayFloated(et.key))
-                .map((et) => (
-                  <div
-                    key={et.key}
-                    className={`term-pane-file-tab${sv === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
+            {sessionEditorTabs
+              .filter((et) => !isOverlayFloated(et.key))
+              .map((et) => (
+                <div
+                  key={et.key}
+                  className={`term-pane-file-tab${sv === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (leaf.tabId != null) {
+                      setActiveEditorKeyFor(leaf.tabId, et.key)
+                      setShellViewFor(leaf.tabId, et.key)
+                    }
+                  }}
+                  title={et.path}
+                >
+                  <span className="term-pane-file-tab-name">{et.name}</span>
+                  {et.isDirty && <span className="term-pane-file-tab-dirty">●</span>}
+                  <span
+                    className="term-pane-file-tab-float"
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (leaf.tabId != null) {
-                        setActiveEditorKeyFor(leaf.tabId, et.key)
-                        setShellViewFor(leaf.tabId, et.key)
-                      }
+                      // Float the file editor overlay directly (explicit kind),
+                      // so it doesn't depend on the global shellView / focus.
+                      floatPane(leaf.id, { kind: 'editor', editorKey: et.key })
                     }}
-                    title={et.path}
+                    title={t('floatPane')}
                   >
-                    <span className="term-pane-file-tab-name">{et.name}</span>
-                    {et.isDirty && <span className="term-pane-file-tab-dirty">●</span>}
-                    <span
-                      className="term-pane-file-tab-float"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        // Float the file editor overlay directly (explicit kind),
-                        // so it doesn't depend on the global shellView / focus.
-                        floatPane(leaf.id, { kind: 'editor', editorKey: et.key })
-                      }}
-                      title={t('floatPane')}
-                    >
-                      ⤢
-                    </span>
-                    <span
-                      className="term-pane-file-tab-close"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        requestCloseEditorTab(et.key)
-                      }}
-                    >
-                      ×
-                    </span>
-                  </div>
-                ))}
-              {sessionDockerLogTabs
-                .filter((dt) => !isOverlayFloated(dt.tabId))
-                .map((dt) => (
-                  <div
-                    key={dt.tabId}
-                    className={`term-pane-file-tab${sv === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
+                    ⤢
+                  </span>
+                  <span
+                    className="term-pane-file-tab-close"
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (leaf.tabId != null) setShellViewFor(leaf.tabId, `dockerlog:${dt.tabId}`)
+                      requestCloseEditorTab(et.key)
                     }}
-                    title={`${t('dockerLogs')}: ${dt.containerName}`}
                   >
-                    <span className="term-pane-file-tab-name">📋 {dt.containerName}</span>
-                    <span
-                      className="term-pane-file-tab-float"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        // Float the docker log overlay directly (explicit kind), so
-                        // it doesn't depend on the global shellView / focus state.
-                        floatPane(leaf.id, { kind: 'dockerLog', dockerLogTabId: dt.tabId })
-                      }}
-                      title={t('floatPane')}
-                    >
-                      ⤢
-                    </span>
-                    <span
-                      className="term-pane-file-tab-close"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        closeDockerLogTab(dt.tabId)
-                      }}
-                    >
-                      ×
-                    </span>
-                  </div>
-                ))}
-            </div>
+                    ×
+                  </span>
+                </div>
+              ))}
+            {sessionDockerLogTabs
+              .filter((dt) => !isOverlayFloated(dt.tabId))
+              .map((dt) => (
+                <div
+                  key={dt.tabId}
+                  className={`term-pane-file-tab${sv === `dockerlog:${dt.tabId}` ? ' active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (leaf.tabId != null) setShellViewFor(leaf.tabId, `dockerlog:${dt.tabId}`)
+                  }}
+                  title={`${t('dockerLogs')}: ${dt.containerName}`}
+                >
+                  <span className="term-pane-file-tab-name">📋 {dt.containerName}</span>
+                  <span
+                    className="term-pane-file-tab-float"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      // Float the docker log overlay directly (explicit kind), so
+                      // it doesn't depend on the global shellView / focus state.
+                      floatPane(leaf.id, { kind: 'dockerLog', dockerLogTabId: dt.tabId })
+                    }}
+                    title={t('floatPane')}
+                  >
+                    ⤢
+                  </span>
+                  <span
+                    className="term-pane-file-tab-close"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      closeDockerLogTab(dt.tabId)
+                    }}
+                  >
+                    ×
+                  </span>
+                </div>
+              ))}
+          </div>
         </div>
         <div
           className="term-pane-body"
@@ -5690,9 +5796,18 @@ export default function App() {
                   <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                     <AiChatPanel
                       tabId={aiFloatingTabId}
-                      isLocal={connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType).isLocal}
-                      isSerial={connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType).isSerial}
-                      isTelnet={connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType).isTelnet}
+                      isLocal={
+                        connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
+                          .isLocal
+                      }
+                      isSerial={
+                        connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
+                          .isSerial
+                      }
+                      isTelnet={
+                        connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
+                          .isTelnet
+                      }
                       config={activeProfile}
                       profiles={aiConfig?.profiles ?? []}
                       onSelectProfile={handleSelectAiProfile}

@@ -715,3 +715,72 @@ async fn poll_output_drains_the_buffer() {
     .expect("poll again");
   assert!(chunks.is_empty());
 }
+
+// ==================== Database maintenance (size / VACUUM) ====================
+
+/// Deleting sessions must hand the freed pages back to the filesystem instead
+/// of leaving `wrolp.db` at its old size (the 300 MB-of-free-pages bug).
+#[tokio::test]
+async fn deleting_sessions_reclaims_db_pages() {
+  let app = build_test_app();
+  let db_path = app._dir.path().join("wrolp.db");
+
+  {
+    let state = app.state();
+    let conn = state.db.lock().expect("db lock");
+    db::create_session(
+      &conn,
+      "s1",
+      "c1",
+      "conn",
+      1,
+      "2026-01-01T00:00:00Z",
+      None,
+      None,
+    )
+    .expect("create session");
+    let events: Vec<RecordedEvent> = (0..3000)
+      .map(|i| RecordedEvent {
+        seq: i,
+        timestamp_ms: i as u64,
+        direction: "output".to_string(),
+        content: "x".repeat(200),
+      })
+      .collect();
+    db::insert_events(&conn, "s1", &events).expect("insert events");
+    // WAL mode keeps new pages in `-wal` until a checkpoint; fold them into the
+    // main file so the measured size actually reflects the stored events.
+    let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+  }
+  let grown = fs::metadata(&db_path).expect("stat db").len();
+  assert!(
+    grown > 100_000,
+    "db should grow with the events, got {}",
+    grown
+  );
+
+  commands::delete_all_sessions(app.state())
+    .await
+    .expect("delete all");
+
+  let after = fs::metadata(&db_path).expect("stat db").len();
+  assert!(
+    after < grown,
+    "deleting every session must release pages: {} -> {}",
+    grown,
+    after
+  );
+
+  // The reported figures must line up with the file on disk.
+  let stats = commands::get_db_stats(app.state()).await.expect("stats");
+  assert_eq!(stats.sessions, 0);
+  assert_eq!(stats.legacy_events, 0);
+  assert_eq!(stats.db_bytes, after);
+
+  // The manual shrink is idempotent and never grows the file.
+  let res = commands::vacuum_database(app.state())
+    .await
+    .expect("vacuum");
+  assert!(res.after_bytes <= res.before_bytes);
+  assert_eq!(res.freed_bytes, res.before_bytes - res.after_bytes);
+}

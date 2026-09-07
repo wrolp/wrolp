@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex};
 
 const SCHEMA: &str = include_str!("schema.sql");
@@ -342,6 +343,7 @@ pub fn delete_session(conn: &Connection, session_id: &str) -> Result<Option<Stri
   conn
     .execute("DELETE FROM sessions WHERE id = ?1", params![session_id])
     .map_err(|e| e.to_string())?;
+  reclaim_freed_pages(conn);
   Ok(events_file)
 }
 
@@ -362,6 +364,7 @@ pub fn delete_all_sessions(conn: &Connection) -> Result<Vec<String>, String> {
   conn
     .execute("DELETE FROM sessions", [])
     .map_err(|e| e.to_string())?;
+  reclaim_freed_pages(conn);
   Ok(files)
 }
 
@@ -814,4 +817,132 @@ pub fn delete_ai_prompt_template(conn: &Connection, id: &str) -> Result<(), Stri
     .execute("DELETE FROM ai_prompt_templates WHERE id = ?1", params![id])
     .map_err(|e| e.to_string())?;
   Ok(())
+}
+
+// ==================== Database Maintenance ====================
+// SQLite keeps freed pages for reuse, so `wrolp.db` stayed at its old size
+// after sessions were deleted — 300 MB of free pages for an otherwise empty
+// database was the result. Two mechanisms fix that:
+//   * `reclaim_freed_pages`, run after bulk deletions, which rewrites the file
+//     when the freed space is worth it (automatic, see the threshold below);
+//   * `VACUUM` via the "shrink now" action on the Settings page, which always
+//     rewrites and defragments the whole file.
+//
+// `PRAGMA incremental_vacuum` is deliberately NOT used: it can only drop free
+// pages located after the last page still in use, so after deleting sessions it
+// typically releases a single page and leaves the rest behind.
+
+/// Size / free-space figures of `wrolp.db`, shown on the Settings page.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbStats {
+  /// Absolute path of the database file.
+  pub path: String,
+  /// Main database file size in bytes.
+  pub db_bytes: u64,
+  /// Write-ahead-log size in bytes (0 when checkpointed).
+  pub wal_bytes: u64,
+  pub page_size: u64,
+  pub page_count: u64,
+  /// Pages on the freelist, i.e. pages held by deleted rows.
+  pub free_pages: u64,
+  /// Bytes a `VACUUM` would release right now (`free_pages * page_size`).
+  pub reclaimable_bytes: u64,
+  /// Number of indexed session rows.
+  pub sessions: i64,
+  /// Rows still in the legacy `session_events` table (not yet exported to files).
+  pub legacy_events: i64,
+  /// `PRAGMA auto_vacuum`: 0 none, 1 full, 2 incremental.
+  pub auto_vacuum: i64,
+}
+
+/// Read a single integer PRAGMA; 0 when the pragma is unavailable.
+fn pragma_i64(conn: &Connection, name: &str) -> i64 {
+  conn
+    .query_row(&format!("PRAGMA {}", name), [], |row| row.get::<_, i64>(0))
+    .unwrap_or(0)
+}
+
+/// Size of `path` on disk; 0 when the file does not exist.
+fn file_len(path: &Path) -> u64 {
+  std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+/// Path of the write-ahead log that belongs to `db_path`.
+fn wal_path(db_path: &Path) -> std::path::PathBuf {
+  std::path::PathBuf::from(format!("{}-wal", db_path.display()))
+}
+
+/// Rewrite the database when recent DELETEs left a worthwhile amount of free
+/// space behind, so `wrolp.db` shrinks on its own after "delete all sessions"
+/// instead of holding on to hundreds of megabytes.
+///
+/// `VACUUM` rewrites the whole file, so it only runs when the freed space is
+/// large in absolute terms (>= 8 MiB) or dominates the file (>= 75% and at
+/// least 512 KiB). Single-session deletes stay cheap; failures are logged and
+/// never surface (reclaiming is an optimization, not a correctness concern).
+pub fn reclaim_freed_pages(conn: &Connection) {
+  let page_size = pragma_i64(conn, "page_size") as u64;
+  let total = pragma_i64(conn, "page_count") as u64 * page_size;
+  let free = pragma_i64(conn, "freelist_count") as u64 * page_size;
+  const MIN_FREE: u64 = 8 * 1024 * 1024;
+  const MIN_FREE_SMALL_DB: u64 = 512 * 1024;
+  let worth_it = free >= MIN_FREE || (free >= MIN_FREE_SMALL_DB && free * 4 >= total * 3);
+  if !worth_it {
+    return;
+  }
+  eprintln!(
+    "[db] reclaiming {} bytes of free pages (db {} bytes)",
+    free, total
+  );
+  // In WAL mode `VACUUM` writes into the log, so the main file only shrinks
+  // once the checkpoint folds it back and truncates it — order matters.
+  if let Err(e) = conn.execute_batch("VACUUM") {
+    eprintln!("[db] reclaim failed: {}", e);
+    return;
+  }
+  if let Err(e) = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())) {
+    eprintln!("[db] checkpoint after reclaim failed: {}", e);
+  }
+}
+
+/// Collect the figures shown on the Settings page (Settings → Database).
+pub fn db_stats(conn: &Connection, db_path: &Path) -> Result<DbStats, String> {
+  let page_size = pragma_i64(conn, "page_size") as u64;
+  let free_pages = pragma_i64(conn, "freelist_count") as u64;
+  let sessions = conn
+    .query_row("SELECT COUNT(*) FROM sessions", [], |row| {
+      row.get::<_, i64>(0)
+    })
+    .map_err(|e| e.to_string())?;
+  let legacy_events = conn
+    .query_row("SELECT COUNT(*) FROM session_events", [], |row| {
+      row.get::<_, i64>(0)
+    })
+    .map_err(|e| e.to_string())?;
+  Ok(DbStats {
+    path: db_path.to_string_lossy().to_string(),
+    db_bytes: file_len(db_path),
+    wal_bytes: file_len(&wal_path(db_path)),
+    page_size,
+    page_count: pragma_i64(conn, "page_count") as u64,
+    free_pages,
+    reclaimable_bytes: free_pages * page_size,
+    sessions,
+    legacy_events,
+    auto_vacuum: pragma_i64(conn, "auto_vacuum"),
+  })
+}
+
+/// Rewrite the database file to reclaim every free page (`VACUUM`). Returns the
+/// total on-disk size (db + wal) before and after so the UI can report how much
+/// space was released.
+pub fn vacuum(conn: &Connection, db_path: &Path) -> Result<(u64, u64), String> {
+  let before = file_len(db_path) + file_len(&wal_path(db_path));
+  conn.execute_batch("VACUUM").map_err(|e| e.to_string())?;
+  // Best effort: fold the WAL back into the main file so the reported size
+  // matches what the user sees on disk.
+  let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+  let after = file_len(db_path) + file_len(&wal_path(db_path));
+  Ok((before, after))
 }

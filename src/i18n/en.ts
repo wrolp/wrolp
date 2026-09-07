@@ -354,7 +354,8 @@ const en = {
   aiReadOnlyHint: 'Read-only mode: only inspection commands run',
   aiFullModeHint: 'Full access: modifying commands allowed',
   aiModeTitle: 'AI Mode',
-  aiModeDesc: 'Choose the default AI working mode: Chat-only (no commands run), Run commands (full access), or Read-only (inspection commands only). Can be changed per chat.',
+  aiModeDesc:
+    'Choose the default AI working mode: Chat-only (no commands run), Run commands (full access), or Read-only (inspection commands only). Can be changed per chat.',
   aiModeLabel: 'AI mode',
   aiModeChat: 'Chat only',
   aiModeCommand: 'Run commands',
@@ -471,7 +472,8 @@ const en = {
   keepaliveMax: 'SSH keepalive retries',
   keepaliveMaxDesc: 'Unanswered pings before the connection is closed. Minimum 2.',
   dataRoot: 'Data folder (storage location)',
-  dataRootDesc: 'All app data — wrolp.db, recordings, connection and window config — is stored in this directory.',
+  dataRootDesc:
+    'All app data — wrolp.db, recordings, connection and window config — is stored in this directory.',
   dataRootBrowse: 'Browse…',
   dataRootReset: 'Reset to default',
   dataRootDefault: '(default)',
@@ -482,6 +484,16 @@ const en = {
   keyFollowDesc:
     'When enabled, the next data-dir migration also copies the key into the new directory and the app prefers that key — making the data dir portable/backup-able as a whole. Off by default to keep the key machine-anchored.',
   keyFollowApplied: 'Option saved — applies at the next migration.',
+  dbMaintenance: 'Database',
+  dbMaintenanceDesc:
+    'Deleting sessions frees pages inside wrolp.db but keeps the file at its old size. Shrinking releases those pages back to disk.',
+  dbSizeValue: 'Size {size}',
+  dbReclaimable: '{size} reclaimable',
+  dbVacuum: 'Shrink now',
+  dbVacuuming: 'Shrinking…',
+  dbVacuumDone: 'Released {size} ({before} → {after}).',
+  dbVacuumNone: 'Nothing to reclaim — the database is already compact.',
+  dbVacuumFailed: 'Shrink failed: {err}',
   retry: 'Retry',
   copy: 'Copy',
   paste: 'Paste',
@@ -689,7 +701,8 @@ const en = {
   ntCertPath: 'Certificate (.pem)',
   ntKeyPath: 'Private key (.pem)',
   ntMaxUpload: 'Max upload size (MB)',
-  ntTlsNote: 'When TLS is enabled the certificate and private key must be PEM files — or click "Generate self-signed certificate" to create a pair. Clients will still warn that the certificate is untrusted, which is expected.',
+  ntTlsNote:
+    'When TLS is enabled the certificate and private key must be PEM files — or click "Generate self-signed certificate" to create a pair. Clients will still warn that the certificate is untrusted, which is expected.',
   ntGenCert: 'Generate self-signed certificate',
   ntGenCertOk: 'Certificate generated and both paths filled in — ready to start.',
   ntServerHost: 'Server address',
@@ -708,8 +721,10 @@ const en = {
   ntStatusCol: 'Status',
   ntMessage: 'Message',
   ntStartedAt: 'Started',
-  ntRootNote: 'Serves the chosen directory over the local network. Only clients on the same machine or LAN can reach it.',
-  ntSharedDirNote: 'A sub-folder containing the shared files is created automatically when the root directory is empty.',
+  ntRootNote:
+    'Serves the chosen directory over the local network. Only clients on the same machine or LAN can reach it.',
+  ntSharedDirNote:
+    'A sub-folder containing the shared files is created automatically when the root directory is empty.',
   ntTransferStarted: 'Transfer started.',
   ntFillAll: 'Please fill in every required field.',
   ntLocalChoose: 'Choose local file',

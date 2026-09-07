@@ -27,6 +27,8 @@ import type {
   TunnelConfig,
   KeepaliveConfig,
   DataRootInfo,
+  DbStats,
+  DbVacuumResult,
   LegacyMigrateResult,
   RescanResult,
   CastExportResult,
@@ -431,6 +433,16 @@ export async function getDataRoot(): Promise<DataRootInfo> {
 /** Configure a custom data directory, or reset to default when `path` is null. */
 export async function setDataRoot(path: string | null): Promise<DataRootInfo> {
   return await invoke<DataRootInfo>('set_data_root', { path })
+}
+
+/** Size / free-space figures of `wrolp.db` (Settings → Database). */
+export async function getDbStats(): Promise<DbStats> {
+  return await invoke<DbStats>('get_db_stats')
+}
+
+/** Rewrite `wrolp.db` to release every free page (VACUUM). */
+export async function vacuumDatabase(): Promise<DbVacuumResult> {
+  return await invoke<DbVacuumResult>('vacuum_database')
 }
 
 /** FUT4: whether the next data-dir migration also carries `vault.key` along. */

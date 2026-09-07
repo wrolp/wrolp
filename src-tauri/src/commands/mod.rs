@@ -255,6 +255,7 @@ pub(crate) fn shell_quote_arg(s: &str) -> String {
 pub(crate) mod ai_chat;
 pub(crate) mod ai_term;
 pub(crate) mod connections;
+pub(crate) mod db_maintenance;
 pub(crate) mod ftp;
 pub(crate) mod ftp_server;
 pub(crate) mod http_server;
@@ -275,6 +276,7 @@ pub(crate) mod window;
 pub use ai_chat::*;
 pub use ai_term::*;
 pub use connections::*;
+pub use db_maintenance::*;
 pub use ftp::*;
 pub use ftp_server::*;
 pub use http_server::*;
