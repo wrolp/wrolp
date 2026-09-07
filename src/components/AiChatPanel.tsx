@@ -23,6 +23,7 @@ import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { focusTerminal } from './Terminal'
+import { open } from '@tauri-apps/plugin-shell'
 
 // Map markdown elements to our existing chat styles so the look stays
 // consistent with the previous (hand-rolled) renderer.
@@ -47,6 +48,24 @@ function makeMarkdownComponents(onSendToShell: (text: string) => void) {
         )
       }
       return <code className="ai-chat-inline-code">{children}</code>
+    },
+    // Links in AI replies would otherwise navigate the app's own webview — the
+    // whole UI is replaced by the target page and there is no way back. Open web
+    // links in the OS browser instead, which keeps the app intact.
+    a(props: { href?: string; children?: React.ReactNode }) {
+      const { href, children } = props
+      const handleClick = (e: React.MouseEvent) => {
+        if (!href || !/^https?:\/\//i.test(href)) return
+        e.preventDefault()
+        open(href).catch(() => {
+          window.open(href, '_blank', 'noopener,noreferrer')
+        })
+      }
+      return (
+        <a href={href} target="_blank" rel="noopener noreferrer" onClick={handleClick}>
+          {children}
+        </a>
+      )
     },
   }
 }
