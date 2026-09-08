@@ -281,8 +281,8 @@ Right-click a split-pane tab → **Duplicate tab** to clone it into a new split 
 
 ### Enabling
 
-- **Auto-record** is on by default (starts when an SSH connection opens). Disable it in **Settings**, or toggle per-panel with the record button.
-- Globally disable with the env var `WROLP_RECORDING=0` (or `false`).
+- Recording is **off by default**. Turn on **Auto-record** in **Settings** to start automatically when an SSH connection opens, or use the per-pane record button to record manually.
+- The env var forces it globally: `WROLP_RECORDING=1` / `true` turns recording on, `0` / `false` turns it off.
 
 ### Content
 
@@ -519,7 +519,7 @@ All data lives under `wrolp-terminal/` in the OS config directory:
 
 ### Recording & Privacy
 
-- Session recording is on by default and captures keystrokes and commands. To opt out, disable "Auto-record sessions" in Settings, or set `WROLP_RECORDING=0` globally.
+- Session recording is **off by default** — nothing is captured until you enable it. Turn on **Auto-record sessions** in Settings, use the per-pane record button, or set `WROLP_RECORDING=1` globally.
 - Recording data is stored in the local SQLite database and is never uploaded anywhere.
 
 ---

@@ -114,7 +114,7 @@
 - **按会话隔离的视图状态**（`shellView` / `activeEditorKey` 均为 `Record<number, ...>`）让每个标签打开的文件与 Docker 日志互不干扰 —— 在某个会话中打开的文件不会出现在另一个会话里。
 
 ### 会话录制
-- 默认开启录制（可通过 `WROLP_RECORDING=0` / `false` 关闭）。
+- 录制默认**关闭**。可在 **设置** 开启自动录制，或用环境变量 `WROLP_RECORDING=1` / `true` 全局强制开启（`0` / `false` 强制关闭）。
 - 事件先缓存在内存中，每 5 秒（以及断开连接时）追加到该会话独立的 NDJSON 文件：`<数据目录>/recordings/<工作空间>/<分组>/<连接>/<YYYYMMDD-HHMMSS>_<会话前8位>.jsonl`。SQLite 的 `sessions` 表只保留索引（`events_file`、`event_count` 以及工作空间 / 分组快照），因此 `wrolp.db` 始终很小。
 - 两类事件：`input`（原始按键）与 `command`（回车时捕获的完整命令行，保留 Tab 补全文本）。
 - 底部面板提供浏览器（`SessionListPanel` / `SessionViewer`）：每行显示其「工作空间 / 分组」面包屑，可在文件管理器中显示、导出为 asciinema v2（`.cast`）、回放或删除。

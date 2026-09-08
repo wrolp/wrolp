@@ -114,7 +114,7 @@
 - **Per-session view state** (`shellView` / `activeEditorKey` are `Record<number, ...>`) keeps each tab's open files and docker logs isolated — files opened in one session don't appear in another.
 
 ### Session recording
-- Recording is on by default (disable with `WROLP_RECORDING=0` / `false`).
+- Recording is **off by default**. Turn on auto-recording in **Settings**, or force it globally with the env var `WROLP_RECORDING=1` / `true` (`0` / `false` forces it off).
 - Events are buffered in memory and appended every 5s (and on disconnect) to one NDJSON file per session: `<data dir>/recordings/<workspace>/<group>/<connection>/<YYYYMMDD-HHMMSS>_<session8>.jsonl`. The SQLite `sessions` table only keeps the index (`events_file`, `event_count`, plus a workspace/group snapshot), which keeps `wrolp.db` small.
 - Two event kinds: `input` (raw keystrokes) and `command` (full command line captured on Enter, preserving tab-completed text).
 - Browser in the bottom panel (`SessionListPanel` / `SessionViewer`): each row shows its workspace / group breadcrumb, can be revealed in the file manager, exported as asciinema v2 (`.cast`), replayed or deleted.
