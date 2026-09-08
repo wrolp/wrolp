@@ -14,30 +14,147 @@ fn default_local_shell() -> (String, Vec<String>) {
 
 /// Resolve a shell specifier (preset name or arbitrary command/path) into a
 /// (command, args) pair suitable for portable_pty's CommandBuilder.
-fn resolve_local_shell(spec: &str) -> (String, Vec<String>) {
+///
+/// Returns an error when a named shell cannot be located. We deliberately do
+/// NOT fall back to a bare `bash` when Git Bash is missing: on Windows, `bash`
+/// on PATH usually resolves to `C:\Windows\System32\bash.exe`, which is the WSL
+/// launcher — silently spawning that would open WSL instead of failing loudly.
+fn resolve_local_shell(spec: &str) -> Result<(String, Vec<String>), String> {
   match spec {
-    // Git Bash: locate the executable on the common install paths.
+    // Git Bash: locate the executable on the common install paths, then fall
+    // back to Git for Windows' registered install path (covers installs in
+    // custom directories, e.g. `D:\program\Git`).
     "gitbash" => {
-      let candidates = [
+      let mut candidates: Vec<std::path::PathBuf> = [
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files (x86)\Git\bin\bash.exe",
         r"C:\Program Files\Git\usr\bin\bash.exe",
-      ];
-      for c in candidates {
-        if std::path::Path::new(c).exists() {
-          return (c.to_string(), vec!["--login".to_string()]);
+      ]
+      .iter()
+      .map(std::path::PathBuf::from)
+      .collect();
+      if let Some(dir) = git_for_windows_install_dir() {
+        candidates.push(std::path::PathBuf::from(&dir).join("bin").join("bash.exe"));
+        candidates
+          .push(std::path::PathBuf::from(dir).join("usr").join("bin").join("bash.exe"));
+      }
+      for c in &candidates {
+        if c.exists() {
+          return Ok((c.to_string_lossy().into_owned(), vec!["--login".to_string()]));
         }
       }
-      ("bash".to_string(), vec![])
+      Err(
+        "Git Bash not found. Install Git for Windows to the default location, or enter the full \
+         path to bash.exe in the shell field (e.g. D:\\program\\Git\\bin\\bash.exe)."
+          .to_string(),
+      )
     }
     // WSL: `wsl.exe` has no `--login` flag (that's a bash option). Run bash as
     // a login+interactive shell inside the distro instead.
-    "wsl" => (
+    "wsl" => Ok((
       "wsl.exe".to_string(),
       vec!["bash".to_string(), "-li".to_string()],
-    ),
+    )),
     // Anything else (cmd, pwsh, powershell, bash, or an explicit path) is used as-is.
-    other => (other.to_string(), vec![]),
+    other => Ok((other.to_string(), vec![])),
+  }
+}
+
+/// Look up Git for Windows' registered install root (e.g. `D:\program\Git`).
+///
+/// The installer always writes `InstallPath` under `HKLM\SOFTWARE\GitForWindows`
+/// (per-user installs under `HKCU`, and 32-bit Git on 64-bit Windows under the
+/// corresponding `WOW6432Node` views). Reading it finds Git installed to
+/// arbitrary directories the well-known paths miss.
+fn git_for_windows_install_dir() -> Option<String> {
+  #[cfg(windows)]
+  {
+    use std::process::Command;
+    let roots = [
+      r"HKLM\SOFTWARE\GitForWindows",
+      r"HKCU\SOFTWARE\GitForWindows",
+      r"HKLM\SOFTWARE\WOW6432Node\GitForWindows",
+      r"HKCU\SOFTWARE\WOW6432Node\GitForWindows",
+    ];
+    for root in roots {
+      // Absent keys are expected on many machines — skip and try the next root.
+      let Ok(out) = Command::new("reg")
+        .arg("query")
+        .arg(root)
+        .arg("/v")
+        .arg("InstallPath")
+        .output()
+      else {
+        continue;
+      };
+      if !out.status.success() {
+        continue;
+      }
+      let text = String::from_utf8_lossy(&out.stdout);
+      for line in text.lines() {
+        if let Some(value) = reg_install_path_from_line(line) {
+          return Some(value);
+        }
+      }
+    }
+    None
+  }
+  #[cfg(not(windows))]
+  {
+    None
+  }
+}
+
+/// Extract the install path from a single `reg query` output line such as
+///
+/// ```text
+///     InstallPath    REG_SZ    D:\program\Git
+/// ```
+///
+/// `reg` pads fields with whitespace, so the path — which may itself contain
+/// spaces — is taken as everything after the value-type token (`REG_SZ` /
+/// `REG_EXPAND_SZ`).
+fn reg_install_path_from_line(line: &str) -> Option<String> {
+  if !line.contains("InstallPath") {
+    return None;
+  }
+  let after_type = line.split("REG_").nth(1)?;
+  let value = after_type.splitn(2, char::is_whitespace).nth(1)?.trim();
+  if value.is_empty() {
+    None
+  } else {
+    Some(value.to_string())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parses_reg_install_path_line() {
+    // Standard output shape (fields padded with whitespace).
+    assert_eq!(
+      reg_install_path_from_line("    InstallPath    REG_SZ    D:\\program\\Git"),
+      Some("D:\\program\\Git".to_string())
+    );
+    // Paths containing spaces survive (everything after the type token is kept).
+    assert_eq!(
+      reg_install_path_from_line("    InstallPath    REG_SZ    C:\\Program Files\\Git"),
+      Some("C:\\Program Files\\Git".to_string())
+    );
+    // CRLF from reg.exe on Windows is trimmed too.
+    assert_eq!(
+      reg_install_path_from_line("    InstallPath    REG_EXPAND_SZ    D:\\Git\r"),
+      Some("D:\\Git".to_string())
+    );
+  }
+
+  #[test]
+  fn ignores_unrelated_reg_lines() {
+    assert_eq!(reg_install_path_from_line("HKEY_LOCAL_MACHINE\\SOFTWARE\\GitForWindows"), None);
+    assert_eq!(reg_install_path_from_line("ERROR: The system was unable to find"), None);
+    assert_eq!(reg_install_path_from_line("    SomethingElse    REG_SZ    x"), None);
   }
 }
 
@@ -86,12 +203,12 @@ pub async fn open_local_shell(
     shells.remove(&tab_id);
   }
 
-  let shell_for_history = shell.clone();
-  let (shell_cmd, shell_args) = match shell {
-    // An empty spec means "use the default shell" (e.g. the default Local-Terminal entry).
-    Some(s) if !s.trim().is_empty() => resolve_local_shell(&s),
-    _ => default_local_shell(),
+  // An empty spec means "use the default shell" (e.g. the default Local-Terminal entry).
+  let shell_spec = match shell {
+    Some(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+    _ => None,
   };
+  let shell_for_history = shell_spec.clone();
 
   // Per-tab output queue owned by this LocalShell. The reader thread holds an
   // `Arc` clone and writes here, so it never reaches back into the global
@@ -107,10 +224,6 @@ pub async fn open_local_shell(
   // Sink for AI-issued commands; `None` while no AI command is in flight.
   // Owned here (not in `AppState`) for the same reason as `output`.
   let ai_capture = Arc::new(StdMutex::new(None::<String>));
-  eprintln!(
-    "[open_local_shell] starting '{}' (tab={})",
-    shell_cmd, tab_id
-  );
 
   // Create the PTY at the actual terminal size up front. If the size is left at
   // the default 80x24, the shell lays out its prompt/wrapping using the wrong
@@ -119,10 +232,10 @@ pub async fn open_local_shell(
   let initial_cols = if cols == 0 { 80u16 } else { cols as u16 };
   let initial_rows = if rows == 0 { 24u16 } else { rows as u16 };
 
-  // Offload the blocking Win32 ConPTY calls (CreatePseudoConsole +
-  // CreateProcess) to tokio's dedicated blocking thread pool so they never
-  // tie up an async worker and stall other commands / UI updates.
-  let shell_cmd_clone = shell_cmd.clone();
+  // Offload everything that can block — shell resolution (the `gitbash` preset
+  // may run `reg` to locate a custom Git install) and the Win32 ConPTY calls
+  // (CreatePseudoConsole + CreateProcess) — to tokio's dedicated blocking
+  // thread pool so they never tie up an async worker and stall other commands.
   let cwd_clone = cwd.clone();
   let (master, child) = tokio::task::spawn_blocking(
     move || -> Result<
@@ -132,6 +245,20 @@ pub async fn open_local_shell(
       ),
       String,
     > {
+      // Resolve the shell preset inside the blocking thread: for `gitbash` this
+      // may query the registry when the well-known install paths are missing,
+      // and an unresolved shell reports an error instead of silently launching
+      // whatever `bash` resolves to on PATH (typically WSL's launcher on
+      // Windows).
+      let (shell_cmd, shell_args) = match shell_spec.as_deref() {
+        Some(spec) => resolve_local_shell(spec)?,
+        None => default_local_shell(),
+      };
+      eprintln!(
+        "[open_local_shell] starting '{}' (tab={})",
+        shell_cmd, tab_id
+      );
+
       let pty_system = portable_pty::native_pty_system();
       let pair = pty_system
         .openpty(portable_pty::PtySize {
@@ -142,7 +269,7 @@ pub async fn open_local_shell(
         })
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-      let mut cmd = portable_pty::CommandBuilder::new(&shell_cmd_clone);
+      let mut cmd = portable_pty::CommandBuilder::new(&shell_cmd);
       if !shell_args.is_empty() {
         cmd.args(&shell_args);
       }
@@ -155,32 +282,34 @@ pub async fn open_local_shell(
       cmd.env("TERM", "xterm-256color");
 
       let child = pair.slave.spawn_command(cmd).map_err(|e| {
-        format!("Failed to spawn shell '{}': {}", shell_cmd_clone, e)
+        format!("Failed to spawn shell '{}': {}", shell_cmd, e)
       })?;
-      Ok((pair.master, child))
+
+      // On some Windows builds ConPTY ignores the size passed to `openpty` and
+      // only honors an explicit resize issued *after* the child is spawned.
+      // Without this, cmd.exe lays out its prompt using the default 80x24 and
+      // typed input then appears on the line above the prompt. Force the real
+      // size now.
+      let master = pair.master;
+      eprintln!(
+        "[open_local_shell] opening PTY for {} at {}x{}",
+        shell_cmd, initial_cols, initial_rows
+      );
+      let _ = master.resize(portable_pty::PtySize {
+        rows: initial_rows,
+        cols: initial_cols,
+        pixel_width: 0,
+        pixel_height: 0,
+      });
+      eprintln!(
+        "[open_local_shell] spawned '{}' ok (tab={})",
+        shell_cmd, tab_id
+      );
+      Ok((master, child))
     },
   )
   .await
   .map_err(|e| format!("spawn_blocking join error: {}", e))??;
-
-  // On some Windows builds ConPTY ignores the size passed to `openpty` and only
-  // honors an explicit resize issued *after* the child is spawned. Without this,
-  // cmd.exe lays out its prompt using the default 80x24 and typed input then
-  // appears on the line above the prompt. Force the real size now.
-  eprintln!(
-    "[open_local_shell] opening PTY for {} at {}x{}",
-    shell_cmd, initial_cols, initial_rows
-  );
-  let _ = master.resize(portable_pty::PtySize {
-    rows: initial_rows,
-    cols: initial_cols,
-    pixel_width: 0,
-    pixel_height: 0,
-  });
-  eprintln!(
-    "[open_local_shell] spawned '{}' ok (tab={})",
-    shell_cmd, tab_id
-  );
 
   let mut reader = master
     .try_clone_reader()
