@@ -14,9 +14,11 @@ tokio = { version = "1", features = ["full"] }
 dirs = "6"
 log = "0.4"
 simplelog = "0.12"
-russh = "0.44"
-russh-keys = "0.44"
-russh-sftp = "2"
+# `russh-keys` was merged into `russh::keys` in 0.50 — the separate crate is gone.
+# 0.63.2 is the first release that fixes every published russh advisory
+# (see task/BUGS.md B19); it pairs with `russh-sftp` 3.x.
+russh = "0.63"
+russh-sftp = "3"
 async-trait = "0.1"
 encoding_rs = "0.8"
 portable-pty = "0.8"

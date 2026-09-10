@@ -6,7 +6,8 @@
 //! backend builds the appropriate implementation with [`build_fs`].
 
 use russh::client::{self, Handle};
-use russh_keys::load_secret_key;
+use russh::keys::key::PrivateKeyWithHashAlg;
+use russh::keys::load_secret_key;
 use russh_sftp::client::{Config, SftpSession};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -49,6 +50,7 @@ async fn authenticate_handle(
       .authenticate_password(username, pw)
       .await
       .map_err(|e| format!("Authentication error: {}", e))?
+      .success()
     {
       return Err(format!("Authentication failed for user '{}'", username));
     }
@@ -57,9 +59,10 @@ async fn authenticate_handle(
     let key = load_secret_key(&resolved, passphrase)
       .map_err(|e| format!("Failed to load key '{}': {}", kp, e))?;
     if !handle
-      .authenticate_publickey(username, Arc::new(key))
+      .authenticate_publickey(username, PrivateKeyWithHashAlg::new(Arc::new(key), None))
       .await
       .map_err(|e| format!("Key authentication error: {}", e))?
+      .success()
     {
       return Err("Key authentication failed".into());
     }

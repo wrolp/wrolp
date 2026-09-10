@@ -30,7 +30,12 @@ pub(crate) use russh::client::{self, Handler};
 #[allow(unused_imports)]
 pub(crate) use russh::ChannelId;
 #[allow(unused_imports)]
-pub(crate) use russh_keys::load_secret_key;
+pub(crate) use russh::keys::load_secret_key;
+#[allow(unused_imports)]
+pub(crate) use russh::keys::key::PrivateKeyWithHashAlg;
+#[allow(unused_imports)]
+pub(crate) use russh::keys::PublicKeyOrCertificate;
+
 pub use serial::*;
 #[allow(unused_imports)]
 pub(crate) use std::path::PathBuf;

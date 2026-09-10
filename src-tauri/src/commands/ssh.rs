@@ -1,11 +1,13 @@
 use super::*;
-#[async_trait::async_trait]
+// NOTE: russh 0.63 declares `Handler` with native `async fn` (RPITIT,
+// `-> impl Future + Send`), not `#[async_trait]`. Adding `#[async_trait::async_trait]`
+// here rewrites the methods into boxed futures and no longer matches the trait.
 impl Handler for SshHandler {
   type Error = SshError;
 
   async fn check_server_key(
     &mut self,
-    _server_public_key: &russh_keys::key::PublicKey,
+    _server_public_key: &PublicKeyOrCertificate,
   ) -> Result<bool, Self::Error> {
     Ok(true)
   }
@@ -355,8 +357,8 @@ pub async fn connect(
       // 2. Authenticate
       if let Some(ref pw) = cfg.password {
         match handle.authenticate_password(&cfg.username, pw).await {
-          Ok(true) => {}
-          Ok(false) => {
+          Ok(res) if res.success() => {}
+          Ok(_) => {
             emit_error(&app_handle, tid, "Authentication failed: wrong password");
             return;
           }
@@ -384,11 +386,14 @@ pub async fn connect(
           }
         };
         match handle
-          .authenticate_publickey(&cfg.username, Arc::new(key))
+          .authenticate_publickey(
+            &cfg.username,
+            PrivateKeyWithHashAlg::new(Arc::new(key), None),
+          )
           .await
         {
-          Ok(true) => {}
-          Ok(false) => {
+          Ok(res) if res.success() => {}
+          Ok(_) => {
             emit_error(&app_handle, tid, "Authentication failed: invalid key");
             return;
           }

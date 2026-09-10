@@ -31,13 +31,13 @@ impl From<String> for SshError {
 
 struct TestHandler;
 
-#[async_trait::async_trait]
+// russh 0.63 declares `Handler` with native `async fn` — no `#[async_trait]`.
 impl Handler for TestHandler {
   type Error = SshError;
 
   async fn check_server_key(
     &mut self,
-    _key: &russh_keys::key::PublicKey,
+    _key: &russh::keys::PublicKeyOrCertificate,
   ) -> Result<bool, Self::Error> {
     Ok(true)
   }
@@ -115,8 +115,8 @@ async fn main() {
 
   eprintln!("Authenticating with password...");
   match handle.authenticate_password(&username, &password).await {
-    Ok(true) => eprintln!("Authentication OK"),
-    Ok(false) => {
+    Ok(res) if res.success() => eprintln!("Authentication OK"),
+    Ok(_) => {
       eprintln!("Wrong password!");
       return;
     }

@@ -68,6 +68,7 @@ pub async fn poll_working_dir(
         .authenticate_password(&config.username, pw)
         .await
         .map_err(|e| format!("Auth error: {}", e))?
+        .success()
       {
         return Err("Authentication failed".into());
       }
@@ -76,9 +77,13 @@ pub async fn poll_working_dir(
       let key = load_secret_key(&resolved, config.passphrase.as_deref())
         .map_err(|e| format!("Failed to load key: {}", e))?;
       if !handle
-        .authenticate_publickey(&config.username, Arc::new(key))
+        .authenticate_publickey(
+          &config.username,
+          PrivateKeyWithHashAlg::new(Arc::new(key), None),
+        )
         .await
         .map_err(|e| format!("Key auth error: {}", e))?
+        .success()
       {
         return Err("Key authentication failed".into());
       }
