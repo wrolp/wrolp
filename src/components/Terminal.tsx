@@ -1691,12 +1691,33 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 dockerContainerRef.current = null
                 cwdRef.current = null
               }
-              const t0 = command.trim().split(/\s+/)[0]?.toLowerCase()
-              if (t0 === 'cd' || t0 === 'chdir' || t0 === 'set-location' || t0 === 'sl') {
+              const trimmedCmd = command.trim()
+              const t0 = trimmedCmd.split(/\s+/)[0]?.toLowerCase() ?? ''
+              const isCdCmd = t0 === 'cd' || t0 === 'chdir' || t0 === 'set-location' || t0 === 'sl'
+              // Windows drive switch — `D:` on its own (cmd / PowerShell) changes
+              // the current drive and is NOT a `cd`, so the branch below never
+              // fires and the tracked cwd would stay on the old drive: every `ls`
+              // link opened afterwards would resolve against the wrong directory.
+              // cmd even keeps a separate cwd per drive, so the resulting directory
+              // cannot be derived here. Drop the tracked cwd instead and let the
+              // next `ls` take its base from the prompt, which cmd/PowerShell
+              // always print accurately (`D:\data>` / `PS D:\data>`).
+              const onWindowsPath = /^[A-Za-z]:[\\/]/.test(cwdRef.current ?? '')
+              const driveSwitch = isLocal
+                ? /^[A-Za-z]:$/i.test(isCdCmd ? (trimmedCmd.split(/\s+/)[1] ?? '') : t0)
+                : false
+              if (isLocal && onWindowsPath && driveSwitch) {
+                setCwd(null)
+              } else if (isCdCmd) {
                 // Strip the `--` end-of-options marker and common flags (e.g.
                 // `cd -- /path`, `cd -L /path`) so the real target is parsed.
-                let cdRaw = command.trim().slice(t0.length).trim()
+                let cdRaw = trimmedCmd.slice(t0.length).trim()
                 cdRaw = cdRaw.replace(/^--\s+/, '').replace(/^-[LP]\s+/, '')
+                // cmd's drive-switching form is `cd /d D:\data`: without stripping
+                // the `/d` the first token would be `/d` and the target would
+                // resolve to a bogus unix-ish `/d`. Only stripped when a Windows
+                // absolute path follows, so a real `cd /d` on Unix is untouched.
+                if (isLocal) cdRaw = cdRaw.replace(/^\/d\s+(?=[A-Za-z]:[\\/])/i, '')
                 const arg = cdRaw.split(/\s+/)[0] ?? ''
                 void (async () => {
                   // Docker exec shells: `cd` runs inside the container — the

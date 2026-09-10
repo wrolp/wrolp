@@ -230,6 +230,10 @@ export function resolveCdTarget(arg: string, current: string | null): string | n
   const raw = arg.trim().replace(/^["']|["']$/g, '')
   if (!raw) return null // `cd` with no arg — shell-dependent; keep previous
   if (raw === '-' || raw === '~' || raw.startsWith('~')) return null // prev dir / home: unknown
+  // A bare drive (`D:`) only switches drives — the resulting directory is the
+  // drive's own last cwd, which is unknowable here. Treat it as unresolvable so
+  // it can never be appended to the current path as `C:\Users\me\D:`.
+  if (/^[A-Za-z]:$/i.test(raw)) return null
   if (/^[A-Za-z]:[\\/]/.test(raw)) return normalizeLocalPath(raw) // C:\x / C:/x
   if (raw.startsWith('/')) return normalizeLocalPath(raw) // git-bash /c/x, /usr/x
   if (raw.startsWith('\\')) return null // UNC/root edge case; skip
