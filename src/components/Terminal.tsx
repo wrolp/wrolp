@@ -24,6 +24,8 @@ import {
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 import { stripAnsi, highlightTableText } from '../lib/termHighlight'
+import { highlightStore } from '../lib/highlightStore'
+import type { HighlightConfig } from '../lib/highlightRules'
 import {
   detectLsCommand,
   parseLsBlock,
@@ -40,7 +42,11 @@ import {
   replayScrollback,
 } from './terminal/registry'
 import type { CaptureState } from './terminal/capture'
-import { clearCaptureTimers, feedCapture, ensureHighlightLanguagesPreloaded } from './terminal/capture'
+import {
+  clearCaptureTimers,
+  feedCapture,
+  ensureHighlightLanguagesPreloaded,
+} from './terminal/capture'
 import {
   AI_CMD_FG,
   AI_OUTPUT_FG,
@@ -50,6 +56,11 @@ import {
 } from './terminal/aiMark'
 import type { AiMarkState } from './terminal/aiMark'
 import { colorizeChunk, colorizeOutputChunk } from './terminal/aiMark'
+import { AnsiHighlighter, HL_MAX_CHUNK } from './terminal/highlightStream'
+// Delay before flushing a held-back trailing token fragment when output goes
+// quiet. Must stay comfortably above the 100ms output-poll cadence below, or
+// the flush fires between two polls and colorizes a half-received token.
+const HL_FLUSH_DELAY_MS = 300
 import {
   LS_CAPTURE_TIMEOUT_MS,
   LS_MAX_BYTES,
@@ -76,9 +87,6 @@ import { feedTable } from './terminal/tableCapture'
 import type { TerminalComponentProps } from './terminal/types'
 
 export { focusTerminal, getTerminalInputText } from './terminal/registry'
-
-
-
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
@@ -163,8 +171,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // screen. The regex distinguishes the *result* line (`BEG<path>END`) from the
   // *echoed command* line by requiring the captured text to start with a real
   // path prefix (`/`, `~`, or a Windows drive).
-  const cwdQueryBegRef = useRef<string>(`__WROLP_CWD_BEG_${Math.random().toString(36).slice(2, 10)}__`)
-  const cwdQueryEndRef = useRef<string>(`__WROLP_CWD_END_${Math.random().toString(36).slice(2, 10)}__`)
+  const cwdQueryBegRef = useRef<string>(
+    `__WROLP_CWD_BEG_${Math.random().toString(36).slice(2, 10)}__`,
+  )
+  const cwdQueryEndRef = useRef<string>(
+    `__WROLP_CWD_END_${Math.random().toString(36).slice(2, 10)}__`,
+  )
   // Single in-flight cwd query. Only the latest query is ever honored — starting
   // a new one cancels the previous (stale) one so a late `pwd` result can never
   // clobber a newer, correctly-tracked working directory (e.g. the connect-time
@@ -288,9 +300,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   ): { x: number; y: number; cellH: number } | null => {
     const rect = term.element?.getBoundingClientRect()
     if (!rect) return null
-    const core = (term as unknown as {
-      _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } }
-    })._core
+    const core = (
+      term as unknown as {
+        _core?: {
+          _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } }
+        }
+      }
+    )._core
     let cellW = core?._renderService?.dimensions?.css?.cell?.width
     let cellH = core?._renderService?.dimensions?.css?.cell?.height
     if (!cellW || !cellH) {
@@ -393,12 +409,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const term = termRef.current
     if (!term) return
     if (!expectingEchoRef.current) return
-    if (
-      tableCaptureRef.current ||
-      captureRef.current ||
-      lsCaptureRef.current ||
-      aiMarkRef.current
-    )
+    if (tableCaptureRef.current || captureRef.current || lsCaptureRef.current || aiMarkRef.current)
       return
     const at = getInputLineAtCursorEnd(term)
     if (!at) {
@@ -423,7 +434,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // real shell prompt appears. SSH/local sessions bypass this (shellReadyRef is
   // initialized to true).
   function looksLikeLoginPrompt(line: string): boolean {
-    return /\b(?:login|user(?:name| name|-name)?|password|passwort|passcode|pin|passwd)\s*[:：]\s*$/i.test(line)
+    return /\b(?:login|user(?:name| name|-name)?|password|passwort|passcode|pin|passwd)\s*[:：]\s*$/i.test(
+      line,
+    )
   }
   function looksLikeShellPrompt(line: string): boolean {
     return /[$#%>❯]\s*$/.test(line.trimEnd())
@@ -594,7 +607,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (visOnHome === len) {
         if (text.slice(homeCol, homeCol + len) !== entry.name) return false
       } else if (visOnHome > 0) {
-        if (text.slice(homeCol, homeCol + visOnHome) !== entry.name.slice(0, visOnHome)) return false
+        if (text.slice(homeCol, homeCol + visOnHome) !== entry.name.slice(0, visOnHome))
+          return false
       } else {
         return false
       }
@@ -809,9 +823,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // shell resolves them against its own working directory. The outer $HOME
     // must not be used to expand `~` either.
     const nested = nestedDepthRef.current > 0 || dockerContainerRef.current != null
-    const homePromise: Promise<string | null> = isLocal || nested
-      ? Promise.resolve(null)
-      : pollWorkingDir(tabIdRef.current).catch(() => null)
+    const homePromise: Promise<string | null> =
+      isLocal || nested ? Promise.resolve(null) : pollWorkingDir(tabIdRef.current).catch(() => null)
     const cwdPromise: Promise<string | null> = isLocal
       ? Promise.resolve(cwdRef.current ?? promptCwd ?? localCwd ?? null)
       : (async () => {
@@ -863,6 +876,38 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // ---- AI-issued command/output highlight (ai-term-mark) ----
   const aiMarkRef = useRef<AiMarkState | null>(null)
   const aiMarkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Terminal output category highlighting (IP/URL/number/… with configurable colors).
+  const highlighterRef = useRef<AnsiHighlighter | null>(null)
+  const hlEnabledRef = useRef(true)
+  // The streaming highlighter holds back a trailing token fragment until it is
+  // complete (or a newline arrives). A short debounce ensures such a fragment is
+  // still flushed when output goes quiet (e.g. a prompt ending in a path char),
+  // so no characters are ever left hanging.
+  const hlFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleHlFlush = () => {
+    if (hlFlushTimeoutRef.current) clearTimeout(hlFlushTimeoutRef.current)
+    hlFlushTimeoutRef.current = setTimeout(() => {
+      hlFlushTimeoutRef.current = null
+      const hl = highlighterRef.current
+      const term = termRef.current
+      if (!hl || !term) return
+      const f = hl.flush()
+      if (f) term.write(f)
+    }, HL_FLUSH_DELAY_MS)
+  }
+  const flushHlNow = () => {
+    if (hlFlushTimeoutRef.current) {
+      clearTimeout(hlFlushTimeoutRef.current)
+      hlFlushTimeoutRef.current = null
+    }
+    const hl = highlighterRef.current
+    const term = termRef.current
+    if (!hl || !term) return
+    // Forced: at session boundaries we must drain every held character even if
+    // a token is still incomplete (emitted plain, never lost).
+    const f = hl.flush(true)
+    if (f) term.write(f)
+  }
 
   // Execution-status badge ("AI running → done/error") driven by the same
   // ai-term-mark events, rendered as a DOM overlay on top of the terminal.
@@ -900,6 +945,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     if (!st || mark.seq !== st.seq) return // stale end — ignore
     clearAiMarkTimeout()
     aiMarkRef.current = null
+    // AI output bypassed the highlighter; resync its SGR/base state.
+    flushHlNow()
+    highlighterRef.current?.reset()
     termRef.current?.write(ANSI_RESET)
   }
 
@@ -936,6 +984,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     aiMarkTimeoutRef.current = setTimeout(() => {
       aiMarkTimeoutRef.current = null
       aiMarkRef.current = null
+      flushHlNow()
+      highlighterRef.current?.reset()
       termRef.current?.write(ANSI_RESET)
     }, AI_MARK_TIMEOUT_MS)
   }
@@ -1015,7 +1065,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       })
       return
     }
-    term.write(chunk)
+    // Category highlighting: inject SGR before the passthrough write. Skipped
+    // while we're still awaiting a typed-line echo (that line is repainted by
+    // the command-line colorizer with cursor math we must not disturb).
+    const hl = highlighterRef.current
+    if (hl && hlEnabledRef.current && !expectingEchoRef.current && chunk.length <= HL_MAX_CHUNK) {
+      term.write(hl.push(chunk))
+      scheduleHlFlush()
+    } else {
+      // Huge chunk (or highlight disabled) bypasses the highlighter — drain any
+      // held-back fragment first so it isn't lost.
+      flushHlNow()
+      term.write(chunk)
+    }
     // A newline means a command started producing output — we're no longer
     // awaiting a typed-line echo, so drop the gate to avoid recoloring output.
     if (chunk.includes('\n') || chunk.includes('\r')) expectingEchoRef.current = false
@@ -1044,7 +1106,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     if (shellReadyRef.current) recolorLiveLine()
   }
 
-  const startPrintCapture = (lang: string, highlighter: (t: string) => string[], prompt: string) => {
+  const startPrintCapture = (
+    lang: string,
+    highlighter: (t: string) => string[],
+    prompt: string,
+  ) => {
     resetCapture()
     // NOTE: do NOT clearLsLinks() here. A previous `ls` listing may still be
     // visible on screen and should stay clickable. The link provider matches
@@ -1117,6 +1183,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     tabIdRef.current = tabId
   }, [tabId])
+  // Terminal output category highlighting: follow settings changes live.
+  useEffect(() => {
+    const apply = (cfg: HighlightConfig) => {
+      hlEnabledRef.current = cfg.enabled
+      if (!highlighterRef.current) highlighterRef.current = new AnsiHighlighter(cfg)
+      else highlighterRef.current.update(cfg)
+    }
+    const unsubscribe = highlightStore.subscribe(apply)
+    apply(highlightStore.load())
+    return unsubscribe
+  }, [])
   // On reconnect the shell restarts in its start dir, so drop the tracked cwd
   // (it would otherwise stay stale at the pre-reconnect directory).
   useEffect(() => {
@@ -1588,100 +1665,101 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // prompt still got classified as a command. The keystroke itself is still
           // forwarded to the device below — only the bookkeeping is skipped.
           if (!isPagerPrompt(command)) {
-          // Track directory changes (local AND ssh) by following cd/Set-Location.
-          // The backend never updates LocalShell.cwd on `cd`, and SSH prompts only
-          // show a *relative* cwd, so we keep the real (absolute) cwd here for `ls`
-          // link resolution. SSH is seeded from $HOME on the first `cd`.
-          if (command) {
-            // Session-boundary commands switch the shell context: entering a
-            // nested session (docker exec shell / interactive ssh) or leaving
-            // one (exit/logout) makes the tracked cwd stale — it describes the
-            // OUTER shell, not what's on screen. Drop it so `ls` link bases
-            // fall back to the prompt-derived cwd (see startLsCaptureIfMatch).
-            if (isNestedSessionEntry(command)) {
-              nestedDepthRef.current += 1
-              // A manually typed `docker exec` shell — remember the container so
-              // `ls` click type resolution queries the CONTAINER filesystem (not
-              // the host SFTP) and cwd tracking stays container-relative.
-              dockerContainerRef.current = parseDockerExecContainer(command) ?? dockerContainerRef.current
-              cwdRef.current = null
-            } else if (isNestedSessionExit(command)) {
-              // Leaving a nested session, or exiting a sidebar-opened docker exec
-              // shell back to the host — drop the nested state so `ls` link
-              // bases fall back to the host cwd again.
-              if (nestedDepthRef.current > 0) nestedDepthRef.current -= 1
-              dockerContainerRef.current = null
-              cwdRef.current = null
-            }
-            const t0 = command.trim().split(/\s+/)[0]?.toLowerCase()
-            if (t0 === 'cd' || t0 === 'chdir' || t0 === 'set-location' || t0 === 'sl') {
-              // Strip the `--` end-of-options marker and common flags (e.g.
-              // `cd -- /path`, `cd -L /path`) so the real target is parsed.
-              let cdRaw = command.trim().slice(t0.length).trim()
-              cdRaw = cdRaw.replace(/^--\s+/, '').replace(/^-[LP]\s+/, '')
-              const arg = cdRaw.split(/\s+/)[0] ?? ''
-              void (async () => {
-                // Docker exec shells: `cd` runs inside the container — the
-                // host-tracked cwd can't describe container paths, so skip both
-                // the `pwd` seed and the cwd tracking (ls links resolve from the
-                // container's prompt instead).
-                if (dockerContainerRef.current != null) return
-                // SSH: seed the cwd from the shell's real directory (a hidden
-                // `pwd` query) when we don't yet track an absolute cwd. We never
-                // guess from $HOME, since the dir need not live under it. Inside
-                // a nested session the query would hit the OUTER shell, so skip
-                // it — absolute `cd` targets still resolve, relative ones fall
-                // back to the prompt on the next `ls`.
-                if (!isLocal && cwdRef.current == null && nestedDepthRef.current === 0) {
-                  try {
-                    const real = await fetchRemoteCwd()
-                    if (real && cwdRef.current == null) setCwd(real)
-                  } catch {
-                    /* keep null; will fall back to the prompt */
+            // Track directory changes (local AND ssh) by following cd/Set-Location.
+            // The backend never updates LocalShell.cwd on `cd`, and SSH prompts only
+            // show a *relative* cwd, so we keep the real (absolute) cwd here for `ls`
+            // link resolution. SSH is seeded from $HOME on the first `cd`.
+            if (command) {
+              // Session-boundary commands switch the shell context: entering a
+              // nested session (docker exec shell / interactive ssh) or leaving
+              // one (exit/logout) makes the tracked cwd stale — it describes the
+              // OUTER shell, not what's on screen. Drop it so `ls` link bases
+              // fall back to the prompt-derived cwd (see startLsCaptureIfMatch).
+              if (isNestedSessionEntry(command)) {
+                nestedDepthRef.current += 1
+                // A manually typed `docker exec` shell — remember the container so
+                // `ls` click type resolution queries the CONTAINER filesystem (not
+                // the host SFTP) and cwd tracking stays container-relative.
+                dockerContainerRef.current =
+                  parseDockerExecContainer(command) ?? dockerContainerRef.current
+                cwdRef.current = null
+              } else if (isNestedSessionExit(command)) {
+                // Leaving a nested session, or exiting a sidebar-opened docker exec
+                // shell back to the host — drop the nested state so `ls` link
+                // bases fall back to the host cwd again.
+                if (nestedDepthRef.current > 0) nestedDepthRef.current -= 1
+                dockerContainerRef.current = null
+                cwdRef.current = null
+              }
+              const t0 = command.trim().split(/\s+/)[0]?.toLowerCase()
+              if (t0 === 'cd' || t0 === 'chdir' || t0 === 'set-location' || t0 === 'sl') {
+                // Strip the `--` end-of-options marker and common flags (e.g.
+                // `cd -- /path`, `cd -L /path`) so the real target is parsed.
+                let cdRaw = command.trim().slice(t0.length).trim()
+                cdRaw = cdRaw.replace(/^--\s+/, '').replace(/^-[LP]\s+/, '')
+                const arg = cdRaw.split(/\s+/)[0] ?? ''
+                void (async () => {
+                  // Docker exec shells: `cd` runs inside the container — the
+                  // host-tracked cwd can't describe container paths, so skip both
+                  // the `pwd` seed and the cwd tracking (ls links resolve from the
+                  // container's prompt instead).
+                  if (dockerContainerRef.current != null) return
+                  // SSH: seed the cwd from the shell's real directory (a hidden
+                  // `pwd` query) when we don't yet track an absolute cwd. We never
+                  // guess from $HOME, since the dir need not live under it. Inside
+                  // a nested session the query would hit the OUTER shell, so skip
+                  // it — absolute `cd` targets still resolve, relative ones fall
+                  // back to the prompt on the next `ls`.
+                  if (!isLocal && cwdRef.current == null && nestedDepthRef.current === 0) {
+                    try {
+                      const real = await fetchRemoteCwd()
+                      if (real && cwdRef.current == null) setCwd(real)
+                    } catch {
+                      /* keep null; will fall back to the prompt */
+                    }
                   }
-                }
-                const next = resolveCdTarget(arg, cwdRef.current)
-                if (!next) return
-                // Don't trust the computed path — verify the directory actually exists
-                // before updating the tracked cwd. A failed `cd` leaves the shell in
-                // its current directory, so using the bogus target would make all
-                // subsequent `ls` links point to a non-existent base.
-                try {
-                  const exists = await fsFileExists(lsFsTarget(), next)
-                  if (exists) setCwd(next)
-                } catch {
-                  /* fall through: keep old cwd; ls links will use prompt as fallback */
-                }
-              })()
+                  const next = resolveCdTarget(arg, cwdRef.current)
+                  if (!next) return
+                  // Don't trust the computed path — verify the directory actually exists
+                  // before updating the tracked cwd. A failed `cd` leaves the shell in
+                  // its current directory, so using the bogus target would make all
+                  // subsequent `ls` links point to a non-existent base.
+                  try {
+                    const exists = await fsFileExists(lsFsTarget(), next)
+                    if (exists) setCwd(next)
+                  } catch {
+                    /* fall through: keep old cwd; ls links will use prompt as fallback */
+                  }
+                })()
+              }
             }
-          }
-          // F1: recolor the typed command (and, if the PS1 is uncolored, its
-          // trailing symbol) right before the shell processes the Enter. The line
-          // is already on screen uncolored; we rewrite it in place.
-          // Skip for Telnet/Serial until the shell prompt is detected.
-          if (shellReadyRef.current) {
-            highlightCurrentCommandLine(term)
-          }
-          // NOTE: do NOT clearLsLinks() on Enter. A previous `ls` listing stays
-          // visible on screen across ordinary commands (Enter, `cd`, `cat`, a
-          // new `ls`…) and should remain clickable throughout. The link provider
-          // matches the *live* hovered line (column-anchored + name-boundary),
-          // so entries can't produce phantom links once their rows scroll off —
-          // they simply stop matching. Each entry carries its own baseDir, so a
-          // click always resolves against the listing it came from, even after
-          // a newer `ls` elsewhere. Links are cleared only on:
-          //   `clear` / disconnect / reconnect / AI command / unmount.
-          // Clear any stale table capture first so a non-table command (e.g.
-          // `echo hi` right after `df`) can't be wrongly colored as a table.
-          resetTableCapture()
-          // TODO(临时): 暂注释命令输出相关高亮（表格/print），保留输入高亮与 ls/dir。
-          // startCaptureIfPrint(command, prompt)          // 命令输出高亮：cat/head/tail
-          // startCaptureIfLsPlain 已由 startLsCaptureIfMatch 兼管（plain ls/dir 在
-          // writeLsChunk 里完成着色+可点击，避免两个 capture 同时占用输出）。
-          // Telnet has no SFTP channel, so `ls` entries can't be resolved or
-          // opened — skip the clickable-link capture entirely for it.
-          if (!isTelnet) startLsCaptureIfMatch(command, prompt) // 保留：原 ls/dir 着色+可点击
-          // startTableCaptureIfMatch(command, prompt)     // 命令输出高亮：df/ps/free/netstat/...
+            // F1: recolor the typed command (and, if the PS1 is uncolored, its
+            // trailing symbol) right before the shell processes the Enter. The line
+            // is already on screen uncolored; we rewrite it in place.
+            // Skip for Telnet/Serial until the shell prompt is detected.
+            if (shellReadyRef.current) {
+              highlightCurrentCommandLine(term)
+            }
+            // NOTE: do NOT clearLsLinks() on Enter. A previous `ls` listing stays
+            // visible on screen across ordinary commands (Enter, `cd`, `cat`, a
+            // new `ls`…) and should remain clickable throughout. The link provider
+            // matches the *live* hovered line (column-anchored + name-boundary),
+            // so entries can't produce phantom links once their rows scroll off —
+            // they simply stop matching. Each entry carries its own baseDir, so a
+            // click always resolves against the listing it came from, even after
+            // a newer `ls` elsewhere. Links are cleared only on:
+            //   `clear` / disconnect / reconnect / AI command / unmount.
+            // Clear any stale table capture first so a non-table command (e.g.
+            // `echo hi` right after `df`) can't be wrongly colored as a table.
+            resetTableCapture()
+            // TODO(临时): 暂注释命令输出相关高亮（表格/print），保留输入高亮与 ls/dir。
+            // startCaptureIfPrint(command, prompt)          // 命令输出高亮：cat/head/tail
+            // startCaptureIfLsPlain 已由 startLsCaptureIfMatch 兼管（plain ls/dir 在
+            // writeLsChunk 里完成着色+可点击，避免两个 capture 同时占用输出）。
+            // Telnet has no SFTP channel, so `ls` entries can't be resolved or
+            // opened — skip the clickable-link capture entirely for it.
+            if (!isTelnet) startLsCaptureIfMatch(command, prompt) // 保留：原 ls/dir 着色+可点击
+            // startTableCaptureIfMatch(command, prompt)     // 命令输出高亮：df/ps/free/netstat/...
           }
         }
       }
@@ -1796,9 +1874,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // metrics at fit() time, so a fit that ran before the font arrived computes
     // wrong cols/rows and the prompt renders truncated until a manual resize.
     if (typeof document !== 'undefined' && document.fonts?.ready) {
-      document.fonts.ready
-        .then(() => maybeFitAndResize())
-        .catch(() => {})
+      document.fonts.ready.then(() => maybeFitAndResize()).catch(() => {})
     }
 
     // Poll SSH output (every 100ms), completely bypassing Tauri event system.
@@ -1886,10 +1962,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 term.refresh(0, term.rows - 1)
                 // Only propagate if geometry actually changed (avoids spurious
                 // SIGWINCH when the initial fit was already correct).
-                if (
-                  term.cols !== prevCols ||
-                  term.rows !== prevRows
-                ) {
+                if (term.cols !== prevCols || term.rows !== prevRows) {
                   lastColsRef.current = term.cols
                   lastRowsRef.current = term.rows
                   sendResize(term)
@@ -1995,10 +2068,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 const prevRows = term.rows
                 fitRef.current.fit()
                 term.refresh(0, term.rows - 1)
-                if (
-                  term.cols !== prevCols ||
-                  term.rows !== prevRows
-                ) {
+                if (term.cols !== prevCols || term.rows !== prevRows) {
                   lastColsRef.current = term.cols
                   lastRowsRef.current = term.rows
                   sendResize(term)
@@ -2126,10 +2196,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             // Propagate the corrected geometry to the shell too (SIGWINCH),
             // otherwise the shell keeps the pre-font-load size and the prompt
             // stays truncated until a manual resize.
-            if (
-              term.cols !== lastColsRef.current ||
-              term.rows !== lastRowsRef.current
-            ) {
+            if (term.cols !== lastColsRef.current || term.rows !== lastRowsRef.current) {
               lastColsRef.current = term.cols
               lastRowsRef.current = term.rows
               sendResize(term)
@@ -2164,6 +2231,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     aiMarkRef.current = null
     resetLsCapture()
     clearLsLinks()
+    flushHlNow()
+    highlighterRef.current?.reset()
     // Reset login-state detection so Telnet/Serial re-enter the login prompt
     // without live coloring until the shell prompt reappears.
     shellReadyRef.current = !isTelnet && !isSerial
@@ -2216,10 +2285,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 const prevRows = term.rows
                 fit.fit()
                 term.refresh(0, term.rows - 1)
-                if (
-                  term.cols !== prevCols ||
-                  term.rows !== prevRows
-                ) {
+                if (term.cols !== prevCols || term.rows !== prevRows) {
                   lastColsRef.current = term.cols
                   lastRowsRef.current = term.rows
                   sendResize(term)
@@ -2362,10 +2428,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
               const prevRows = term.rows
               fit.fit()
               term.refresh(0, term.rows - 1)
-              if (
-                term.cols !== prevCols ||
-                term.rows !== prevRows
-              ) {
+              if (term.cols !== prevCols || term.rows !== prevRows) {
                 lastColsRef.current = term.cols
                 lastRowsRef.current = term.rows
                 sendResize(term)
@@ -2538,6 +2601,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     setCtxMenu(null)
     termRef.current?.focus()
     termRef.current?.clear()
+    flushHlNow()
+    highlighterRef.current?.reset()
     clearLsLinks()
     resetLsCapture()
     resetTableCapture()
@@ -2707,5 +2772,3 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     </div>
   )
 }
-
-

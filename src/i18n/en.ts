@@ -261,6 +261,54 @@ const en = {
     'Wrolp Terminal — an SSH terminal and server-ops tool. Build and repository information:',
   openConfigDir: 'Open config folder',
   language: 'Language',
+  // Settings: terminal output highlight (pattern highlighting)
+  highlightOutput: 'Terminal Output Highlight',
+  highlightOutputDesc:
+    'Color IPs, URLs, emails, numbers, dates, paths and more in terminal output.',
+  highlightOutputGlobal: 'Enable output highlighting',
+  highlightScheme: 'Color scheme',
+  highlightSchemeDefault: 'One Dark',
+  highlightSchemeNord: 'Nord',
+  highlightSchemeSolarized: 'Solarized',
+  highlightSchemePastel: 'Pastel',
+  highlightSchemeCustom: 'Custom',
+  highlightRestoreDefault: 'Restore default colors',
+  highlightPreview: 'Preview',
+  highlightRuleIp: 'IP address',
+  highlightRuleMac: 'MAC address',
+  highlightRuleUuid: 'UUID',
+  highlightRuleUrl: 'URL',
+  highlightRuleEmail: 'Email',
+  highlightRuleNumber: 'Number',
+  highlightRuleVersion: 'Version number',
+  highlightRuleDate: 'Date',
+  highlightRuleTime: 'Time',
+  highlightRulePort: 'Port',
+  highlightRulePath: 'Path',
+  highlightRuleHash: 'Hash / Hex',
+  highlightRuleKeywordError: 'Error keywords',
+  highlightRuleKeywordWarn: 'Warning keywords',
+  highlightRuleKeywordInfo: 'Info keywords',
+  highlightRuleKeywordOk: 'Success keywords',
+  highlightRuleTcpState: 'TCP states',
+  highlightRuleVarKey: 'Variables & keys',
+  highlightCustomTitle: 'Custom regex rules',
+  highlightCustomHint:
+    'A whole match is painted in the chosen color and takes precedence over the built-in rules above (JS regex syntax).',
+  highlightCustomAdd: 'Add rule',
+  highlightCustomPatternPlaceholder: 'e.g. ERROR|failed',
+  highlightCustomLabelPlaceholder: 'Label (optional)',
+  highlightCustomInvalid: 'Invalid regex — not applied',
+  highlightCustomRemove: 'Remove rule',
+  highlightCustomSamplesTitle: 'Samples & tips',
+  highlightCustomSamplesBody: `Unlike the built-in rules, custom rules are case-sensitive, and each match is painted as one block, overriding any built-in coloring inside that range (URL / IP / date etc.).
+Common one-line samples:
+• \\b(?:4\\d{2}|5\\d{2})\\b — HTTP 4xx/5xx status codes (the \\b keeps values like 4040 untouched)
+• \\b(?:host|port|token)\\b(?=\\s*[:=]) — paints only the key name; the lookahead leaves the = / : and the value on their built-in colors
+• \\b(?:[Cc]onnection refused|reset)\\b — multi-word phrases that may start with a capital
+• (?<=["'])[^"']+(?=["']) — paints only the text inside quotes (quotes excluded)
+
+An invalid regex gets a red border and simply never fires; “Reset defaults” keeps your custom rules.`,
 
   // Settings: AI
   aiSettingsHeader: 'AI Assistant',

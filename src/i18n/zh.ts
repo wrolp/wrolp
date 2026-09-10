@@ -261,6 +261,51 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aboutDesc: 'Wrolp Terminal — 面向运维的 SSH 终端与服务器管理工具。构建与仓库信息：',
   openConfigDir: '打开配置目录',
   language: '语言',
+  // Settings: terminal output highlight (pattern highlighting)
+  highlightOutput: '终端输出高亮',
+  highlightOutputDesc: '为终端输出中的 IP、URL、邮箱、数字、日期、路径等上色。',
+  highlightOutputGlobal: '启用输出高亮',
+  highlightScheme: '配色方案',
+  highlightSchemeDefault: 'One Dark',
+  highlightSchemeNord: 'Nord 极地',
+  highlightSchemeSolarized: 'Solarized 日出',
+  highlightSchemePastel: 'Pastel 柔和',
+  highlightSchemeCustom: '自定义',
+  highlightRestoreDefault: '恢复默认颜色',
+  highlightPreview: '预览',
+  highlightRuleIp: 'IP 地址',
+  highlightRuleMac: 'MAC 地址',
+  highlightRuleUuid: 'UUID',
+  highlightRuleUrl: 'URL',
+  highlightRuleEmail: '邮箱',
+  highlightRuleNumber: '数字',
+  highlightRuleVersion: '版本号',
+  highlightRuleDate: '日期',
+  highlightRuleTime: '时间',
+  highlightRulePort: '端口',
+  highlightRulePath: '路径',
+  highlightRuleHash: '散列 / 十六进制',
+  highlightRuleKeywordError: '错误关键字',
+  highlightRuleKeywordWarn: '警告关键字',
+  highlightRuleKeywordInfo: '信息关键字',
+  highlightRuleKeywordOk: '成功关键字',
+  highlightRuleTcpState: 'TCP 状态词',
+  highlightRuleVarKey: '变量 / 键名',
+  highlightCustomTitle: '自定义正则规则',
+  highlightCustomHint: '整段命中即按所选颜色高亮，优先于上方内置规则（JS 正则语法）。',
+  highlightCustomAdd: '添加规则',
+  highlightCustomPatternPlaceholder: '正则，如 ERROR|失败',
+  highlightCustomLabelPlaceholder: '名称（可选）',
+  highlightCustomInvalid: '正则无效，本条暂不生效',
+  highlightCustomRemove: '删除该规则',
+  highlightCustomSamplesTitle: '示例与写法说明',
+  highlightCustomSamplesBody: `与内置类别不同：自定义规则区分大小写；命中即整段上色，并覆盖该范围内的内置着色（URL / IP / 日期等）。
+常用写法示例：
+• \\b(?:4\\d{2}|5\\d{2})\\b —— 404 / 500 等 HTTP 状态码（\\b 防止误染 4040）
+• \\b(?:host|port|token)\\b(?=\\s*[:=]) —— 只染键名；?= 只看不吃，= / : 与后面的值仍按内置类别着色
+• \\b(?:[Cc]onnection refused|reset)\\b —— 大小写两可的短语整体染色
+• (?<=["'])[^"']+(?=["']) —— 只染引号内的文字（不含引号本身）
+无效正则会红框提示且不生效；「恢复默认」不清除自定义规则。`,
 
   // Settings: AI
   aiSettingsHeader: 'AI 助手',

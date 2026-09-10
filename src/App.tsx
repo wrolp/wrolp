@@ -110,6 +110,26 @@ import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { detectLanguage } from './editor/languages'
 import { useI18n, LANG_LABELS } from './i18n'
+import type { TranslationKey } from './i18n/en'
+import { highlightStore } from './lib/highlightStore'
+import {
+  applyScheme,
+  CATEGORY_META,
+  cloneDefaultConfig,
+  compileHighlighter,
+  DISPLAY_ORDER,
+  HIGHLIGHT_SAMPLE,
+  isBuiltinSchemeId,
+  removeCustomRule,
+  setGlobalEnabled,
+  setRuleColor,
+  setRuleEnabled,
+  upsertCustomRule,
+  type CategoryKey,
+  type CustomHighlightRule,
+  type HighlightCategoryConfig,
+  type HighlightConfig,
+} from './lib/highlightRules'
 import './styles/App.scss'
 
 // Global connection cache
@@ -174,6 +194,332 @@ function toNativeWinPath(dir: string): string {
         return `${drive.toUpperCase()}:\\${tail}`
       })
     : dir
+}
+
+const HL_SCHEME_OPTIONS = [
+  { id: 'default', labelKey: 'highlightSchemeDefault' },
+  { id: 'nord', labelKey: 'highlightSchemeNord' },
+  { id: 'solarized', labelKey: 'highlightSchemeSolarized' },
+  { id: 'pastel', labelKey: 'highlightSchemePastel' },
+] as const
+
+function isValidRegex(src: string): boolean {
+  try {
+    new RegExp(src, 'g')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function nextRuleId(): string {
+  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** Settings → General card for terminal output category highlighting. */
+function HighlightSettingsCard({
+  cfg,
+  onSave,
+}: {
+  cfg: HighlightConfig
+  onSave: (next: HighlightConfig) => void
+}) {
+  const { t } = useI18n()
+  const ruleByKey = new Map<CategoryKey, HighlightCategoryConfig>(cfg.rules.map((r) => [r.key, r]))
+  const previewSegs = compileHighlighter(
+    cfg.enabled ? cfg.rules : [],
+    cfg.enabled ? cfg.custom : [],
+  ).annotate(HIGHLIGHT_SAMPLE)
+
+  return (
+    <div className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-icon">🎨</div>
+        <div>
+          <h3 className="settings-card-title">{t('highlightOutput')}</h3>
+          <p className="settings-card-sub">{t('highlightOutputDesc')}</p>
+        </div>
+      </div>
+      <div className="settings-fields">
+        {/* Global master switch */}
+        <label
+          className="settings-field"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+        >
+          <input
+            type="checkbox"
+            checked={cfg.enabled}
+            onChange={(e) => onSave(setGlobalEnabled(cfg, e.target.checked))}
+          />
+          <span className="settings-label">{t('highlightOutputGlobal')}</span>
+        </label>
+
+        {/* Built-in color scheme */}
+        <div
+          className="settings-field"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+        >
+          <label
+            htmlFor="terminal-hl-scheme"
+            className="settings-label"
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            {t('highlightScheme')}
+          </label>
+          <select
+            id="terminal-hl-scheme"
+            className="settings-input"
+            value={cfg.schemeId}
+            onChange={(e) => {
+              const v = e.target.value
+              if (isBuiltinSchemeId(v)) onSave(applyScheme(cfg, v))
+            }}
+            style={{ width: 200 }}
+          >
+            {HL_SCHEME_OPTIONS.map((s) => (
+              <option key={s.id} value={s.id}>
+                {t(s.labelKey)}
+              </option>
+            ))}
+            {cfg.schemeId === 'custom' && (
+              <option value="custom">{t('highlightSchemeCustom')}</option>
+            )}
+          </select>
+        </div>
+
+        {/* Per-category rules */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, margin: '2px 0 6px' }}>
+          {DISPLAY_ORDER.map((key) => {
+            const rule = ruleByKey.get(key)
+            if (!rule) return null
+            const meta = CATEGORY_META[key]
+            return (
+              <div
+                key={key}
+                className="settings-field"
+                style={{ display: 'flex', alignItems: 'center', gap: 10, flexDirection: 'row' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={rule.enabled}
+                  onChange={(e) => onSave(setRuleEnabled(cfg, key, e.target.checked))}
+                />
+                <input
+                  type="color"
+                  value={rule.color}
+                  disabled={!rule.enabled}
+                  onChange={(e) => onSave(setRuleColor(cfg, key, e.target.value))}
+                  style={{
+                    width: 36,
+                    height: 22,
+                    padding: 0,
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                  }}
+                />
+                <span className="settings-label" style={{ minWidth: 128 }}>
+                  {t(meta.labelKey as TranslationKey)}
+                </span>
+                <span className="settings-help" style={{ opacity: 0.6 }}>
+                  {meta.sample}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* User custom regex rules (WindTerm-Trigger style) */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'baseline',
+            gap: 8,
+            marginTop: 10,
+          }}
+        >
+          <span className="settings-label">{t('highlightCustomTitle')}</span>
+          <span className="settings-help" style={{ opacity: 0.6, flex: 1 }}>
+            {t('highlightCustomHint')}
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              onSave(
+                upsertCustomRule(cfg, {
+                  id: nextRuleId(),
+                  label: '',
+                  pattern: '',
+                  color: '#e06c75',
+                  enabled: true,
+                }),
+              )
+            }
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.25)',
+              borderRadius: 4,
+              color: 'inherit',
+              padding: '1px 8px',
+              fontSize: 12,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t('highlightCustomAdd')}
+          </button>
+        </div>
+        <details className="settings-help" style={{ marginTop: 6 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11, userSelect: 'none' }}>
+            {t('highlightCustomSamplesTitle')}
+          </summary>
+          <div
+            style={{
+              marginTop: 6,
+              padding: '6px 10px',
+              background: 'rgba(255,255,255,0.04)',
+              borderRadius: 6,
+              fontSize: 11,
+              lineHeight: 1.7,
+              whiteSpace: 'pre-line',
+            }}
+          >
+            {t('highlightCustomSamplesBody')}
+          </div>
+        </details>
+        {cfg.custom.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2 }}>
+            {cfg.custom.map((rule) => {
+              const trimmed = rule.pattern.trim()
+              const invalid = trimmed !== '' && !isValidRegex(trimmed)
+              const update = (patch: Partial<CustomHighlightRule>) =>
+                onSave(upsertCustomRule(cfg, { ...rule, ...patch }))
+              return (
+                <div
+                  key={rule.id}
+                  className="settings-field"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    flexDirection: 'row',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={rule.enabled}
+                    onChange={(e) => update({ enabled: e.target.checked })}
+                  />
+                  <input
+                    type="color"
+                    value={rule.color}
+                    onChange={(e) => update({ color: e.target.value })}
+                    style={{
+                      width: 36,
+                      height: 22,
+                      padding: 0,
+                      border: 'none',
+                      background: 'transparent',
+                      cursor: 'pointer',
+                    }}
+                  />
+                  <input
+                    type="text"
+                    value={rule.label}
+                    placeholder={t('highlightCustomLabelPlaceholder')}
+                    onChange={(e) => update({ label: e.target.value })}
+                    className="settings-input"
+                    style={{ width: 110 }}
+                  />
+                  <input
+                    type="text"
+                    value={rule.pattern}
+                    placeholder={t('highlightCustomPatternPlaceholder')}
+                    onChange={(e) => update({ pattern: e.target.value })}
+                    className="settings-input"
+                    title={invalid ? t('highlightCustomInvalid') : undefined}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      fontFamily: 'var(--font-mono, Consolas, monospace)',
+                      fontSize: 12,
+                      borderColor: invalid ? 'rgba(224,108,117,0.8)' : undefined,
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onSave(removeCustomRule(cfg, rule.id))}
+                    title={t('highlightCustomRemove')}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'rgba(255,255,255,0.5)',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      padding: '0 4px',
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Live preview */}
+        <div style={{ marginTop: 4 }}>
+          <div className="settings-label" style={{ marginBottom: 4 }}>
+            {t('highlightPreview')}
+          </div>
+          <div
+            style={{
+              background: 'rgba(0,0,0,0.35)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 6,
+              padding: '8px 10px',
+              fontFamily: 'var(--font-mono, Consolas, monospace)',
+              fontSize: 12,
+              lineHeight: 1.7,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+            }}
+          >
+            {previewSegs.length === 0
+              ? HIGHLIGHT_SAMPLE
+              : previewSegs.map((seg, i) =>
+                  seg.color ? (
+                    <span key={i} style={{ color: seg.color }}>
+                      {seg.text}
+                    </span>
+                  ) : (
+                    <span key={i}>{seg.text}</span>
+                  ),
+                )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onSave({ ...cloneDefaultConfig(), custom: cfg.custom })}
+          style={{
+            marginTop: 10,
+            alignSelf: 'flex-start',
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            color: 'var(--accent, #4f8cff)',
+            cursor: 'pointer',
+            textDecoration: 'underline',
+            fontSize: 13,
+          }}
+        >
+          {t('highlightRestoreDefault')}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 export default function App() {
@@ -1110,6 +1456,11 @@ export default function App() {
       return 5000
     }
   })
+  // Terminal output category highlight (persisted via highlightStore).
+  const [hlCfg, setHlCfg] = useState<HighlightConfig>(() => highlightStore.load())
+  const saveHlCfg = useCallback((next: HighlightConfig) => {
+    setHlCfg(highlightStore.save(next))
+  }, [])
   const [reconnectKeys, setReconnectKeys] = useState<Record<number, number>>({})
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
@@ -3521,6 +3872,8 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+
+                  <HighlightSettingsCard cfg={hlCfg} onSave={saveHlCfg} />
 
                   <div className="settings-card">
                     <div className="settings-card-header">
