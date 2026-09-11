@@ -1883,10 +1883,12 @@ body.resize-v * {
   flex: 0 1 auto;
   min-width: 0;
   overflow-x: auto;
-  scrollbar-width: thin;
+  // No native horizontal scrollbar — the strip is scrolled by the wheel
+  // (`PaneTabsStrip`, App.tsx) so overflowing tabs don't steal a row.
+  scrollbar-width: none;
 
   &::-webkit-scrollbar {
-    height: 3px;
+    display: none;
   }
 }
 

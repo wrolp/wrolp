@@ -226,6 +226,37 @@ function nextRuleId(): string {
   return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
+/**
+ * Horizontally-wheelable strip for the pane header's file / docker-log tabs.
+ *
+ * React registers `wheel` as a PASSIVE listener at the root, so `preventDefault`
+ * inside an `onWheel` prop is a no-op — a native non-passive listener is
+ * required to both scroll sideways and stop the event from chaining. The
+ * native scrollbar is hidden in CSS (`.term-pane-file-tabs`).
+ */
+function PaneTabsStrip({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      // Only take over when the tabs actually overflow.
+      if (el.scrollWidth <= el.clientWidth) return
+      const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX
+      if (delta === 0) return
+      el.scrollLeft += delta
+      e.preventDefault()
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+  return (
+    <div className="term-pane-file-tabs" ref={ref}>
+      {children}
+    </div>
+  )
+}
+
 /** Settings → General card for the multi-line paste guard (see B20). */
 function PasteGuardSettingsCard({
   cfg,
@@ -5070,7 +5101,7 @@ export default function App() {
               ITS OWN SSH session (leaf.tabId) — files opened in one workspace
               tab never appear in another. The tabs follow the pane itself (not
               focus) so switching splits keeps the editor's tab bar visible. */}
-          <div className="term-pane-file-tabs">
+          <PaneTabsStrip>
             <div
               className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
               onClick={(e) => {
@@ -5180,7 +5211,7 @@ export default function App() {
                   </span>
                 </div>
               ))}
-          </div>
+          </PaneTabsStrip>
         </div>
         <div
           className="term-pane-body"
