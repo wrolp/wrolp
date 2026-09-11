@@ -474,8 +474,14 @@ pub struct SshSession {
   pub data_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
   /// Shutdown signal
   pub shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-  /// PTY channel Arc (for resize)
-  pub channel_arc: Option<Arc<tokio::sync::Mutex<russh::Channel<russh::client::Msg>>>>,
+  /// PTY channel *write* half (input + resize).
+  ///
+  /// Only the write half is kept: the read half is owned by a drain task in
+  /// `connect`. russh 0.63 attaches a bounded inbound queue to every channel and
+  /// blocks its session loop on `send().await` once that queue fills (B21), so
+  /// the queue must be drained even though output is consumed via the handler
+  /// callback rather than `Channel::wait()`.
+  pub channel_arc: Option<Arc<russh::ChannelWriteHalf<russh::client::Msg>>>,
   /// Shared SSH session handle, kept alive for the session lifetime.
   /// Used to open extra channels (ProxyJump direct-tcpip, docker exec) for
   /// secondary targets without re-authenticating, and for the keepalive probe

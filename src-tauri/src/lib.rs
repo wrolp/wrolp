@@ -29,7 +29,35 @@ use tauri::Manager;
 // use tauri::tray::TrayIconBuilder;
 // use tauri::image::Image;
 
+/// Install the `log` facade on stderr.
+///
+/// The backend calls `eprintln!` everywhere but never set a logger, so every
+/// `russh` `warn!`/`error!` (dropped keepalives, channel/socket errors) was
+/// silently thrown away — previous SSH stalls therefore left no trace at all.
+/// Level comes from `WROLP_LOG` (`off`/`error`/`warn`/`info`/`debug`/`trace`)
+/// and defaults to `warn` so only real problems show up.
+fn init_logging() {
+  use simplelog::{Config, LevelFilter, SimpleLogger};
+
+  let level = match std::env::var("WROLP_LOG")
+    .unwrap_or_default()
+    .trim()
+    .to_ascii_lowercase()
+    .as_str()
+  {
+    "off" => LevelFilter::Off,
+    "error" => LevelFilter::Error,
+    "info" => LevelFilter::Info,
+    "debug" => LevelFilter::Debug,
+    "trace" => LevelFilter::Trace,
+    _ => LevelFilter::Warn,
+  };
+
+  let _ = SimpleLogger::init(level, Config::default());
+}
+
 pub fn run() {
+  init_logging();
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_shell::init())
