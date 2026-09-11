@@ -79,7 +79,6 @@ const HL_FLUSH_DELAY_MS = 300
 import {
   LS_CAPTURE_TIMEOUT_MS,
   LS_MAX_BYTES,
-  joinPath,
   extractLsTargetArg,
   resolveLsBaseDir,
   expandTilde,
@@ -88,6 +87,7 @@ import {
   isNestedSessionExit,
 } from './terminal/lsCapture'
 import type { LsCaptureState, LsClickableEntry } from './terminal/lsCapture'
+import { resolveLsEntryPath } from './terminal/lsCapture'
 import {
   getCurrentCommandLine,
   splitPromptCommand,
@@ -514,11 +514,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         : { kind: 'session', tabId: tabIdRef.current }
   }
 
-  const lookupIsDir = async (
-    baseDirPromise: Promise<string | null>,
-    name: string,
-  ): Promise<boolean | null> => {
-    const base = await baseDirPromise
+  const lookupIsDir = async (base: string | null, name: string): Promise<boolean | null> => {
     if (!base) return null
     const cache = lsDirCacheRef.current
     let dirMap = cache.get(base)
@@ -534,19 +530,28 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }
 
   const onLsEntryClick = async (entry: LsClickableEntry) => {
-    // Resolve the entry's absolute path from *this listing's* base directory
-    // (captured at submit time and bound to the entry), so the click lands in
-    // the right place even after the user has `cd`'d away — and even if a newer
-    // `ls` has since run in a different directory.
-    const base = (await entry.baseDirPromise) ?? null
-    const abs = base ? joinPath(base, entry.name) : entry.name
+    // Resolve the entry's absolute path. By default this uses the listing's
+    // captured base directory (bound to the entry at submit time), so a click
+    // lands in the directory the listing was produced from even after the user
+    // has `cd`'d away. B22: if the file is no longer there (e.g. it was `mv`'d
+    // out of the listing's dir), `resolveLsEntryPath` falls back to the current
+    // cwd so a moved file still opens — only when the captured path is confirmed
+    // gone AND the cwd path exists, preserving every other behavior.
+    const capturedBase = (await entry.baseDirPromise) ?? null
+    const { abs, base } = await resolveLsEntryPath({
+      capturedBase,
+      name: entry.name,
+      cwd: cwdRef.current,
+      nested: dockerContainerRef.current != null,
+      exists: (p) => fsFileExists(lsFsTarget(), p),
+    })
     // Plain `ls` (multi format) carries no type info — resolve dir-vs-file at
     // click time. On lookup failure, default to treating it as a directory: a
     // `cd` into a file fails gently in the shell, whereas opening a directory
     // in the editor pops an error dialog.
     let isDir = entry.kind === 'dir'
     if (entry.kind === 'unknown') {
-      const resolved = await lookupIsDir(entry.baseDirPromise, entry.name)
+      const resolved = await lookupIsDir(base, entry.name)
       isDir = resolved === null ? true : resolved
     }
     if (isDir) {

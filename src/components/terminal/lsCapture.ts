@@ -43,6 +43,58 @@ export function joinPath(base: string, name: string): string {
   return `${base.replace(/[\\/]+$/, '')}${sep}${name}`
 }
 
+/**
+ * Resolve the absolute path an `ls` entry click should open (B22).
+ *
+ * By default the path is built from the listing's *captured* base directory
+ * (`joinPath(capturedBase, name)`), so a click lands in the directory the
+ * listing was produced from even after the user has `cd`'d away. But if the
+ * file is no longer at that base — e.g. it was `mv`'d out of the listing's
+ * directory — we fall back to the current cwd so a moved file still opens.
+ *
+ * We only switch bases when the captured path is confirmed *gone* AND the cwd
+ * path *exists*, so the "click lands in the listing's dir" behavior is
+ * preserved for every other case (notably: `cd` away while the file is still
+ * in its original place). `exists` is injected so the logic is testable
+ * without a live filesystem/backend; in the app it's `fsFileExists(lsFsTarget(),
+ * p)`. `nested` skips the fallback (a docker exec / nested shell's host-tracked
+ * cwd can't describe container-side paths).
+ */
+export interface LsEntryResolveCtx {
+  capturedBase: string | null
+  name: string
+  cwd: string | null
+  nested: boolean
+  exists: (abs: string) => Promise<boolean>
+}
+
+export interface LsEntryResolveResult {
+  abs: string
+  base: string | null
+}
+
+export async function resolveLsEntryPath(ctx: LsEntryResolveCtx): Promise<LsEntryResolveResult> {
+  const { capturedBase, name, cwd, nested, exists } = ctx
+  const capturedAbs = capturedBase ? joinPath(capturedBase, name) : name
+  if (!nested && capturedBase) {
+    let capturedExists = false
+    try {
+      capturedExists = await exists(capturedAbs)
+    } catch {
+      capturedExists = true // on error, trust the captured path
+    }
+    if (!capturedExists && cwd) {
+      const cwdAbs = joinPath(cwd, name)
+      try {
+        if (await exists(cwdAbs)) return { abs: cwdAbs, base: cwd }
+      } catch {
+        /* keep the captured path */
+      }
+    }
+  }
+  return { abs: capturedAbs, base: capturedBase }
+}
+
 /** Extract a single non-flag path argument from an `ls`-style command, if any. */
 export function extractLsTargetArg(cmd: string): string | null {
   const tokens = cmd.trim().split(/\s+/).filter(Boolean)
