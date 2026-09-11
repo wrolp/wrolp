@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::commands::expand_tilde;
-use crate::docker_fs::DockerExecFs;
+use crate::docker_fs::new_docker_fs;
 use crate::ssh_session::{AppState, FileEntry, FileMeta, SshHandler, TargetAuth, TargetRef};
 
 /// Unified remote filesystem interface implemented by every target type.
@@ -243,6 +243,9 @@ pub async fn build_sftp(
     TargetRef::Local { .. } => {
       Err("Target is a local target and does not support SFTP streaming upload".into())
     }
+    TargetRef::Wsl { .. } => {
+      Err("Target is a WSL target and does not support SFTP streaming upload".into())
+    }
     TargetRef::Ftp { .. } => {
       Err("Target is an FTP connection and does not support SFTP streaming upload".into())
     }
@@ -261,13 +264,14 @@ pub async fn build_fs(
       user,
     } => {
       let jump = get_jump_handle(state, *jump_tab_id)?;
-      Ok(Box::new(DockerExecFs::new(
+      Ok(Box::new(new_docker_fs(
         jump,
         container.clone(),
         user.clone(),
       )))
     }
     TargetRef::Local { .. } => Ok(Box::new(crate::local_fs::LocalFs::new())),
+    TargetRef::Wsl { distro, .. } => Ok(Box::new(crate::wsl_fs::new_wsl_fs(distro.clone()))),
     TargetRef::Ftp { tab_id } => {
       let sessions = state.ftp_sessions.lock().map_err(|e| e.to_string())?;
       let session = sessions

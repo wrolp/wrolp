@@ -2095,7 +2095,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                       {t('rootDir')} (/)
                     </div>
                   </div>
-                  {fileMode === 'local' && drives.length > 0 && (
+                  {fileMode === 'local' && target.kind !== 'wsl' && drives.length > 0 && (
                     <div className="file-path-jump-group">
                       <div className="file-path-jump-label">{t('localDrives')}</div>
                       {drives.map((d) => (
@@ -2132,13 +2132,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                 {pathDisplay}
               </span>
             )}
-            {/* Set the current browsed directory as the SSH connection's startup
-                directory (main session only; pin icon next to the path). */}
-            {sessionTabId != null && onSetStartupDir && (
+            {/* Set the current browsed directory as the terminal's startup
+                directory: an SSH connection (main session) or a WSL terminal's
+                saved entry (pin icon next to the path). */}
+            {(sessionTabId != null || target.kind === 'wsl') && onSetStartupDir && (
               <span
                 className="file-path-pin"
                 onClick={() => onSetStartupDir(normalizePath(currentPath))}
-                title={t('setAsStartupDir')}
+                title={target.kind === 'wsl' ? t('setAsStartupDirWsl') : t('setAsStartupDir')}
               >
                 <Icon name="pin" />
               </span>

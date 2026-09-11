@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai;
+mod cmd_fs;
 // `commands`/`db`/`ssh_session` are `pub` so `src-tauri/tests/` integration
 // tests can drive the `#[tauri::command]` handlers via `tauri::test`.
 pub mod commands;
@@ -20,6 +21,7 @@ mod tftp_proto;
 mod vault;
 #[cfg(windows)]
 mod webview_drop;
+mod wsl_fs;
 
 use ssh_session::AppState;
 use tauri::generate_handler;
@@ -241,6 +243,7 @@ pub fn run() {
       commands::local_close,
       commands::get_local_shell_dirs,
       commands::clear_local_shell_dirs,
+      commands::list_wsl_distros,
       commands::list_files,
       commands::download_file,
       commands::download_directory,

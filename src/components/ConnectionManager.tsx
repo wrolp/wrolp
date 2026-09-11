@@ -10,6 +10,7 @@ import type {
   TunnelConfig,
   TunnelInfo,
 } from '../types'
+import { isWslShell } from '../lib/pasteGuard'
 import {
   saveConnection as saveConn,
   deleteConnection,
@@ -18,6 +19,7 @@ import {
   deleteGroup,
   getLocalTerminals,
   saveLocalTerminals,
+  listWslDistros,
   addTunnel,
   updateTunnel,
   stopTunnel,
@@ -953,6 +955,10 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
   const [name, setName] = useState('')
   const [cwd, setCwd] = useState('')
   const [shell, setShell] = useState('cmd')
+  const [distro, setDistro] = useState('')
+  // Installed WSL distributions for the distro dropdown: null = not loaded yet,
+  // [] = unavailable (WSL missing / listing failed → fall back to text input).
+  const [wslDistros, setWslDistros] = useState<string[] | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [localMenu, setLocalMenu] = useState<{
     x: number
@@ -986,14 +992,34 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
       setName(entry.name)
       setCwd(entry.cwd)
       setShell(entry.shell)
+      setDistro(entry.distro ?? '')
     } else {
       setEditing(null)
       setName('')
       setCwd('')
       setShell('cmd')
+      setDistro('')
     }
     setModalOpen(true)
   }
+
+  // Lazily fetch the installed WSL distributions the first time the editor is
+  // shown with a WSL shell. A failed/empty result disables the dropdown (the
+  // field falls back to a free-text input).
+  useEffect(() => {
+    if (!modalOpen || !isWslShell(shell) || wslDistros !== null) return
+    let active = true
+    listWslDistros()
+      .then((d) => {
+        if (active) setWslDistros(d)
+      })
+      .catch(() => {
+        if (active) setWslDistros([])
+      })
+    return () => {
+      active = false
+    }
+  }, [modalOpen, shell, wslDistros])
 
   const pickDir = async () => {
     try {
@@ -1019,7 +1045,10 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
   }
 
   const handleSave = async () => {
-    if (!cwd.trim()) {
+    const wslMode = isWslShell(shell)
+    // A WSL entry's directory is a Linux path and may be left empty (→ $HOME);
+    // other shells need a real Windows directory.
+    if (!wslMode && !cwd.trim()) {
       setSaveError(t('localTermFieldsRequired'))
       return
     }
@@ -1030,12 +1059,15 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
         .replace(/[\\/]+$/, '')
         .split(/[\\/]/)
         .pop() || cwd.trim()
-    const finalName = name.trim() || fallbackName
+    const finalName = name.trim() || (wslMode ? t('shellWsl') : fallbackName)
+    const entryDistro = wslMode ? distro.trim() || undefined : undefined
     const current = await getLocalTerminals().catch(() => entries)
     let next: LocalTerminalEntry[]
     if (editing) {
       next = current.map((e) =>
-        e.id === editing.id ? { ...e, name: finalName, cwd: cwd.trim(), shell } : e,
+        e.id === editing.id
+          ? { ...e, name: finalName, cwd: cwd.trim(), shell, distro: entryDistro }
+          : e,
       )
     } else {
       next = [
@@ -1045,6 +1077,7 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
           name: finalName,
           cwd: cwd.trim(),
           shell,
+          distro: entryDistro,
         },
       ]
     }
@@ -1168,12 +1201,16 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
                   <input
                     type="text"
                     value={cwd}
-                    placeholder={t('localTerminalDirPlaceholder')}
+                    placeholder={
+                      isWslShell(shell) ? t('wslDirPlaceholder') : t('localTerminalDirPlaceholder')
+                    }
                     onChange={(e) => setCwd(e.target.value)}
                   />
-                  <button type="button" onClick={pickDir}>
-                    {t('browseDir')}
-                  </button>
+                  {!isWslShell(shell) && (
+                    <button type="button" onClick={pickDir}>
+                      {t('browseDir')}
+                    </button>
+                  )}
                 </div>
               </label>
               <label className="modal-field">
@@ -1189,6 +1226,32 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
                   )}
                 </select>
               </label>
+              {isWslShell(shell) && (
+                <label className="modal-field">
+                  <span>{t('wslDistro')}</span>
+                  {wslDistros && wslDistros.length > 0 ? (
+                    <select value={distro} onChange={(e) => setDistro(e.target.value)}>
+                      <option value="">{t('wslDistroDefault')}</option>
+                      {wslDistros.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                      {/* Keep a stored value that is no longer installed selectable. */}
+                      {distro && !wslDistros.includes(distro) && (
+                        <option value={distro}>{distro}</option>
+                      )}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={distro}
+                      placeholder={t('wslDistroHint')}
+                      onChange={(e) => setDistro(e.target.value)}
+                    />
+                  )}
+                </label>
+              )}
               {saveError && <div className="modal-error">{saveError}</div>}
             </div>
             <div className="modal-actions">

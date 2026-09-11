@@ -12,6 +12,17 @@ fn default_local_shell() -> (String, Vec<String>) {
   }
 }
 
+/// True when the shell spec is the WSL launcher (preset `wsl`, or a path to
+/// `wsl.exe`). Mirrors the frontend's `isWslShell`.
+fn is_wsl_spec(spec: &str) -> bool {
+  let s = spec.trim().to_ascii_lowercase();
+  s == "wsl"
+    || s.ends_with("/wsl")
+    || s.ends_with("\\wsl")
+    || s.ends_with("/wsl.exe")
+    || s.ends_with("\\wsl.exe")
+}
+
 /// Resolve a shell specifier (preset name or arbitrary command/path) into a
 /// (command, args) pair suitable for portable_pty's CommandBuilder.
 ///
@@ -19,7 +30,11 @@ fn default_local_shell() -> (String, Vec<String>) {
 /// NOT fall back to a bare `bash` when Git Bash is missing: on Windows, `bash`
 /// on PATH usually resolves to `C:\Windows\System32\bash.exe`, which is the WSL
 /// launcher — silently spawning that would open WSL instead of failing loudly.
-fn resolve_local_shell(spec: &str) -> Result<(String, Vec<String>), String> {
+fn resolve_local_shell(
+  spec: &str,
+  distro: Option<&str>,
+  cwd: Option<&str>,
+) -> Result<(String, Vec<String>), String> {
   match spec {
     // Git Bash: locate the executable on the common install paths, then fall
     // back to Git for Windows' registered install path (covers installs in
@@ -50,11 +65,24 @@ fn resolve_local_shell(spec: &str) -> Result<(String, Vec<String>), String> {
       )
     }
     // WSL: `wsl.exe` has no `--login` flag (that's a bash option). Run bash as
-    // a login+interactive shell inside the distro instead.
-    "wsl" => Ok((
-      "wsl.exe".to_string(),
-      vec!["bash".to_string(), "-li".to_string()],
-    )),
+    // a login+interactive shell inside the distro instead. A named distro is
+    // selected with `-d` (empty = the system default distro) and the start
+    // directory with `--cd` (a Linux path — the Windows process cwd is NOT
+    // applied to WSL entries, see `open_local_shell`).
+    "wsl" => {
+      let mut args: Vec<String> = Vec::new();
+      if let Some(d) = distro.map(str::trim).filter(|d| !d.is_empty()) {
+        args.push("-d".to_string());
+        args.push(d.to_string());
+      }
+      if let Some(c) = cwd.map(str::trim).filter(|c| !c.is_empty()) {
+        args.push("--cd".to_string());
+        args.push(c.to_string());
+      }
+      args.push("bash".to_string());
+      args.push("-li".to_string());
+      Ok(("wsl.exe".to_string(), args))
+    }
     // Anything else (cmd, pwsh, powershell, bash, or an explicit path) is used as-is.
     other => Ok((other.to_string(), vec![])),
   }
@@ -156,6 +184,73 @@ mod tests {
     assert_eq!(reg_install_path_from_line("ERROR: The system was unable to find"), None);
     assert_eq!(reg_install_path_from_line("    SomethingElse    REG_SZ    x"), None);
   }
+
+  #[test]
+  fn wsl_shell_args_carry_distro_and_start_dir() {
+    let (cmd, args) = resolve_local_shell("wsl", Some("Ubuntu-22.04"), Some("/home/u")).unwrap();
+    assert_eq!(cmd, "wsl.exe");
+    assert_eq!(
+      args,
+      vec!["-d", "Ubuntu-22.04", "--cd", "/home/u", "bash", "-li"]
+    );
+  }
+
+  #[test]
+  fn wsl_shell_args_default_when_blank() {
+    let (cmd, args) = resolve_local_shell("wsl", None, None).unwrap();
+    assert_eq!(cmd, "wsl.exe");
+    assert_eq!(args, vec!["bash", "-li"]);
+    // A blank distro/start dir must not emit empty flags.
+    let (_, args) = resolve_local_shell("wsl", Some("  "), Some("")).unwrap();
+    assert_eq!(args, vec!["bash", "-li"]);
+  }
+
+  #[test]
+  fn detects_wsl_specs() {
+    assert!(is_wsl_spec("wsl"));
+    assert!(is_wsl_spec("  WSL  "));
+    assert!(is_wsl_spec(r"C:\Windows\System32\wsl.exe"));
+    assert!(!is_wsl_spec("gitbash"));
+    assert!(!is_wsl_spec("cmd"));
+  }
+
+  #[test]
+  fn decodes_utf16le_with_bom() {
+    let s = "Ubuntu-24.04\r\ndocker-desktop\r\n";
+    let mut bytes: Vec<u8> = vec![0xFF, 0xFE];
+    for u in s.encode_utf16() {
+      bytes.extend_from_slice(&u.to_le_bytes());
+    }
+    assert_eq!(decode_wsl_output(&bytes), s);
+  }
+
+  #[test]
+  fn decodes_utf16le_without_bom() {
+    let mut bytes = Vec::new();
+    for u in "Ubuntu-24.04\n".encode_utf16() {
+      bytes.extend_from_slice(&u.to_le_bytes());
+    }
+    assert_eq!(decode_wsl_output(&bytes).trim(), "Ubuntu-24.04");
+  }
+
+  #[test]
+  fn passes_utf8_through() {
+    assert_eq!(decode_wsl_output(b"Ubuntu-24.04\n"), "Ubuntu-24.04\n");
+    assert_eq!(decode_wsl_output(b""), "");
+  }
+
+  /// Real probe against the local machine's `wsl.exe`. Ignored by default so it
+  /// never runs where WSL is absent: `cargo test --lib local_shell -- --ignored`.
+  #[tokio::test]
+  #[ignore = "requires a WSL installation"]
+  async fn lists_real_wsl_distros() {
+    let distros = list_wsl_distros().await.expect("list distros");
+    eprintln!("wsl distros: {distros:?}");
+    assert!(!distros.is_empty(), "expected at least one distro");
+    assert!(distros
+      .iter()
+      .all(|d| !d.is_empty() && !d.contains('\u{feff}')));
+  }
 }
 
 /// Open a local shell (PTY-backed local process) for the given tab.
@@ -165,6 +260,7 @@ pub async fn open_local_shell(
   state: tauri::State<'_, AppState>,
   tab_id: u32,
   shell: Option<String>,
+  distro: Option<String>,
   cwd: Option<String>,
   reuse_existing: bool,
   cols: u32,
@@ -250,8 +346,9 @@ pub async fn open_local_shell(
       // and an unresolved shell reports an error instead of silently launching
       // whatever `bash` resolves to on PATH (typically WSL's launcher on
       // Windows).
+      let is_wsl = shell_spec.as_deref().map(is_wsl_spec).unwrap_or(false);
       let (shell_cmd, shell_args) = match shell_spec.as_deref() {
-        Some(spec) => resolve_local_shell(spec)?,
+        Some(spec) => resolve_local_shell(spec, distro.as_deref(), cwd_clone.as_deref())?,
         None => default_local_shell(),
       };
       eprintln!(
@@ -273,10 +370,14 @@ pub async fn open_local_shell(
       if !shell_args.is_empty() {
         cmd.args(&shell_args);
       }
-      // An empty cwd means "use the default working directory"…
-      if let Some(ref dir) = cwd_clone {
-        if !dir.trim().is_empty() {
-          cmd.cwd(dir);
+      // An empty cwd means "use the default working directory". A WSL entry's
+      // cwd is a *Linux* path (forwarded via `--cd` above), so it must not be
+      // passed to CreateProcess as the Windows process cwd.
+      if !is_wsl {
+        if let Some(ref dir) = cwd_clone {
+          if !dir.trim().is_empty() {
+            cmd.cwd(dir);
+          }
         }
       }
       cmd.env("TERM", "xterm-256color");
@@ -476,6 +577,60 @@ pub async fn clear_local_shell_dirs(
     None => dirs.clear(),
   }
   Ok(())
+}
+
+/// List installed WSL distributions for the local-terminal editor's distro
+/// dropdown (`wsl.exe -l -q`). Returns an empty list when WSL is unavailable so
+/// the frontend can fall back to a free-text field.
+#[tauri::command]
+pub async fn list_wsl_distros() -> Result<Vec<String>, String> {
+  // WSL can be slow to answer on a cold start; keep it off the async runtime.
+  let bytes = tokio::task::spawn_blocking(|| {
+    std::process::Command::new("wsl.exe")
+      .args(["-l", "-q"])
+      .output()
+      .ok()
+      .map(|o| o.stdout)
+  })
+  .await
+  .map_err(|e| format!("wsl distro listing task failed: {}", e))?;
+  // `wsl.exe` missing (non-Windows / no WSL) is not an error — just no list.
+  let Some(bytes) = bytes else {
+    return Ok(Vec::new());
+  };
+  let text = decode_wsl_output(&bytes);
+  let mut out: Vec<String> = Vec::new();
+  for line in text.lines() {
+    let name = line.trim().trim_start_matches('\u{feff}').trim();
+    if !name.is_empty() && !out.iter().any(|d| d == name) {
+      out.push(name.to_string());
+    }
+  }
+  Ok(out)
+}
+
+/// Decode output captured from `wsl.exe`, which writes **UTF-16LE** when stdout
+/// is a pipe (its console output is UTF-8). A plain `from_utf8` would yield
+/// NUL-interleaved garbage, so detect the encoding and decode accordingly.
+fn decode_wsl_output(bytes: &[u8]) -> String {
+  let has_bom = bytes.starts_with(&[0xFF, 0xFE]);
+  let nul_ratio = if bytes.is_empty() {
+    0.0
+  } else {
+    bytes.iter().filter(|b| **b == 0).count() as f32 / bytes.len() as f32
+  };
+  if has_bom || nul_ratio > 0.125 {
+    let mut units: Vec<u16> = bytes
+      .chunks_exact(2)
+      .map(|c| u16::from_le_bytes([c[0], c[1]]))
+      .collect();
+    if units.first() == Some(&0xFEFF) {
+      units.remove(0);
+    }
+    String::from_utf16_lossy(&units)
+  } else {
+    String::from_utf8_lossy(bytes).into_owned()
+  }
 }
 
 /// Helper: insert/update a directory in the MRU history (max 20 entries).

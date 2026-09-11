@@ -290,10 +290,12 @@ export async function openLocalShell(
   reuseExisting: boolean = true,
   cols?: number,
   rows?: number,
+  distro?: string,
 ): Promise<void> {
   return await invoke('open_local_shell', {
     tabId,
     shell: shell ?? null,
+    distro: distro ?? null,
     cwd: cwd ?? null,
     reuseExisting,
     cols: cols ?? 0,
@@ -334,6 +336,11 @@ export async function getLocalShellDirs(): Promise<LocalShellDir[]> {
 /// Remove a single entry (or all) from the local-shell directory history.
 export async function clearLocalShellDirs(path?: string): Promise<void> {
   return await invoke('clear_local_shell_dirs', { path: path ?? null })
+}
+
+/// List installed WSL distributions (empty when WSL is unavailable).
+export async function listWslDistros(): Promise<string[]> {
+  return await invoke<string[]>('list_wsl_distros')
 }
 
 // ===== File Operations =====

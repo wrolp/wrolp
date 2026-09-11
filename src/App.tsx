@@ -9,7 +9,12 @@ import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
 import { WorkspaceSelector } from './components/WorkspaceSelector'
 import { ConnectionManager } from './components/ConnectionManager'
-import { TerminalComponent, focusTerminal, getTerminalInputText, pasteToTerminal } from './components/Terminal'
+import {
+  TerminalComponent,
+  focusTerminal,
+  getTerminalInputText,
+  pasteToTerminal,
+} from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
@@ -81,6 +86,7 @@ import {
   stopDockerContainer,
   localClose,
   getLocalTerminals,
+  saveLocalTerminals,
   listWorkspaces,
   createWorkspace,
   deleteWorkspace,
@@ -112,7 +118,7 @@ import { detectLanguage } from './editor/languages'
 import { useI18n, LANG_LABELS } from './i18n'
 import type { TranslationKey } from './i18n/en'
 import { highlightStore } from './lib/highlightStore'
-import { loadPasteGuard, savePasteGuard } from './lib/pasteGuard'
+import { loadPasteGuard, savePasteGuard, isWslShell } from './lib/pasteGuard'
 import type { PasteGuardConfig, PasteMode } from './lib/pasteGuard'
 import {
   applyScheme,
@@ -803,9 +809,19 @@ export default function App() {
     if (!focusedTab) return
     const container = focusedTab.dockerContainer
     if (focusedTab.tabType === 'localShell') {
-      // Local shell → browse the user's own machine.
-      setFileMode('local')
-      setFileTarget({ kind: 'local', tabId: focusedTab.tabId })
+      if (isWslShell(focusedTab.localShellType)) {
+        // WSL shell → browse the distribution's filesystem, not Windows'.
+        setFileMode('local')
+        setFileTarget({
+          kind: 'wsl',
+          tabId: focusedTab.tabId,
+          distro: focusedTab.localShellDistro,
+        })
+      } else {
+        // Local shell → browse the user's own machine.
+        setFileMode('local')
+        setFileTarget({ kind: 'local', tabId: focusedTab.tabId })
+      }
     } else if (container) {
       // Focused shell is inside a Docker container → show its file panel.
       // The docker exec runs on the same SSH session the shell uses, so that
@@ -2078,7 +2094,7 @@ export default function App() {
 
   // Open a local shell as a NEW top-level tab (workspace).
   const openLocalShellTab = useCallback(
-    (cwd?: string, shell?: string, name?: string): number => {
+    (cwd?: string, shell?: string, name?: string, distro?: string, entryId?: string): number => {
       const tabId = nextTabId++
       const newTab: TabInfo = {
         tabId,
@@ -2090,6 +2106,8 @@ export default function App() {
         localShellCwd: cwd,
         localShellType: shell,
         localShellName: name,
+        localShellDistro: distro,
+        localShellEntryId: entryId,
       }
       setTabs((prev) => [...prev, newTab])
       const leafId = newLeafId()
@@ -2103,8 +2121,8 @@ export default function App() {
 
   // Open a local shell as a NEW top-level tab (workspace).
   const handleOpenLocalTerminal = useCallback(
-    (cwd?: string, shell?: string, name?: string) => {
-      return openLocalShellTab(cwd, shell, name)
+    (cwd?: string, shell?: string, name?: string, distro?: string, entryId?: string) => {
+      return openLocalShellTab(cwd, shell, name, distro, entryId)
     },
     [openLocalShellTab],
   )
@@ -2124,6 +2142,8 @@ export default function App() {
       shell: string | undefined,
       direction: 'row' | 'column',
       name?: string,
+      distro?: string,
+      entryId?: string,
     ): number | null => {
       const rootId = activeTabIdRef.current
       if (rootId == null) return null
@@ -2144,6 +2164,8 @@ export default function App() {
         localShellCwd: cwd,
         localShellType: shell,
         localShellName: name,
+        localShellDistro: distro,
+        localShellEntryId: entryId,
       }
       setTabs((prev) => [...prev, newTab])
       const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
@@ -2292,7 +2314,10 @@ export default function App() {
   const openInEditor = useCallback(async (target: TargetRef, path: string) => {
     const key = `${JSON.stringify(target)}:${path}`
     const legacyTabId =
-      target.kind === 'session' || target.kind === 'local' || target.kind === 'ftp'
+      target.kind === 'session' ||
+      target.kind === 'local' ||
+      target.kind === 'wsl' ||
+      target.kind === 'ftp'
         ? target.tabId
         : target.jumpTabId
     setEditorTabs((prev) => {
@@ -2628,7 +2653,14 @@ export default function App() {
       // inside the active workspace instead of a new top-level tab.
       if (tab.embedded || fromPane) {
         if (tab.tabType === 'localShell') {
-          handleOpenLocalSplit(tab.localShellCwd, tab.localShellType, 'row', tab.localShellName)
+          handleOpenLocalSplit(
+            tab.localShellCwd,
+            tab.localShellType,
+            'row',
+            tab.localShellName,
+            tab.localShellDistro,
+            tab.localShellEntryId,
+          )
           return
         }
         if (tab.tabType === 'terminal' && tab.connectionId) {
@@ -2638,7 +2670,13 @@ export default function App() {
         return
       }
       if (tab.tabType === 'localShell') {
-        openLocalShellTab(tab.localShellCwd, tab.localShellType, tab.localShellName)
+        openLocalShellTab(
+          tab.localShellCwd,
+          tab.localShellType,
+          tab.localShellName,
+          tab.localShellDistro,
+          tab.localShellEntryId,
+        )
         return
       }
       if (tab.tabType !== 'terminal' || !tab.connectionId) return
@@ -3095,26 +3133,60 @@ export default function App() {
     loadConnections()
   }, [])
 
-  // Set the focused SSH connection's startup directory (triggered from the file
-  // panel). `dir === '.'` means home, which clears the startup directory.
+  // Load saved local terminal entries
+  const reloadLocalTerminals = useCallback(() => {
+    getLocalTerminals()
+      .then(setLocalTerminals)
+      .catch((err: unknown) => console.error('getLocalTerminals', err))
+  }, [])
+
+  // Set the focused terminal's startup directory (triggered from the file
+  // panel). SSH targets update their connection; WSL targets update the saved
+  // local-terminal entry they were opened from. `.`/"" mean home, which clears
+  // the startup directory (SSH: no startup dir; WSL: `$HOME` by default).
   const handleSetStartupDir = useCallback(
     async (dir: string) => {
       const ftabId = focusedLeafTabId ?? activeTabId ?? 0
       const ftab = tabs.find((t) => t.tabId === ftabId)
+      const isHome = dir === '.' || dir === ''
+      const dirLabel = isHome ? '~ (home)' : dir
+      const nextDir = isHome ? '' : dir
+      // WSL local shell → persist onto its sidebar entry (its `cwd`).
+      if (ftab?.tabType === 'localShell' && isWslShell(ftab.localShellType)) {
+        const entryId = ftab.localShellEntryId
+        if (!entryId || entryId === '__default__') {
+          setToast({ kind: 'error', text: t('startupDirNeedsSavedEntry') })
+          return
+        }
+        try {
+          const current = await getLocalTerminals()
+          await saveLocalTerminals(
+            current.map((e) => (e.id === entryId ? { ...e, cwd: nextDir } : e)),
+          )
+          reloadLocalTerminals()
+          // Reflect it on the live tab so a later duplicate/remount uses it.
+          setTabs((prev) =>
+            prev.map((t) => (t.tabId === ftab.tabId ? { ...t, localShellCwd: nextDir } : t)),
+          )
+          setToast({ kind: 'success', text: t('startupDirSet', { dir: dirLabel }) })
+        } catch (err) {
+          setToast({ kind: 'error', text: `Failed to set startup directory: ${err}` })
+        }
+        return
+      }
       const conn = ftab?.connectionId
         ? connections.find((c) => c.id === ftab.connectionId)
         : undefined
       if (!conn) return
-      const dirLabel = dir === '.' ? '~ (home)' : dir
       try {
-        await saveConnection({ ...conn, startupDir: dir === '.' ? undefined : dir })
+        await saveConnection({ ...conn, startupDir: nextDir || undefined })
         setToast({ kind: 'success', text: t('startupDirSet', { dir: dirLabel }) })
         loadConnections()
       } catch (err) {
         setToast({ kind: 'error', text: `Failed to set startup directory: ${err}` })
       }
     },
-    [focusedLeafTabId, activeTabId, tabs, connections, setToast, t],
+    [focusedLeafTabId, activeTabId, tabs, connections, setToast, t, reloadLocalTerminals],
   )
 
   // Workspace handlers
@@ -3155,13 +3227,6 @@ export default function App() {
     } catch (err) {
       console.error('Failed to rename workspace:', err)
     }
-  }, [])
-
-  // Load saved local terminal entries
-  const reloadLocalTerminals = useCallback(() => {
-    getLocalTerminals()
-      .then(setLocalTerminals)
-      .catch((err: unknown) => console.error('getLocalTerminals', err))
   }, [])
 
   // Sidebar drag-to-resize
@@ -3589,6 +3654,7 @@ export default function App() {
               dockerContainer={tab.dockerContainer}
               localCwd={tab.localShellCwd}
               localShellType={tab.localShellType}
+              localDistro={tab.localShellDistro}
               onNotify={(kind, text) => setToast({ kind, text })}
               maxScrollback={typeof maxScrollback === 'number' ? maxScrollback : 5000}
               onStatusChange={(status, errorMessage) => {
@@ -5766,10 +5832,17 @@ export default function App() {
               sidebarWidth={sidebarWidth}
               localTerminals={localTerminals}
               onOpenLocalTerminal={(entry) =>
-                handleOpenLocalTerminal(entry.cwd, entry.shell, entry.name)
+                handleOpenLocalTerminal(entry.cwd, entry.shell, entry.name, entry.distro, entry.id)
               }
               onOpenLocalSplit={(entry, direction) =>
-                handleOpenLocalSplit(entry.cwd, entry.shell, direction, entry.name)
+                handleOpenLocalSplit(
+                  entry.cwd,
+                  entry.shell,
+                  direction,
+                  entry.name,
+                  entry.distro,
+                  entry.id,
+                )
               }
               onOpenLocalDir={handleOpenLocalDir}
               onLocalTerminalsChanged={reloadLocalTerminals}
@@ -5827,14 +5900,19 @@ export default function App() {
                     : `${fconn.name} (${fconn.host}:${fconn.port})`
                   : (ftab?.connectionName ?? undefined)
                 // Docker targets: show BOTH the host machine and the container
-                // name (e.g. "prod (10.0.0.5:22) → docker:nginx"). Other
-                // non-session targets (jump) use their own targetLabel.
+                // name (e.g. "prod (10.0.0.5:22) → docker:nginx"). WSL targets
+                // show the distribution; other non-session targets (jump) use
+                // their own targetLabel.
                 const serverLabel = fileTarget
                   ? fileTarget.kind === 'docker'
                     ? hostLabel
                       ? `${hostLabel} → docker:${fileTarget.container}`
                       : `docker:${fileTarget.container}`
-                    : undefined
+                    : fileTarget.kind === 'wsl'
+                      ? fileTarget.distro
+                        ? `WSL (${fileTarget.distro})`
+                        : 'WSL'
+                      : undefined
                   : hostLabel
                 return (
                   <FilePanel
@@ -5846,10 +5924,10 @@ export default function App() {
                     defaultPath={
                       fileTarget?.kind === 'docker'
                         ? '/'
-                        : fileTarget?.kind === 'local'
+                        : fileTarget?.kind === 'local' || fileTarget?.kind === 'wsl'
                           ? // Empty path resolves to the user's home directory
-                            // in the backend; "/" would map to the current
-                            // drive root on Windows instead.
+                            // in the backend (WSL: the distribution's $HOME);
+                            // "/" would map to a Windows drive root instead.
                             (tabs.find((t) => t.tabId === fileTarget.tabId)?.localShellCwd ?? '')
                           : // Session target: open the file panel at the connection's
                             // startup directory (same directory the terminal cd's

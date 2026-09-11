@@ -51,6 +51,8 @@ export interface TerminalComponentProps {
   localCwd?: string
   /** Shell command to use for the local shell (local mode only). */
   localShellType?: string
+  /** WSL only: distribution to launch (empty/absent = system default). */
+  localDistro?: string
   autoConnect: boolean
   /** Maximum scrollback lines to retain (default 5000). */
   maxScrollback?: number

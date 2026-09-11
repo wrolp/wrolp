@@ -207,6 +207,12 @@ export interface TabInfo {
   // localShell tab fields
   localShellCwd?: string
   localShellType?: string
+  // WSL only: the distribution the shell (and its Files panel) targets.
+  localShellDistro?: string
+  // Id of the sidebar `LocalTerminalEntry` this tab was opened from (so file
+  // panel actions can write back to the saved entry). '__default__' for the
+  // built-in "open local shell" shortcut, which has no persisted entry.
+  localShellEntryId?: string
   // Display name for a local shell tab (from the sidebar Local Terminal entry).
   // Falls back to the cwd when absent.
   localShellName?: string
@@ -321,6 +327,7 @@ export type TargetRef =
   | { kind: 'docker'; jumpTabId: number; container: string; user?: string }
   | { kind: 'dockerSsh'; jumpTabId: number; host: string; port: number; auth: TargetAuth }
   | { kind: 'local'; tabId: number }
+  | { kind: 'wsl'; tabId: number; distro?: string }
   | { kind: 'ftp'; tabId: number }
 
 /** A Docker container discovered via `docker ps` on a connected (jump) host. */
@@ -405,6 +412,8 @@ export interface LocalTerminalEntry {
   name: string
   cwd: string
   shell: string
+  /** WSL only: distribution name (e.g. "Ubuntu-22.04"); empty = default. */
+  distro?: string
 }
 
 /**
@@ -526,6 +535,8 @@ export function targetLabel(target: TargetRef): string {
       return `docker-ssh:${target.host}:${target.port}`
     case 'local':
       return 'Local machine'
+    case 'wsl':
+      return target.distro ? `WSL (${target.distro})` : 'WSL'
     case 'ftp':
       return 'FTP'
   }

@@ -207,6 +207,15 @@ export function isPosixLocalShell(spec?: string | null): boolean {
   )
 }
 
+/** True when a local terminal is the WSL launcher (`wsl` preset or a path to
+ *  `wsl.exe`). Used to point the Files panel at the distribution's filesystem
+ *  instead of the Windows one (git-bash is NOT WSL — it uses the Windows FS). */
+export function isWslShell(spec?: string | null): boolean {
+  const s = (spec ?? '').trim().toLowerCase()
+  if (!s) return false
+  return s === 'wsl' || /(^|[\\/])wsl(\.exe)?$/.test(s)
+}
+
 /** True when the session's shell is POSIX-ish, i.e. `\` continues the line.
  *  SSH targets are assumed POSIX (a Windows box reached over SSH does not run
  *  a readline shell anyway); serial/Telnet never are. */

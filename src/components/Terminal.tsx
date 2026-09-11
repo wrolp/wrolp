@@ -124,6 +124,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   dockerContainer,
   localCwd,
   localShellType,
+  localDistro,
   onNotify,
 }) => {
   const { t } = useI18n()
@@ -143,6 +144,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const hasRun = useRef(false)
   const reconnectTriggerRef = useRef(reconnectTrigger ?? 0)
   const localShellTypeRef = useRef(localShellType)
+  const localDistroRef = useRef(localDistro)
   // Tracks the CURRENT working directory for `ls` link resolution. For local
   // shells the backend's `LocalShell.cwd` is only the startup dir (never updated
   // on `cd`); for SSH the prompt only shows a *relative* basename (e.g. "lac724"
@@ -1219,6 +1221,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     connectConfigRef.current = connectConfig
     localShellTypeRef.current = localShellType
+    localDistroRef.current = localDistro
     onStatusChangeRef.current = onStatusChange
     onSizeChangeRef.current = onSizeChange
     onOpenFileRef.current = onOpenFile
@@ -1964,7 +1967,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       lastRowsRef.current = rows
       onStatusChangeRef.current('connecting')
       if (isLocal) {
-        openLocalShell(currentTabId, localShellTypeRef.current, localCwd, true, cols, rows)
+        openLocalShell(
+          currentTabId,
+          localShellTypeRef.current,
+          localCwd,
+          true,
+          cols,
+          rows,
+          localDistroRef.current,
+        )
           .then(() => {
             connectedRef.current = true
             onStatusChangeRef.current('connected')
@@ -2294,6 +2305,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           false,
           term.cols,
           term.rows,
+          localDistroRef.current,
         )
           .then(() => {
             connectedRef.current = true

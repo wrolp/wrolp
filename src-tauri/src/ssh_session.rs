@@ -602,6 +602,15 @@ pub enum TargetRef {
     #[serde(rename = "tabId")]
     tab_id: u32,
   },
+  /// A WSL distribution's filesystem (used when the focused tab is a WSL local
+  /// shell). Operations run through the local `wsl.exe`.
+  #[serde(rename = "wsl")]
+  Wsl {
+    #[serde(rename = "tabId")]
+    tab_id: u32,
+    #[serde(default)]
+    distro: Option<String>,
+  },
   /// An active FTP connection (no terminal — only remote file browsing).
   #[serde(rename = "ftp")]
   Ftp {
