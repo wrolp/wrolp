@@ -1,21 +1,77 @@
-// ===== Color Variables =====
-$bg-primary: #1e1e1e;
-$bg-secondary: #2d2d2d;
-$bg-tertiary: #252526;
-$bg-sidebar: #252526;
-$bg-hover: #2a2d2e;
-$bg-active: #37373d;
-$bg-input: #3c3c3c;
-$border: #3e3e3e;
-$border-focus: #007acc;
-$text-primary: #d4d4d4;
-$text-secondary: #aaaaaa;
-$text-muted: #888888;
-$text-dim: #666666;
-$accent: #0e639c;
-$accent-hover: #1177bb;
-$danger: #c42b1c;
-$danger-hover: #e44b2c;
-$success: #1fa87e;
-$warning: #cca700;
+// ===== 颜色变量（主题 token 的别名）=====
+//
+// 每个变量现在只是 `_theme.scss` 里对应 token 的别名（`var(--x)`）。好处是
+// 全仓既有的 `$bg-secondary` / `$accent` 等调用点**一行都不用改**就自动跟随主题，
+// 而主题值仍集中在 `_theme.scss` 一处维护。
+//
+// 代价（重要）：这些变量已不再是 Sass 颜色，而是 CSS 变量字符串，因此**不能**
+// 再对它们做 Sass 色值运算（`darken()` / `color.adjust()` 等会报错）。原先 11 处
+// `color.adjust($accent|$border|$success, …)` 已改为读取 `--accent-l8` /
+// `--accent-l12` / `--accent-l14` / `--accent-soft-40` / `--border-l12` /
+// `--success-l8` 这些**由 Sass 在构建期精确复算**的派生 token（见 `_theme.scss`），
+// 因此深色主题的取值与改造前逐位一致。
+
+@use 'sass:color';
+@use 'sass:list';
+@use 'sass:meta';
+
+$bg-primary: var(--bg-primary);
+$bg-secondary: var(--bg-secondary);
+$bg-tertiary: var(--bg-tertiary);
+$bg-sidebar: var(--bg-sidebar);
+$bg-hover: var(--bg-hover);
+$bg-active: var(--bg-active);
+$bg-input: var(--bg-input);
+$border: var(--border);
+$border-focus: var(--border-focus);
+$text-primary: var(--text-primary);
+$text-secondary: var(--text-secondary);
+$text-muted: var(--text-muted);
+$text-dim: var(--text-dim);
+$accent: var(--accent);
+$accent-hover: var(--accent-hover);
+$danger: var(--danger);
+$danger-hover: var(--danger-hover);
+$success: var(--success);
+$warning: var(--warning);
 $font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+
+// ===== `rgba()` 垫片 =====
+//
+// 全仓有 90+ 处 `rgba($accent, 0.12)` / `rgba($border, 0.5)` 这类「主题色 + 硬编码
+// alpha」写法。一旦上面的变量变成 CSS 变量，Sass 内置的 `rgba()` 就无法处理它们
+// （它不是颜色，而是字符串）。这里**故意覆盖内建 `rgba()`**（Sass 允许用户自定义
+// 函数优先于同名内建），让这些调用点零改动继续工作：
+//
+//   rgba($accent, 0.12)  ->  rgba(var(--accent), 12%)
+//                        ->  color-mix(in srgb, var(--accent) 12%, transparent)
+//
+// `color-mix()` 与 `transparent` 混合按预乘 alpha 计算，结果就是同色同 alpha 的
+// 半透明色（WebView2 / Chromium 111+、Safari 16.2+ 均支持）。
+//
+// 传入**字面颜色**或**数值**时按原语义落到内建行为，不改变任何既有输出：
+//   rgba(#6ec3f0, 0.55)      -> color.change(#6ec3f0, $alpha: 0.55)
+//   rgba(0, 0, 0, 0.4)       -> color.change(rgb(0, 0, 0), $alpha: 0.4)
+//
+// 新增代码若需要"某个主题色的低 alpha 版本"，直接照旧写 `rgba($token, a)` 即可。
+@function rgba($args...) {
+  $n: list.length($args);
+
+  // 4 参数值形式：rgba(r, g, b, a)
+  @if $n >= 4 {
+    @return color.change(
+      rgb(list.nth($args, 1), list.nth($args, 2), list.nth($args, 3)),
+      $alpha: list.nth($args, 4)
+    );
+  }
+
+  $c: list.nth($args, 1);
+  $a: list.nth($args, 2);
+
+  // 主题 token（var(--x) 会被 Sass 视作字符串）→ 交给 color-mix 在运行期解析
+  @if meta.type-of($c) == 'string' {
+    @return color-mix(in srgb, #{$c} #{$a * 100%}, transparent);
+  }
+
+  @return color.change($c, $alpha: $a);
+}

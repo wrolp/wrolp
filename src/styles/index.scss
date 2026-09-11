@@ -1,4 +1,21 @@
 @use 'variables' as *;
+@use 'theme' as theme;
+
+// ===== Theme tokens =====
+//
+// Emitted here (the first stylesheet main.tsx loads) so every downstream file —
+// App.scss, component-inline `var(--x)` usage, xterm/Monaco containers — can rely
+// on the tokens existing. `:root` doubles as the no-JS / missing-attribute
+// fallback, which is why it carries the dark set; the light set only overrides it
+// while `<html data-theme="light">`. Switching is then a single attribute flip
+// with zero React re-render (see src/lib/themeStore.ts).
+:root {
+  @include theme.emit-tokens(dark);
+}
+
+html[data-theme='light'] {
+  @include theme.emit-tokens(light);
+}
 
 // Bundled Nerd Font (MesloLGS NF) so terminal icon glyphs (powerline / nerdfont
 // symbols used by shells like powerlevel10k / oh-my-zsh) render correctly even

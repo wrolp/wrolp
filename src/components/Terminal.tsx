@@ -3,6 +3,8 @@ import { Terminal } from '@xterm/xterm'
 import type { ILink } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
+import { xtermTheme } from '../lib/theme'
+import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
 import { listen } from '@tauri-apps/api/event'
 import '@xterm/xterm/css/xterm.css'
 import {
@@ -1316,31 +1318,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // ConPTY workaround (forces a line feed at the right edge and disables
       // reflow) and actively misaligns rows against a modern ConPTY, which
       // already emits proper VT sequences.
-      theme: {
-        // Opaque terminal background. Do NOT use transparency here: xterm.js
-        // will alpha-blend shell-rendered cell backgrounds (e.g. powerlevel10k
-        // prompt blocks) against the theme background and the colors look wrong.
-        background: '#1e1e1e',
-        foreground: '#ffffff',
-        cursor: '#aeafad',
-        selectionBackground: '#264f78',
-        black: '#a0a0a0',
-        red: '#f44747',
-        green: '#3a8558',
-        yellow: '#dcdcaa',
-        blue: '#5b7fb5',
-        magenta: '#c586c0',
-        cyan: '#4dc9b0',
-        white: '#ffffff',
-        brightBlack: '#808080',
-        brightRed: '#f44747',
-        brightGreen: '#4daa6a',
-        brightYellow: '#dcdcaa',
-        brightBlue: '#5b7fb5',
-        brightMagenta: '#d4a0d4',
-        brightCyan: '#6ae6cc',
-        brightWhite: '#ffffff',
-      },
+      // Palette lives in src/lib/theme.ts (shared with SessionViewer) and follows
+      // both the UI theme and the "terminal palette" setting. The subscription
+      // registered below re-applies it whenever either changes.
+      theme: xtermTheme(getTerminalTheme()),
       minimumContrastRatio: 1,
       allowProposedApi: true,
     })
@@ -1361,6 +1342,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     termRef.current = term
     fitRef.current = fitAddon
+    // xterm owns its palette in JS, so CSS tokens can't reach it — re-apply on
+    // every theme / terminal-palette change for this instance's lifetime.
+    const unsubTheme = subscribeTheme(() => {
+      term.options.theme = xtermTheme(getTerminalTheme())
+    })
     // Register this instance so external callers (reconnect, "send to terminal")
     // can focus it. Overwrites any stale instance for the same tabId.
     latestTerminalByTab.set(currentTabId, term)
@@ -2148,6 +2134,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       resetLsCapture()
       clearLsLinks()
       lsLinkProviderDisposable.dispose()
+      unsubTheme()
       if (linkTooltipShowTimer.current) clearTimeout(linkTooltipShowTimer.current)
       if (linkTooltipHideTimer.current) clearTimeout(linkTooltipHideTimer.current)
       linkTooltipEntryRef.current = null

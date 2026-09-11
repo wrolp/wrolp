@@ -130,6 +130,8 @@ import {
   type HighlightCategoryConfig,
   type HighlightConfig,
 } from './lib/highlightRules'
+import { useTheme } from './lib/themeStore'
+import type { TerminalPalette, ThemeMode } from './lib/themeStore'
 import './styles/App.scss'
 
 // Global connection cache
@@ -1033,6 +1035,17 @@ export default function App() {
     }
   })
   const [opacity, setOpacity] = useState(1)
+  // UI theme + terminal palette preferences (src/lib/themeStore.ts). `resolvedTheme`
+  // is what the "follow system" setting currently maps to; the terminal palette is
+  // deliberately independent so a dark terminal can sit under a light UI.
+  const {
+    mode: themeMode,
+    resolved: resolvedTheme,
+    palette: terminalPalette,
+    setThemeMode,
+    setTerminalPalette,
+  } = useTheme()
+  const isLightTheme = resolvedTheme === 'light'
   const [aiInputHeight, setAiInputHeight] = useState(0)
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([])
   const [autoRecord, setAutoRecordState] = useState(false)
@@ -3538,7 +3551,52 @@ export default function App() {
                   <div className="settings-card">
                     <div className="settings-fields">
                       <div className="settings-field">
+                        <label htmlFor="ui-theme" className="settings-label">
+                          {t('themeLabel')}
+                        </label>
+                        <select
+                          id="ui-theme"
+                          className="settings-input"
+                          style={{ width: '200px' }}
+                          value={themeMode}
+                          onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
+                        >
+                          <option value="system">{t('themeSystem')}</option>
+                          <option value="dark">{t('themeDark')}</option>
+                          <option value="light">{t('themeLight')}</option>
+                        </select>
+                        <span className="settings-help">{t('themeHelp')}</span>
+                      </div>
+
+                      <div className="settings-field">
+                        <label htmlFor="terminal-palette" className="settings-label">
+                          {t('terminalPaletteLabel')}
+                        </label>
+                        <select
+                          id="terminal-palette"
+                          className="settings-input"
+                          style={{ width: '200px' }}
+                          value={terminalPalette}
+                          onChange={(e) => setTerminalPalette(e.target.value as TerminalPalette)}
+                        >
+                          <option value="follow">{t('terminalPaletteFollow')}</option>
+                          <option value="dark">{t('terminalPaletteDark')}</option>
+                          <option value="light">{t('terminalPaletteLight')}</option>
+                        </select>
+                        <span className="settings-help">{t('terminalPaletteHelp')}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="settings-card">
+                    <div className="settings-fields">
+                      <div className="settings-field">
                         <label className="settings-label">{t('windowOpacity')}</label>
+                        {/* The native window is `transparent: true`, so a translucent UI
+                            lets the desktop show through — which reads as "dirty" over a
+                            light background. The light theme therefore renders opaque and
+                            the slider is disabled; the stored value is kept and comes back
+                            when switching back to dark. */}
                         <input
                           type="range"
                           min="20"
@@ -3546,8 +3604,13 @@ export default function App() {
                           value={Math.round(opacity * 100)}
                           onChange={(e) => setOpacity(Number(e.target.value) / 100)}
                           className="settings-range"
+                          disabled={isLightTheme}
                         />
-                        <span className="settings-help">Current: {Math.round(opacity * 100)}%</span>
+                        <span className="settings-help">
+                          {isLightTheme
+                            ? t('windowOpacityLightDisabled')
+                            : t('currentPercent', { val: Math.round(opacity * 100) })}
+                        </span>
                       </div>
 
                       <div className="settings-field">
@@ -5806,7 +5869,11 @@ export default function App() {
   ) : null
 
   return (
-    <div className="app-container" style={{ '--win-opacity': opacity } as React.CSSProperties}>
+    // Light theme always renders opaque (the matching slider is disabled in Settings).
+    <div
+      className="app-container"
+      style={{ '--win-opacity': isLightTheme ? 1 : opacity } as React.CSSProperties}
+    >
       {/* Custom titlebar */}
       <Titlebar
         onSettings={handleOpenSettings}

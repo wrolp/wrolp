@@ -4,6 +4,8 @@ import { LANGUAGE_OPTIONS_SORTED, ENCODING_OPTIONS } from '../editor/languages'
 import type { TargetRef } from '../types'
 import HexViewer from './HexViewer'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
+import { monacoThemeId } from '../lib/theme'
+import { getResolvedTheme, subscribeTheme } from '../lib/themeStore'
 
 export interface EditorTab {
   key: string
@@ -70,7 +72,9 @@ export function FileEditor({
   handlersRef.current = { onContentChange, onSave }
 
   const [showMinimap, setShowMinimap] = useState(false)
-  const [showWhitespace, setShowWhitespace] = useState<'none' | 'all' | 'boundary' | 'trailing'>('none')
+  const [showWhitespace, setShowWhitespace] = useState<'none' | 'all' | 'boundary' | 'trailing'>(
+    'none',
+  )
   const [tabSize, setTabSize] = useState(2)
 
   const active = tabs.find((t) => t.key === activeKey) || null
@@ -90,7 +94,8 @@ export function FileEditor({
     const editor = monaco.editor.create(containerRef.current, {
       value: active.content,
       language: active.language,
-      theme: 'vs-dark',
+      // Built-in Monaco light/dark themes — see src/lib/theme.ts.
+      theme: monacoThemeId(getResolvedTheme()),
       automaticLayout: true,
       fontSize: 13,
       minimap: { enabled: showMinimap },
@@ -127,6 +132,15 @@ export function FileEditor({
       editorRef.current = null
     }
   }, [active?.key, active?.loading])
+
+  // Follow theme changes (Monaco keeps its palette in JS, not CSS).
+  useEffect(
+    () =>
+      subscribeTheme(() => {
+        monaco.editor.setTheme(monacoThemeId(getResolvedTheme()))
+      }),
+    [],
+  )
 
   // Sync content / language / EOL from external prop changes
   useEffect(() => {

@@ -1,0 +1,158 @@
+// ===== Theme tokens（浅色/深色主题的单一事实来源）=====
+//
+// `emit-tokens` 把一张主题 map 展开成一组 CSS 自定义属性，于是切换主题只是
+// 在 <html> 上翻一个属性（`data-theme`），**不需要任何 React 重渲染**：
+//
+//   :root                    -> dark（默认值，也是无 JS / 属性缺失时的兜底）
+//   html[data-theme='light'] -> light
+//
+// `_variables.scss` 把语义变量重导出为 `var(--x)` 别名，因此全仓 ~500 处既有
+// 的 `$bg-secondary` / `rgba($accent, .12)` 调用点会自动跟随主题（后者靠那里的
+// `rgba()` 垫片转成 `color-mix()`）。
+//
+// 规则（重要）：`dark` 这张表里的值必须是**历史字面量的原样搬运**——擅自"顺手
+// 优化"会静默改变现有深色主题。只有 `light` 表允许是新值。
+//
+// 新增颜色时：两张表都要加同名的 key，否则浅色下会缺失该 token（回退到无效值
+// → 该属性不生效）。详见 task/plans/light-theme-plan.md。
+
+@use 'sass:color';
+@use 'sass:map';
+
+// 深色强调色基数：下面几个 `color.adjust()` 派生 token 都由它算出，保证深色与
+// 改造前**逐位一致**（原先这些值是 App.scss 里直接调 color.adjust() 得到的）。
+$dark-accent: #0e639c;
+
+$themes: (
+  dark: (
+    // ---- L1 语义色（原 _variables.scss 的 19 个变量，值照搬）----
+    bg-primary: #1e1e1e,
+    bg-secondary: #2d2d2d,
+    bg-tertiary: #252526,
+    bg-sidebar: #252526,
+    bg-hover: #2a2d2e,
+    bg-active: #37373d,
+    bg-input: #3c3c3c,
+    border: #3e3e3e,
+    border-focus: #007acc,
+    text-primary: #d4d4d4,
+    text-secondary: #aaaaaa,
+    text-muted: #888888,
+    text-dim: #666666,
+    accent: #0e639c,
+    accent-hover: #1177bb,
+    danger: #c42b1c,
+    danger-hover: #e44b2c,
+    success: #1fa87e,
+    warning: #cca700,
+
+    // ---- L2 派生色（原先是散落的 color.adjust 调用，这里由 Sass 精确复算）----
+    accent-l8: color.adjust($dark-accent, $lightness: 8%),
+    accent-l12: color.adjust($dark-accent, $lightness: 12%),
+    accent-l14: color.adjust($dark-accent, $lightness: 14%),
+    accent-soft-40: color.adjust($dark-accent, $lightness: 40%),
+    border-l12: color.adjust(#3e3e3e, $lightness: 12%),
+    success-l8: color.adjust(#1fa87e, $lightness: 8%),
+
+    // ---- L2 半透明叠加 / 阴影 / 遮罩 ----
+    overlay-1: rgba(255, 255, 255, 0.06),
+    overlay-2: rgba(255, 255, 255, 0.12),
+    overlay-3: rgba(255, 255, 255, 0.25),
+    shadow-1: rgba(0, 0, 0, 0.4),
+    shadow-2: rgba(0, 0, 0, 0.55),
+    scrim: rgba(0, 0, 0, 0.5),
+
+    // ---- L3 场景色（原先是散落的硬编码）----
+    titlebar-bg: #202020,
+    text-on-accent: #ffffff,
+    link: #4da3ff,
+    // 文件面板里"目录"行的前景色（图标 + 名称共用 currentColor）。
+    // 深色底上是一抹浅蓝；浅色底必须显著加深，否则白底上看不清。
+    dir-fg: #b8e0ff,
+    menu-hover: #094771,
+    scrollbar-thumb: #424242,
+    scrollbar-thumb-hover: #555555,
+    term-scrollbar-thumb: rgba(128, 128, 128, 0.3),
+    term-scrollbar-thumb-hover: rgba(128, 128, 128, 0.55),
+    editor-blank: #101318,
+    toast-bg: rgba(30, 30, 34, 0.95),
+    toast-fg: #ffffff,
+    toast-border: rgba(255, 255, 255, 0.12),
+    toast-ok: #28c76f,
+    toast-error: #f44747,
+    toast-info: #4aa3ff,
+    toast-accent: #6c8cff,
+  ),
+  light: (
+    // ---- L1：对齐 VS Code Light+ 观感，层级关系与深色一致（tertiary 比
+    //      secondary 更亮，与深色里 tertiary 更暗互为镜像）----
+    bg-primary: #ffffff,
+    bg-secondary: #f3f3f3,
+    bg-tertiary: #f8f8f8,
+    bg-sidebar: #f3f3f3,
+    bg-hover: #e8e8e8,
+    bg-active: #e4e6f1,
+    bg-input: #ffffff,
+    border: #d4d4d4,
+    border-focus: #007acc,
+    text-primary: #1f1f1f,
+    text-secondary: #5a5a5a,
+    text-muted: #808080,
+    // 浅色下 dim 应比 muted 更浅（深色里 dim 比 muted 更暗），保持"最不显眼"语义
+    text-dim: #999999,
+    // accent 在本项目里**既作背景（状态栏/主按钮配白字）又作前景/描边**，
+    // 浅色下必须足够深：#0066b8 配 #fff 的对比度约 5.3:1。
+    accent: #0066b8,
+    accent-hover: #0078d4,
+    danger: #d13438,
+    danger-hover: #e81123,
+    success: #107c10,
+    warning: #9a6700,
+
+    // ---- L2 派生色：浅色下 hover 要往**更深**走，而不是更深色主题里的更亮 ----
+    accent-l8: #005aa3,
+    accent-l12: #00508f,
+    accent-l14: #004b86,
+    accent-soft-40: #0a5f9e,
+    border-l12: #b9b9b9,
+    success-l8: #0a5c0a,
+
+    // ---- L2 半透明叠加：深色主题用"提亮"（白+低 alpha），浅色必须反转为"压暗"（黑+低 alpha）----
+    overlay-1: rgba(0, 0, 0, 0.04),
+    overlay-2: rgba(0, 0, 0, 0.06),
+    overlay-3: rgba(0, 0, 0, 0.1),
+    // 阴影在浅色下要更收敛，否则会显得脏
+    shadow-1: rgba(0, 0, 0, 0.12),
+    shadow-2: rgba(0, 0, 0, 0.18),
+    scrim: rgba(0, 0, 0, 0.35),
+
+    // ---- L3 ----
+    titlebar-bg: #f3f3f3,
+    // 强调底色上的文字两个主题都保持白色（accent 足够深）
+    text-on-accent: #ffffff,
+    link: #0969da,
+    // 白底 / #e8e8e8 悬停底上的对比度分别约 6.6:1 / 5.9:1。
+    dir-fg: #0b62c4,
+    menu-hover: #e8f0fe,
+    scrollbar-thumb: #c1c1c1,
+    scrollbar-thumb-hover: #a8a8a8,
+    term-scrollbar-thumb: rgba(120, 120, 120, 0.35),
+    term-scrollbar-thumb-hover: rgba(80, 80, 80, 0.55),
+    // 编辑器空白底：深色是近黑，浅色必须纯白（否则 Monaco 的 light 主题会露底色）
+    editor-blank: #ffffff,
+    toast-bg: rgba(255, 255, 255, 0.98),
+    toast-fg: #1f1f1f,
+    toast-border: rgba(0, 0, 0, 0.12),
+    toast-ok: #1a9e5a,
+    toast-error: #d13438,
+    toast-info: #0a69da,
+    toast-accent: #4a6cf7,
+  ),
+);
+
+/// 把 `$name` 这张主题表的每一项写成一个 CSS 自定义属性。
+@mixin emit-tokens($name) {
+  @each $key, $value in map.get($themes, $name) {
+    --#{$key}: #{$value};
+  }
+}

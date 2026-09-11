@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { xtermTheme } from '../lib/theme'
+import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
 import '@xterm/xterm/css/xterm.css'
 import type { SessionEventDto } from '../types'
 import { getSessionEvents } from '../commands'
@@ -60,28 +62,9 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
       disableStdin: true,
       convertEol: true,
       scrollback: 100000,
-      theme: {
-        background: '#1e1e1e',
-        foreground: '#ffffff',
-        cursor: '#aeafad',
-        selectionBackground: '#264f78',
-        black: '#a0a0a0',
-        red: '#f44747',
-        green: '#3a8558',
-        yellow: '#dcdcaa',
-        blue: '#5b7fb5',
-        magenta: '#c586c0',
-        cyan: '#4dc9b0',
-        white: '#ffffff',
-        brightBlack: '#808080',
-        brightRed: '#f44747',
-        brightGreen: '#4daa6a',
-        brightYellow: '#dcdcaa',
-        brightBlue: '#5b7fb5',
-        brightMagenta: '#d4a0d4',
-        brightCyan: '#6ae6cc',
-        brightWhite: '#ffffff',
-      },
+      // Shared with Terminal.tsx — see src/lib/theme.ts. Used to be a byte-for-byte
+      // duplicate of the palette there.
+      theme: xtermTheme(getTerminalTheme()),
       minimumContrastRatio: 1,
     })
     const fit = new FitAddon()
@@ -91,11 +74,17 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
     termRef.current = term
     fitRef.current = fit
 
+    // xterm owns its palette in JS, so CSS tokens can't reach it.
+    const unsubTheme = subscribeTheme(() => {
+      term.options.theme = xtermTheme(getTerminalTheme())
+    })
+
     const ro = new ResizeObserver(() => fitRef.current?.fit())
     ro.observe(containerRef.current)
 
     return () => {
       ro.disconnect()
+      unsubTheme()
       playTimerRef.current && clearTimeout(playTimerRef.current)
       term.dispose()
       termRef.current = null
@@ -209,9 +198,8 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
   }
 
   const totalMs = events.length > 0 ? events[events.length - 1].timestampMs : 0
-  const currentMs = currentIndex > 0 && events[currentIndex - 1]
-    ? events[currentIndex - 1].timestampMs
-    : 0
+  const currentMs =
+    currentIndex > 0 && events[currentIndex - 1] ? events[currentIndex - 1].timestampMs : 0
 
   const formatTime = (ms: number) => {
     const s = Math.floor(ms / 1000)
@@ -222,15 +210,24 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
   return (
     <div className="session-viewer">
       <div className="session-viewer-header">
-        <span className="session-viewer-title"><Icon name="play" /> {sessionTitle}</span>
+        <span className="session-viewer-title">
+          <Icon name="play" /> {sessionTitle}
+        </span>
         <div className="session-viewer-controls">
-          <button onClick={isPlaying ? handlePause : handlePlay} disabled={loading || events.length === 0}>
+          <button
+            onClick={isPlaying ? handlePause : handlePlay}
+            disabled={loading || events.length === 0}
+          >
             {isPlaying ? <Icon name="pause" /> : <Icon name="play" />}
           </button>
           <button onClick={handleStepBack} disabled={loading || currentIndex === 0}>
             <Icon name="stepBack" />
           </button>
-          <button onClick={handleStepForward} disabled={loading || currentIndex >= events.length} title={t('stepForward')}>
+          <button
+            onClick={handleStepForward}
+            disabled={loading || currentIndex >= events.length}
+            title={t('stepForward')}
+          >
             ⏭
           </button>
           <select
@@ -246,7 +243,9 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
           <span className="time-display">
             {formatTime(currentMs)} / {formatTime(totalMs)}
           </span>
-          <button onClick={onClose} className="close-btn" title={t('close')}>✕</button>
+          <button onClick={onClose} className="close-btn" title={t('close')}>
+            ✕
+          </button>
         </div>
       </div>
       <div className="session-viewer-timeline">
@@ -259,7 +258,9 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
           disabled={loading || events.length === 0}
           className="timeline-slider"
         />
-        <span className="event-count">{currentIndex} / {events.length} {t('events')}</span>
+        <span className="event-count">
+          {currentIndex} / {events.length} {t('events')}
+        </span>
       </div>
       <div className="session-viewer-terminal" ref={containerRef} />
     </div>

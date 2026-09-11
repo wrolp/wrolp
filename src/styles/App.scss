@@ -3487,7 +3487,7 @@ input[type='password']::-ms-clear {
     }
 
     &.is-dir {
-      color: #b8e0ff;
+      color: var(--dir-fg);
     }
 
     .file-icon {
@@ -3531,7 +3531,7 @@ input[type='password']::-ms-clear {
     }
 
     &.dir {
-      color: #b8e0ff;
+      color: var(--dir-fg);
     }
 
     // A directory row currently under a dragged file/folder: show it as the
@@ -3839,7 +3839,7 @@ input[type='password']::-ms-clear {
     border-radius: 3px;
     cursor: pointer;
     &:hover {
-      background: color.adjust($accent, $lightness: 8%);
+      background: var(--accent-l8);
     }
     &:disabled {
       opacity: 0.6;
@@ -5339,7 +5339,7 @@ input[type='password']::-ms-clear {
 
     .orch-inferred-path {
       font-size: 11px;
-      color: color.adjust($accent, $lightness: 40%);
+      color: var(--accent-soft-40);
       font-family: 'Cascadia Code', Consolas, monospace;
       word-break: break-all;
       flex: 1;
@@ -5564,7 +5564,7 @@ input[type='password']::-ms-clear {
   .env-chip {
     background: rgba($accent, 0.18);
     border: 1px solid rgba($accent, 0.3);
-    color: color.adjust($accent, $lightness: 40%);
+    color: var(--accent-soft-40);
     font-size: 11px;
     font-family: 'Cascadia Code', Consolas, monospace;
     padding: 2px 8px;
@@ -6389,7 +6389,7 @@ input[type='password']::-ms-clear {
   &:hover {
     background: $bg-hover;
     color: $text-primary;
-    border-color: color.adjust($border, $lightness: 12%);
+    border-color: var(--border-l12);
   }
   &:disabled {
     opacity: 0.4;
@@ -6829,7 +6829,7 @@ input[type='password']::-ms-clear {
   }
 
   .ai-chat-msg-assistant & {
-    background: linear-gradient(135deg, $accent, color.adjust($accent, $lightness: 12%));
+    background: linear-gradient(135deg, $accent, var(--accent-l12));
     color: #fff;
   }
 }
@@ -7183,7 +7183,7 @@ input[type='password']::-ms-clear {
   font-size: 12px;
 
   &.ai-tool-executing {
-    border-color: color.adjust($accent, $lightness: 8%);
+    border-color: var(--accent-l8);
   }
 
   &.ai-tool-done {
@@ -7767,7 +7767,7 @@ input[type='password']::-ms-clear {
   cursor: pointer;
   transition: all 0.15s;
   &:hover:not(:disabled) {
-    background: color.adjust($accent, $lightness: 8%);
+    background: var(--accent-l8);
   }
   &:disabled {
     opacity: 0.4;
@@ -7810,7 +7810,7 @@ input[type='password']::-ms-clear {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, $accent, color.adjust($accent, $lightness: 12%));
+  background: linear-gradient(135deg, $accent, var(--accent-l12));
   color: #fff;
   flex-shrink: 0;
   box-shadow: 0 2px 8px rgba($accent, 0.25);
@@ -8013,13 +8013,13 @@ input[type='password']::-ms-clear {
   transition: all 0.15s;
 
   &:hover {
-    background: color.adjust($accent, $lightness: 8%);
+    background: var(--accent-l8);
   }
 }
 
 .ai-settings-card {
   .settings-card-icon {
-    background: linear-gradient(135deg, $accent, color.adjust($accent, $lightness: 14%));
+    background: linear-gradient(135deg, $accent, var(--accent-l14));
   }
 }
 
@@ -8908,7 +8908,7 @@ input[type='password']::-ms-clear {
       color: #fff;
 
       &:hover {
-        background: color.adjust($success, $lightness: 8%);
+        background: var(--success-l8);
       }
 
       &:disabled {
