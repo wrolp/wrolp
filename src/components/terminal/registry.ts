@@ -30,6 +30,32 @@ export const getTerminalInputText = (tabId: number): string => {
   return stripPrompt(getCurrentCommandLine(term))
 }
 
+// Registered per terminal tab so external callers (command-list snippets) can
+// drive the SAME paste pipeline as a real Ctrl+V — multi-line text then gets the
+// guard / bracketed-paste / quoted-insert treatment instead of being written raw
+// via `sendInput` (which would execute each line immediately). The registered
+// fn is the terminal's own `pasteIntoTerminal` callback, so it already knows the
+// session kind, bracketed-paste mode and the correct send path.
+export const pasteFnByTab = new Map<number, (text: string) => void>()
+
+export const registerPaste = (tabId: number, fn: (text: string) => void): void => {
+  pasteFnByTab.set(tabId, fn)
+}
+
+// Only clear our entry when it still belongs to this instance — during a
+// transient double-mount the superseding instance overwrites the map entry, so
+// the stale instance's cleanup must NOT delete the live one.
+export const unregisterPaste = (tabId: number, fn: (text: string) => void): void => {
+  if (pasteFnByTab.get(tabId) === fn) pasteFnByTab.delete(tabId)
+}
+
+/** Paste `text` into the terminal owned by `tabId` through that tab's paste
+ *  pipeline. No-op if the terminal is not mounted / not registered. */
+export const pasteToTerminal = (tabId: number, text: string): void => {
+  const fn = pasteFnByTab.get(tabId)
+  if (fn) fn(text)
+}
+
 // Preserves terminal scrollback across transient re-mounts (float pop-out / dock
 // back). React tears down the xterm instance when its portal container changes,
 // so we serialize the full buffer (ANSI colors included, via @xterm/addon-serialize)

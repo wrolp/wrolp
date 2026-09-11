@@ -66,4 +66,7 @@ export interface TerminalComponentProps {
   onOpenFile?: (target: TargetRef, path: string) => void
   /** Notify the parent of the current working directory (after connect, `cd`, etc.). */
   onCwdChange?: (cwd: string | null) => void
+  /** Surface a transient toast in the app shell (e.g. the multi-line paste
+   *  guard dropping a paste in a serial session). */
+  onNotify?: (kind: 'info' | 'success' | 'error', text: string) => void
 }

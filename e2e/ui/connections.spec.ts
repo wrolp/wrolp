@@ -47,7 +47,9 @@ test('creates a new connection through the modal', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.empty-state')).toBeVisible()
 
-  await page.locator('.sidebar-header button').click()
+  // The "+" button adds a connection; scope to the sidebar header so the
+  // "Scan Network" button (also under `.sidebar-header`) doesn't collide.
+  await page.locator('.sidebar-header').getByRole('button', { name: '+' }).click()
   const modal = page.locator('.modal')
   await expect(modal).toBeVisible()
   await expect(modal).toContainText('New Connection')

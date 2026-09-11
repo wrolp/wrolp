@@ -9,7 +9,7 @@ import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
 import { WorkspaceSelector } from './components/WorkspaceSelector'
 import { ConnectionManager } from './components/ConnectionManager'
-import { TerminalComponent, focusTerminal, getTerminalInputText } from './components/Terminal'
+import { TerminalComponent, focusTerminal, getTerminalInputText, pasteToTerminal } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
@@ -112,6 +112,8 @@ import { detectLanguage } from './editor/languages'
 import { useI18n, LANG_LABELS } from './i18n'
 import type { TranslationKey } from './i18n/en'
 import { highlightStore } from './lib/highlightStore'
+import { loadPasteGuard, savePasteGuard } from './lib/pasteGuard'
+import type { PasteGuardConfig, PasteMode } from './lib/pasteGuard'
 import {
   applyScheme,
   CATEGORY_META,
@@ -216,6 +218,105 @@ function isValidRegex(src: string): boolean {
 
 function nextRuleId(): string {
   return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** Settings → General card for the multi-line paste guard (see B20). */
+function PasteGuardSettingsCard({
+  cfg,
+  onSave,
+}: {
+  cfg: PasteGuardConfig
+  onSave: (next: PasteGuardConfig) => void
+}) {
+  const { t } = useI18n()
+  return (
+    <div className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-icon">📋</div>
+        <div>
+          <h3 className="settings-card-title">{t('pasteGuardTitle')}</h3>
+          <p className="settings-card-sub">{t('pasteGuardDesc')}</p>
+        </div>
+      </div>
+      <div className="settings-fields">
+        <label
+          className="settings-field"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+        >
+          <input
+            type="checkbox"
+            checked={cfg.enabled}
+            onChange={(e) => onSave({ ...cfg, enabled: e.target.checked })}
+          />
+          <span className="settings-label">{t('pasteGuardEnable')}</span>
+        </label>
+
+        <div
+          className="settings-field"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+        >
+          <label
+            htmlFor="paste-guard-mode"
+            className="settings-label"
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            {t('pasteGuardMode')}
+          </label>
+          <select
+            id="paste-guard-mode"
+            className="settings-input"
+            value={cfg.mode}
+            disabled={!cfg.enabled}
+            onChange={(e) => onSave({ ...cfg, mode: e.target.value as PasteMode })}
+            style={{ width: 220 }}
+          >
+            <option value="ask">{t('pasteGuardModeAsk')}</option>
+            <option value="insert">{t('pasteGuardModeInsert')}</option>
+            <option value="execute">{t('pasteGuardModeExecute')}</option>
+          </select>
+        </div>
+
+        <div
+          className="settings-field"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+        >
+          <label
+            htmlFor="paste-guard-threshold"
+            className="settings-label"
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            {t('pasteGuardThreshold')}
+          </label>
+          <input
+            id="paste-guard-threshold"
+            type="number"
+            min={1}
+            max={50}
+            className="settings-input"
+            value={cfg.threshold}
+            disabled={!cfg.enabled}
+            onChange={(e) => onSave({ ...cfg, threshold: Number(e.target.value) })}
+            style={{ width: 72 }}
+          />
+          <span className="settings-help">{t('pasteGuardThresholdHint')}</span>
+        </div>
+
+        <label
+          className="settings-field"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+        >
+          <input
+            type="checkbox"
+            checked={cfg.appendContinuation}
+            disabled={!cfg.enabled}
+            onChange={(e) => onSave({ ...cfg, appendContinuation: e.target.checked })}
+          />
+          <span className="settings-label">{t('pasteGuardContinuation')}</span>
+        </label>
+        <span className="settings-help">{t('pasteGuardContinuationHint')}</span>
+      </div>
+    </div>
+  )
 }
 
 /** Settings → General card for terminal output category highlighting. */
@@ -1474,6 +1575,11 @@ export default function App() {
   const saveHlCfg = useCallback((next: HighlightConfig) => {
     setHlCfg(highlightStore.save(next))
   }, [])
+  // Multi-line paste guard (persisted via pasteGuardStore).
+  const [pasteGuardCfg, setPasteGuardCfg] = useState<PasteGuardConfig>(() => loadPasteGuard())
+  const savePasteGuardCfg = useCallback((next: PasteGuardConfig) => {
+    setPasteGuardCfg(savePasteGuard(next))
+  }, [])
   const [reconnectKeys, setReconnectKeys] = useState<Record<number, number>>({})
   const isDragging = useRef(false)
   const isDraggingV = useRef(false)
@@ -2458,21 +2564,34 @@ export default function App() {
   }, [])
 
   // Send a command snippet's text into the currently focused terminal WITHOUT
-  // executing it (no trailing newline), then return focus to the terminal. If
-  // the user has already typed a partial command on the input line, join them
-  // with ` && ` so the snippet continues the existing pipeline instead of
-  // overwriting it. `focusedLeafTabId` is the pane the user last clicked (the
-  // root workspace tab when not split), not necessarily `activeTabId`.
+  // executing it (no trailing newline), then return focus to the terminal.
+  // Multi-line snippets go through the SAME paste pipeline as a Ctrl+V (guard /
+  // bracketed-paste / quoted-insert + line continuation), so the block is
+  // inserted into the edit buffer and the user presses Enter to run it as one
+  // command — exactly like pasting. A single-line snippet layered on top of a
+  // partial command keeps the legacy ` && ` join to continue the pipeline.
+  // `focusedLeafTabId` is the pane the user last clicked (the root workspace tab
+  // when not split), not necessarily `activeTabId`.
   const handleSendSnippetToTerminal = useCallback(
     (command: string) => {
       const tabId = focusedLeafTabId
       const tab = tabId != null ? tabs.find((t) => t.tabId === tabId) : undefined
       if (!tab || tabId == null) return
+      const isMultiLine = /\r\n|\r|\n/.test(command)
       const existing = getTerminalInputText(tabId)
-      const joined = existing.trim().length > 0 ? ` && ${command}` : command
-      const isLocal = tab.tabType === 'localShell'
-      const send = isLocal ? localSendInput : sendInput
-      send(tabId, joined).catch((e) => console.error('send snippet failed:', e))
+      if (isMultiLine || existing.trim().length === 0) {
+        // Insert like a paste: continuation + quoted-insert for POSIX shells,
+        // bracketed paste when the shell enabled it, or the guard dialog for a
+        // multi-line non-bracketed paste (same flow as Ctrl+V).
+        pasteToTerminal(tabId, command)
+      } else {
+        // Single-line snippet on top of a partially-typed command: continue the
+        // pipeline with `&&` (legacy behaviour).
+        const joined = ` && ${command}`
+        const isLocal = tab.tabType === 'localShell'
+        const send = isLocal ? localSendInput : sendInput
+        send(tabId, joined).catch((e) => console.error('send snippet failed:', e))
+      }
       focusTerminal(tabId)
     },
     [tabs, focusedLeafTabId],
@@ -3470,6 +3589,7 @@ export default function App() {
               dockerContainer={tab.dockerContainer}
               localCwd={tab.localShellCwd}
               localShellType={tab.localShellType}
+              onNotify={(kind, text) => setToast({ kind, text })}
               maxScrollback={typeof maxScrollback === 'number' ? maxScrollback : 5000}
               onStatusChange={(status, errorMessage) => {
                 setTabs((prev) =>
@@ -3937,6 +4057,8 @@ export default function App() {
                   </div>
 
                   <HighlightSettingsCard cfg={hlCfg} onSave={saveHlCfg} />
+
+                  <PasteGuardSettingsCard cfg={pasteGuardCfg} onSave={savePasteGuardCfg} />
 
                   <div className="settings-card">
                     <div className="settings-card-header">

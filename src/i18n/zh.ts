@@ -787,6 +787,29 @@ const zh: Partial<Record<TranslationKey, string>> = {
   ntSaveTo: '保存远端文件到…',
   ntEmptyDir: '（空）',
   ntSize: '大小',
+  pasteGuardTitle: '多行粘贴保护',
+  pasteGuardDesc:
+    '粘贴多行文本时，如果远端程序不支持括号粘贴（无法把整块文本当字面内容插入），先询问再决定怎么发送，避免整段内容被逐行自动执行。',
+  pasteGuardEnable: '启用多行粘贴保护',
+  pasteGuardMode: '远端不支持安全粘贴时',
+  pasteGuardModeAsk: '每次询问（推荐）',
+  pasteGuardModeInsert: '总是插入不执行',
+  pasteGuardModeExecute: '总是逐行执行',
+  pasteGuardThreshold: '触发行数',
+  pasteGuardThresholdHint: '行（1 = 任何多行粘贴都拦截）',
+  pasteDialogTitle: '检测到多行粘贴',
+  pasteDialogMessage:
+    '粘贴内容共 {lines} 行，且当前会话不支持括号粘贴（无法整块作为字面文本插入）。请选择发送方式：',
+  pasteInsertNoExec: '插入不执行',
+  pasteExecuteLineByLine: '逐行执行',
+  pasteInsertUnavailable: '该会话没有行编辑器（仅 SSH 会话支持），无法安全插入多行。',
+  pasteDialogFiltered: '已过滤 {controls} 个控制字符、{sequences} 个粘贴标记。',
+  pasteSerialBlocked: '串口会话不支持多行粘贴，已忽略 {count} 行；如需发送请单行粘贴。',
+  pasteGuardContinuation: '多行粘贴时给非末行补续行符 \\',
+  pasteGuardContinuationHint:
+    'POSIX shell（Linux / macOS / WSL / git-bash）下，让插入的多行内容在按回车后作为一条命令提交（括号粘贴与「插入不执行」都适用）。行尾已有 `\\`、以 `|`、`&&`、`do`、`then` 等结尾的行、注释行、空行，以及多行字符串 / heredoc 内部都不会被改动；若 `\\` 后面还跟了空格（如 `cd \\ `，此时 shell 会把它当转义空格），会把它修正到行尾；cmd / PowerShell 与「逐行执行」不受影响。',
+  pasteDialogContinuation:
+    '「插入不执行」会在 {count} 行的行尾补上或修正续行符 `\\`，使整块内容按回车后作为一条命令提交；选「逐行执行」则不改动内容。',
 }
 
 export default zh

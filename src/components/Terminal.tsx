@@ -29,6 +29,17 @@ import { stripAnsi, highlightTableText } from '../lib/termHighlight'
 import { highlightStore } from '../lib/highlightStore'
 import type { HighlightConfig } from '../lib/highlightRules'
 import {
+  isPosixSession,
+  loadPasteGuard,
+  pasteLineCount,
+  pastePreview,
+  planPaste,
+  sanitizePasteText,
+  toQuotedInsert,
+} from '../lib/pasteGuard'
+import type { SessionKind } from '../lib/pasteGuard'
+import { PasteConfirmDialog } from './PasteConfirmDialog'
+import {
   detectLsCommand,
   parseLsBlock,
   extractCwdFromPrompt,
@@ -42,6 +53,8 @@ import {
   latestTerminalByTab,
   scrollbackCache,
   replayScrollback,
+  registerPaste,
+  unregisterPaste,
 } from './terminal/registry'
 import type { CaptureState } from './terminal/capture'
 import {
@@ -88,7 +101,7 @@ import type { TableCaptureState } from './terminal/tableCapture'
 import { feedTable } from './terminal/tableCapture'
 import type { TerminalComponentProps } from './terminal/types'
 
-export { focusTerminal, getTerminalInputText } from './terminal/registry'
+export { focusTerminal, getTerminalInputText, pasteToTerminal } from './terminal/registry'
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
@@ -111,6 +124,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   dockerContainer,
   localCwd,
   localShellType,
+  onNotify,
 }) => {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -2580,24 +2594,168 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }, [])
 
+  // ---- multi-line paste guard (B20) ----
+  // Pasting is routed through xterm's own input pipeline (`term.paste`) instead
+  // of calling `sendInput` directly:
+  //   * xterm wraps the text in bracketed-paste markers when the remote app
+  //     enabled `CSI ? 2004 h`, so the shell treats it as literal input and only
+  //     executes after the user presses Enter (the behaviour we want);
+  //   * xterm normalises newlines and fires `onData`, which is the only place
+  //     that dispatches to the right backend (SSH / local / serial / telnet).
+  //     The previous code sent raw text to the SSH backend for EVERY session
+  //     kind, so serial/Telnet pastes never reached their channel.
+  const [pasteDialog, setPasteDialog] = useState<{
+    /** Sanitised clipboard text (what "execute line by line" sends, and what
+     *  the preview shows). */
+    text: string
+    /** Text as the insert action will type it (line continuation applied). */
+    insertText: string
+    lineCount: number
+    canInsert: boolean
+    /** How many lines got a trailing `\` for the insert action. */
+    continuationAdded: number
+    removedControls: number
+    removedSequences: number
+  } | null>(null)
+
+  const writePaste = useCallback((text: string) => {
+    const term = termRef.current
+    if (!term) return
+    term.focus()
+    term.paste(text)
+  }, [])
+
+  // Send bytes straight to the session, bypassing xterm's paste pipeline.
+  // Needed by the quoted-insert path: `term.paste()` rewrites every `\r?\n`
+  // into `\r`, which would turn the `\x16\n` pairs (Ctrl-V + newline) into
+  // `\x16\r` — readline would then insert a literal CR instead of a newline.
+  const sendRawToSession = useCallback(
+    (data: string) => {
+      const id = tabIdRef.current
+      if (isLocal) {
+        localSendInput(id, data).catch((e) => console.error('local_send_input error:', e))
+      } else if (isSerial) {
+        serialSendInput(id, data).catch((e) => console.error('serial_send_input error:', e))
+      } else if (isTelnet) {
+        telnetSendInput(id, data).catch((e) => console.error('telnet_send_input error:', e))
+      } else {
+        sendInput(id, data).catch((e) => console.error('send_input error:', e))
+      }
+    },
+    [isLocal, isSerial, isTelnet],
+  )
+
+  const pasteIntoTerminal = useCallback(
+    (raw: string) => {
+      const term = termRef.current
+      if (!term) return
+      const san = sanitizePasteText(raw)
+      if (!san.text) return
+      const sessionKind: SessionKind = isSerial
+        ? 'serial'
+        : isTelnet
+          ? 'telnet'
+          : isLocal
+            ? 'local'
+            : 'ssh'
+      // NOTE: the public accessor is `term.modes.bracketedPasteMode` (xterm
+      // exposes the DEC private modes under `modes`, not directly on Terminal).
+      const bracketed = !!term.modes.bracketedPasteMode
+      const plan = planPaste({
+        text: san.text,
+        bracketedPasteMode: bracketed,
+        sessionKind,
+        localShellType,
+        config: loadPasteGuard(),
+      })
+      switch (plan.action) {
+        case 'passthrough':
+          // Bracketed paste (or an unguarded single line): the shell inserts the
+          // text literally. A POSIX shell additionally gets the `\` line
+          // continuation — WSL / Git Bash / SSH all leave the block in the edit
+          // buffer, where the newlines would otherwise split into separate
+          // commands as soon as the user presses Enter.
+          writePaste(plan.insertText)
+          // POSIX shells: park the cursor at the end of the inserted block so it
+          // is ready for Enter / further typing. A no-op when already there.
+          if (isPosixSession(sessionKind, localShellType)) sendRawToSession('\x05')
+          break
+        case 'execute':
+          // Line-by-line by explicit request — never modify the payload.
+          writePaste(plan.text)
+          break
+        case 'insert':
+          termRef.current?.focus()
+          sendRawToSession(toQuotedInsert(plan.insertText))
+          // POSIX shells: the quoted-insert bytes left the cursor at the tail of
+          // the block; nudge it to end-of-line explicitly so it holds there
+          // regardless of the shell's readline configuration.
+          if (isPosixSession(sessionKind, localShellType)) sendRawToSession('\x05')
+          break
+        case 'drop-serial':
+          // Serial consoles have no line editor: a multi-line paste is dropped
+          // instead of being turned into a dialog (see the plan's decision 3).
+          onNotify?.('error', t('pasteSerialBlocked', { count: pasteLineCount(san.text) }))
+          break
+        case 'ask':
+          setPasteDialog({
+            text: plan.text,
+            insertText: plan.insertText,
+            lineCount: pasteLineCount(san.text),
+            canInsert: plan.canInsert,
+            continuationAdded: plan.continuationAdded,
+            removedControls: san.removedControls,
+            removedSequences: san.removedSequences,
+          })
+          break
+      }
+    },
+    [isLocal, isSerial, isTelnet, localShellType, onNotify, sendRawToSession, t, writePaste],
+  )
+
+  // Expose this tab's paste pipeline to external callers (command-list snippets)
+  // so a multi-line snippet is inserted exactly like a Ctrl+V paste — with the
+  // guard / bracketed-paste / quoted-insert treatment — instead of being written
+  // raw via `sendInput` (which would execute each line immediately). Mirrors the
+  // `latestTerminalByTab` guard: transient double-mounts don't clobber the live
+  // entry (see `unregisterPaste`).
+  useEffect(() => {
+    registerPaste(tabId, pasteIntoTerminal)
+    return () => unregisterPaste(tabId, pasteIntoTerminal)
+  }, [pasteIntoTerminal, tabId])
+
+  // Ctrl+V / Shift+Insert land on xterm's hidden textarea and never reach the
+  // context-menu handler, so the same guard is applied to the DOM paste event
+  // (capture phase = before xterm's own textarea listener). `term.paste()` goes
+  // straight to `onData`, so this cannot recurse.
+  const pasteIntoTerminalRef = useRef(pasteIntoTerminal)
+  pasteIntoTerminalRef.current = pasteIntoTerminal
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onPaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData('text')
+      // Leave non-text pastes (e.g. images) to the default handler.
+      if (!text) return
+      e.preventDefault()
+      e.stopPropagation()
+      pasteIntoTerminalRef.current(text)
+    }
+    el.addEventListener('paste', onPaste, true)
+    return () => el.removeEventListener('paste', onPaste, true)
+  }, [])
+
   const handlePaste = useCallback(async () => {
     setCtxMenu(null)
     termRef.current?.focus()
-    const term = termRef.current
-    if (!term) return
+    if (!termRef.current) return
     try {
       const text = await navigator.clipboard.readText()
-      if (text) {
-        if (isLocal) {
-          await localSendInput(tabIdRef.current, text)
-        } else {
-          await sendInput(tabIdRef.current, text)
-        }
-      }
+      if (text) pasteIntoTerminal(text)
     } catch {
       // Clipboard read may be blocked; silently ignore
     }
-  }, [])
+  }, [pasteIntoTerminal])
 
   const handleSelectAll = useCallback(() => {
     setCtxMenu(null)
@@ -2776,6 +2934,37 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             <Icon name="plus" size={12} /> {t('addToCommandList')}
           </div>
         </div>
+      )}
+      {pasteDialog && (
+        <PasteConfirmDialog
+          lineCount={pasteDialog.lineCount}
+          preview={pastePreview(pasteDialog.text)}
+          canInsert={pasteDialog.canInsert}
+          insertDisabledReason={t('pasteInsertUnavailable')}
+          continuationAdded={pasteDialog.continuationAdded}
+          filteredControls={pasteDialog.removedControls}
+          filteredSequences={pasteDialog.removedSequences}
+          onInsert={() => {
+            const d = pasteDialog
+            setPasteDialog(null)
+            termRef.current?.focus()
+            sendRawToSession(toQuotedInsert(d.insertText))
+            const sk: SessionKind = isSerial
+              ? 'serial'
+              : isTelnet
+                ? 'telnet'
+                : isLocal
+                  ? 'local'
+                  : 'ssh'
+            if (isPosixSession(sk, localShellType)) sendRawToSession('\x05')
+          }}
+          onExecute={() => {
+            const d = pasteDialog
+            setPasteDialog(null)
+            writePaste(d.text)
+          }}
+          onCancel={() => setPasteDialog(null)}
+        />
       )}
     </div>
   )

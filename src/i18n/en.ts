@@ -804,6 +804,31 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   ntSaveTo: 'Save remote file to…',
   ntEmptyDir: '(empty)',
   ntSize: 'Size',
+  pasteGuardTitle: 'Multi-line paste protection',
+  pasteGuardDesc:
+    'When a multi-line paste goes to a session whose remote app does not support bracketed paste, ask before sending so the whole block is not executed line by line.',
+  pasteGuardEnable: 'Protect multi-line pastes',
+  pasteGuardMode: 'When a safe paste is not possible',
+  pasteGuardModeAsk: 'Ask every time (recommended)',
+  pasteGuardModeInsert: 'Always insert without executing',
+  pasteGuardModeExecute: 'Always execute line by line',
+  pasteGuardThreshold: 'Guard from',
+  pasteGuardThresholdHint: 'lines (1 = any multi-line paste)',
+  pasteDialogTitle: 'Multi-line paste',
+  pasteDialogMessage:
+    'This paste has {lines} lines and the session cannot take a bracketed (literal) paste. How should it be sent?',
+  pasteInsertNoExec: 'Insert without executing',
+  pasteExecuteLineByLine: 'Execute line by line',
+  pasteInsertUnavailable:
+    'This session has no line editor (only SSH sessions do), so multi-line text cannot be inserted safely.',
+  pasteDialogFiltered: 'Filtered {controls} control characters and {sequences} paste markers.',
+  pasteSerialBlocked:
+    'Serial sessions do not support multi-line paste — {count} lines ignored. Paste a single line instead.',
+  pasteGuardContinuation: 'Append a trailing \\ to multi-line pastes',
+  pasteGuardContinuationHint:
+    'POSIX shells (Linux / macOS / WSL / Git Bash): lets an inserted block run as a single command after Enter (applies to bracketed paste and to "insert without executing"). Lines already ending with `\\`, with an open operator / block keyword, comments, blank lines, and open strings or heredocs are left untouched; a `\\` that is followed by a space (e.g. `cd \\ `, which the shell reads as an escaped space) is moved to the end of the line; cmd / PowerShell and "execute line by line" are unaffected.',
+  pasteDialogContinuation:
+    'Insert will add or fix a trailing `\\` on {count} line(s) so the block runs as a single command after Enter; "execute line by line" sends it unchanged.',
 }
 
 export default en

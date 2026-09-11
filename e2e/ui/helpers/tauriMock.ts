@@ -12,6 +12,11 @@ export interface MockConnection {
   username?: string
   group?: string
   description?: string
+  /** 'serial' / 'telnet' open the matching terminal kind instead of SSH. */
+  kind?: string
+  /** Serial only: COM port name (shown as the tab host). */
+  portName?: string
+  baudRate?: number
 }
 
 export interface TauriMockOptions {
@@ -54,7 +59,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     const pollChunks: string[][] = (opts.pollOutputChunks ?? []).map((c) => [...c])
     // Every invoke is recorded here so tests can assert backend interactions
     // (e.g. "connect was called", "poll_output stopped after connection-closed").
-    const invoked: string[] = []
+    const invoked: Array<{ cmd: string; args: Record<string, unknown> }> = []
 
     const internals: Record<string, unknown> = {
       metadata: { currentWindow: { label: 'main' } },
@@ -68,7 +73,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
       },
       convertFileSrc: (p: string) => p,
       async invoke(cmd: string, args: Record<string, unknown> = {}) {
-        invoked.push(cmd)
+        invoked.push({ cmd, args })
         if (cmd === 'plugin:event|listen') {
           const cb = callbacks.get(args.handler as number)
           if (cb) {
@@ -233,7 +238,32 @@ export async function emitTauriEvent(page: Page, event: string, payload?: unknow
 
 /** Read the list of commands the app has invoked so far (via the mock). */
 export async function invokedCommands(page: Page): Promise<string[]> {
+  return (await invokedCalls(page)).map((c) => c.cmd)
+}
+
+/** Read the invoked commands AND their arguments (for payload assertions). */
+export async function invokedCalls(
+  page: Page,
+): Promise<Array<{ cmd: string; args: Record<string, unknown> }>> {
   return await page.evaluate(() => [
-    ...((window as unknown as { __TAURI_INVOKED__: string[] }).__TAURI_INVOKED__ ?? []),
+    ...((
+      window as unknown as {
+        __TAURI_INVOKED__: Array<{ cmd: string; args: Record<string, unknown> }>
+      }
+    ).__TAURI_INVOKED__ ?? []),
   ])
+}
+
+/** Dispatch a clipboard `paste` event into the terminal's hidden textarea, so
+ *  the same path as a real Ctrl+V is exercised. */
+export async function pasteIntoTerminal(page: Page, text: string) {
+  await page.evaluate((value) => {
+    const ta = document.querySelector('.xterm-helper-textarea')
+    if (!ta) throw new Error('.xterm-helper-textarea not found')
+    const dt = new DataTransfer()
+    dt.setData('text/plain', value)
+    ta.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }),
+    )
+  }, text)
 }
