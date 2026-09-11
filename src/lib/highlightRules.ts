@@ -428,6 +428,15 @@ const OCTET = '(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)'
 
 // IPv6 (RFC-ish, incl. `::` compression and embedded IPv4). `%zone` is appended
 // OUTSIDE the alternation so every compressed form can carry one (not just fe80:).
+//
+// B23: a branch that LEADS with a colon (`:` + `:hextet`s, or the `::` forms)
+// must not start immediately after another colon. Otherwise netstat's tcp6
+// Local Address `:::<port>` (`::` wildcard + `:` separator + port, e.g.
+// `:::8086`) has its `::8086` tail read as a compressed IPv6 address — so a
+// 1–4 digit port turned IP-colored while a 5-digit port (too long for a hextet)
+// fell back to number color. The `(?<!:)` guard only rejects a match that
+// starts right after a colon; addresses beginning at a token boundary (`::1`,
+// `::ffff:…`) are unaffected.
 const IPV6 = [
   '(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}',
   '(?:[0-9a-f]{1,4}:){1,7}:',
@@ -437,8 +446,8 @@ const IPV6 = [
   '(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}',
   '(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}',
   '[0-9a-f]{1,4}:(?:(?::[0-9a-f]{1,4}){1,6})',
-  ':(?:(?::[0-9a-f]{1,4}){1,7}|:)',
-  `::(?:ffff(?::0{1,4})?:)?(?:${OCTET}\\.){3}${OCTET}`,
+  '(?<!:):(?:(?::[0-9a-f]{1,4}){1,7}|:)',
+  `(?<!:)::(?:ffff(?::0{1,4})?:)?(?:${OCTET}\\.){3}${OCTET}`,
   `(?:[0-9a-f]{1,4}:){1,4}:(?:${OCTET}\\.){3}${OCTET}`,
 ].join('|')
 
@@ -456,14 +465,24 @@ const EMAIL_RE = /(?<![\w.])[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?
 // digit-only trailing group (e.g. `…:fe8a:1234%15` → base + `:1234` as "port").
 // An IPv4 match is allowed to end right before a `:` even without port digits, so
 // `0.0.0.0:*` / `0.0.0.0:http` still highlight the address part.
+// netstat's tcp6 wildcard (`:::<port>`, `:::*`) gets its own branch so it can be
+// split into address + port (see IPV6_WILDCARD_PORT / IPV6_WILDCARD_SPLIT_RE).
 // A `/prefix` (CIDR, e.g. `192.168.33.100/24`, `2001:db8::/64`) is swallowed as
 // part of the address so the bare prefix never survives to be mis-colored as a
 // number. Prefix length is validated per address family (v4 ≤ 32, v6 ≤ 128).
 const IPV4_PREFIX = '(?:3[0-2]|[12]?\\d)'
 const IPV6_PREFIX = '(?:12[0-8]|1[01]\\d|[1-9]?\\d)'
+// B23: netstat tcp6's wildcard address — the unspecified `::` written as a port
+// host, i.e. `:::<port>` / `:::*` (`::` + `:` separator + port). Three
+// consecutive colons are never a valid IPv6 form, so this shape is
+// unambiguously "wildcard address + port": matched as ONE token here, then
+// split into `::` (address) + `:<port>` (port) below. The port field may be
+// numeric, `*`, or a service name (netstat without `-n`).
+const IPV6_WILDCARD_PORT = '(?<!:):{3}(?:\\d{1,5}|\\*|[A-Za-z][A-Za-z0-9_.-]*)(?![\\w:])'
 const IP_RE = new RegExp(
   `(?<![\\w.])` +
-    `(?:(?:${IPV6})(?:%[0-9a-zA-Z._-]+)?(?:\\/${IPV6_PREFIX})?(?!\\.\\d)(?![0-9a-fA-F:])` +
+    `(?:${IPV6_WILDCARD_PORT}` +
+    `|(?:(?:${IPV6})(?:%[0-9a-zA-Z._-]+)?(?:\\/${IPV6_PREFIX})?(?!\\.\\d)(?![0-9a-fA-F:]))` +
     `|${IPV4}(?::\\d{1,5})?(?:\\/${IPV4_PREFIX})?(?!\\.\\d)(?![0-9a-fA-F]))`,
   'gi',
 )
@@ -637,11 +656,19 @@ const VAR_KEY_RE =
 
 /**
  * Split a matched IPv4:port token (`0.0.0.0:135`, `192.168.1.10:8080`) so the
- * address and its port can carry different colors. IPv6 never matches: an IPv6
- * token may also end in `:digits` (its last hextet), which must stay address
- * color — the `^…$` dotted-decimal anchor rejects any IPv6 form.
+ * address and its port can carry different colors. A *real* IPv6 address never
+ * matches: it may also end in `:digits` (its last hextet), which must stay
+ * address color — the `^…$` dotted-decimal anchor rejects any IPv6 form.
  */
 const IPV4_PORT_SPLIT_RE = new RegExp(`^(${IPV4}):(\\d{1,5})$`)
+/**
+ * Split netstat's tcp6 wildcard token (B23): `:::8086` → `::` (address) +
+ * `:8086` (port); `:::*` → `::` + `:*`. Safe because `:::` is never a valid
+ * IPv6, so the first two colons are always the unspecified address.
+ */
+const IPV6_WILDCARD_SPLIT_RE = /^(::)(:.*)$/
+/** A port field that should take the port color (digits only, like IPv4). */
+const PORT_DIGITS_RE = /^:\d{1,5}$/
 
 const CATEGORY_PATTERNS: Record<CategoryKey, RegExp> = {
   url: URL_RE,
@@ -738,7 +765,7 @@ export function compileHighlighter(
       const color = active.get(cat)
       if (cat === 'ip') {
         // IPv4:port — color the address and the `:port` differently (when the
-        // port rule is on). A pure IPv6 match never hits this branch.
+        // port rule is on). A real IPv6 match never hits this branch.
         const pm = IPV4_PORT_SPLIT_RE.exec(full)
         if (pm) {
           const portColor = active.get('port')
@@ -755,6 +782,24 @@ export function compileHighlighter(
             last = i + full.length
             continue
           }
+        }
+        // netstat tcp6 wildcard `:::<port>` / `:::*` (B23): `::` is the address,
+        // everything after is the port field. A numeric port takes the port
+        // color (only when the port rule is on); `:*` / a service name stays
+        // plain — exactly like IPv4's `0.0.0.0:*` / `0.0.0.0:http`.
+        const vm = IPV6_WILDCARD_SPLIT_RE.exec(full)
+        if (vm) {
+          const ipPart = vm[1]
+          const portPart = full.slice(ipPart.length)
+          units.push({ a: i, b: i + ipPart.length, text: ipPart, color })
+          units.push({
+            a: i + ipPart.length,
+            b: i + full.length,
+            text: portPart,
+            color: PORT_DIGITS_RE.test(portPart) ? active.get('port') : undefined,
+          })
+          last = i + full.length
+          continue
         }
       }
       const shownEnd = i + shown.length
@@ -875,4 +920,6 @@ export const HIGHLIGHT_SAMPLE =
   '2026-09-08 14:30:22 [INFO] deploy ok · 192.168.1.10:8080 · 192.168.33.0/24 · fe80::1%18 · ' +
   'aa:bb:cc:dd:ee:ff · 550e8400-e29b-41d4-a716-446655440000 · user@example.com · ' +
   'https://example.com/x?v=1 · /var/log/app.log · v1.21.0 · go1.22.5 · commit a3f8c1e · 0x1F · ' +
-  '1.2ms · Wed Sep  9 10:46:20 2026 · C:\\Program Files\\nodejs\\node.exe · error: timeout'
+  '1.2ms · Wed Sep  9 10:46:20 2026 · C:\\Program Files\\nodejs\\node.exe · ' +
+  // netstat tcp6 wildcard address: `:::<port>` (B23) — must NOT read as IPv6.
+  ':::8086 · :::48080 · :::* · error: timeout'
