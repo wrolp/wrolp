@@ -1,5 +1,7 @@
 # Wrolp Terminal Release Notes
 
+[中文文档](./RELEASE_NOTES.zh.md) · [English](#)
+
 ---
 
 ## v0.0.7 — 2026-09-07
