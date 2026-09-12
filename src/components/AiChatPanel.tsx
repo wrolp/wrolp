@@ -225,6 +225,10 @@ const TOOL_LABELS: Record<
   read_file: { label: 'Read file', icon: 'file' },
   list_connections: { label: 'List connections', icon: 'link' },
   search_help: { label: 'Search help', icon: 'search' },
+  get_current_server: { label: 'Current server', icon: 'desktop' },
+  get_ui_settings: { label: 'Read appearance settings', icon: 'search' },
+  set_ui_settings: { label: 'Change appearance settings', icon: 'desktop' },
+  reset_ui_settings: { label: 'Reset appearance settings', icon: 'folder' },
 }
 
 // Built-in server-ops prompt templates, grouped and localized. Each item is an

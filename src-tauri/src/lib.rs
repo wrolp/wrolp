@@ -352,6 +352,7 @@ pub fn run() {
       commands::cancel_ai_chat,
       commands::start_ai_agent,
       commands::confirm_ai_tool,
+      commands::ai_ui_tool_result,
       commands::start_tunnel,
       commands::stop_tunnel,
       commands::list_tunnels,

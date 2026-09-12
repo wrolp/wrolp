@@ -852,6 +852,26 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
     'POSIX shells (Linux / macOS / WSL / Git Bash): lets an inserted block run as a single command after Enter (applies to bracketed paste and to "insert without executing"). Lines already ending with `\\`, with an open operator / block keyword, comments, blank lines, and open strings or heredocs are left untouched; a `\\` that is followed by a space (e.g. `cd \\ `, which the shell reads as an escaped space) is moved to the end of the line; cmd / PowerShell and "execute line by line" are unaffected.',
   pasteDialogContinuation:
     'Insert will add or fix a trailing `\\` on {count} line(s) so the block runs as a single command after Enter; "execute line by line" sends it unchanged.',
+
+  // Settings → General: AI appearance / system-config access
+  aiAppearanceTitle: 'AI appearance & settings',
+  aiAppearanceDesc:
+    'Let the AI assistant read and change display settings (theme, terminal font & colours, highlight scheme, language). Changes apply immediately and can be undone. The AI can never touch credentials, API keys or the data directory.',
+  aiAppearanceEnable: 'Allow the AI to read and change appearance settings',
+  aiAppearanceGroupsHint: 'Allowed categories:',
+  aiAppearanceGroupTheme: 'Theme & colours',
+  aiAppearanceGroupTerminal: 'Terminal',
+  aiAppearanceGroupHighlight: 'Output highlight',
+  aiAppearanceGroupUi: 'Interface & language',
+  aiAppearanceRequireConfirm: 'Ask before applying AI appearance changes',
+  aiAppearanceRequireConfirmHint:
+    'Large changes and a full reset always ask for confirmation, regardless of this switch.',
+  aiAppearanceExamples:
+    'Try asking the AI:\n· "Switch to the light theme"\n· "Make the terminal font bigger — e.g. use Consolas"\n· "Use the light terminal palette"\n· "Switch the output highlight scheme to nord"\n· "Make the URL highlight colour orange"\n· "Change the interface language to Chinese"\n· "Reset the appearance to defaults"',
+  aiAppearanceHistory: 'Recent AI appearance changes',
+  aiAppearanceHistoryEmpty: 'No changes yet.',
+  aiAppearanceUndo: 'Undo',
+  aiAppearanceClear: 'Clear history',
 }
 
 export default en

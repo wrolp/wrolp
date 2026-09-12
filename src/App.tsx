@@ -122,6 +122,19 @@ import { loadPasteGuard, savePasteGuard, isWslShell } from './lib/pasteGuard'
 import type { PasteGuardConfig, PasteMode } from './lib/pasteGuard'
 import { loadConfirmCloseTerminal, saveConfirmCloseTerminal } from './lib/closeGuard'
 import {
+  clearAppearanceHistory,
+  listAppearanceHistory,
+  subscribeAppSettings,
+  undoAppearance,
+  type AppearanceSnapshot,
+  type SettingGroup,
+} from './lib/appSettings'
+import {
+  installAiUiBridge,
+  saveAiAppearanceConfig,
+  useAiAppearanceConfig,
+} from './lib/aiUiBridge'
+import {
   applyScheme,
   CATEGORY_META,
   cloneDefaultConfig,
@@ -408,6 +421,136 @@ function CloseGuardSettingsCard({
           <span className="settings-label">{t('closeGuardEnable')}</span>
         </label>
         <span className="settings-help">{t('closeGuardHint')}</span>
+      </div>
+    </div>
+  )
+}
+
+/** Settings → General card: let the AI read/change display + system settings.
+ *  See task/plans/AI-UI-CONFIG-PLAN.md. */
+function AiAppearanceSettingsCard() {
+  const { t } = useI18n()
+  const cfg = useAiAppearanceConfig()
+  const [history, setHistory] = useState<AppearanceSnapshot[]>(() => listAppearanceHistory())
+  // Refresh the list whenever any setting is applied (settings page or AI).
+  useEffect(() => subscribeAppSettings(() => setHistory(listAppearanceHistory())), [])
+
+  const groups: { id: SettingGroup; label: string }[] = [
+    { id: 'theme', label: t('aiAppearanceGroupTheme') },
+    { id: 'terminal', label: t('aiAppearanceGroupTerminal') },
+    { id: 'highlight', label: t('aiAppearanceGroupHighlight') },
+    { id: 'ui', label: t('aiAppearanceGroupUi') },
+  ]
+  const rowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    flexDirection: 'row',
+  }
+
+  return (
+    <div className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-icon">🎨</div>
+        <div>
+          <h3 className="settings-card-title">{t('aiAppearanceTitle')}</h3>
+          <p className="settings-card-sub">{t('aiAppearanceDesc')}</p>
+        </div>
+      </div>
+      <div className="settings-fields">
+        <label className="settings-field" style={rowStyle}>
+          <input
+            type="checkbox"
+            checked={cfg.enabled}
+            onChange={(e) => saveAiAppearanceConfig({ ...cfg, enabled: e.target.checked })}
+          />
+          <span className="settings-label">{t('aiAppearanceEnable')}</span>
+        </label>
+
+        <span className="settings-help">{t('aiAppearanceGroupsHint')}</span>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          {groups.map((g) => (
+            <label key={g.id} className="settings-field" style={{ ...rowStyle, gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={cfg.groups[g.id]}
+                disabled={!cfg.enabled}
+                onChange={(e) =>
+                  saveAiAppearanceConfig({
+                    ...cfg,
+                    groups: { ...cfg.groups, [g.id]: e.target.checked },
+                  })
+                }
+              />
+              <span className="settings-label">{g.label}</span>
+            </label>
+          ))}
+        </div>
+
+        <label className="settings-field" style={rowStyle}>
+          <input
+            type="checkbox"
+            checked={cfg.requireConfirm}
+            disabled={!cfg.enabled}
+            onChange={(e) => saveAiAppearanceConfig({ ...cfg, requireConfirm: e.target.checked })}
+          />
+          <span className="settings-label">{t('aiAppearanceRequireConfirm')}</span>
+        </label>
+        <span className="settings-help">{t('aiAppearanceRequireConfirmHint')}</span>
+
+        {/* Concrete example prompts so users know what to actually ask the AI.
+            Keep the listed examples in sync with the registry keys
+            (theme / terminal / highlight / ui) — see src/lib/appSettings.ts. */}
+        <span className="settings-help" style={{ marginTop: 8, whiteSpace: 'pre-line' }}>
+          {t('aiAppearanceExamples')}
+        </span>
+
+        <div className="settings-label" style={{ marginTop: 8 }}>
+          {t('aiAppearanceHistory')}
+        </div>
+        {history.length === 0 ? (
+          <span className="settings-help">{t('aiAppearanceHistoryEmpty')}</span>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {history.map((h) => (
+              <div key={h.undoId} style={rowStyle}>
+                <span
+                  className="settings-help"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {new Date(h.ts).toLocaleTimeString()} · {Object.keys(h.changes).join(', ')}
+                </span>
+                <button
+                  type="button"
+                  className="settings-help"
+                  onClick={() => {
+                    undoAppearance(h.undoId)
+                    setHistory(listAppearanceHistory())
+                  }}
+                >
+                  {t('aiAppearanceUndo')}
+                </button>
+              </div>
+            ))}
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  clearAppearanceHistory()
+                  setHistory([])
+                }}
+              >
+                {t('aiAppearanceClear')}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1555,6 +1698,12 @@ export default function App() {
       return () => clearTimeout(id)
     }
   }, [toast])
+
+  // AI appearance/settings bridge — answers `ai-ui-tool-request` events even
+  // while the AI chat panel is closed. MUST stay at this top level (installing
+  // it inside AiChatPanel would leave requests unanswered once the panel
+  // unmounts). See task/plans/AI-UI-CONFIG-PLAN.md §4.4.
+  useEffect(() => installAiUiBridge(), [])
 
   useEffect(() => {
     loadAiConfig()
@@ -4310,6 +4459,8 @@ export default function App() {
                     enabled={confirmCloseWithFiles}
                     onToggle={saveConfirmCloseWithFiles}
                   />
+
+                  <AiAppearanceSettingsCard />
 
                   <div className="settings-card">
                     <div className="settings-card-header">

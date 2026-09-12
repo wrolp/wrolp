@@ -565,6 +565,77 @@ pub fn tool_definitions() -> Vec<OpenAiTool> {
         }),
       },
     },
+    OpenAiTool {
+      tool_type: "function".into(),
+      function: OpenAiFunction {
+        name: "get_ui_settings".into(),
+        description: "Read the app's current display/appearance settings (theme mode, terminal \
+                     colour palette, terminal font & cursor, terminal output highlight scheme and \
+                     per-category colours, UI language). ALWAYS call this before set_ui_settings so \
+                     you use valid keys and values — the returned list is the ONLY set of keys you \
+                     may change. Read-only; safe to call anytime."
+          .into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "keys": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional subset of setting keys; omit to get everything."
+                }
+            },
+            "required": []
+        }),
+      },
+    },
+    OpenAiTool {
+      tool_type: "function".into(),
+      function: OpenAiFunction {
+        name: "set_ui_settings".into(),
+        description: "Change the app's display/appearance settings — theme mode (dark/light/system), \
+                     terminal colour palette, terminal font size/family/line-height, terminal cursor, \
+                     terminal output highlight scheme or per-category colours, UI language. Changes \
+                     apply LIVE to all open terminals/editors. Only keys returned by get_ui_settings \
+                     are accepted; values are validated (hex colours, enums, numeric ranges). Prefer \
+                     small, coherent changes and briefly tell the user what you changed."
+          .into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "changes": {
+                    "type": "object",
+                    "description": "Map of setting key → new value, e.g. {\"theme.mode\":\"light\",\"terminal.fontSize\":16}"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "One short sentence for the user explaining why (shown in the tool card)."
+                }
+            },
+            "required": ["changes"]
+        }),
+      },
+    },
+    OpenAiTool {
+      tool_type: "function".into(),
+      function: OpenAiFunction {
+        name: "reset_ui_settings".into(),
+        description: "Reset display/appearance settings to their defaults. Pass `keys` to reset only \
+                     those, or omit to reset every setting. Requires user confirmation. Returns the \
+                     applied/previous values and an undoId."
+          .into(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "keys": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional subset of setting keys to reset; omit to reset everything."
+                }
+            },
+            "required": []
+        }),
+      },
+    },
   ]
 }
 

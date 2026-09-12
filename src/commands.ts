@@ -1025,3 +1025,11 @@ export async function confirmAiTool(
     maxAgentRounds: maxAgentRounds ?? 12,
   })
 }
+
+/**
+ * Resolve a pending frontend UI-tool request (the AI appearance/settings bridge).
+ * `result` must be a JSON string; the Rust side drops unknown/late ids silently.
+ */
+export async function aiUiToolResult(id: number, result: string): Promise<void> {
+  return await invoke<void>('ai_ui_tool_result', { id, result })
+}

@@ -779,6 +779,13 @@ pub struct AppState {
   pub ai_config: StdMutex<Option<crate::ai::AiConfig>>,
   /// Pending agent pause awaiting user confirmation of a sensitive tool call
   pub ai_pending: StdMutex<Option<AiPendingConfirm>>,
+  /// Frontend UI-tool bridge: request id → oneshot sender awaiting the WebView's
+  /// JSON result (AI appearance/settings tools). Ids that nobody answers are
+  /// dropped on timeout / by `ai_ui_tool_result` silently ignoring unknown ids.
+  pub ui_tool_pending:
+    StdMutex<HashMap<u64, tokio::sync::oneshot::Sender<String>>>,
+  /// Monotonic id source for `ui_tool_pending`.
+  pub next_ui_tool_id: AtomicU64,
   /// Active local shell sessions: tab_id → LocalShell
   pub local_shells: StdMutex<HashMap<u32, LocalShell>>,
   /// Working directory history for local shells (most-recently-used first)
@@ -929,6 +936,8 @@ impl AppState {
       ai_chat_buffers: StdMutex::new(HashMap::new()),
       ai_config: StdMutex::new(ai_config),
       ai_pending: StdMutex::new(None),
+      ui_tool_pending: StdMutex::new(HashMap::new()),
+      next_ui_tool_id: AtomicU64::new(1),
       local_shells: StdMutex::new(HashMap::new()),
       local_shell_dirs: StdMutex::new(Vec::new()),
       local_terminals: StdMutex::new(local_terminals),

@@ -829,6 +829,25 @@ const zh: Partial<Record<TranslationKey, string>> = {
     'POSIX shell（Linux / macOS / WSL / git-bash）下，让插入的多行内容在按回车后作为一条命令提交（括号粘贴与「插入不执行」都适用）。行尾已有 `\\`、以 `|`、`&&`、`do`、`then` 等结尾的行、注释行、空行，以及多行字符串 / heredoc 内部都不会被改动；若 `\\` 后面还跟了空格（如 `cd \\ `，此时 shell 会把它当转义空格），会把它修正到行尾；cmd / PowerShell 与「逐行执行」不受影响。',
   pasteDialogContinuation:
     '「插入不执行」会在 {count} 行的行尾补上或修正续行符 `\\`，使整块内容按回车后作为一条命令提交；选「逐行执行」则不改动内容。',
+
+  // 设置 → 通用：AI 修改外观 / 系统配置
+  aiAppearanceTitle: 'AI 外观与系统配置',
+  aiAppearanceDesc:
+    '允许 AI 助手读取并修改显示类设置（主题、终端字体与配色、输出高亮方案、语言）。修改即时生效且可撤销。AI 永远不会接触凭据、API Key 或数据目录。',
+  aiAppearanceEnable: '允许 AI 读取与修改外观设置',
+  aiAppearanceGroupsHint: '允许的类别：',
+  aiAppearanceGroupTheme: '主题与配色',
+  aiAppearanceGroupTerminal: '终端',
+  aiAppearanceGroupHighlight: '输出高亮',
+  aiAppearanceGroupUi: '界面与语言',
+  aiAppearanceRequireConfirm: 'AI 修改外观前先确认',
+  aiAppearanceRequireConfirmHint: '无论此开关如何，大范围修改与整体重置都一定会先确认。',
+  aiAppearanceExamples:
+    '试试对 AI 说：\n· 「换成浅色主题」\n· 「终端字体大一点，用 Consolas」\n· 「终端配色改成浅色」\n· 「输出高亮换成 nord」\n· 「把 URL 高亮颜色改成橙色」\n· 「界面语言换成中文」\n· 「外观恢复默认」',
+  aiAppearanceHistory: '最近的 AI 外观修改',
+  aiAppearanceHistoryEmpty: '暂无记录。',
+  aiAppearanceUndo: '撤销',
+  aiAppearanceClear: '清空历史',
 }
 
 export default zh

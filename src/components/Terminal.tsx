@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { xtermTheme } from '../lib/theme'
 import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
+import { getTerminalAppearance, subscribeAppSettings } from '../lib/appSettings'
 import { listen } from '@tauri-apps/api/event'
 import '@xterm/xterm/css/xterm.css'
 import {
@@ -1330,11 +1331,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       unlistenAiMark = un
     })
 
+    // Font / cursor come from the appearance registry so the settings page and
+    // the AI bridge can change them live (subscription below).
+    const appearance = getTerminalAppearance()
     const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily:
-        '"WrolpNerdFont", "FiraCode Nerd Font", "Fira Code Nerd Font", "CaskaydiaCove Nerd Font", "CaskaydiaCove NF", "JetBrainsMono Nerd Font", "MesloLGS NF", "Symbols Nerd Font", "Fira Code", "Cascadia Code", Consolas, "Courier New", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace',
+      cursorBlink: appearance.cursorBlink,
+      cursorStyle: appearance.cursorStyle,
+      fontSize: appearance.fontSize,
+      fontFamily: appearance.fontFamily,
+      lineHeight: appearance.lineHeight,
       scrollback: maxScrollback ?? 5000,
       // NOTE: do NOT enable `windowsMode`. It is the legacy winpty / pre-1903
       // ConPTY workaround (forces a line feed at the right edge and disables
@@ -1368,6 +1373,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // every theme / terminal-palette change for this instance's lifetime.
     const unsubTheme = subscribeTheme(() => {
       term.options.theme = xtermTheme(getTerminalTheme())
+    })
+    // Live-apply font / cursor changes pushed by the appearance registry (the
+    // settings page or the AI UI bridge) to every open terminal instance.
+    const unsubAppearance = subscribeAppSettings(() => {
+      const a = getTerminalAppearance()
+      term.options.fontSize = a.fontSize
+      term.options.fontFamily = a.fontFamily
+      term.options.lineHeight = a.lineHeight
+      term.options.cursorStyle = a.cursorStyle
+      term.options.cursorBlink = a.cursorBlink
+      fitAddon.fit()
     })
     // Register this instance so external callers (reconnect, "send to terminal")
     // can focus it. Overwrites any stale instance for the same tabId.
@@ -2165,6 +2181,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       clearLsLinks()
       lsLinkProviderDisposable.dispose()
       unsubTheme()
+      unsubAppearance()
       if (linkTooltipShowTimer.current) clearTimeout(linkTooltipShowTimer.current)
       if (linkTooltipHideTimer.current) clearTimeout(linkTooltipHideTimer.current)
       linkTooltipEntryRef.current = null

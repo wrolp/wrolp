@@ -966,6 +966,84 @@ pub(crate) async fn execute_ai_tools(
   results
 }
 
+/// How long to wait for the WebView to answer a UI-tool request. The bridge is
+/// local (in-process event round-trip), so this is generous; a timeout returns a
+/// structured error instead of hanging the agent loop.
+const UI_TOOL_TIMEOUT_SECS: u64 = 10;
+
+/// Send one frontend UI-tool request and await the WebView's JSON result
+/// (`ai-ui-tool-request` → frontend applies → `ai_ui_tool_result`).
+///
+/// Never hangs: an emit failure or a timeout returns `Err` (structured by the
+/// caller). Late/duplicate results are ignored by `ai_ui_tool_result`.
+pub(crate) async fn call_frontend_ui_tool(
+  app: &tauri::AppHandle,
+  op: &str,
+  args: serde_json::Value,
+) -> Result<String, String> {
+  let state = app.state::<AppState>();
+  let id = state.next_ui_tool_id.fetch_add(1, Ordering::Relaxed);
+  let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+  if let Ok(mut map) = state.ui_tool_pending.lock() {
+    map.insert(id, tx);
+  } else {
+    return Err("UI tool bridge unavailable (state lock poisoned)".into());
+  }
+
+  let emit_result = app.emit(
+    "ai-ui-tool-request",
+    serde_json::json!({ "id": id, "op": op, "args": args }),
+  );
+  if let Err(e) = emit_result {
+    if let Ok(mut map) = state.ui_tool_pending.lock() {
+      map.remove(&id);
+    }
+    return Err(format!("Failed to reach the UI bridge: {}", e));
+  }
+
+  let outcome = match tokio::time::timeout(
+    std::time::Duration::from_secs(UI_TOOL_TIMEOUT_SECS),
+    rx,
+  )
+  .await
+  {
+    Ok(Ok(result)) => Ok(result),
+    Ok(Err(_)) => Err("The UI bridge dropped the request".into()),
+    Err(_) => Err(format!(
+      "The UI did not respond within {}s (AI appearance changes may be disabled, \
+       or the app window is not responding).",
+      UI_TOOL_TIMEOUT_SECS
+    )),
+  };
+
+  if let Ok(mut map) = state.ui_tool_pending.lock() {
+    map.remove(&id);
+  }
+  outcome
+}
+
+/// Resolve a pending frontend UI-tool request. Unknown ids (already timed out /
+/// duplicated) are ignored silently so the frontend never sees an error noise.
+#[tauri::command]
+pub async fn ai_ui_tool_result(
+  app: tauri::AppHandle,
+  id: u64,
+  result: String,
+) -> Result<(), String> {
+  let state = app.state::<AppState>();
+  let sender = {
+    let mut map = state
+      .ui_tool_pending
+      .lock()
+      .map_err(|_| "UI tool bridge unavailable".to_string())?;
+    map.remove(&id)
+  };
+  if let Some(tx) = sender {
+    let _ = tx.send(result);
+  }
+  Ok(())
+}
+
 /// Build a human-readable context block describing the shell tab's connected
 /// server (or note that it is not connected). Used to enrich the system prompt.
 pub(crate) fn build_current_server_context(app: &tauri::AppHandle, tab_id: u32) -> Option<String> {
@@ -1297,6 +1375,51 @@ pub(crate) async fn execute_one_tool(
           Ok(serde_json::to_string(&info).map_err(|e| e.to_string())?)
         }
       }
+    }
+    // ---- AI appearance / display settings (frontend bridge) ----
+    // These run in the WebView (localStorage + React state), so they are
+    // dispatched over `call_frontend_ui_tool`. Read-only mode blocks writes;
+    // large changes and full resets reuse the existing needsConfirmation loop.
+    "get_ui_settings" => {
+      let req = serde_json::json!({
+          "keys": args.get("keys").cloned().unwrap_or(serde_json::Value::Null),
+      });
+      return call_frontend_ui_tool(app, "get", req).await;
+    }
+    "set_ui_settings" | "reset_ui_settings" => {
+      let is_reset = tool == "reset_ui_settings";
+      if read_only {
+        return Ok(serde_json::json!({
+            "error": "Blocked: the AI assistant is in read-only mode and cannot change \
+                      appearance or system settings."
+        })
+        .to_string());
+      }
+      let changes = args.get("changes").cloned().unwrap_or(serde_json::Value::Null);
+      let keys = args.get("keys").cloned().unwrap_or(serde_json::Value::Null);
+      let reason = args.get("reason").cloned().unwrap_or(serde_json::Value::Null);
+      let change_count = changes.as_object().map(|m| m.len()).unwrap_or(0);
+      // Wide-blast-radius operations pause for confirmation unless already forced:
+      // a whole-settings reset, or a change touching more than 10 keys.
+      let reset_all = is_reset && keys.is_null();
+      if !force && (reset_all || change_count > 10) {
+        return Ok(serde_json::json!({
+            "needsConfirmation": true,
+            "op": if is_reset { "reset" } else { "set" },
+            "changes": changes,
+            "keys": keys,
+        })
+        .to_string());
+      }
+      // `force` lets the frontend honour the user's "ask before AI appearance
+      // changes" setting: without it the bridge answers with needsConfirmation
+      // (same closed loop as above), and with it (post-confirm) it applies.
+      let req = if is_reset {
+        serde_json::json!({ "keys": keys, "force": force })
+      } else {
+        serde_json::json!({ "changes": changes, "reason": reason, "force": force })
+      };
+      return call_frontend_ui_tool(app, if is_reset { "reset" } else { "set" }, req).await;
     }
     other => Err(format!("Unknown tool: {}", other)),
   };
