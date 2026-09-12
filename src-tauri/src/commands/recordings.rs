@@ -178,13 +178,37 @@ pub async fn reveal_session_file(
 }
 
 /// Non-blocking, best-effort "show this file in the OS file manager".
+///
+/// On Windows we drive the Shell Automation object (`Shell.Application`) via
+/// PowerShell instead of `explorer /select,"<path>"`. Two reasons:
+///  1. `explorer /select,"<path>"` is unreliable for deep/long paths (the
+///     recordings live under AppData). When explorer.exe is already the
+///     running shell the path is forwarded over DDE and the parse can fail,
+///     making Explorer fall back to opening the user's Documents library.
+///  2. `Shell.Application.Open(<file>)` would *launch* the file (opening the
+///     "choose an app" dialog for a .jsonl), not reveal it.
+/// So we open the file's *parent folder* through the COM object (handles long
+/// paths, no DDE fallback) and then best-effort select the file in that window.
 fn reveal_in_file_manager(path: &std::path::Path) {
   #[cfg(target_os = "windows")]
   {
-    // explorer parses its own command line; quoting keeps paths with spaces
-    // intact after `spawn` joins argv.
-    let _ = std::process::Command::new("explorer")
-      .arg(format!("/select,\"{}\"", path.display()))
+    let p = path.to_string_lossy().into_owned();
+    // Escape single quotes for a PowerShell single-quoted string literal
+    // (inside a single-quoted PS string only `'` is special; double it).
+    let escaped = p.replace('\'', "''");
+    // Built by concatenation (not format!) so PowerShell's own `{`/`}` are
+    // left untouched.
+    let ps = [
+      "$f='".to_string(),
+      escaped,
+      "'; $sh=New-Object -ComObject Shell.Application; \
+        $sh.Open((Split-Path $f)) | Out-Null; \
+        $fi=$sh.NameSpace((Split-Path $f)).ParseName((Split-Path $f -Leaf)); \
+        if($fi){ try { $fi.InvokeVerb('select') } catch {} }".to_string(),
+    ]
+    .concat();
+    let _ = std::process::Command::new("powershell")
+      .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
       .spawn();
   }
   #[cfg(target_os = "macos")]
@@ -279,7 +303,7 @@ pub async fn set_recording_enabled(
           &rec.connection_name,
           tab_id,
           &started_at_iso,
-          None,
+          rec.workspace_name.as_deref(),
           rec.group_name.as_deref(),
         );
       }

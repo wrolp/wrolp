@@ -3944,6 +3944,10 @@ export default function App() {
             password: conn.password,
             keyPath: conn.keyPath,
             startupDir: conn.startupDir,
+            // Carried through so the backend can file the recording under the
+            // connection's real workspace/group instead of default/__ungrouped__.
+            group: conn.group,
+            workspaceId: conn.workspaceId,
             // Serial-port fields (only meaningful when kind === 'serial').
             kind: conn.kind,
             portName: conn.portName,
