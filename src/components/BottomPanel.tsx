@@ -57,7 +57,10 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
   // If viewing a session, show the viewer full-screen in the bottom panel
   if (viewingSession && expanded) {
     return (
-      <div className="bottom-panel expanded">
+      <div
+        className={`bottom-panel expanded${pos === 'right' ? ' right' : ''}`}
+        style={pos === 'right' ? { width: size } : { height: size }}
+      >
         <SessionViewer
           sessionId={viewingSession.id}
           sessionTitle={viewingSession.title || viewingSession.connectionName || 'Session'}

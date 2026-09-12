@@ -5,6 +5,13 @@ import { xtermTheme } from '../lib/theme'
 import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
 import '@xterm/xterm/css/xterm.css'
 import type { SessionEventDto } from '../types'
+
+// Only "output" events are visible terminal bytes. "input" events are the raw
+// keystrokes we sent to the PTY, which the PTY already echoes back inside the
+// "output" stream — writing both would duplicate every typed character during
+// playback. "command" events are logical markers (used by extract-commands),
+// not something rendered to the screen.
+const isVisible = (ev: SessionEventDto) => ev.direction === 'output'
 import { getSessionEvents } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -128,7 +135,7 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
     }
 
     const ev = evs[idx]
-    termRef.current?.write(ev.content)
+    if (isVisible(ev)) termRef.current?.write(ev.content)
     playIndexRef.current = idx + 1
     setCurrentIndex(idx + 1)
 
@@ -165,7 +172,7 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
     const idx = playIndexRef.current
     if (idx < eventsRef.current.length) {
       const ev = eventsRef.current[idx]
-      termRef.current?.write(ev.content)
+      if (isVisible(ev)) termRef.current?.write(ev.content)
       playIndexRef.current = idx + 1
       setCurrentIndex(idx + 1)
     }
@@ -180,7 +187,8 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
     termRef.current?.clear()
     // Replay up to newIdx
     for (let i = 0; i < newIdx; i++) {
-      termRef.current?.write(eventsRef.current[i].content)
+      const ev = eventsRef.current[i]
+      if (isVisible(ev)) termRef.current?.write(ev.content)
     }
     playIndexRef.current = newIdx
     setCurrentIndex(newIdx)
@@ -191,7 +199,8 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
     const targetIdx = Math.floor(ratio * eventsRef.current.length)
     termRef.current?.clear()
     for (let i = 0; i < targetIdx; i++) {
-      termRef.current?.write(eventsRef.current[i].content)
+      const ev = eventsRef.current[i]
+      if (isVisible(ev)) termRef.current?.write(ev.content)
     }
     playIndexRef.current = targetIdx
     setCurrentIndex(targetIdx)
