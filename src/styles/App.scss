@@ -1779,6 +1779,11 @@ body.resize-v * {
     overflow: hidden;
     display: flex;
     flex-direction: row;
+    // Gap between the terminal surface and a docked AI pane. MUST equal
+    // DOCK_GAP in App.tsx — the dock's resize handle is exactly this size and
+    // fills the gap. No effect when the body has a single child (dock closed) —
+    // flex gap only applies between items.
+    gap: 4px;
   }
 
   .term-pane-ai-toggle {
@@ -1958,33 +1963,63 @@ body.resize-v * {
   background: transparent;
   z-index: 2;
 
-  // A visible grab line in the middle of the (wider) hit area.
+  // No visible bar at rest: the split is communicated purely by the gap between
+  // the panes. On hover/drag a crisp 1px accent line is drawn down the centre,
+  // with a soft blurred glow beside it (the glow is what makes the splitter read
+  // while interacting, without any resting weight). `pointer-events: none` so
+  // this purely-visual layer never affects the hit zone.
+  //
+  // The hit zone stays the bare track — deliberately NO negative offsets: an
+  // earlier version widened it into the neighbouring panes, which stole the
+  // overlay scrollbar's grab zone along that edge (those grab zones are
+  // pointer-events:none next to a divider — see `.term-scrollbar`).
   &::after {
     content: '';
     position: absolute;
-    background: $border;
+    pointer-events: none;
+    opacity: 0;
+    background: $accent;
+    transition: opacity 0.12s ease;
   }
 
-  &:hover,
-  &.dragging {
-    background: rgba($accent, 0.18);
-
-    &::after {
-      background: $accent;
-    }
+  &:hover::after,
+  &.dragging::after {
+    opacity: 1;
   }
 }
 
-// Row splits: vertical divider bar, drag left/right
+// Row splits: drag left/right. The track width IS the gap between the panes
+// (SPLIT_GAP in App.tsx — panes are inset by half this on each side of a seam,
+// so the overlay fills the gap exactly). Keep the two in sync.
 .term-split-divider.divider-row {
-  width: 7px;
+  width: 4px;
   cursor: ew-resize !important;
+
+  // 1px line down the middle; the box-shadow is the blurred halo beside it.
+  &::after {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+    box-shadow: 0 0 6px 1px rgba($accent, 0.7);
+  }
 }
 
-// Column splits: horizontal divider bar, drag up/down
+// Column splits: drag up/down. The track height IS the gap between the panes.
 .term-split-divider.divider-col {
-  height: 7px;
+  height: 4px;
   cursor: ns-resize !important;
+
+  // 1px line across the middle; the box-shadow is the blurred halo beside it.
+  &::after {
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    transform: translateY(-50%);
+    box-shadow: 0 0 6px 1px rgba($accent, 0.7);
+  }
 }
 
 .resizing-h,
@@ -1995,6 +2030,19 @@ body.resizing-h {
 .resizing-v,
 body.resizing-v {
   cursor: ns-resize !important;
+}
+
+// The splitter's hit zone no longer bleeds into the pane (it is the bare track),
+// so the overlay scrollbar keeps its default position and its full grab zone even
+// when it sits right next to a divider — see `.term-split-divider`.
+
+// While dragging a divider, the overlay scrollbar must not intercept the drag
+// (its grab zone / thumb can otherwise swallow a stray pointer move).
+body.resizing-h .term-scrollbar::before,
+body.resizing-v .term-scrollbar::before,
+body.resizing-h .term-scrollbar-thumb,
+body.resizing-v .term-scrollbar-thumb {
+  pointer-events: none;
 }
 
 // While an AI dock pane is being resized, swallow pointer events on the
@@ -6061,6 +6109,7 @@ input[type='password']::-ms-clear {
 // Docked AI pane (right/top/bottom/left inside the shell pane)
 .ai-dock-pane {
   background: $bg-primary;
+  border: 1px solid $border;
   // The chat panel must fill the space *below* the dock bar (not overlap it),
   // accounting for both vertical (top/bottom) and horizontal (left/right) docks.
   & .ai-chat-panel {

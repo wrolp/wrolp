@@ -148,6 +148,13 @@ let cachedConnections: ConnectionConfig[] = []
 // Auto-incrementing tab id counter
 let nextTabId = 1
 
+// Pixel gap between adjacent terminal split panes. Panes are inset by half of
+// this on every edge shared with a sibling (see `renderPane`), and the invisible
+// divider overlay is exactly this wide so it fills the gap. The two MUST stay in
+// sync: `.term-split-divider.divider-row { width }` / `.divider-col { height }`
+// in `styles/App.scss`.
+const SPLIT_GAP = 4
+
 /** Human-readable byte size (KB / MB / GB) for the Settings → Database row. */
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -1276,6 +1283,10 @@ export default function App() {
   )
   const MIN_DOCK = 140
   const MAX_DOCK = 900
+  // Gap (px) between the terminal surface and a docked AI pane. MUST equal
+  // `.term-pane-body { gap }` in styles/App.scss; the dock resize handle below
+  // is exactly this size and sits inside the gap.
+  const DOCK_GAP = 4
   // Persist AI input-area height (debounced) so it survives reloads.
   const aiInputHeightSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleAiInputHeightChange = useCallback((height: number) => {
@@ -3086,9 +3097,8 @@ export default function App() {
       e.stopPropagation()
       // The divider lives directly inside the workspace container now (no
       // intermediate .term-split wrapper), so measure the workspace box.
-      const splitEl = (e.currentTarget as HTMLElement).closest(
-        '.term-workspace',
-      ) as HTMLElement | null
+      const el = e.currentTarget as HTMLElement
+      const splitEl = el.closest('.term-workspace') as HTMLElement | null
       if (!splitEl) return
       const rect = splitEl.getBoundingClientRect()
       const isRow = branch.dir === 'row'
@@ -3112,6 +3122,7 @@ export default function App() {
         document.removeEventListener('mousemove', onMove)
         document.removeEventListener('mouseup', onUp)
         document.body.classList.remove('resizing-h', 'resizing-v')
+        el.classList.remove('dragging')
         document.body.style.userSelect = ''
         try {
           getCurrentWindow().setResizable(true)
@@ -3120,6 +3131,7 @@ export default function App() {
         }
       }
       document.body.classList.add(isRow ? 'resizing-h' : 'resizing-v')
+      el.classList.add('dragging')
       document.body.style.userSelect = 'none'
       document.addEventListener('mousemove', onMove)
       document.addEventListener('mouseup', onUp)
@@ -4982,6 +4994,17 @@ export default function App() {
       if (relY < relX && relY < 1 - relX) return 'top'
       return 'bottom'
     }
+    // Real gap between panes: inset this pane by half the split gap on every edge
+    // that is NOT on the workspace boundary (i.e. every edge shared with a sibling
+    // pane). `calc()` keeps the fractional-% layout responsive while subtracting a
+    // fixed px gap; boundary edges stay flush, so a single unsplit pane has no
+    // outer frame. The divider overlay is centred on the seam and is exactly
+    // SPLIT_GAP wide, so it fills this gap.
+    const gapHalf = SPLIT_GAP / 2
+    const insL = rect.left > 1e-6 ? gapHalf : 0
+    const insT = rect.top > 1e-6 ? gapHalf : 0
+    const insR = rect.left + rect.width < 1 - 1e-6 ? gapHalf : 0
+    const insB = rect.top + rect.height < 1 - 1e-6 ? gapHalf : 0
     return (
       <div
         key={leaf.id}
@@ -5004,10 +5027,10 @@ export default function App() {
         }}
         style={{
           position: 'absolute',
-          left: `${rect.left * 100}%`,
-          top: `${rect.top * 100}%`,
-          width: `${rect.width * 100}%`,
-          height: `${rect.height * 100}%`,
+          left: `calc(${rect.left * 100}% + ${insL}px)`,
+          top: `calc(${rect.top * 100}% + ${insT}px)`,
+          width: `calc(${rect.width * 100}% - ${insL + insR}px)`,
+          height: `calc(${rect.height * 100}% - ${insT + insB}px)`,
           display: 'flex',
           flexDirection: 'column',
           minWidth: 0,
@@ -5302,6 +5325,11 @@ export default function App() {
               // Switch dock side (top/bottom = stacked above/below; left/right = beside).
               const setDockSide = (s: 'left' | 'top' | 'right' | 'bottom') =>
                 setAiDockSideByTab((prev) => ({ ...prev, [tid]: s }))
+              // The terminal/dock separation is a real gap (`.term-pane-body { gap }`)
+              // plus a border on the terminal-facing edge. The border comes from the
+              // base `.ai-dock-pane` rule (1px solid all round) — no side is
+              // overridden to `none` here, so every edge (including the shared one) is
+              // framed.
               const dockStyle: React.CSSProperties = isVertical
                 ? {
                     height: hasExplicitSize ? size : undefined,
@@ -5310,8 +5338,6 @@ export default function App() {
                     minHeight: 0,
                     display: 'flex',
                     flexDirection: 'column',
-                    borderTop: side === 'top' ? '1px solid var(--border, #333)' : 'none',
-                    borderBottom: side === 'bottom' ? '1px solid var(--border, #333)' : 'none',
                     order: side === 'top' ? -1 : 0,
                     width: '100%',
                   }
@@ -5322,8 +5348,6 @@ export default function App() {
                     minHeight: 0,
                     display: 'flex',
                     flexDirection: 'column',
-                    borderLeft: side === 'left' ? '1px solid var(--border, #333)' : 'none',
-                    borderRight: side === 'right' ? '1px solid var(--border, #333)' : 'none',
                     order: side === 'left' ? -1 : 0,
                   }
               // Resize handle sits on the edge adjacent to the terminal.
@@ -5406,8 +5430,8 @@ export default function App() {
                     right: 0,
                     // Sit entirely in the gap between panes so it never overlaps
                     // the chat's top/bottom edge (which would occlude content).
-                    [side === 'top' ? 'bottom' : 'top']: -6,
-                    height: 6,
+                    [side === 'top' ? 'bottom' : 'top']: -DOCK_GAP,
+                    height: DOCK_GAP,
                     cursor: 'ns-resize',
                     zIndex: 5,
                   }
@@ -5415,8 +5439,8 @@ export default function App() {
                     position: 'absolute',
                     top: 0,
                     bottom: 0,
-                    [side === 'left' ? 'right' : 'left']: -6,
-                    width: 6,
+                    [side === 'left' ? 'right' : 'left']: -DOCK_GAP,
+                    width: DOCK_GAP,
                     cursor: 'ew-resize',
                     zIndex: 5,
                   }
@@ -5639,21 +5663,19 @@ export default function App() {
                       position: 'absolute',
                       left: `${pct}%`,
                       top: `${rect.top * 100}%`,
-                      width: 4,
                       height: `${rect.height * 100}%`,
                       transform: 'translateX(-50%)',
                       cursor: 'col-resize',
-                      zIndex: 10,
+                      zIndex: 11,
                     }
                   : {
                       position: 'absolute',
                       left: `${rect.left * 100}%`,
                       top: `${pct}%`,
                       width: `${rect.width * 100}%`,
-                      height: 4,
                       transform: 'translateY(-50%)',
                       cursor: 'row-resize',
-                      zIndex: 10,
+                      zIndex: 11,
                     }
               }
               onMouseDown={(e) => handleSplitDividerMouseDown(e, n, i)}

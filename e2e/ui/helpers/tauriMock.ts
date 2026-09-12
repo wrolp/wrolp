@@ -36,6 +36,12 @@ export interface TauriMockOptions {
   windowConfig?: Record<string, unknown>
   /** Raw JSON string returned by `load_layout`. */
   layout?: string
+  /**
+   * Value returned by `load_ai_config`. When omitted the mock returns `{}`, which
+   * the app treats as "no AI configured" — so the docked AI pane never opens.
+   * Provide a full `AiConfig` (with at least one profile) to exercise the AI dock.
+   */
+  aiConfig?: Record<string, unknown>
 }
 
 /**
@@ -148,7 +154,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
               gitCommit: 'mock',
             }
           case 'load_ai_config':
-            return {}
+            return opts.aiConfig ?? {}
           case 'get_local_terminals':
           case 'get_local_shell_dirs':
           case 'list_local_drives':
@@ -158,6 +164,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_global_variables':
           case 'list_ai_prompt_templates':
           case 'list_hidden_builtin_templates':
+          case 'list_ai_models':
           case 'list_docker_containers':
             return []
           case 'list_command_snippets':
