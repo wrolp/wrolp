@@ -120,6 +120,7 @@ import type { TranslationKey } from './i18n/en'
 import { highlightStore } from './lib/highlightStore'
 import { loadPasteGuard, savePasteGuard, isWslShell } from './lib/pasteGuard'
 import type { PasteGuardConfig, PasteMode } from './lib/pasteGuard'
+import { loadConfirmCloseTerminal, saveConfirmCloseTerminal } from './lib/closeGuard'
 import {
   applyScheme,
   CATEGORY_META,
@@ -358,6 +359,55 @@ function PasteGuardSettingsCard({
           <span className="settings-label">{t('pasteGuardContinuation')}</span>
         </label>
         <span className="settings-help">{t('pasteGuardContinuationHint')}</span>
+      </div>
+    </div>
+  )
+}
+
+/** A terminal/pane close that was intercepted because the target still owns open
+ *  files, and is now waiting for the user's decision (see `closeTab`/`closePane`). */
+interface PendingTerminalClose {
+  /** 'pane' closes a single pane; 'tab' closes the whole workspace. */
+  kind: 'pane' | 'tab'
+  /** Set for 'pane'. */
+  leafId?: string
+  /** Workspace root tab id (target of `closeTab`). */
+  rootId: number
+  /** Human label used in the dialog (connection / tab name). */
+  label: string
+  /** How many open editor tabs belong to the sessions being closed. */
+  fileCount: number
+  /** Keys of those files that have unsaved changes (empty = all clean). */
+  dirtyKeys: string[]
+}
+
+/** Settings → General card: confirm before closing a terminal with open files. */
+function CloseGuardSettingsCard({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean
+  onToggle: (next: boolean) => void
+}) {
+  const { t } = useI18n()
+  return (
+    <div className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-icon">🛡️</div>
+        <div>
+          <h3 className="settings-card-title">{t('closeGuardTitle')}</h3>
+          <p className="settings-card-sub">{t('closeGuardDesc')}</p>
+        </div>
+      </div>
+      <div className="settings-fields">
+        <label
+          className="settings-field"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+        >
+          <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked)} />
+          <span className="settings-label">{t('closeGuardEnable')}</span>
+        </label>
+        <span className="settings-help">{t('closeGuardHint')}</span>
       </div>
     </div>
   )
@@ -1160,6 +1210,18 @@ export default function App() {
   // Editor tab whose close was intercepted because it has unsaved changes.
   // While set, a confirm dialog asks whether to save before closing.
   const [pendingCloseEditorKey, setPendingCloseEditorKey] = useState<string | null>(null)
+  // Ask-before-close guard: closing a terminal / pane that still has open files
+  // is intercepted so the files (and any unsaved edits) are never silently
+  // discarded. Display-only preference (localStorage), default ON.
+  const [confirmCloseWithFiles, setConfirmCloseWithFiles] = useState(loadConfirmCloseTerminal)
+  const confirmCloseWithFilesRef = useRef(confirmCloseWithFiles)
+  confirmCloseWithFilesRef.current = confirmCloseWithFiles
+  // A close that was intercepted and is waiting for the user's decision.
+  const [pendingClose, setPendingClose] = useState<PendingTerminalClose | null>(null)
+  const saveConfirmCloseWithFiles = useCallback((next: boolean) => {
+    setConfirmCloseWithFiles(next)
+    saveConfirmCloseTerminal(next)
+  }, [])
   // Set when a tunnel was auto-stopped because the server refused TCP
   // forwarding (AdministrativelyProhibited); shows a fix-it dialog.
   const [tunnelFatalInfo, setTunnelFatalInfo] = useState<{ host: string; port: string } | null>(
@@ -2278,7 +2340,7 @@ export default function App() {
   // Close a top-level tab (workspace): disconnect and remove its own session
   // plus every embedded session created by splitting inside it, and drop its
   // tree.
-  const closeTab = useCallback(async (tabId: number) => {
+  const closeTab = useCallback(async (tabId: number, opts?: { force?: boolean }) => {
     const root = tabsRef.current.find((t) => t.tabId === tabId)
     if (!root) return
     // Sessions belonging to this workspace: the root itself + any embedded ones
@@ -2289,6 +2351,22 @@ export default function App() {
           .map((l) => l.tabId)
           .filter((x): x is number => x != null)
       : [tabId]
+    // Ask-before-close guard: an accidental click must not silently discard the
+    // open (possibly unsaved) files owned by the sessions this close tears down.
+    // `force` is set by the confirm handler once the user has agreed.
+    if (!opts?.force && confirmCloseWithFilesRef.current) {
+      const files = editorTabsRef.current.filter((et) => sessionIds.includes(et.sshTabId))
+      if (files.length > 0) {
+        setPendingClose({
+          kind: 'tab',
+          rootId: tabId,
+          label: root.connectionName,
+          fileCount: files.length,
+          dirtyKeys: files.filter((f) => f.isDirty).map((f) => f.key),
+        })
+        return
+      }
+    }
     for (const sid of sessionIds) {
       const s = tabsRef.current.find((t) => t.tabId === sid)
       if (s?.tabType === 'terminal') {
@@ -2770,7 +2848,7 @@ export default function App() {
   // than tearing down the whole workspace. Only when the last pane is closed
   // does the whole workspace close.
   const closePane = useCallback(
-    (leafId: string) => {
+    (leafId: string, opts?: { force?: boolean }) => {
       const disconnectTab = (id: number) => {
         const tab = tabsRef.current.find((t) => t.tabId === id)
         if (tab?.tabType === 'terminal') {
@@ -2795,15 +2873,42 @@ export default function App() {
       if (rootId == null) return
       const prevTree = splitTreesRef.current[rootId]
       const removed = removeLeafById(prevTree, leafId, newLeafId)
+      const isLastPane =
+        !removed || collectLeaves(pruneEmptyLeaves(removed, newLeafId)).length === 0
+      // Ask-before-close guard: closing this pane discards the open files of its
+      // session — or, when it is the last pane, of the whole workspace (the close
+      // then falls through to `closeTab`). Confirm first unless already agreed.
+      if (!opts?.force && confirmCloseWithFilesRef.current) {
+        const ids = isLastPane
+          ? collectLeaves(prevTree)
+              .map((l) => l.tabId)
+              .filter((x): x is number => x != null)
+          : closedTabId != null
+            ? [closedTabId]
+            : []
+        const files = editorTabsRef.current.filter((et) => ids.includes(et.sshTabId))
+        if (files.length > 0) {
+          const rootTab = tabsRef.current.find((t) => t.tabId === rootId)
+          setPendingClose({
+            kind: 'pane',
+            leafId,
+            rootId,
+            label: rootTab?.connectionName ?? '',
+            fileCount: files.length,
+            dirtyKeys: files.filter((f) => f.isDirty).map((f) => f.key),
+          })
+          return
+        }
+      }
       if (!removed) {
         // The closed pane was the last one in the workspace -> close it fully.
-        closeTab(rootId)
+        closeTab(rootId, { force: true })
         return
       }
       const nt = pruneEmptyLeaves(removed, newLeafId)
       const remainingLeaves = collectLeaves(nt)
       if (remainingLeaves.length === 0) {
-        closeTab(rootId)
+        closeTab(rootId, { force: true })
         return
       }
       // Tear down only the closed session's tab.
@@ -2840,6 +2945,38 @@ export default function App() {
     },
     [newLeafId, closeTab],
   )
+
+  // ---- Ask-before-close confirm handlers ------------------------------------
+  /** Run the close the user just approved (bypasses the guard). */
+  const performPendingClose = useCallback(
+    (req: PendingTerminalClose) => {
+      if (req.kind === 'pane' && req.leafId) closePane(req.leafId, { force: true })
+      else void closeTab(req.rootId, { force: true })
+    },
+    [closePane, closeTab],
+  )
+
+  /** Discard the open files (without saving) and close. */
+  const confirmPendingCloseDiscard = useCallback(() => {
+    const req = pendingClose
+    setPendingClose(null)
+    if (req) performPendingClose(req)
+  }, [pendingClose, performPendingClose])
+
+  /** Save every dirty file first, then close. Aborts (no close) if a save fails,
+   *  so an edit the backend rejected is never silently lost. */
+  const confirmPendingCloseSave = useCallback(async () => {
+    const req = pendingClose
+    setPendingClose(null)
+    if (!req) return
+    for (const key of req.dirtyKeys) {
+      const ok = await handleSaveEditorTab(key)
+      if (!ok) return
+    }
+    performPendingClose(req)
+  }, [pendingClose, handleSaveEditorTab, performPendingClose])
+
+  const cancelPendingClose = useCallback(() => setPendingClose(null), [])
 
   // ===== Floating (pop-out) panes =====
   // Floated panes are removed from the split-tree layout (their leaf is pruned)
@@ -4168,6 +4305,11 @@ export default function App() {
                   <HighlightSettingsCard cfg={hlCfg} onSave={saveHlCfg} />
 
                   <PasteGuardSettingsCard cfg={pasteGuardCfg} onSave={savePasteGuardCfg} />
+
+                  <CloseGuardSettingsCard
+                    enabled={confirmCloseWithFiles}
+                    onToggle={saveConfirmCloseWithFiles}
+                  />
 
                   <div className="settings-card">
                     <div className="settings-card-header">
@@ -6712,6 +6854,40 @@ export default function App() {
           onSave={() => void confirmCloseSave()}
           onConfirm={confirmCloseDiscard}
           onCancel={confirmCloseCancel}
+        />
+      )}
+
+      {/* Ask before closing a terminal / pane that still has open files */}
+      {pendingClose && (
+        <ConfirmDialog
+          title={
+            pendingClose.dirtyKeys.length > 0
+              ? t('unsavedChanges')
+              : t('closeTerminalWithFilesTitle')
+          }
+          message={
+            pendingClose.dirtyKeys.length > 0
+              ? t('closeTerminalDirtyMessage', {
+                  name: pendingClose.label,
+                  count: pendingClose.fileCount,
+                })
+              : t('closeTerminalWithFilesMessage', {
+                  name: pendingClose.label,
+                  count: pendingClose.fileCount,
+                })
+          }
+          saveLabel={pendingClose.dirtyKeys.length > 0 ? t('saveAllAndClose') : undefined}
+          onSave={
+            pendingClose.dirtyKeys.length > 0 ? () => void confirmPendingCloseSave() : undefined
+          }
+          confirmLabel={
+            pendingClose.dirtyKeys.length > 0
+              ? t('discardAllAndClose')
+              : t('closeFilesAndTerminal')
+          }
+          danger
+          onConfirm={confirmPendingCloseDiscard}
+          onCancel={cancelPendingClose}
         />
       )}
 

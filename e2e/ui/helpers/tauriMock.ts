@@ -42,6 +42,10 @@ export interface TauriMockOptions {
    * Provide a full `AiConfig` (with at least one profile) to exercise the AI dock.
    */
   aiConfig?: Record<string, unknown>
+  /** Value returned by `list_files` (the file panel's directory listing). */
+  fileEntries?: unknown[]
+  /** Value returned by `read_file_content` (opening a file in the editor). */
+  fileContent?: Record<string, unknown>
 }
 
 /**
@@ -169,6 +173,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return []
           case 'list_command_snippets':
             return opts.commandSnippets ?? []
+          case 'list_files':
+            return opts.fileEntries ?? []
+          case 'read_file_content':
+            return opts.fileContent ?? null
           case 'get_recording_enabled':
             return true
           case 'get_auto_record':

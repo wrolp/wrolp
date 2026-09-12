@@ -236,6 +236,22 @@ const en = {
   saveAndClose: 'Save & Close',
   discardAndClose: "Don't Save",
 
+  // Ask-before-close guard (closing a terminal / pane that still has open files)
+  closeTerminalWithFilesTitle: 'Close terminal with open files?',
+  closeTerminalWithFilesMessage:
+    '“{name}” still has {count} open file(s). Closing the terminal will discard them.',
+  closeTerminalDirtyMessage:
+    '“{name}” has {count} open file(s) with unsaved changes. Closing the terminal will discard them.',
+  saveAllAndClose: 'Save all & close',
+  discardAllAndClose: 'Close without saving',
+  closeFilesAndTerminal: 'Close files & terminal',
+  closeGuardTitle: 'Confirm before closing a terminal with open files',
+  closeGuardDesc:
+    'Closing a terminal tab or split pane that still has files open asks for confirmation first, so an accidental click cannot silently discard them.',
+  closeGuardEnable: 'Ask before closing a terminal with open files',
+  closeGuardHint:
+    'When off, closing a terminal or pane immediately discards its open files (unsaved edits included).',
+
   // Settings: general
   settingsGeneral: 'General',
   settingsAi: 'AI',

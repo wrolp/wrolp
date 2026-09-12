@@ -1729,6 +1729,10 @@ body.resize-v * {
     flex-shrink: 0;
     width: 18px;
     height: 18px;
+    // Extra gap from the file tabs that follow it: the pane-close ✕ and a file
+    // tab's ✕ used to sit ~2px apart, so "close this file" easily became "close
+    // the whole terminal". The guard dialog still backs this up (see closeGuard).
+    margin-right: 8px;
     display: flex;
     align-items: center;
     justify-content: center;

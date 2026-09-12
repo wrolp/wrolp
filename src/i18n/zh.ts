@@ -236,6 +236,19 @@ const zh: Partial<Record<TranslationKey, string>> = {
   saveAndClose: '保存并关闭',
   discardAndClose: '不保存',
 
+  // 关闭终端前确认（终端/pane 仍有打开文件时）
+  closeTerminalWithFilesTitle: '终端仍有打开的文件，确认关闭？',
+  closeTerminalWithFilesMessage: '“{name}” 仍有 {count} 个打开的文件，关闭终端会一并丢弃。',
+  closeTerminalDirtyMessage: '“{name}” 有 {count} 个文件未保存，关闭终端会一并丢弃。',
+  saveAllAndClose: '全部保存并关闭',
+  discardAllAndClose: '不保存直接关闭',
+  closeFilesAndTerminal: '关闭文件并关闭终端',
+  closeGuardTitle: '关闭仍有打开文件的终端前确认',
+  closeGuardDesc:
+    '关闭还有文件打开的终端标签或分屏 pane 时先弹确认，避免误点导致文件（含未保存内容）被静默丢弃。',
+  closeGuardEnable: '关闭仍有打开文件的终端时弹确认',
+  closeGuardHint: '关闭后，关闭终端或 pane 会立即丢弃其打开的文件（含未保存内容），不再提示。',
+
   // Settings: general
   settingsGeneral: '通用',
   settingsAi: 'AI',
