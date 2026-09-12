@@ -711,6 +711,12 @@ export default function AiChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pollRef = useRef<number>(0)
   const templatePickerRef = useRef<HTMLDivElement>(null)
+  // Guard against double-firing confirmAndResume.
+  const confirmingRef = useRef(false)
+  // Synchronously track tool IDs the user has already acted on (Allow/Deny).
+  // A stale in-flight poll can deliver a needs-confirmation event *before* React
+  // commits the optimistic state update, so we cannot rely on state.status alone.
+  const confirmedToolIdsRef = useRef<Set<string>>(new Set())
 
   // Pending images selected via the "add image" button (data URLs).
   const [pendingImages, setPendingImages] = useState<string[]>([])
@@ -773,12 +779,31 @@ export default function AiChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingText, toolCalls])
 
-  // Merge incoming tool events into the displayed list (by id, latest status wins)
+  // Merge incoming tool events into the displayed list (by id, latest status wins).
+  // Block stale poll events that revive needs-confirmation after the user has
+  // already clicked Allow/Deny.  We use a **synchronous ref** (not React state)
+  // because state updates are batched: an in-flight poll's mergeToolEvents may
+  // read prev *before* the optimistic confirmAndResume update is committed.
   const mergeToolEvents = useCallback((incoming: ToolCallEvent[]) => {
     if (incoming.length === 0) return
+    const confirmed = confirmedToolIdsRef.current
     setToolCalls((prev) => {
       const byId = new Map(prev.map((t) => [t.id, t]))
-      for (const ev of incoming) byId.set(ev.id, ev)
+      for (const ev of incoming) {
+        // Primary guard: synchronous ref — always reflects the user's click.
+        if (ev.status === 'needs-confirmation' && confirmed.has(ev.id)) continue
+        // Secondary safety net: if state somehow progressed past confirmation,
+        // don't let a stale event revert it.
+        const existing = byId.get(ev.id)
+        if (
+          ev.status === 'needs-confirmation' &&
+          existing &&
+          (existing.status === 'executing' || existing.status === 'denied')
+        ) {
+          continue
+        }
+        byId.set(ev.id, ev)
+      }
       const order = [...prev.map((t) => t.id), ...incoming.map((t) => t.id)]
       const seen = new Set<string>()
       const ordered: ToolCallEvent[] = []
@@ -882,18 +907,33 @@ export default function AiChatPanel({
   )
 
   // Resume the agent after the user approves/declines a sensitive tool call.
+  // NOTE: One confirm_ai_tool call on the Rust side resolves ALL pending tool
+  // calls at once (the entire AiPendingConfirm batch).  The UI shows one
+  // Allow/Deny bar per card, but clicking ANY of them confirms the whole
+  // batch.  confirmingRef is NOT reset here — it stays true until a brand-new
+  // agent round starts (runAgent), so any extra clicks on sibling cards are
+  // silently ignored instead of hitting "No pending tool confirmation."
   const confirmAndResume = useCallback(
     (approved: boolean) => {
-      if (!chatId) return
+      if (!chatId || confirmingRef.current) return
+      confirmingRef.current = true
       const id = chatId
-      // Optimistically clear the confirmation prompt.
-      setToolCalls((prev) =>
-        prev.map((tc) =>
+      // Kill the stale poll cycle — it may revive needs-confirmation
+      // events from the buffer and overwrite the optimistic update below.
+      if (pollRef.current) clearTimeout(pollRef.current)
+      // Synchronously record which tool IDs the user is acting on, so that
+      // any in-flight poll delivering a stale needs-confirmation event will
+      // be blocked (React state updates are batched / async).
+      setToolCalls((prev) => {
+        for (const tc of prev) {
+          if (tc.status === 'needs-confirmation') confirmedToolIdsRef.current.add(tc.id)
+        }
+        return prev.map((tc) =>
           tc.status === 'needs-confirmation'
             ? { ...tc, status: approved ? 'executing' : 'denied' }
             : tc,
-        ),
-      )
+        )
+      })
       confirmAiTool(id, approved, chatMode, maxAgentRounds)
         .then(() => startPolling(id))
         .catch((e) => setError(String(e)))
@@ -906,6 +946,9 @@ export default function AiChatPanel({
       setShowSuggestions(false)
       setStreaming(true)
       setStreamingText('')
+      // Reset per-run confirmation tracking.
+      confirmedToolIdsRef.current.clear()
+      confirmingRef.current = false
       // NOTE: tool calls from previous turns are intentionally NOT cleared here
       // — they belong to their own conversation turns and are kept alongside
       // the messages. Clearing only happens on "clear conversation" or when
@@ -2259,13 +2302,27 @@ function ToolCallCard({
   let summary = meta.label
   try {
     const args = JSON.parse(tool.arguments || '{}')
-    const parts = Object.entries(args)
-      .filter(([k]) => k !== 'tabId')
-      .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
-    if (parts.length) summary += ` · ${parts.join(', ')}`
-    else if (args.tabId !== undefined) summary += ` · tab ${args.tabId}`
+    const entries = Object.entries(args).filter(([k]) => k !== 'tabId')
+    // For bulk-setting tools, show key count instead of dumping every pair
+    // (set_ui_settings with 20+ highlight + terminal keys would overflow).
+    const isBulkSet = tool.name === 'set_ui_settings' || tool.name === 'reset_ui_settings'
+    if (isBulkSet && entries.length > 3) {
+      const changes = args.changes
+      const count = changes ? Object.keys(changes as Record<string, unknown>).length : entries.length
+      summary += ` · ${count} keys`
+    } else if (entries.length) {
+      const parts = entries.map(
+        ([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`,
+      )
+      const joined = parts.join(', ')
+      // Truncate at 80 chars so the ellipsis in .ai-tool-name kicks in
+      // before the summary eats the entire tool-head row.
+      summary += ` · ${joined.length > 80 ? joined.slice(0, 77) + '…' : joined}`
+    } else if (args.tabId !== undefined) {
+      summary += ` · tab ${args.tabId}`
+    }
   } catch {
-    if (tool.arguments) summary += ` · ${tool.arguments}`
+    if (tool.arguments) summary += ` · ${tool.arguments.slice(0, 80)}`
   }
 
   return (

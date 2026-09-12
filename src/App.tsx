@@ -6588,7 +6588,15 @@ export default function App() {
                 </div>
                 {/* Standalone AI Chat tab (full screen) */}
                 {activeProfile && aiChatActive && activeTerminalTab && (
-                  <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      minHeight: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                  >
                     <AiChatPanel
                       tabId={activeTerminalTab.tabId}
                       isLocal={connFlagsForType(activeTerminalTab.tabType).isLocal}
@@ -6759,7 +6767,15 @@ export default function App() {
                       ⤡ Dock
                     </button>
                   </div>
-                  <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      minHeight: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}
+                  >
                     <AiChatPanel
                       tabId={aiFloatingTabId}
                       isLocal={
