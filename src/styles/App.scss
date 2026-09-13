@@ -1542,6 +1542,16 @@ body.resize-v * {
       padding: 4px 0;
     }
 
+    // Tail room so the last row can be scrolled up to the top of the viewport —
+    // the hex viewer's counterpart to Monaco's `scrollBeyondLastLine`. The target
+    // is "one viewport, minus the row already showing", measured in client
+    // coordinates; `100%` resolves to the content box, so this container's 4px
+    // padding — `padding: 4px 0` above — has to be added back, and `1lh` is the
+    // height of one `.hex-row` (a single line box).
+    .hex-tail {
+      height: calc(100% - 1lh + 4px);
+    }
+
     .hex-row:hover {
       background: rgba(255, 255, 255, 0.04);
     }

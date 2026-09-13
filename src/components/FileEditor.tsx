@@ -99,7 +99,10 @@ export function FileEditor({
       automaticLayout: true,
       fontSize: 13,
       minimap: { enabled: showMinimap },
-      scrollBeyondLastLine: false,
+      // One viewport of spare room below the last line, so the tail of the file can
+      // be scrolled up to the top of the viewport (Monaco otherwise pins the last
+      // line to the bottom edge).
+      scrollBeyondLastLine: true,
       scrollbar: {
         verticalScrollbarSize: 4,
         horizontalScrollbarSize: 4,

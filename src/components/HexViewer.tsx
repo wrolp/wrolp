@@ -95,7 +95,12 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
         <span className="hex-bytes">Hex bytes</span>
         <span className="hex-ascii">ASCII</span>
       </div>
-      <div className="hex-body">{rows}</div>
+      <div className="hex-body">
+        {rows}
+        {/* Tail room (see `.hex-tail`) so the last rows can be scrolled up to the
+            top of the viewport, matching the code editor's `scrollBeyondLastLine`. */}
+        <div className="hex-tail" aria-hidden="true" />
+      </div>
       {more > 0 && (
         <div className="hex-more">
           <button className="editor-btn" onClick={() => setShownBytes((n) => n + 1_048_576)}>
