@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test'
-import { installTauriMock, emitTauriEvent, invokedCommands } from './helpers/tauriMock'
+import {
+  installTauriMock,
+  emitTauriEvent,
+  invokedCalls,
+  invokedCommands,
+} from './helpers/tauriMock'
 
 // Terminal connect flow with a stubbed backend: clicking a connection opens a
 // workspace tab whose Terminal component drives `connect` then polls
@@ -121,6 +126,41 @@ test('the docked AI pane has a gap and a border against the terminal', async ({ 
 
   // …and the shared edge carries a visible border.
   expect(await dock.evaluate((el) => getComputedStyle(el).borderLeftWidth)).toBe('1px')
+})
+
+// Regression: the hidden `pwd` query is injected into the interactive shell, and
+// the Enter handler runs BEFORE the user's own `\r` is written to the pty — so a
+// query sent inline turned `ls` + `echo …` into `lsecho …` (and `cd /` +
+// `echo …` into "cd: too many arguments"). The query must land AFTER the newline.
+test('the hidden pwd query is never sent before the submitted newline', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    // The shell has already echoed a submitted `ls` line (the buffer ends in a
+    // prompt + command), so Enter drives the command-processing path.
+    pollOutputChunks: [['root@demo:~$ ls']],
+  })
+  await page.goto('/')
+  await page.locator('.connection-item').click()
+  await expect(page.locator('.tab-item')).toContainText('Demo')
+
+  const ta = page.locator('.xterm-helper-textarea')
+  await expect(ta).toBeAttached()
+  // Let the poll loop drain the prompt into the buffer, then submit.
+  await page.waitForTimeout(400)
+  await ta.focus()
+  await page.keyboard.press('Enter')
+
+  await expect
+    .poll(async () => {
+      const sent = (await invokedCalls(page))
+        .filter((c) => c.cmd === 'send_input')
+        .map((c) => String(c.args.data))
+      const query = sent.findIndex((d) => d.includes('__WROLP_CWD_BEG_'))
+      const newline = sent.indexOf('\r')
+      if (query < 0 || newline < 0) return 'pending'
+      return query > newline ? 'after' : 'before'
+    })
+    .toBe('after')
 })
 
 test('connection-closed event stops the output polling loop', async ({ page }) => {

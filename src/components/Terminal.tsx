@@ -250,7 +250,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         resolve(null)
       }, 4000)
       cwdQueryPendingRef.current = { resolve, timer }
-      sendInput(tabIdRef.current, `echo "${beg}$(pwd)${end}"\r`)
+      // Defer the injection by one macrotask. Callers run inside onData's Enter
+      // handler, i.e. BEFORE the user's own `\r` is written to the pty; sending
+      // now would put the query ahead of that newline in the input stream, so the
+      // shell would run `ls` + `echo …` as a single line (`lsecho …` — and `cd /`
+      // + `echo …` as a `cd` with too many arguments). A macrotask lets the
+      // newline go first, so the query lands as its own line at the next prompt.
+      setTimeout(() => sendInput(tabIdRef.current, `echo "${beg}$(pwd)${end}"\r`), 0)
     })
   }
   // Seed the best-known remote cwd right after connecting: a configured startup
@@ -860,17 +866,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // a directory keeps working after the shell has `cd`'d elsewhere. On
           // failure this resolves null and links fall back to relative paths
           // (`cd -- 'x'`) resolved by the nested shell.
-          if (nested) {
-            // The query is injected into the interactive shell via sendInput —
-            // but this handler runs synchronously BEFORE the user's own `\r` is
-            // dispatched (sendInput(data) at the end of onData), so sending now
-            // would splice the query into the user's input line (`ls` + `echo …`
-            // → `lsecho …`). Defer one macrotask so the newline goes out first
-            // and the query lands as its own line at the next prompt.
-            return new Promise<string | null>((resolve) => {
-              setTimeout(() => resolve(fetchRemoteCwd()), 0)
-            })
-          }
+          // `fetchRemoteCwd` itself defers the injection by a macrotask, so it
+          // can never splice into the command line the user just submitted.
+          if (nested) return fetchRemoteCwd()
           if (cwdRef.current) return cwdRef.current
           const real = await fetchRemoteCwd()
           if (real) {
