@@ -31,6 +31,7 @@ const en = {
   no: 'No',
   search: 'Search',
   clear: 'Clear',
+  clearInputLine: 'Clear input',
   refresh: 'Refresh',
 
   // Titlebar

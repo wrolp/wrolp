@@ -67,6 +67,46 @@ export function xtermTheme(theme: ResolvedTheme): ITheme {
   return theme === 'light' ? LIGHT_XTERM_THEME : DARK_XTERM_THEME
 }
 
+/** Theme keys in SGR order: indices 0–7, then the bright 8–15. */
+const SGR_COLOR_KEYS = [
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'brightBlack',
+  'brightRed',
+  'brightGreen',
+  'brightYellow',
+  'brightBlue',
+  'brightMagenta',
+  'brightCyan',
+  'brightWhite',
+] as const
+
+/**
+ * The SGR-addressable colours of a terminal theme, for callers that reason about
+ * colour *values* outside CSS (a renderer can't — see terminal/sgrContrast.ts).
+ * Pass the live theme (`term.options.theme`) so a palette switch is picked up.
+ */
+export interface AnsiThemeColors {
+  /** Hex colours for SGR indices 0–15, in SGR order (index 0 = `black`). */
+  colors: Array<string | undefined>
+  /** Default foreground — SGR 39, or a cell with no foreground set. */
+  foreground: string
+}
+
+export function ansiThemeColors(theme: ITheme | undefined): AnsiThemeColors {
+  const t = theme ?? DARK_XTERM_THEME
+  return {
+    colors: SGR_COLOR_KEYS.map((key) => t[key]),
+    foreground: t.foreground ?? '#ffffff',
+  }
+}
+
 /**
  * Monaco theme id. `'vs'` / `'vs-dark'` are Monaco's built-in light/dark themes —
  * sufficient here, and they keep the editor's syntax colours consistent with the

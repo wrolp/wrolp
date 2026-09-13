@@ -242,6 +242,24 @@ export function getInputLineAtCursorEnd(
   return { prompt, command }
 }
 
+// The command text the user has typed on the current input line but not yet
+// submitted — `null` when the caret is not on a live shell command line (program
+// output, a pager prompt, or a full-screen TUI). Unlike `getInputLineAtCursorEnd`
+// the caret may sit anywhere within the line, not only at its end.
+export function getPendingInputText(term: Terminal): string | null {
+  const rawLine = getCurrentCommandLine(term)
+  if (!rawLine) return null
+  const plain = stripAnsi(rawLine)
+  // Full-screen programs (vi/nano/less/tmux/…) manage their own screen.
+  if (term.buffer.active.type === 'alternate') return null
+  // A pager prompt (`---- More ----`) is device output, not a typed command.
+  if (isPagerPrompt(plain)) return null
+  const { prompt, command } = splitPromptCommand(plain)
+  // No prompt marker — this is program output, not a shell command line.
+  if (!prompt) return null
+  return command
+}
+
 // Capture commands submitted by the user. A single Enter commits the current
 // terminal-buffer line (which holds tab-completed text); a multi-line paste
 // commits each pasted line directly.

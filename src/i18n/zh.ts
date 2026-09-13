@@ -33,6 +33,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   no: '否',
   search: '搜索',
   clear: '清屏',
+  clearInputLine: '清空输入',
   refresh: '刷新',
 
   // Titlebar

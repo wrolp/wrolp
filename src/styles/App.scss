@@ -3103,6 +3103,16 @@ input[type='password']::-ms-clear {
       background: #094771;
     }
 
+    // Unavailable action (e.g. "Clear input" with an empty input line).
+    &.disabled {
+      opacity: 0.45;
+      cursor: default;
+
+      &:hover {
+        background: none;
+      }
+    }
+
     &.ctx-danger {
       color: #f06b6b;
 

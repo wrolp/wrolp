@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import type { ILink } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
-import { xtermTheme } from '../lib/theme'
+import { ansiThemeColors, xtermTheme } from '../lib/theme'
 import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
 import { getTerminalAppearance, subscribeAppSettings } from '../lib/appSettings'
 import { listen } from '@tauri-apps/api/event'
@@ -91,11 +91,13 @@ import {
 } from './terminal/lsCapture'
 import type { LsCaptureState, LsClickableEntry } from './terminal/lsCapture'
 import { resolveLsEntryPath } from './terminal/lsCapture'
+import { fixLowContrastSgr } from './terminal/sgrContrast'
 import {
   getCurrentCommandLine,
   splitPromptCommand,
   highlightCurrentCommandLine,
   getInputLineAtCursorEnd,
+  getPendingInputText,
   commitSubmittedCommands,
   isPagerPrompt,
 } from './terminal/promptLine'
@@ -301,7 +303,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Guards sendResize until the backend shell is registered (otherwise ResizeObserver
   // fires before openLocalShell resolves, producing "local_resize: Local shell not found").
   const connectedRef = useRef(false)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  // `pending` snapshots how much text sits on the shell's input line when the
+  // menu opens, so "Clear input" can be disabled when there is nothing to clear.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; pending: string } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement | null>(null)
   // Clickable hover card shown over a clickable `ls`/`dir` entry, like VSCode's
   // terminal link tooltip ("Enter folder" / "Open file" + modifier hint). The
@@ -1070,6 +1074,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // Strip our hidden `pwd` query (the echoed command + its result) so the
     // terminal never shows it; the resolved cwd is captured separately.
     chunk = stripCwdQuery(chunk)
+    // dircolors paints world-writable dirs blue-on-green (34;42), which is
+    // unreadable on the themed palettes — keep the background, fix the
+    // foreground. See ./terminal/sgrContrast.ts for the (deliberately narrow)
+    // scope; other SGR bytes stay untouched.
+    chunk = fixLowContrastSgr(chunk, ansiThemeColors(term.options.theme))
     const ai = aiMarkRef.current
     if (ai) {
       writeAiChunk(ai, chunk)
@@ -1357,6 +1366,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // both the UI theme and the "terminal palette" setting. The subscription
       // registered below re-applies it whenever either changes.
       theme: xtermTheme(getTerminalTheme()),
+      // Left at 1 on purpose: this option rewrites *every* low-contrast cell,
+      // which would override the themed palette and our injected 24-bit
+      // highlight colours. Unreadable dircolors pairs are handled narrowly in
+      // ./terminal/sgrContrast.ts instead.
       minimumContrastRatio: 1,
       allowProposedApi: true,
     })
@@ -1865,7 +1878,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      setCtxMenu({ x: e.clientX, y: e.clientY })
+      const term = termRef.current
+      setCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        pending: term ? (getPendingInputText(term) ?? '') : '',
+      })
     }
     containerRef.current.addEventListener('contextmenu', handleContextMenu)
 
@@ -2832,6 +2850,26 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     resetTableCapture()
   }, [])
 
+  // Erase whatever the user has typed on the shell's current input line without
+  // submitting it. The shell owns that line, so we drive its line editor:
+  // Ctrl+A (start of line) + Ctrl+K (kill to end) — correct even when the caret
+  // sits mid-line, and understood by readline (bash/zsh), PSReadLine and Cisco
+  // IOS. cmd.exe has no readline-style editor, where Esc clears the line.
+  const handleClearInput = useCallback(() => {
+    setCtxMenu(null)
+    const term = termRef.current
+    if (!term) return
+    term.focus()
+    const sessionKind: SessionKind = isSerial
+      ? 'serial'
+      : isTelnet
+        ? 'telnet'
+        : isLocal
+          ? 'local'
+          : 'ssh'
+    sendRawToSession(isPosixSession(sessionKind, localShellType) ? '\x01\x0b' : '\x1b')
+  }, [isLocal, isSerial, isTelnet, localShellType, sendRawToSession])
+
   const handleAskAi = useCallback(() => {
     setCtxMenu(null)
     const term = termRef.current
@@ -2975,6 +3013,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           </div>
           <div className="context-menu-item" onClick={handlePaste}>
             <Icon name="paste" /> {t('paste')}
+          </div>
+          <div
+            className={'context-menu-item' + (ctxMenu.pending ? '' : ' disabled')}
+            onClick={ctxMenu.pending ? handleClearInput : undefined}
+            title={t('clearInputLine')}
+          >
+            ⌫ {t('clearInputLine')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleSelectAll}>
