@@ -182,9 +182,22 @@ test('param and option rows are each drawn as a bordered card', async ({ page })
       id: 'b1',
       command: 'tool --env=${env} ${image}',
       params: [
-        { name: 'image', type: 'text', defaultValue: 'x', options: [], defaultEnabled: true },
+        {
+          name: 'image',
+          type: 'select',
+          defaultValue: 'x',
+          options: ['a', 'b'],
+          defaultEnabled: true,
+        },
       ],
-      options: [{ id: 'o1', text: '--env=${env}', defaultEnabled: true }],
+      options: [
+        {
+          id: 'o1',
+          text: '--env=${env}',
+          value: { type: 'text', options: [], defaultValue: '' },
+          defaultEnabled: true,
+        },
+      ],
     }),
   ])
   await page.locator('.cmd-list-item').click({ button: 'right' })
@@ -199,6 +212,34 @@ test('param and option rows are each drawn as a bordered card', async ({ page })
       .evaluate((el) => getComputedStyle(el).borderTopWidth)
   expect(await borderOf('.snip-param-row')).toBe('1px')
   expect(await borderOf('.snip-option-row')).toBe('1px')
+
+  // The long placeholder hints must fit their field, not be clipped: measure the
+  // placeholder text and compare with the input's inner width.
+  const fitsHint = (sel: string) =>
+    editor
+      .locator(sel)
+      .first()
+      .evaluate((el) => {
+        const input = el as HTMLInputElement
+        const cs = getComputedStyle(input)
+        const ctx = document.createElement('canvas').getContext('2d')!
+        ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`
+        // Both sides are text-only widths (clientWidth already includes padding).
+        const need = ctx.measureText(input.placeholder).width
+        const have = input.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+        return { need: Math.round(need), have: Math.round(have) }
+      })
+  for (const sel of ['.snip-param-options', '.snip-param-desc', '.snip-exclusive']) {
+    const { need, have } = await fitsHint(sel)
+    expect(need, `${sel} placeholder`).toBeLessThanOrEqual(have)
+  }
+
+  // The "space-separated" toggle's label must not be squeezed to one letter.
+  const sepText = await editor
+    .locator('.snip-opt-sep-text')
+    .first()
+    .evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }))
+  expect(sepText.scroll).toBeLessThanOrEqual(sepText.client + 1)
 })
 
 // Regression: the floating panel is moved with a CSS `transform` (drag/resize

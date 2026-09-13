@@ -1606,6 +1606,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           />
                         )}
                         <input
+                          className="snip-param-desc"
                           value={p.description}
                           onChange={(e) => updateParam(idx, { description: e.target.value })}
                           placeholder={t('snippetParamDescription')}
@@ -1665,6 +1666,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           spellCheck={false}
                         />
                         <input
+                          className="snip-option-label"
                           value={o.label}
                           onChange={(e) => updateOption(idx, { label: e.target.value })}
                           placeholder={t('snippetOptionLabel')}
@@ -1709,7 +1711,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                                 changeOptionSeparator(idx, e.target.checked ? ' ' : '=')
                               }
                             />
-                            {t('snippetOptionSpaceSeparated')}
+                            <span className="snip-opt-sep-text">
+                              {t('snippetOptionSpaceSeparated')}
+                            </span>
                           </label>
                         )}
                         <input
