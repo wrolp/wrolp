@@ -163,15 +163,18 @@ test('groups snippets by connection and filters to the active connection', async
     baseSnippet({ id: 'g3', command: 'echo other', connectionId: 'c2' }),
   ])
 
-  // Filter is ON by default with an active connection: general + Demo only.
+  // Filter is ON by default with an active connection: Demo + general only.
+  // Connection groups come first, the general bucket is drawn last.
   await expect(page.locator('.cmd-list-section')).toHaveCount(2)
-  await expect(page.locator('.cmd-list-section-title')).toHaveText(['General', 'Demo'])
+  await expect(page.locator('.cmd-list-section-title')).toHaveText(['Demo', 'General'])
   await expect(page.locator('.cmd-list-item')).toHaveCount(2)
 
-  // Turning the filter off reveals the other connection's group.
+  // Turning the filter off reveals the other connection's group (still before
+  // the trailing general bucket).
   await page.getByText('This connection only').click()
   await expect(page.locator('.cmd-list-section')).toHaveCount(3)
   await expect(page.locator('.cmd-list-item')).toHaveCount(3)
+  await expect(page.locator('.cmd-list-section-title').last()).toHaveText('General')
 })
 
 // Each param/option is drawn as its own bordered card, so one entry's inputs

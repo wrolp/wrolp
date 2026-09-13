@@ -693,13 +693,11 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       ? filtered.filter((s) => !s.connectionId || s.connectionId === activeConnectionId)
       : filtered
 
-  // Group by connection: general first, then configured connections, then any
-  // dangling connection ids (deleted connections). Empty groups are hidden.
+  // Group by connection: configured connections first, then any dangling
+  // connection ids (deleted connections), and the general bucket last — most
+  // snippets are connection-scoped, so unfiled ones must not push them down.
+  // Empty groups are hidden.
   const groups: Array<{ id: string; title: string; items: CommandSnippetDto[] }> = []
-  const generalItems = scoped.filter((s) => !s.connectionId)
-  if (generalItems.length > 0) {
-    groups.push({ id: '__general__', title: t('snippetGroupGeneral'), items: generalItems })
-  }
   const knownConnIds = new Set(connections.map((c) => c.id))
   for (const c of connections) {
     const items = scoped.filter((s) => s.connectionId === c.id)
@@ -717,6 +715,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const unknownItems = scoped.filter((s) => s.connectionId && !knownConnIds.has(s.connectionId))
   if (unknownItems.length > 0) {
     groups.push({ id: '__unknown__', title: t('snippetGroupUnknown'), items: unknownItems })
+  }
+  const generalItems = scoped.filter((s) => !s.connectionId)
+  if (generalItems.length > 0) {
+    groups.push({ id: '__general__', title: t('snippetGroupGeneral'), items: generalItems })
   }
 
   const toggleGroup = (id: string) => {
