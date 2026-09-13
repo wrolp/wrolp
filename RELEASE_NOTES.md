@@ -4,6 +4,51 @@
 
 ---
 
+## v0.0.8 — 2026-09-13
+
+Adds a light theme with a decoupled terminal palette, configurable terminal output highlighting, multi-line paste protection, WSL local terminals and an AI appearance bridge — plus a long list of terminal rendering and SSH stability fixes.
+
+### Features
+
+- **Light theme** — dark / light / follow system for the whole UI, applied instantly without a restart: every colour now comes from a CSS-variable token, and the window stays opaque in light mode (translucency over a light desktop looks dirty)
+- **Terminal palette decoupled from the UI theme** — "follow interface theme / always dark / always light", so a dark terminal can live under a light UI
+- **Terminal output highlighting** — 18 categories (IPv4/IPv6 with CIDR, MAC, UUID, URL, email, number, version, date, time, port, path, hash, error / warning / info / success keywords, TCP states, `$VAR` names) are colourised as output streams in; four built-in schemes (Default, Nord, Solarized, Pastel) plus per-category colours, with any edit switching the scheme to "Custom"
+- **Multi-line paste protection** — bracketed paste where the remote supports it, otherwise a dialog asks whether to insert without executing, execute line by line, or cancel; configurable threshold, optional trailing `\` continuation for POSIX shells, and an "always ask / never execute / always execute" mode; serial sessions discard multi-line pastes with a hint, and command snippets now share the same pipeline as Ctrl+V
+- **WSL local terminals** — pick a WSL distribution from a dropdown (or leave it as default) and the file panel browses that distribution's filesystem instead of the Windows one; the current directory can be pinned as the entry's startup directory
+- **Confirm before closing a terminal with open files** — closing a pane or tab that still has open editors asks first, offering save all / discard all / cancel when something is unsaved; can be turned off in Settings
+- **Clear input** — a new terminal context-menu action that erases the shell's current input line (Ctrl+A + Ctrl+K) without submitting it, disabled while the line is empty
+- **AI appearance bridge** — the assistant can read and change display settings through `get_ui_settings` / `set_ui_settings` / `reset_ui_settings`: theme, terminal font and cursor, highlight scheme and colours, language. Settings gains a master switch, a per-category whitelist, "ask before applying" and an undo history of the last 20 changes. Credentials, API keys and the data directory stay out of reach, and font changes apply to open terminals immediately
+- **Command snippets: parameters, options and connection scope** — snippets can declare parameters and options (value slots with defaults, `=` or space separators, mutually exclusive option groups) and be scoped to a connection; the "General" group now sorts last
+- **Wheel scrolling for pane file tabs** — the pane's file/log tab strip scrolls horizontally with the wheel and no longer shows a raw scrollbar
+
+### Fixes
+
+- SSH sessions no longer freeze permanently with keys unresponsive: the PTY channel's bounded inbound queue had no consumer, so its read half is now drained by a background task; the keepalive probe also moved out of the input path and russh's native keepalive is back
+- Wrapped command lines no longer erase the previous line or leave stray characters — wrapped input lines are no longer redrawn in place (readline owns that); only single-line input is recoloured
+- The second "send straight to terminal" click no longer loses the ` && ` it just typed — the input line is recoloured from xterm's write-completion callback instead of reading a stale buffer
+- A stale empty remembered option value no longer shadows its declared default
+- `drwxrwxrwx` (other-writable) directories are readable again in the dark theme: low-contrast colour pairs keep their background but get a black or white foreground
+- "Analyze Container" logs no longer print raw ANSI escapes and control bytes (cursor moves, screen clears, OSC titles, bell) in either the coloured or the plain-text path
+- The hidden `pwd` query is no longer sent before the submitted newline — it could merge with a typed command (`lsecho`)
+- Clicking an `ls` entry whose path has since moved now falls back to the current directory
+- Windows drive-switch commands (`D:`) are tracked again
+- `netstat`'s IPv6 wildcard port (`:::<port>`) is no longer mis-coloured as an IPv6 address
+- The AI chat panel is no longer clipped at the right edge by long unbreakable strings
+- Real gaps and borders between the terminal area and docked panels
+- Session playback skips non-output events
+- Recordings are attached to the connection's workspace and group
+- Git Bash is located through the registry when it is not on `PATH`, and start-up fails loudly instead of silently
+- Command snippet editor fields no longer clip their hints, and allowed-value lists are edited in a textarea
+
+### Internal
+
+- Introduced a generic command-driven filesystem (`CmdFs`) shared by the Docker and WSL backends
+- Playwright end-to-end suite grown to 88 cases (theme, paste guard, contrast, highlighting, close guard, AI appearance, WSL, command snippets), plus a self-check script for the paste-guard logic
+- Updated Rust and JS dependencies; hardened the redirect guard, timer cleanup and SFTP lifecycle
+- Added a Chinese translation of these release notes
+
+---
+
 ## v0.0.7 — 2026-09-07
 
 Adds serial (COM) and Telnet sessions, built-in FTP/HTTP/TFTP file tools, a relocatable data directory, and file-based session recordings — plus a round of AI and terminal polish.
