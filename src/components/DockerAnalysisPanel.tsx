@@ -55,7 +55,11 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
     if (targetContainer) {
       runAnalysis()
     }
-  }, [targetContainer, runAnalysis])
+    // Only auto-run when the target container changes — NOT when activeTabId /
+    // onAnalyzed change (which would otherwise re-run analysis on every tab
+    // switch because runAnalysis's identity shifts with its deps).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetContainer])
 
   // Manual re-run
   const handleRefresh = () => runAnalysis()
@@ -83,12 +87,15 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
     }
   }, [logs, logsAutoScroll])
 
-  // Fetch logs when container/tail lines change
+  // Fetch logs when container changes. Deliberately NOT re-firing when
+  // activeTabId / logsTail change — the refresh button and tail control
+  // call fetchLogs() directly for those.
   useEffect(() => {
     if (targetContainer) {
       fetchLogs()
     }
-  }, [targetContainer, fetchLogs])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetContainer])
 
   if (loading) {
     return (

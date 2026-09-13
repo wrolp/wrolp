@@ -383,6 +383,11 @@ pub struct SshHandler {
   /// on the same connection are suppressed. Set on the first channel-open
   /// confirmation (the PTY shell), and never overwritten.
   pub shell_channel_id: Option<russh::ChannelId>,
+  /// Signalled when this connection's SFTP channel closes. Lets the keepalive
+  /// task (which otherwise pins the handle forever, leaking one SSE task + idle
+  /// connection per SFTP session) end as soon as the session is dropped. Only
+  /// set for SFTP-only connections (`is_sftp`).
+  pub sftp_close_notify: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl SshHandler {

@@ -1444,6 +1444,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     const node = renameTarget
     setRenameTarget(null)
     if (!newName || newName === node.name) return
+    // A rename is scoped to the current directory: reject path separators and
+    // `..` so a crafted name can't move the entry out of its parent (which
+    // would also produce a malformed concatenated path downstream).
+    if (/[/\\]/.test(newName) || newName === '..' || newName.startsWith('../')) {
+      setError('Invalid name: cannot contain path separators or ".."')
+      return
+    }
     const parent = getParentDir(node.path)
     try {
       await fsRenameFile(target, node.path, join(parent, newName))

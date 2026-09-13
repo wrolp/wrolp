@@ -141,6 +141,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  // True until cleanup runs. Guards the deferred connect/poll timers from firing
+  // on a disposed xterm instance after the pane closes (they can't all be
+  // tracked by id, so a mount check is the reliable gate).
+  const mountedRef = useRef(true)
   const isActiveRef = useRef(isActive)
   const tabIdRef = useRef(tabId)
   const connectConfigRef = useRef(connectConfig)
@@ -2034,6 +2038,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             // rendered at the correct width — matching what the user sees after a
             // manual window resize.
             setTimeout(() => {
+              if (!mountedRef.current) return
               if (fitRef.current && term.cols > 0 && term.rows > 0) {
                 const prevCols = term.cols
                 const prevRows = term.rows
@@ -2144,6 +2149,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             // Same deferred-fit-then-poll rationale as the local shell path:
             // ensure correct geometry before any output is rendered.
             setTimeout(() => {
+              if (!mountedRef.current) return
               if (fitRef.current && term.cols > 0 && term.rows > 0) {
                 const prevCols = term.cols
                 const prevRows = term.rows
@@ -2198,6 +2204,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     return () => {
       console.log('[Terminal] cleanup, resetting hasRun')
+      mountedRef.current = false
       hasRun.current = false
       connectedRef.current = false
       resetCapture()
@@ -2363,6 +2370,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             // Defer polling + post-connect fit so geometry is correct before
             // any output is rendered.
             setTimeout(() => {
+              if (!mountedRef.current) return
               const fit = fitRef.current
               if (fit && term.cols > 0 && term.rows > 0) {
                 const prevCols = term.cols
@@ -2418,6 +2426,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             setTimeout(() => {
+              if (!mountedRef.current) return
               if (pollTimerRef.current) clearInterval(pollTimerRef.current)
               pollTimerRef.current = setInterval(async () => {
                 if (document.hidden || !connectedRef.current) return
@@ -2461,6 +2470,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             setTimeout(() => {
+              if (!mountedRef.current) return
               if (pollTimerRef.current) clearInterval(pollTimerRef.current)
               pollTimerRef.current = setInterval(async () => {
                 if (document.hidden || !connectedRef.current) return
@@ -2508,6 +2518,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // Defer polling + post-connect fit so geometry is correct before any
           // output is rendered.
           setTimeout(() => {
+            if (!mountedRef.current) return
             const fit = fitRef.current
             if (fit && term.cols > 0 && term.rows > 0) {
               const prevCols = term.cols

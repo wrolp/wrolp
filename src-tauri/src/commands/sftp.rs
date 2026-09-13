@@ -55,6 +55,7 @@ pub async fn poll_working_dir(
       tab_id,
       is_sftp: true,
       shell_channel_id: None,
+      sftp_close_notify: None,
     };
 
     let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)

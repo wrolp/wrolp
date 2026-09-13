@@ -71,6 +71,21 @@ impl Handler for SshHandler {
     }
     Ok(())
   }
+
+  async fn channel_close(
+    &mut self,
+    _channel: ChannelId,
+    _session: &mut russh::client::Session,
+  ) -> Result<(), Self::Error> {
+    // For SFTP-only connections, releasing the session closes the one channel —
+    // signal the keepalive task so it ends instead of pinning the handle forever.
+    if self.is_sftp {
+      if let Some(notify) = &self.sftp_close_notify {
+        notify.notify_one();
+      }
+    }
+    Ok(())
+  }
 }
 // ==================== SSH Connection (russh) ====================
 
@@ -373,6 +388,7 @@ pub async fn connect(
         tab_id: tid,
         is_sftp: false,
         shell_channel_id: None,
+        sftp_close_notify: None,
       };
       // Two layers of keepalive:
       //  1. russh's built-in keepalive (configured just below). It runs inside

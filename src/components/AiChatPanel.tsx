@@ -946,6 +946,12 @@ export default function AiChatPanel({
       setShowSuggestions(false)
       setStreaming(true)
       setStreamingText('')
+      // Kill any still-running poll chain from a previous agent round so a stale
+      // `startPolling` timeout can't finalize/overwrite this new round's output.
+      if (pollRef.current) {
+        clearTimeout(pollRef.current)
+        pollRef.current = 0
+      }
       // Reset per-run confirmation tracking.
       confirmedToolIdsRef.current.clear()
       confirmingRef.current = false

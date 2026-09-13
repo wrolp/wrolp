@@ -1169,16 +1169,27 @@ export default function App() {
   // a fresh SSH connect, and without this the pane would show the host shell.
   const prevStatusesRef = useRef<Record<number, string>>({})
   useEffect(() => {
+    // Track pending post-connect command timers so a closed tab (or a tabs
+    // change mid-delay) cancels them instead of firing into a dead session.
+    const pending = new Map<number, ReturnType<typeof setTimeout>>()
     for (const tab of tabs) {
       const prev = prevStatusesRef.current[tab.tabId]
       if (prev !== 'connected' && tab.status === 'connected') {
         const cmd = tab.postConnectCmd
         if (cmd) {
           // Allow the terminal a moment to settle
-          setTimeout(() => sendInput(tab.tabId, cmd), 300)
+          const t = setTimeout(() => {
+            pending.delete(tab.tabId)
+            sendInput(tab.tabId, cmd)
+          }, 300)
+          pending.set(tab.tabId, t)
         }
       }
       prevStatusesRef.current[tab.tabId] = tab.status
+    }
+    // Clear any still-pending timers before the effect re-runs / unmounts.
+    return () => {
+      for (const t of pending.values()) clearTimeout(t)
     }
   }, [tabs])
 

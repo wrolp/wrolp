@@ -73,7 +73,13 @@ async fn authenticate_handle(
 }
 
 /// Open the SFTP subsystem on an authenticated handle and keep the handle alive.
-async fn sftp_over_handle(handle: Handle<SshHandler>) -> Result<SftpSession, String> {
+/// The keepalive task waits on `sftp_close` — signalled by the connection's
+/// handler when the SFTP channel closes — so it ends as soon as the [`SftpSession`]
+/// is dropped, instead of pinning the handle (and its connection) forever.
+async fn sftp_over_handle(
+  handle: Handle<SshHandler>,
+  sftp_close: Arc<tokio::sync::Notify>,
+) -> Result<SftpSession, String> {
   let channel = handle
     .channel_open_session()
     .await
@@ -97,10 +103,12 @@ async fn sftp_over_handle(handle: Handle<SshHandler>) -> Result<SftpSession, Str
     .await
     .map_err(|e| format!("Failed to start SFTP session: {}", e))?;
 
-  // Keep the SSH handle alive for the SFTP session's lifetime.
+  // Keep the SSH handle alive for the SFTP session's lifetime. Ends when the
+  // SFTP channel closes (session dropped), so a finished session does not leave
+  // a permanently-parked task + idle connection behind.
   tauri::async_runtime::spawn(async move {
     let _h = handle;
-    std::future::pending::<()>().await;
+    sftp_close.notified().await;
   });
 
   Ok(sftp)
@@ -121,11 +129,13 @@ pub async fn open_session_sftp(
   };
 
   let ssh_config = Arc::new(client::Config::default());
+  let sftp_close = Arc::new(tokio::sync::Notify::new());
   let handler = SshHandler {
     app_handle: app.clone(),
     tab_id,
     is_sftp: true,
     shell_channel_id: None,
+    sftp_close_notify: Some(sftp_close.clone()),
   };
   let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
     .await
@@ -144,7 +154,7 @@ pub async fn open_session_sftp(
     .await?;
   }
 
-  sftp_over_handle(handle).await
+  sftp_over_handle(handle, sftp_close).await
 }
 
 /// Establish a nested SSH+SFTP connection through a jump host (ProxyJump).
@@ -173,11 +183,13 @@ pub async fn open_jump_sftp(
   let stream = channel.into_stream();
 
   let ssh_config = Arc::new(client::Config::default());
+  let sftp_close = Arc::new(tokio::sync::Notify::new());
   let handler = SshHandler {
     app_handle: app.clone(),
     tab_id,
     is_sftp: true,
     shell_channel_id: None,
+    sftp_close_notify: Some(sftp_close.clone()),
   };
   let mut handle = client::connect_stream(ssh_config, stream, handler)
     .await
@@ -192,7 +204,7 @@ pub async fn open_jump_sftp(
   )
   .await?;
 
-  sftp_over_handle(handle).await
+  sftp_over_handle(handle, sftp_close).await
 }
 
 /// Clone the shared jump-host session handle for a connected tab.

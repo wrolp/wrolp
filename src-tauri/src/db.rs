@@ -241,7 +241,7 @@ pub fn create_session(
 ) -> Result<(), String> {
   conn
     .execute(
-      "INSERT INTO sessions (id, connection_id, connection_name, tab_id, started_at, workspace_id, group_name) \
+      "INSERT OR IGNORE INTO sessions (id, connection_id, connection_name, tab_id, started_at, workspace_id, group_name) \
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
       params![id, connection_id, connection_name, tab_id, started_at, workspace_id, group_name],
     )

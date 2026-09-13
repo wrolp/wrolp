@@ -127,7 +127,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
 
   // Track active stream so we can stop it on unmount / toggle-off
   const streamIdRef = useRef<string | null>(null)
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ---- detect whether user is scrolled to the bottom ----
   const handleScroll = useCallback(() => {
@@ -198,7 +198,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
       streamIdRef.current = null
     }
     if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current)
+      clearTimeout(pollTimerRef.current)
       pollTimerRef.current = null
     }
 
@@ -208,8 +208,13 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
       const sid = await dockerLogsStreamStart(jumpTabId, containerName, tail)
       streamIdRef.current = sid
 
-      // Start polling — 500ms is fast enough for real-time feel
-      pollTimerRef.current = setInterval(async () => {
+      // Start polling — 500ms is fast enough for real-time feel. A recursive
+      // setTimeout (not setInterval) is used so each tick awaits the previous
+      // fetch: a slow pollDockerLogs can no longer overlap the next one and
+      // deliver out-of-order log chunks.
+      const tick = async () => {
+        // Bail if the stream was stopped / replaced while this tick was queued.
+        if (streamIdRef.current !== sid) return
         try {
           const chunks = await pollDockerLogs(sid)
           if (chunks.length > 0) {
@@ -229,7 +234,12 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
         } catch {
           // ignore poll errors — stream may have ended
         }
-      }, 500)
+        // Reschedule only if this stream is still the active one.
+        if (streamIdRef.current === sid) {
+          pollTimerRef.current = setTimeout(tick, 500)
+        }
+      }
+      pollTimerRef.current = setTimeout(tick, 500)
       // Snap to the bottom once the stream's initial tail is loaded.
       requestAnimationFrame(scrollToBottom)
     } catch (e) {
@@ -246,7 +256,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
       streamIdRef.current = null
     }
     if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current)
+      clearTimeout(pollTimerRef.current)
       pollTimerRef.current = null
     }
   }, [])
@@ -324,7 +334,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
         stopDockerLogsStream(streamIdRef.current).catch(() => {})
       }
       if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current)
+        clearTimeout(pollTimerRef.current)
       }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

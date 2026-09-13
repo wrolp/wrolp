@@ -636,13 +636,43 @@ fn is_dangerous_command(cmd: &str) -> bool {
   DANGEROUS.iter().any(|d| lower.contains(d))
 }
 
+/// True when the command contains a `>` redirection outside of quotes. Covers
+/// `echo x>file`, `cat a>b`, `cmd 2>err` and `>>` (the old `" > "` string test
+/// missed space-less redirects, letting read-only mode write files).
+fn has_unquoted_redirect(cmd: &str) -> bool {
+  let mut quote: Option<char> = None;
+  let mut esc = false;
+  for ch in cmd.chars() {
+    if esc {
+      esc = false;
+      continue;
+    }
+    if ch == '\\' {
+      esc = true;
+      continue;
+    }
+    if let Some(q) = quote {
+      if ch == q {
+        quote = None;
+      }
+      continue;
+    }
+    match ch {
+      '\'' | '"' | '`' => quote = Some(ch),
+      '>' => return true,
+      _ => {}
+    }
+  }
+  false
+}
+
 /// Returns true when the command is a read-only / inspection command that is
 /// safe to run in AI read-only mode. Used to hard-block modifying commands when
 /// the assistant is started in read-only mode (`read_only == true`).
 fn is_readonly_safe_command(cmd: &str) -> bool {
   let c = cmd.trim();
   // File-write redirections are never allowed in read-only mode.
-  if c.contains(">>") || c.contains(" > ") {
+  if has_unquoted_redirect(c) {
     return false;
   }
   // Subcommands that may modify the system even though their base name is
