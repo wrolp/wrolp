@@ -234,7 +234,9 @@ body.resize-v * {
 }
 
 .workspace-chevron {
-  font-size: 10px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
   color: $text-dim;
   transition: transform 0.15s;
 

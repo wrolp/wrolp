@@ -78,17 +78,18 @@ export const WorkspaceSelector: React.FC<Props> = ({
         onClick={() => setOpen(!open)}
         title="Switch workspace"
       >
-        <span className="workspace-icon"><Icon name="folder" size={15} /></span>
+        <span className="workspace-icon">
+          <Icon name="folder" size={15} />
+        </span>
         <span className="workspace-name">{activeName}</span>
-        <span className={`workspace-chevron ${open ? 'open' : ''}`}>&#9662;</span>
+        <span className={`workspace-chevron ${open ? 'open' : ''}`}>
+          <Icon name="chevronDown" size={14} />
+        </span>
       </button>
       {open && (
         <div className="workspace-dropdown">
           {workspaces.map((ws) => (
-            <div
-              key={ws.id}
-              className={`workspace-item ${ws.id === activeId ? 'active' : ''}`}
-            >
+            <div key={ws.id} className={`workspace-item ${ws.id === activeId ? 'active' : ''}`}>
               {renamingId === ws.id ? (
                 <input
                   ref={renameInputRef}
@@ -132,7 +133,11 @@ export const WorkspaceSelector: React.FC<Props> = ({
                         title="Delete"
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (confirm(`Delete workspace "${ws.name}" and all its connections? This cannot be undone.`)) {
+                          if (
+                            confirm(
+                              `Delete workspace "${ws.name}" and all its connections? This cannot be undone.`,
+                            )
+                          ) {
                             onDelete(ws.id)
                             if (ws.id === activeId) setOpen(false)
                           }
@@ -168,10 +173,7 @@ export const WorkspaceSelector: React.FC<Props> = ({
               />
             </div>
           ) : (
-            <button
-              className="workspace-create-btn"
-              onClick={() => setCreating(true)}
-            >
+            <button className="workspace-create-btn" onClick={() => setCreating(true)}>
               + New Workspace
             </button>
           )}
