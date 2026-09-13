@@ -5,7 +5,7 @@ import {
   pollDockerLogs,
   stopDockerLogsStream,
 } from '../commands'
-import { parseAnsiToHtml, highlightPlainLog } from '../ansi'
+import { parseAnsiToHtml, highlightPlainLog, stripInvisible } from '../ansi'
 import { useI18n } from '../i18n'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 
@@ -481,8 +481,10 @@ function trimToMaxLines(text: string, maxLines: number): string {
 }
 
 /// Plain HTML-escaped text (no colour parsing) — used when the Color toggle is off.
+/// Invisible bytes are still stripped: `docker logs` output carries ANSI escapes
+/// and control characters that must never reach the DOM as raw text.
 function escapeLogs(text: string): string {
-  return text
+  return stripInvisible(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

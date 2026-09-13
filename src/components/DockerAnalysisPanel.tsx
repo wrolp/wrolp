@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   DockerAnalysis,
   ResourceUsage
 } from '../types'
 import { analyzeDockerContainer, dockerContainerLogs } from '../commands'
+import { parseAnsiToHtml } from '../ansi'
 import { useI18n } from '../i18n'
 
 interface Props {
@@ -86,6 +87,11 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       logsRef.current.scrollTop = logsRef.current.scrollHeight
     }
   }, [logs, logsAutoScroll])
+
+  // Render the log payload as HTML: the bytes come straight from `docker logs`,
+  // so they carry ANSI colour codes (and cursor / OSC sequences) that a plain
+  // text node would print verbatim — see `ansi.ts::stripInvisible`.
+  const logsHtml = useMemo(() => (logs ? parseAnsiToHtml(logs) : ''), [logs])
 
   // Fetch logs when container changes. Deliberately NOT re-firing when
   // activeTabId / logsTail change — the refresh button and tail control
@@ -268,7 +274,11 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
         {logsError ? (
           <div className="logs-error">{logsError}</div>
         ) : logs ? (
-          <pre className="danalysis-logs-output" ref={logsRef}>{logs}</pre>
+          <pre
+            className="danalysis-logs-output"
+            ref={logsRef}
+            dangerouslySetInnerHTML={{ __html: logsHtml }}
+          />
         ) : (
           <div className="logs-empty">
             {logsLoading ? t('loading') : t('logsClickRefresh')}

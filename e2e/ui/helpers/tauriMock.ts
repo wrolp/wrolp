@@ -46,6 +46,12 @@ export interface TauriMockOptions {
   fileEntries?: unknown[]
   /** Value returned by `read_file_content` (opening a file in the editor). */
   fileContent?: Record<string, unknown>
+  /** Value returned by `list_docker_containers` (the sidebar Docker section). */
+  dockerContainers?: unknown[]
+  /** Value returned by `analyze_docker_container` (the Analyze Container report). */
+  dockerAnalysis?: Record<string, unknown>
+  /** Raw string returned by `docker_container_logs` (ANSI escapes included). */
+  dockerLogs?: string
 }
 
 /**
@@ -173,8 +179,13 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_ai_prompt_templates':
           case 'list_hidden_builtin_templates':
           case 'list_ai_models':
-          case 'list_docker_containers':
             return []
+          case 'list_docker_containers':
+            return opts.dockerContainers ?? []
+          case 'analyze_docker_container':
+            return opts.dockerAnalysis ?? null
+          case 'docker_container_logs':
+            return opts.dockerLogs ?? ''
           case 'list_command_snippets':
             return snippets
           case 'save_command_snippet': {

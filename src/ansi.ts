@@ -95,16 +95,52 @@ function renderSpan(text: string, s: SgrState): string {
 }
 
 function escapeHtml(s: string): string {
-  return s
+  return stripInvisible(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
 }
 
+/* ---- Invisible bytes ------------------------------------------------------
+ * Raw command output (`docker logs`, `cat` of a binary, progress bars, tty
+ * recordings) carries far more than colours: cursor moves, screen erases,
+ * window titles, bell/backspace bytes.  Only SGR (`…m`) is rendered by the
+ * parser above — everything else must be removed, otherwise the raw ESC byte
+ * lands in the DOM and the reader sees junk such as `[2J` / `[?25l` glued into
+ * the log line.  This is what made the "Analyze Container" log panel unreadable.
+ *
+ * Not `const` regex literals with the /g flag reused across calls — `replace`
+ * resets `lastIndex`, and these are only ever used with `replace`.
+ */
+/** CSI … final byte — cursor moves, erases, mode set/reset, … */
+const NON_SGR_CSI_RE = /\x1b\[[0-9;:?<>=!]*[ -/]*[@-~]/g
+/** OSC … BEL|ST — window/icon titles, hyperlinks. */
+const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g
+/** Two-byte escapes (`\x1b=` charset, `\x1b(B` designators, …). */
+const SHORT_ESC_RE = /\x1b[@-Z\\-_]/g
+/** Remaining C0/C1 control bytes — including any dangling ESC. TAB/LF/CR kept. */
+const CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g
+
+/**
+ * Drop control bytes that cannot be shown: non-SGR escape sequences and stray
+ * C0 control characters. TAB / LF / CR are preserved (the HTML parser folds CR
+ * into a line break, so `\r\n` and `\r` progress output still read correctly).
+ *
+ * Exported for the plain-text path (the log viewer's "Color" toggle off), which
+ * must strip the same bytes even though it does not colourise anything.
+ */
+export function stripInvisible(text: string): string {
+  return text
+    .replace(OSC_RE, '')
+    .replace(NON_SGR_CSI_RE, '')
+    .replace(SHORT_ESC_RE, '')
+    .replace(CONTROL_RE, '')
+}
+
 /**
  * Convert raw text containing ANSI SGR escape sequences into coloured HTML.
- * All other escape sequences are dropped.  Text that does not contain
- * any SGR codes is returned as simple HTML-escaped plain text.
+ * All other escape sequences and control bytes are dropped.  Text that does not
+ * contain any SGR codes is returned as simple HTML-escaped plain text.
  */
 export function parseAnsiToHtml(text: string): string {
   if (!text.includes('\x1b[')) {
@@ -246,11 +282,9 @@ export function hasAnsi(text: string): boolean {
   return ANSI_RE.test(text)
 }
 
+/** HTML-escape plain text — also drops invisible bytes (see `stripInvisible`). */
 function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  return escapeHtml(s)
 }
 
 // RFC3339 / ISO-8601-ish timestamp at the start of a line, optionally wrapped
