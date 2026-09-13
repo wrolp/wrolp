@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
 
 // Closing a terminal / pane that still has open files must ask first, so an

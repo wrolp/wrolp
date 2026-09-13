@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Floating command-list (Ctrl+Shift+P) with a stubbed backend.
@@ -44,9 +44,7 @@ test('command list shows the empty state when no snippets exist', async ({ page 
 // A multi-line snippet must be sent the SAME way as a Ctrl+V paste: the guard
 // opens for a non-bracketed POSIX shell, and "insert without executing" applies
 // the `\` continuation + quoted-insert so the block is one buffered command.
-test('a multi-line snippet is inserted like a paste (guard + quoted-insert)', async ({
-  page,
-}) => {
+test('a multi-line snippet is inserted like a paste (guard + quoted-insert)', async ({ page }) => {
   const MULTI = [
     {
       id: 'm1',

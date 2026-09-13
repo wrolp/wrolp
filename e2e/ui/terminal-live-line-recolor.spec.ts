@@ -12,7 +12,7 @@
  * The mock IPC has no shell, so these tests wrap `__TAURI_INTERNALS__.invoke` to
  * echo `send_input` payloads back through `poll_output`, like a real PTY.
  */
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }

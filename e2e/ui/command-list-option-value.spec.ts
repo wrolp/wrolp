@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Command-list option values: forcing a value on a bare flag (`--tail`) gives

@@ -25,4 +25,7 @@ test-results/
 playwright-report/
 blob-report/
 
+# Coverage output (frontend E2E + Rust llvm-cov)
+coverage/
+
 .tmp*

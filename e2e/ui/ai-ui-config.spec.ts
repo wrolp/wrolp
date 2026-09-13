@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock, emitTauriEvent, invokedCalls } from './helpers/tauriMock'
 
 // AI appearance / system-config tools round-trip through the frontend bridge:
@@ -16,9 +16,8 @@ async function uiTool(page: Page, op: string, args: Record<string, unknown>) {
   await expect
     .poll(
       async () =>
-        (await invokedCalls(page)).filter(
-          (c) => c.cmd === 'ai_ui_tool_result' && c.args.id === id,
-        ).length,
+        (await invokedCalls(page)).filter((c) => c.cmd === 'ai_ui_tool_result' && c.args.id === id)
+          .length,
     )
     .toBe(1)
   const call = (await invokedCalls(page)).find(

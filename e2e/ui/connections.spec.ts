@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './helpers/fixtures'
 import { installTauriMock, type MockConnection } from './helpers/tauriMock'
 
 // Real SSH/SFTP is out of scope for this phase — the backend is stubbed via

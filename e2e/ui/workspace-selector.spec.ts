@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
 
 // The workspace selector's dropdown arrow must render at a visible size

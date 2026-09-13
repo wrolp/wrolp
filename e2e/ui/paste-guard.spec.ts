@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock, invokedCalls, pasteIntoTerminal } from './helpers/tauriMock'
 
 // B20 — multi-line paste guard. Pastes are driven through the same DOM `paste`
@@ -87,7 +87,9 @@ test('"insert without executing" adds a line continuation and uses quoted-insert
   // `\x16` (Ctrl-V) + LF makes readline insert the newline literally instead of
   // submitting the line. The LF must NOT be normalised to \r. A trailing `\x05`
   // (Ctrl-E) parks the cursor at the end of the inserted block.
-  await expect.poll(async () => await sentInput(page)).toEqual(['echo one \\\u0016\necho two', '\u0005'])
+  await expect
+    .poll(async () => await sentInput(page))
+    .toEqual(['echo one \\\u0016\necho two', '\u0005'])
 })
 
 test('a backslash followed by a stray space is repaired when inserting', async ({ page }) => {

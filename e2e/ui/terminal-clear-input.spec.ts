@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // "Clear input" in the terminal context menu erases the shell's current input

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
 
 // Smoke tests: the app must boot with the Tauri backend stubbed and render the

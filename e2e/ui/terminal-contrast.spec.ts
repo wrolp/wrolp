@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
 import { ansiThemeColors, xtermTheme } from '../../src/lib/theme'
 import {

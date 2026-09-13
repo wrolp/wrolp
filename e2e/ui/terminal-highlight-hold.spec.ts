@@ -9,7 +9,7 @@
 // non-empty input line writes ` && <cmd>` (no trailing newline), the shell echoes
 // it, and the echo's final token (`… on 50`) was swallowed — it only appeared
 // after pressing a key (e.g. the right arrow) produced more output.
-import { test, expect } from '@playwright/test'
+import { test, expect } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
 import { AnsiHighlighter } from '../../src/components/terminal/highlightStream'
 import { cloneDefaultConfig } from '../../src/lib/highlightRules'
