@@ -297,6 +297,7 @@ async fn command_snippets_crud() {
       options: vec!["ubuntu".into(), "alpine".into()],
       description: Some("base image".into()),
       default_enabled: true,
+      exclusive_group: None,
     }],
     options: vec![
       CommandOption {
@@ -310,6 +311,7 @@ async fn command_snippets_crud() {
           default_value: "prod".into(),
         }),
         default_enabled: true,
+        exclusive_group: None,
       },
       CommandOption {
         id: "o2".into(),
@@ -318,6 +320,7 @@ async fn command_snippets_crud() {
         description: None,
         value: None,
         default_enabled: false,
+        exclusive_group: None,
       },
     ],
     created_at: "2026-08-28T00:00:00Z".into(),

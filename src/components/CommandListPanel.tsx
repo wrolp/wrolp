@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   CommandOption,
   CommandOptionValue,
@@ -19,6 +20,22 @@ import {
 import { focusTerminal } from './Terminal'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
+
+/**
+ * Modal overlay that portals into <body>.
+ *
+ * The floating command list is positioned with a CSS `transform` (drag/resize
+ * offset), which makes it the containing block for `position: fixed`
+ * descendants. An overlay rendered inside the panel would therefore be clamped
+ * to the small panel box and push tall dialogs (e.g. the fill dialog with many
+ * parameters) out of the window. Portaling to <body> keeps the dialog fixed
+ * within the app window regardless of the panel's transform.
+ */
+const ModalOverlay: React.FC<{ children: React.ReactNode }> = ({ children }) =>
+  createPortal(
+    <div className="modal-overlay cmd-list-modal-overlay">{children}</div>,
+    document.body,
+  )
 
 // ===== Variable helpers =====
 
@@ -106,6 +123,66 @@ function optionValueName(opt: CommandOption): string | null {
   return names.length === 1 ? names[0] : null
 }
 
+/** The separator an option fragment uses between its flag and its `${...}` slot. */
+function optionSeparator(text: string): '=' | ' ' {
+  const m = text.match(/(\s*=\s*|\s+)\$\{/)
+  return m && /^\s+$/.test(m[1]) ? ' ' : '='
+}
+
+/** Rewrite the flag↔slot separator inside an option fragment. */
+function withOptionSeparator(text: string, sep: '=' | ' '): string {
+  const m = text.match(/(\s*=\s*|\s+)(\$\{)/)
+  if (!m || m.index === undefined) return text
+  return text.slice(0, m.index) + (sep === '=' ? '=' : ' ') + text.slice(m.index + m[1].length)
+}
+
+/** Match a flag as a standalone token (never a prefix of a longer `--flag`). */
+function flagTokenRe(flag: string): RegExp {
+  return new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(flag)}(?![A-Za-z0-9_-])`)
+}
+
+/** A valid `${name}` identifier for a newly-created option value slot. */
+function deriveSlotName(flag: string, label: string, taken: Set<string>): string {
+  const scrub = (s: string) => s.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '')
+  let base = scrub(label) || scrub(flag) || 'value'
+  if (!/^[A-Za-z_]/.test(base)) base = `v_${base}`
+  let name = base
+  while (taken.has(name)) name = `${name}_`
+  return name
+}
+
+/**
+ * Ensure an option fragment carries a `${...}` value slot once its value type is
+ * set. Prefers a slot already present in the command (keeping the separator the
+ * command uses); otherwise appends one using `sep` and inserts the composed
+ * fragment into the command, so the option is never dropped as an orphan.
+ */
+function ensureOptionValueSlot(
+  command: string,
+  text: string,
+  sep: '=' | ' ',
+  label: string,
+  taken: Set<string>,
+): { text: string; sep: '=' | ' '; command: string } {
+  if (extractVariables(text).length > 0) {
+    return { text, sep: optionSeparator(text), command }
+  }
+  const flag = text.trim()
+  if (flag.length === 0) return { text, sep, command }
+
+  const eq = command.match(
+    new RegExp(`${escapeRegExp(flag)}\\s*=\\s*\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}`),
+  )
+  if (eq) return { text: `${flag}=` + '${' + eq[1] + '}', sep: '=', command }
+
+  const sp = command.match(new RegExp(`${escapeRegExp(flag)}\\s+\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}`))
+  if (sp) return { text: `${flag} ` + '${' + sp[1] + '}', sep: ' ', command }
+
+  const name = deriveSlotName(flag, label, taken)
+  const composed = flag + (sep === '=' ? '=' : ' ') + '${' + name + '}'
+  return { text: composed, sep, command: command.replace(flagTokenRe(flag), () => composed) }
+}
+
 /** Declared params, de-duplicated by name (first wins). */
 function resolveParamDefs(s: CommandSnippetDto): CommandParam[] {
   const seen = new Set<string>()
@@ -143,6 +220,72 @@ function resolveCommand(
     if (name) subs[name] = oValues[o.id] ?? o.value.defaultValue ?? ''
   }
   return applyVariables(cmd, subs)
+}
+
+/**
+ * Mutually-exclusive options/params: items sharing a non-empty `exclusiveGroup`
+ * may have at most one enabled at a time. Toggling `target` on unchecks every
+ * other member of its group (options and params alike); toggling off only
+ * clears that item, so a group may legitimately end up empty.
+ */
+function applyExclusiveToggle(
+  f: FillState,
+  target: { kind: 'param' | 'option'; key: string },
+  on: boolean,
+): Pick<FillState, 'pEnabled' | 'oEnabled'> {
+  const pEnabled = { ...f.pEnabled }
+  const oEnabled = { ...f.oEnabled }
+  if (target.kind === 'param') pEnabled[target.key] = on
+  else oEnabled[target.key] = on
+
+  if (on) {
+    const group =
+      target.kind === 'param'
+        ? f.params.find((p) => p.name === target.key)?.exclusiveGroup
+        : f.options.find((o) => o.id === target.key)?.exclusiveGroup
+    if (group) {
+      for (const p of f.params) {
+        if (p.exclusiveGroup === group) {
+          pEnabled[p.name] = target.kind === 'param' && p.name === target.key
+        }
+      }
+      for (const o of f.options) {
+        if (o.exclusiveGroup === group) {
+          oEnabled[o.id] = target.kind === 'option' && o.id === target.key
+        }
+      }
+    }
+  }
+  return { pEnabled, oEnabled }
+}
+
+/**
+ * Enforce "at most one enabled per exclusive group" on an initial/default
+ * enabled-state map — used when opening the fill dialog and after a reset, so a
+ * mis-authored default that enables two members of one group can't leak
+ * through. Options are scanned before params (matching the dialog's order); the
+ * first enabled member of a group wins, the rest are disabled. Mutates the
+ * passed maps in place.
+ */
+function normalizeExclusive(
+  params: CommandParam[],
+  options: CommandOption[],
+  pEnabled: Record<string, boolean>,
+  oEnabled: Record<string, boolean>,
+): void {
+  const seen = new Set<string>()
+  const keepFirst = (group: string | undefined, isOn: boolean): boolean => {
+    if (!group || !isOn) return isOn
+    if (seen.has(group)) return false
+    seen.add(group)
+    return true
+  }
+  for (const o of options) {
+    oEnabled[o.id] = keepFirst(o.exclusiveGroup, oEnabled[o.id] !== false)
+  }
+  for (const p of params) {
+    pEnabled[p.name] = keepFirst(p.exclusiveGroup, pEnabled[p.name] !== false)
+  }
 }
 
 /** Flag-looking tokens in a command that are not yet declared as options. */
@@ -288,6 +431,8 @@ interface EditingParam {
   optionsText: string
   description: string
   defaultEnabled: boolean
+  /** Name of the mutual-exclusion group this param belongs to ('' = none). */
+  exclusiveGroup: string
   /** Created automatically from a `${name}` in the command (pruned when the
    *  placeholder disappears). Rows the user added are never auto-removed. */
   auto: boolean
@@ -303,6 +448,11 @@ interface EditingOption {
   optionsText: string
   valueDefault: string
   defaultEnabled: boolean
+  /** Name of the mutual-exclusion group this option belongs to ('' = none). */
+  exclusiveGroup: string
+  /** How the flag joins its value: `=` (`--x=v`) or a space (`--x v`). Encoded
+   *  into the fragment text, kept here so the checkbox survives a type change. */
+  valueSeparator: '=' | ' '
 }
 
 function splitList(text: string): string[] {
@@ -324,6 +474,7 @@ function toEditingParams(params: CommandParam[]): EditingParam[] {
     optionsText: (p.options ?? []).join('\n'),
     description: p.description ?? '',
     defaultEnabled: p.defaultEnabled !== false,
+    exclusiveGroup: p.exclusiveGroup ?? '',
     auto: false,
   }))
 }
@@ -338,6 +489,8 @@ function toEditingOptions(options: CommandOption[]): EditingOption[] {
     optionsText: (o.value?.options ?? []).join('\n'),
     valueDefault: o.value?.defaultValue ?? '',
     defaultEnabled: o.defaultEnabled !== false,
+    exclusiveGroup: o.exclusiveGroup ?? '',
+    valueSeparator: optionSeparator(o.text),
   }))
 }
 
@@ -512,6 +665,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             optionsText: '',
             description: '',
             defaultEnabled: true,
+            exclusiveGroup: '',
             auto: true,
           }))
         if (kept.length === cur.length && added.length === 0) return cur
@@ -601,6 +755,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         oEnabled[o.id] = saved?.oEnabled[o.id] ?? o.defaultEnabled !== false
         oValues[o.id] = saved?.oValues[o.id] ?? o.value?.defaultValue ?? ''
       }
+      // A mis-authored default (or stale memory) could enable two members of
+      // one exclusive group — collapse to the first before showing the dialog.
+      normalizeExclusive(params, options, pEnabled, oEnabled)
       setFilling({ snippet: s, params, options, pEnabled, pValues, oEnabled, oValues })
       return
     }
@@ -796,6 +953,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         options,
         description: p.description.trim() || undefined,
         defaultEnabled: p.defaultEnabled,
+        exclusiveGroup: p.exclusiveGroup.trim() || undefined,
       })
     }
 
@@ -838,6 +996,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         description: o.description.trim() || undefined,
         value,
         defaultEnabled: o.defaultEnabled,
+        exclusiveGroup: o.exclusiveGroup.trim() || undefined,
       })
     }
     return { params, options }
@@ -1023,6 +1182,43 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setEditingParams((cur) => cur.map((p, i) => (i === idx ? { ...p, ...patch } : p)))
   const updateOption = (idx: number, patch: Partial<EditingOption>) =>
     setEditingOptions((cur) => cur.map((o, i) => (i === idx ? { ...o, ...patch } : o)))
+  /**
+   * Change an option's value type. Turning a value on gives the fragment a
+   * `${...}` slot — adopting one already in the command when present, else
+   * composing a fresh one (with the row's separator) and inserting it into the
+   * command so the option is not dropped as an orphan.
+   */
+  const changeOptionValueType = (idx: number, valueType: EditingOption['valueType']) => {
+    const o = editingOptions[idx]
+    if (!o) return
+    if (valueType === 'none') {
+      updateOption(idx, { valueType })
+      return
+    }
+    const taken = new Set<string>([
+      ...editingParams.map((p) => p.name.trim()).filter(Boolean),
+      ...editingOptions.flatMap((x) => extractVariables(x.text)),
+    ])
+    const res = ensureOptionValueSlot(editingCommand, o.text, o.valueSeparator, o.label, taken)
+    setEditingOptions((cur) =>
+      cur.map((x, i) =>
+        i === idx ? { ...x, valueType, text: res.text, valueSeparator: res.sep } : x,
+      ),
+    )
+    if (res.command !== editingCommand) setEditingCommand(res.command)
+  }
+
+  /** Toggle an option's flag↔value separator, keeping the command in sync. */
+  const changeOptionSeparator = (idx: number, sep: '=' | ' ') => {
+    const o = editingOptions[idx]
+    if (!o) return
+    const text = withOptionSeparator(o.text, sep)
+    setEditingOptions((cur) =>
+      cur.map((x, i) => (i === idx ? { ...x, valueSeparator: sep, text } : x)),
+    )
+    if (text !== o.text) setEditingCommand((cmd) => cmd.replace(o.text, () => text))
+  }
+
   const addParamRow = () =>
     setEditingParams((cur) => [
       ...cur,
@@ -1033,6 +1229,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         optionsText: '',
         description: '',
         defaultEnabled: true,
+        exclusiveGroup: '',
         auto: false,
       },
     ])
@@ -1048,6 +1245,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         optionsText: '',
         valueDefault: '',
         defaultEnabled: true,
+        exclusiveGroup: '',
+        valueSeparator: '=',
       },
     ])
 
@@ -1271,7 +1470,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         )}
 
         {editing && (
-          <div className="modal-overlay">
+          <ModalOverlay>
             <div
               className="modal cmd-list-modal-drag"
               style={
@@ -1411,6 +1610,14 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           onChange={(e) => updateParam(idx, { description: e.target.value })}
                           placeholder={t('snippetParamDescription')}
                         />
+                        <input
+                          className="snip-exclusive"
+                          value={p.exclusiveGroup}
+                          onChange={(e) => updateParam(idx, { exclusiveGroup: e.target.value })}
+                          placeholder={t('snippetExclusiveGroup')}
+                          title={t('snippetExclusiveGroupHint')}
+                          spellCheck={false}
+                        />
                         <label
                           className="snip-param-enabled"
                           title={t('snippetParamEnabledByDefault')}
@@ -1465,9 +1672,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                         <select
                           value={o.valueType}
                           onChange={(e) =>
-                            updateOption(idx, {
-                              valueType: e.target.value as EditingOption['valueType'],
-                            })
+                            changeOptionValueType(idx, e.target.value as EditingOption['valueType'])
                           }
                           title={t('snippetOptionValueType')}
                         >
@@ -1492,6 +1697,29 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                             spellCheck={false}
                           />
                         )}
+                        {o.valueType !== 'none' && (
+                          <label
+                            className="snip-opt-sep"
+                            title={t('snippetOptionSpaceSeparatedHint')}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={o.valueSeparator === ' '}
+                              onChange={(e) =>
+                                changeOptionSeparator(idx, e.target.checked ? ' ' : '=')
+                              }
+                            />
+                            {t('snippetOptionSpaceSeparated')}
+                          </label>
+                        )}
+                        <input
+                          className="snip-exclusive"
+                          value={o.exclusiveGroup}
+                          onChange={(e) => updateOption(idx, { exclusiveGroup: e.target.value })}
+                          placeholder={t('snippetExclusiveGroup')}
+                          title={t('snippetExclusiveGroupHint')}
+                          spellCheck={false}
+                        />
                         <label
                           className="snip-param-enabled"
                           title={t('snippetParamEnabledByDefault')}
@@ -1545,7 +1773,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                 </button>
               </div>
             </div>
-          </div>
+          </ModalOverlay>
         )}
 
         {filling && (
@@ -1560,14 +1788,20 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             error={fillError}
             onChangeParamEnabled={(name, v) =>
               setFilling((cur) =>
-                cur ? { ...cur, pEnabled: { ...cur.pEnabled, [name]: v } } : cur,
+                cur
+                  ? { ...cur, ...applyExclusiveToggle(cur, { kind: 'param', key: name }, v) }
+                  : cur,
               )
             }
             onChangeParamValue={(name, v) =>
               setFilling((cur) => (cur ? { ...cur, pValues: { ...cur.pValues, [name]: v } } : cur))
             }
             onChangeOptionEnabled={(id, v) =>
-              setFilling((cur) => (cur ? { ...cur, oEnabled: { ...cur.oEnabled, [id]: v } } : cur))
+              setFilling((cur) =>
+                cur
+                  ? { ...cur, ...applyExclusiveToggle(cur, { kind: 'option', key: id }, v) }
+                  : cur,
+              )
             }
             onChangeOptionValue={(id, v) =>
               setFilling((cur) => (cur ? { ...cur, oValues: { ...cur.oValues, [id]: v } } : cur))
@@ -1576,22 +1810,23 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
               setFilling((cur) => {
                 if (!cur) return cur
                 clearSnippetState(cur.snippet.id)
+                const pEnabled = { ...cur.pEnabled }
+                const pValues = { ...cur.pValues }
+                const oEnabled = { ...cur.oEnabled }
+                const oValues = { ...cur.oValues }
                 if (kind === 'param') {
                   const p = cur.params.find((x) => x.name === key)
                   if (!p) return cur
-                  return {
-                    ...cur,
-                    pEnabled: { ...cur.pEnabled, [key]: p.defaultEnabled !== false },
-                    pValues: { ...cur.pValues, [key]: p.defaultValue ?? '' },
-                  }
+                  pEnabled[key] = p.defaultEnabled !== false
+                  pValues[key] = p.defaultValue ?? ''
+                } else {
+                  const o = cur.options.find((x) => x.id === key)
+                  if (!o) return cur
+                  oEnabled[key] = o.defaultEnabled !== false
+                  oValues[key] = o.value?.defaultValue ?? ''
                 }
-                const o = cur.options.find((x) => x.id === key)
-                if (!o) return cur
-                return {
-                  ...cur,
-                  oEnabled: { ...cur.oEnabled, [key]: o.defaultEnabled !== false },
-                  oValues: { ...cur.oValues, [key]: o.value?.defaultValue ?? '' },
-                }
+                normalizeExclusive(cur.params, cur.options, pEnabled, oEnabled)
+                return { ...cur, pEnabled, pValues, oEnabled, oValues }
               })
             }
             onResetAll={() =>
@@ -1610,6 +1845,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                   oEnabled[o.id] = o.defaultEnabled !== false
                   oValues[o.id] = o.value?.defaultValue ?? ''
                 }
+                normalizeExclusive(cur.params, cur.options, pEnabled, oEnabled)
                 return { ...cur, pEnabled, pValues, oEnabled, oValues }
               })
             }
@@ -1699,7 +1935,7 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
     oValues,
   )
   return (
-    <div className="modal-overlay">
+    <ModalOverlay>
       <div className="modal snip-fill-modal">
         <div className="modal-header">
           <h3>{t('snippetFillParamsTitle')}</h3>
@@ -1847,7 +2083,7 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   )
 }
 
@@ -1952,7 +2188,7 @@ const VariableManagerDialog: React.FC<VariableManagerDialogProps> = ({
   }
 
   return (
-    <div className="modal-overlay">
+    <ModalOverlay>
       <div className="modal cmd-var-modal">
         <div className="modal-header">
           <h3>{t('cmdVarManager')}</h3>
@@ -2011,6 +2247,6 @@ const VariableManagerDialog: React.FC<VariableManagerDialogProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   )
 }

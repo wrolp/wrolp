@@ -173,3 +173,66 @@ test('groups snippets by connection and filters to the active connection', async
   await expect(page.locator('.cmd-list-section')).toHaveCount(3)
   await expect(page.locator('.cmd-list-item')).toHaveCount(3)
 })
+
+// Regression: the floating panel is moved with a CSS `transform` (drag/resize
+// offset), which made it the containing block for the fill dialog's
+// `position: fixed` overlay — so a tall dialog (many params) was clamped to the
+// small panel box and pushed out of the window. The overlay is now portaled to
+// <body>, so it stays fixed within the app window.
+test('the fill dialog stays inside the window when the panel is transformed', async ({ page }) => {
+  // Seed a dragged/resized panel so `.cmd-list-float` carries a transform.
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'wrolp.cmdListPrefs',
+      JSON.stringify({
+        pos: { x: 0, y: 300 },
+        size: { w: 360, h: 260 },
+        opacity: 1,
+        favoriteOnly: false,
+        showHidden: false,
+        activeConnectionOnly: false,
+      }),
+    )
+  })
+
+  const params = Array.from({ length: 14 }, (_, i) => ({
+    name: `p${i}`,
+    type: 'text',
+    defaultValue: `v${i}`,
+    options: [],
+    defaultEnabled: true,
+  }))
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    commandSnippets: [
+      baseSnippet({
+        id: 'big',
+        command: 'tool ' + params.map((p) => `\${${p.name}}`).join(' '),
+        params,
+      }),
+    ],
+  })
+  await page.goto('/')
+  await page.locator('.connection-item').first().click()
+  await expect(page.locator('.tab-item')).toContainText('Demo')
+  await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
+  await page.keyboard.press('Control+Shift+p')
+  await expect(page.locator('.cmd-list-float')).toHaveAttribute('style', /transform/)
+
+  await page.locator('.cmd-list-item').click()
+  const dialog = page.locator('.snip-fill-modal')
+  await expect(dialog).toBeVisible()
+
+  // Portaled to <body> so the panel's transform cannot clip it.
+  expect(
+    await page
+      .locator('.cmd-list-modal-overlay')
+      .evaluate((el) => el.parentElement === document.body),
+  ).toBe(true)
+
+  // …and the dialog fits inside the window.
+  const vp = page.viewportSize()!
+  const box = (await dialog.boundingBox())!
+  expect(box.y).toBeGreaterThanOrEqual(0)
+  expect(box.y + box.height).toBeLessThanOrEqual(vp.height + 1)
+})

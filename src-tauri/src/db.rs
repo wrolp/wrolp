@@ -65,6 +65,9 @@ pub struct CommandParam {
   pub description: Option<String>,
   #[serde(default = "default_true")]
   pub default_enabled: bool,
+  /// Non-empty group name: options/params sharing it are mutually exclusive.
+  #[serde(default)]
+  pub exclusive_group: Option<String>,
 }
 
 /// Value configuration for an option that carries a value.
@@ -96,6 +99,9 @@ pub struct CommandOption {
   pub value: Option<CommandOptionValue>,
   #[serde(default = "default_true")]
   pub default_enabled: bool,
+  /// Non-empty group name: options/params sharing it are mutually exclusive.
+  #[serde(default)]
+  pub exclusive_group: Option<String>,
 }
 
 fn default_true() -> bool {

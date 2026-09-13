@@ -703,6 +703,9 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   snippetParamOptionsRequired: 'A select parameter needs at least one option',
   snippetParamDescription: 'Description (optional)',
   snippetParamEnabledByDefault: 'Enabled by default',
+  snippetExclusiveGroup: 'Exclusive group (optional)',
+  snippetExclusiveGroupHint:
+    'Items sharing this group are mutually exclusive; checking one unchecks the others',
   snippetParamAdd: 'Add parameter',
   snippetParamRemove: 'Remove parameter',
   snippetParamOrphan: 'Not used in the command',
@@ -716,6 +719,9 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   snippetOptionValueNone: 'No value',
   snippetOptionValueText: 'Text',
   snippetOptionValueSelect: 'Select',
+  snippetOptionSpaceSeparated: 'Space',
+  snippetOptionSpaceSeparatedHint:
+    "Join the flag and its value with a space (--x v); unchecked joins with '=' (--x=v)",
   snippetOptionValueRequired: 'This option needs a ${...} value slot in its fragment',
   snippetOptionOrphan: 'Not found in the command',
   snippetOptionDetect: 'Detect flags',

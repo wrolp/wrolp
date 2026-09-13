@@ -8841,6 +8841,12 @@ input[type='password']::-ms-clear {
   z-index: 2100;
 }
 
+// The command-list dialogs are portaled to <body>, so they must stack above the
+// floating panel itself (z-index 2000) — otherwise the panel covers them.
+.cmd-list-modal-overlay {
+  z-index: 2400;
+}
+
 .cmd-list-toast {
   position: fixed;
   bottom: 32px;
@@ -8945,6 +8951,13 @@ input[type='password']::-ms-clear {
 
 .snip-fill-modal {
   max-width: 460px;
+
+  // Cap the scroll area so the title and the footer stay visible inside the
+  // window when many params/options are declared.
+  .modal-body {
+    max-height: 66vh;
+    overflow-y: auto;
+  }
 }
 
 .cmd-var-modal {
@@ -9066,6 +9079,23 @@ input[type='password']::-ms-clear {
   input[type='radio'] {
     margin: 0;
   }
+}
+
+// Mutually-exclusive group name input on the param/option editor rows.
+.snip-param-row .snip-exclusive,
+.snip-option-row .snip-exclusive {
+  flex: 1 1 110px;
+  min-width: 90px;
+}
+
+// Option row: "space-separated value" toggle (unchecked = `=`).
+.snip-opt-sep {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .snip-param-row,

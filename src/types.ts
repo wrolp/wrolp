@@ -164,6 +164,10 @@ export interface CommandParam {
   description?: string
   /** Checkbox state when the fill dialog opens. `false` => placeholder removed. */
   defaultEnabled: boolean
+  /** Non-empty group name: options/params sharing it are mutually exclusive —
+   *  checking one in the fill dialog unchecks the others (across options and
+   *  params alike). */
+  exclusiveGroup?: string
 }
 
 /** Value configuration for an option that carries a value. */
@@ -187,6 +191,10 @@ export interface CommandOption {
   description?: string
   value?: CommandOptionValue
   defaultEnabled: boolean
+  /** Non-empty group name: options/params sharing it are mutually exclusive —
+   *  checking one in the fill dialog unchecks the others (across options and
+   *  params alike). */
+  exclusiveGroup?: string
 }
 
 /** Single command snippet for the floating command list (sent to the terminal
