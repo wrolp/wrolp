@@ -174,6 +174,33 @@ test('groups snippets by connection and filters to the active connection', async
   await expect(page.locator('.cmd-list-item')).toHaveCount(3)
 })
 
+// Each param/option is drawn as its own bordered card, so one entry's inputs
+// don't visually run into the next in the add/edit dialog.
+test('param and option rows are each drawn as a bordered card', async ({ page }) => {
+  await openPanelWithTerminal(page, [
+    baseSnippet({
+      id: 'b1',
+      command: 'tool --env=${env} ${image}',
+      params: [
+        { name: 'image', type: 'text', defaultValue: 'x', options: [], defaultEnabled: true },
+      ],
+      options: [{ id: 'o1', text: '--env=${env}', defaultEnabled: true }],
+    }),
+  ])
+  await page.locator('.cmd-list-item').click({ button: 'right' })
+  await page.locator('.cmd-list-menu .context-menu-item').filter({ hasText: 'Edit' }).click()
+  const editor = page.locator('.cmd-list-modal-drag')
+  await expect(editor).toBeVisible()
+
+  const borderOf = (sel: string) =>
+    editor
+      .locator(sel)
+      .first()
+      .evaluate((el) => getComputedStyle(el).borderTopWidth)
+  expect(await borderOf('.snip-param-row')).toBe('1px')
+  expect(await borderOf('.snip-option-row')).toBe('1px')
+})
+
 // Regression: the floating panel is moved with a CSS `transform` (drag/resize
 // offset), which made it the containing block for the fill dialog's
 // `position: fixed` overlay — so a tall dialog (many params) was clamped to the

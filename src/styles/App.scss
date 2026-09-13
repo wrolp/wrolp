@@ -9106,6 +9106,11 @@ input[type='password']::-ms-clear {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+  // Each param/option is its own bordered card so one entry's inputs don't
+  // visually run into the next.
+  padding: 8px;
+  border: 1px solid $border;
+  border-radius: 6px;
 
   input,
   select {
@@ -9139,6 +9144,12 @@ input[type='password']::-ms-clear {
   .snip-option-options {
     flex: 1 1 130px;
     font-family: 'Cascadia Code', Consolas, monospace;
+  }
+
+  // Orphan (no matching `${name}` / fragment in the command): flag the whole
+  // card, not just its inputs.
+  &.orphan {
+    border-color: rgba(208, 138, 74, 0.8);
   }
 
   &.orphan input,
