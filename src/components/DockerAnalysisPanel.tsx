@@ -1,13 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type {
   DockerAnalysis,
-  PackageInfo,
-  ToolInfo,
-  PortMapping,
-  MountInfo,
-  EnvEntry,
-  ProcessInfo,
-  ResourceUsage,
+  ResourceUsage
 } from '../types'
 import { analyzeDockerContainer, dockerContainerLogs } from '../commands'
 import { useI18n } from '../i18n'

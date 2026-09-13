@@ -6,7 +6,10 @@
 //! Run with: `cd src-tauri && cargo test`.
 
 use crate::commands;
-use crate::db::{self, CommandSetDto, CommandSnippetDto, GlobalVariable, RecordedEvent};
+use crate::db::{
+  self, CommandOption, CommandOptionValue, CommandParam, CommandSetDto, CommandSnippetDto,
+  GlobalVariable, RecordedEvent,
+};
 use crate::ssh_session::{ActiveRecording, AppState, ConnectionConfig};
 use std::fs;
 use tauri::Manager;
@@ -281,11 +284,42 @@ async fn command_snippets_crud() {
 
   let snip = CommandSnippetDto {
     id: "snip1".into(),
-    command: "docker ps".into(),
+    command: "deploy --env=${env} -it ${image}".into(),
     alias: Some("containers".into()),
     favorite: true,
     hidden: false,
     sort_order: 1,
+    connection_id: Some("c1".into()),
+    params: vec![CommandParam {
+      name: "image".into(),
+      param_type: "select".into(),
+      default_value: "ubuntu".into(),
+      options: vec!["ubuntu".into(), "alpine".into()],
+      description: Some("base image".into()),
+      default_enabled: true,
+    }],
+    options: vec![
+      CommandOption {
+        id: "o1".into(),
+        text: "--env=${env}".into(),
+        label: Some("Env".into()),
+        description: None,
+        value: Some(CommandOptionValue {
+          param_type: "select".into(),
+          options: vec!["prod".into(), "dev".into()],
+          default_value: "prod".into(),
+        }),
+        default_enabled: true,
+      },
+      CommandOption {
+        id: "o2".into(),
+        text: "-it".into(),
+        label: None,
+        description: None,
+        value: None,
+        default_enabled: false,
+      },
+    ],
     created_at: "2026-08-28T00:00:00Z".into(),
     updated_at: "2026-08-28T00:00:00Z".into(),
   };
@@ -298,8 +332,15 @@ async fn command_snippets_crud() {
     .await
     .expect("list");
   assert_eq!(list.len(), 1);
-  assert_eq!(list[0].command, "docker ps");
+  assert_eq!(list[0].command, "deploy --env=${env} -it ${image}");
   assert!(list[0].favorite);
+  assert_eq!(list[0].connection_id.as_deref(), Some("c1"));
+  assert_eq!(list[0].params.len(), 1);
+  assert_eq!(list[0].params[0].param_type, "select");
+  assert_eq!(list[0].params[0].options.len(), 2);
+  assert_eq!(list[0].options.len(), 2);
+  assert_eq!(list[0].options[0].value.as_ref().unwrap().default_value, "prod");
+  assert!(!list[0].options[1].default_enabled);
 
   commands::delete_command_snippet(app.state(), "snip1".into())
     .await
@@ -308,6 +349,34 @@ async fn command_snippets_crud() {
     .await
     .expect("list")
     .is_empty());
+}
+
+/// Rows written before the connection_id / params / options migration must
+/// still load: NULL columns default to "general" scope and empty defs.
+#[tokio::test]
+async fn command_snippets_legacy_row_defaults() {
+  let app = build_test_app();
+  {
+    let state = app.state();
+    let conn = state.db.lock().expect("db lock");
+    conn
+      .execute(
+        "INSERT INTO command_snippets \
+         (id, command, alias, favorite, hidden, sort_order, created_at, updated_at) \
+         VALUES ('legacy', 'ls -la', NULL, 0, 0, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        [],
+      )
+      .expect("insert legacy row");
+  }
+
+  let list = commands::list_command_snippets(app.state())
+    .await
+    .expect("list");
+  assert_eq!(list.len(), 1);
+  assert_eq!(list[0].command, "ls -la");
+  assert_eq!(list[0].connection_id, None);
+  assert!(list[0].params.is_empty());
+  assert!(list[0].options.is_empty());
 }
 
 #[tokio::test]

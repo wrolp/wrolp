@@ -48,6 +48,60 @@ pub struct CommandSetDto {
   pub updated_at: String,
 }
 
+/// A per-command parameter definition. `name` maps to `${name}` in the
+/// snippet's command text; the user fills the value before sending.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandParam {
+  pub name: String,
+  /// "text" | "select". `type` is a Rust keyword, so the field is renamed.
+  #[serde(rename = "type")]
+  pub param_type: String,
+  #[serde(default)]
+  pub default_value: String,
+  #[serde(default)]
+  pub options: Vec<String>,
+  #[serde(default)]
+  pub description: Option<String>,
+  #[serde(default = "default_true")]
+  pub default_enabled: bool,
+}
+
+/// Value configuration for an option that carries a value.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandOptionValue {
+  #[serde(rename = "type")]
+  pub param_type: String,
+  #[serde(default)]
+  pub options: Vec<String>,
+  #[serde(default)]
+  pub default_value: String,
+}
+
+/// A toggleable literal fragment of a command (`-it`, `--rm`,
+/// `--env=${env}`, `-p 8080:80`). When checked it stays in the command; when
+/// unchecked the whole fragment is removed. A fragment embedding exactly one
+/// `${name}` carries a value the user can fill in.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandOption {
+  pub id: String,
+  pub text: String,
+  #[serde(default)]
+  pub label: Option<String>,
+  #[serde(default)]
+  pub description: Option<String>,
+  #[serde(default)]
+  pub value: Option<CommandOptionValue>,
+  #[serde(default = "default_true")]
+  pub default_enabled: bool,
+}
+
+fn default_true() -> bool {
+  true
+}
+
 /// A single command snippet for the floating command list. Clicking it sends
 /// the command text to the terminal WITHOUT executing it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +113,15 @@ pub struct CommandSnippetDto {
   pub favorite: bool,
   pub hidden: bool,
   pub sort_order: i64,
+  /// Connection scope; `None` = general (visible for every connection).
+  #[serde(default)]
+  pub connection_id: Option<String>,
+  /// Per-command parameters. Empty falls back to the global-variable flow.
+  #[serde(default)]
+  pub params: Vec<CommandParam>,
+  /// Toggleable literal fragments of the command.
+  #[serde(default)]
+  pub options: Vec<CommandOption>,
   pub created_at: String,
   pub updated_at: String,
 }
@@ -120,6 +183,22 @@ pub fn init_db(data_dir: &std::path::Path) -> Result<DbConn, String> {
       conn
         .execute_batch(&sql)
         .map_err(|e| format!("Migration failed (sessions.{}): {}", column, e))?;
+    }
+  }
+  // Migration (command snippets): older DBs lack connection scoping and the
+  // per-command parameter / option definitions (stored as JSON arrays). NULL
+  // keeps legacy behaviour: general scope, no params/options -> the global
+  // variable flow applies at send time.
+  for (column, ddl) in [
+    ("connection_id", "TEXT"),
+    ("params", "TEXT"),
+    ("options", "TEXT"),
+  ] {
+    if !has_column(&conn, "command_snippets", column)? {
+      let sql = format!("ALTER TABLE command_snippets ADD COLUMN {} {}", column, ddl);
+      conn
+        .execute_batch(&sql)
+        .map_err(|e| format!("Migration failed (command_snippets.{}): {}", column, e))?;
     }
   }
   Ok(Arc::new(StdMutex::new(conn)))
@@ -592,6 +671,15 @@ pub fn delete_command_set(conn: &Connection, id: &str) -> Result<(), String> {
 
 // ==================== Command Snippet Queries ====================
 
+/// Parse a nullable JSON column, tolerating NULL / malformed values (legacy
+/// rows) by yielding an empty vec.
+fn parse_json_column<T: serde::de::DeserializeOwned>(raw: Option<String>) -> Vec<T> {
+  raw
+    .as_deref()
+    .and_then(|s| serde_json::from_str(s).ok())
+    .unwrap_or_default()
+}
+
 fn map_snippet_row(row: &rusqlite::Row) -> rusqlite::Result<CommandSnippetDto> {
   Ok(CommandSnippetDto {
     id: row.get(0)?,
@@ -600,6 +688,9 @@ fn map_snippet_row(row: &rusqlite::Row) -> rusqlite::Result<CommandSnippetDto> {
     favorite: row.get::<_, i64>(3)? != 0,
     hidden: row.get::<_, i64>(4)? != 0,
     sort_order: row.get(5)?,
+    connection_id: row.get(8)?,
+    params: parse_json_column(row.get::<_, Option<String>>(9)?),
+    options: parse_json_column(row.get::<_, Option<String>>(10)?),
     created_at: row.get(6)?,
     updated_at: row.get(7)?,
   })
@@ -608,7 +699,8 @@ fn map_snippet_row(row: &rusqlite::Row) -> rusqlite::Result<CommandSnippetDto> {
 pub fn list_command_snippets(conn: &Connection) -> Result<Vec<CommandSnippetDto>, String> {
   let mut stmt = conn
     .prepare(
-      "SELECT id, command, alias, favorite, hidden, sort_order, created_at, updated_at \
+      "SELECT id, command, alias, favorite, hidden, sort_order, created_at, updated_at, \
+       connection_id, params, options \
        FROM command_snippets ORDER BY favorite DESC, sort_order ASC, updated_at DESC",
     )
     .map_err(|e| e.to_string())?;
@@ -621,10 +713,13 @@ pub fn list_command_snippets(conn: &Connection) -> Result<Vec<CommandSnippetDto>
 }
 
 pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Result<String, String> {
+  let params_json = serde_json::to_string(&snip.params).map_err(|e| e.to_string())?;
+  let options_json = serde_json::to_string(&snip.options).map_err(|e| e.to_string())?;
   let updated = conn
     .execute(
       "UPDATE command_snippets SET command = ?1, alias = ?2, favorite = ?3, hidden = ?4, \
-       sort_order = ?5, updated_at = ?6 WHERE id = ?7",
+       sort_order = ?5, updated_at = ?6, connection_id = ?7, params = ?8, options = ?9 \
+       WHERE id = ?10",
       params![
         snip.command,
         snip.alias,
@@ -632,6 +727,9 @@ pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Resu
         snip.hidden as i64,
         snip.sort_order,
         snip.updated_at,
+        snip.connection_id,
+        params_json,
+        options_json,
         snip.id
       ],
     )
@@ -639,8 +737,9 @@ pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Resu
   if updated == 0 {
     conn
       .execute(
-        "INSERT INTO command_snippets (id, command, alias, favorite, hidden, sort_order, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO command_snippets \
+         (id, command, alias, favorite, hidden, sort_order, created_at, updated_at, connection_id, params, options) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
           snip.id,
           snip.command,
@@ -649,7 +748,10 @@ pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Resu
           snip.hidden as i64,
           snip.sort_order,
           snip.created_at,
-          snip.updated_at
+          snip.updated_at,
+          snip.connection_id,
+          params_json,
+          options_json
         ],
       )
       .map_err(|e| e.to_string())?;

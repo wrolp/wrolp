@@ -44,15 +44,21 @@ CREATE TABLE IF NOT EXISTS command_sets (
 -- Single-command snippets for the floating command list. Clicking one sends
 -- the text to the terminal WITHOUT executing it; `favorite` pins it as a
 -- common command, `hidden` hides it from the default list.
+-- `connection_id` scopes the snippet to one connection (NULL = general, shown
+-- for every connection). `params` / `options` hold the per-command parameter
+-- and toggleable-fragment definitions as JSON arrays.
 CREATE TABLE IF NOT EXISTS command_snippets (
-  id         TEXT PRIMARY KEY,
-  command    TEXT NOT NULL,
-  alias      TEXT,
-  favorite   INTEGER DEFAULT 0,
-  hidden     INTEGER DEFAULT 0,
-  sort_order INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  id            TEXT PRIMARY KEY,
+  command       TEXT NOT NULL,
+  alias         TEXT,
+  favorite      INTEGER DEFAULT 0,
+  hidden        INTEGER DEFAULT 0,
+  sort_order    INTEGER DEFAULT 0,
+  connection_id TEXT,
+  params        TEXT,
+  options       TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
 );
 
 -- Global variables shared by all command-list snippets. Commands reference them

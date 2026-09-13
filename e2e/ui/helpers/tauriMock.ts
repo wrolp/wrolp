@@ -66,6 +66,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
 
     // Stateful connection store so save -> refresh reflects new entries.
     const conns: MockConnection[] = (opts.connections ?? []).map((c) => ({ ...c }))
+    // Stateful command-snippet store so the editor's save -> reload works.
+    const snippets: Array<Record<string, unknown>> = (opts.commandSnippets ?? []).map((s) => ({
+      ...(s as Record<string, unknown>),
+    }))
     const pollChunks: string[][] = (opts.pollOutputChunks ?? []).map((c) => [...c])
     // Every invoke is recorded here so tests can assert backend interactions
     // (e.g. "connect was called", "poll_output stopped after connection-closed").
@@ -172,7 +176,21 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_docker_containers':
             return []
           case 'list_command_snippets':
-            return opts.commandSnippets ?? []
+            return snippets
+          case 'save_command_snippet': {
+            const snippet = args.snippet as Record<string, unknown>
+            const id = snippet.id as string
+            const i = snippets.findIndex((x) => x.id === id)
+            if (i >= 0) snippets[i] = snippet
+            else snippets.push(snippet)
+            return id
+          }
+          case 'delete_command_snippet': {
+            const id = args.id as string
+            const i = snippets.findIndex((x) => x.id === id)
+            if (i >= 0) snippets.splice(i, 1)
+            return null
+          }
           case 'list_files':
             return opts.fileEntries ?? []
           case 'read_file_content':

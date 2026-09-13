@@ -129,11 +129,7 @@ import {
   type AppearanceSnapshot,
   type SettingGroup,
 } from './lib/appSettings'
-import {
-  installAiUiBridge,
-  saveAiAppearanceConfig,
-  useAiAppearanceConfig,
-} from './lib/aiUiBridge'
+import { installAiUiBridge, saveAiAppearanceConfig, useAiAppearanceConfig } from './lib/aiUiBridge'
 import {
   applyScheme,
   CATEGORY_META,
@@ -1000,6 +996,12 @@ export default function App() {
   const focusedLeafTabId: number | null =
     activeTabId != null
       ? ((focusedLeafId ? findLeaf(splitTree, focusedLeafId)?.tabId : null) ?? activeTabId)
+      : null
+  // connectionId of the pane the command list sends to (drives its
+  // "this connection only" filter + default scope for new commands).
+  const activeSnippetConnectionId: string | null =
+    focusedLeafTabId != null
+      ? (tabs.find((t) => t.tabId === focusedLeafTabId)?.connectionId ?? null)
       : null
   const activeTabIdRef = useRef(activeTabId)
   activeTabIdRef.current = activeTabId
@@ -2841,21 +2843,27 @@ export default function App() {
 
   // Save selected text as a command snippet, then open the floating command
   // list so the user immediately sees the new entry.
-  const handleAddCommandSnippet = useCallback((text: string) => {
-    const trimmed = text.trim()
-    if (trimmed.length === 0) return
-    saveCommandSnippet({
-      id: `snip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      command: trimmed,
-      alias: null,
-      favorite: false,
-      hidden: false,
-      sortOrder: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }).catch((e) => console.error('save_command_snippet failed:', e))
-    setCommandListOpen(true)
-  }, [])
+  const handleAddCommandSnippet = useCallback(
+    (text: string) => {
+      const trimmed = text.trim()
+      if (trimmed.length === 0) return
+      saveCommandSnippet({
+        id: `snip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        command: trimmed,
+        alias: null,
+        favorite: false,
+        hidden: false,
+        sortOrder: 0,
+        connectionId: activeSnippetConnectionId,
+        params: [],
+        options: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }).catch((e) => console.error('save_command_snippet failed:', e))
+      setCommandListOpen(true)
+    },
+    [activeSnippetConnectionId],
+  )
 
   // Send a command snippet's text into the currently focused terminal WITHOUT
   // executing it (no trailing newline), then return focus to the terminal.
@@ -7008,6 +7016,8 @@ export default function App() {
         open={commandListOpen}
         onClose={() => setCommandListOpen(false)}
         activeTabId={focusedLeafTabId}
+        connections={connections}
+        activeConnectionId={activeSnippetConnectionId}
         onSendToTerminal={handleSendSnippetToTerminal}
       />
 
@@ -7052,9 +7062,7 @@ export default function App() {
             pendingClose.dirtyKeys.length > 0 ? () => void confirmPendingCloseSave() : undefined
           }
           confirmLabel={
-            pendingClose.dirtyKeys.length > 0
-              ? t('discardAllAndClose')
-              : t('closeFilesAndTerminal')
+            pendingClose.dirtyKeys.length > 0 ? t('discardAllAndClose') : t('closeFilesAndTerminal')
           }
           danger
           onConfirm={confirmPendingCloseDiscard}

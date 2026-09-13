@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import type { CommandSnippetDto, GlobalVariable } from '../types'
+import type {
+  CommandOption,
+  CommandOptionValue,
+  CommandParam,
+  CommandParamType,
+  CommandSnippetDto,
+  ConnectionConfig,
+  GlobalVariable,
+} from '../types'
 import {
   listCommandSnippets,
   saveCommandSnippet,
@@ -28,11 +36,174 @@ function extractVariables(command: string): string[] {
   return [...seen]
 }
 
+/**
+ * Group connections by their optional `group` field, preserving first-seen
+ * order. Different groups may hold connections that share a name and/or IP, so
+ * the editor's scope picker renders these as `<optgroup>` labels to tell them
+ * apart. Ungrouped connections are collected under the empty key.
+ */
+function groupConnections(
+  connections: ConnectionConfig[],
+): Array<{ group: string; items: ConnectionConfig[] }> {
+  const order: string[] = []
+  const map = new Map<string, ConnectionConfig[]>()
+  for (const c of connections) {
+    const g = c.group ?? ''
+    let bucket = map.get(g)
+    if (!bucket) {
+      bucket = []
+      map.set(g, bucket)
+      order.push(g)
+    }
+    bucket.push(c)
+  }
+  return order.map((g) => ({ group: g, items: map.get(g)! }))
+}
+
 /** Replace every occurrence of `${name}` with `value` for the provided values. */
 function applyVariables(command: string, values: Record<string, string>): string {
   return command.replace(VAR_REGEX, (match, name: string) =>
     name in values ? values[name] : match,
   )
+}
+
+/** Escape a string for use inside a RegExp. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Remove every `${name}` from `command`, plus the run of horizontal whitespace
+ * directly adjacent to it. Only spaces/tabs are touched — newlines and
+ * non-whitespace are never consumed. When whitespace exists on BOTH sides,
+ * exactly one space is kept (`a ${x} b` -> `a b`); glued cases (`--flag=${x}`
+ * -> `--flag=`) simply drop the placeholder.
+ */
+function removePlaceholder(command: string, name: string): string {
+  const re = new RegExp(`([ \\t]*)\\$\\{${escapeRegExp(name)}\\}([ \\t]*)`, 'g')
+  return command.replace(re, (_m, before: string, after: string) =>
+    before.length > 0 && after.length > 0 ? ' ' : '',
+  )
+}
+
+function removePlaceholders(command: string, names: string[]): string {
+  return names.reduce((acc, n) => removePlaceholder(acc, n), command)
+}
+
+/**
+ * Remove a literal fragment (option) from `command`. Only matched when it ends
+ * on a token boundary (not followed by a non-space char) so `-v` never eats
+ * `--verbose`. Multi-token fragments (e.g. `-p 8080:80`) match as a whole.
+ */
+function removeFragment(command: string, fragment: string): string {
+  const re = new RegExp(`[ \\t]*${escapeRegExp(fragment)}(?![^\\t\\n\\r ])`, 'g')
+  return command.replace(re, '')
+}
+
+/** The value-slot name of an option: the single `${name}` inside its fragment. */
+function optionValueName(opt: CommandOption): string | null {
+  const names = extractVariables(opt.text)
+  return names.length === 1 ? names[0] : null
+}
+
+/** Declared params, de-duplicated by name (first wins). */
+function resolveParamDefs(s: CommandSnippetDto): CommandParam[] {
+  const seen = new Set<string>()
+  return (s.params ?? []).filter((p) => (seen.has(p.name) ? false : (seen.add(p.name), true)))
+}
+
+/**
+ * Apply the fill dialog's checkbox/value state: first drop unchecked fragments
+ * and placeholders, then substitute the values of everything still included.
+ */
+function resolveCommand(
+  command: string,
+  params: CommandParam[],
+  options: CommandOption[],
+  pEnabled: Record<string, boolean>,
+  pValues: Record<string, string>,
+  oEnabled: Record<string, boolean>,
+  oValues: Record<string, string>,
+): string {
+  let cmd = command
+  for (const o of options) {
+    if (oEnabled[o.id] === false) cmd = removeFragment(cmd, o.text)
+  }
+  cmd = removePlaceholders(
+    cmd,
+    params.filter((p) => pEnabled[p.name] === false).map((p) => p.name),
+  )
+  const subs: Record<string, string> = {}
+  for (const p of params) {
+    if (pEnabled[p.name] !== false) subs[p.name] = pValues[p.name] ?? p.defaultValue ?? ''
+  }
+  for (const o of options) {
+    if (oEnabled[o.id] === false || !o.value) continue
+    const name = optionValueName(o)
+    if (name) subs[name] = oValues[o.id] ?? o.value.defaultValue ?? ''
+  }
+  return applyVariables(cmd, subs)
+}
+
+/** Flag-looking tokens in a command that are not yet declared as options. */
+function detectFlagCandidates(command: string, declaredTexts: string[]): string[] {
+  const known = new Set(declaredTexts.map((t) => t.trim()))
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of command.split(/\s+/)) {
+    const token = raw.trim()
+    if (!/^-{1,2}[^\s]+$/.test(token)) continue
+    if (known.has(token) || seen.has(token)) continue
+    seen.add(token)
+    out.push(token)
+  }
+  return out
+}
+
+// ===== Last-selection memory (per snippet, localStorage) =====
+
+interface SnippetMemory {
+  pEnabled: Record<string, boolean>
+  pValues: Record<string, string>
+  oEnabled: Record<string, boolean>
+  oValues: Record<string, string>
+}
+
+const SNIPPET_STATE_KEY = 'wrolp.cmdSnippetState'
+
+function loadAllSnippetStates(): Record<string, SnippetMemory> {
+  try {
+    const raw = localStorage.getItem(SNIPPET_STATE_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, SnippetMemory>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function loadSnippetState(id: string): SnippetMemory | null {
+  return loadAllSnippetStates()[id] ?? null
+}
+
+function saveSnippetState(id: string, state: SnippetMemory) {
+  try {
+    const all = loadAllSnippetStates()
+    all[id] = state
+    localStorage.setItem(SNIPPET_STATE_KEY, JSON.stringify(all))
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
+function clearSnippetState(id: string) {
+  try {
+    const all = loadAllSnippetStates()
+    if (id in all) {
+      delete all[id]
+      localStorage.setItem(SNIPPET_STATE_KEY, JSON.stringify(all))
+    }
+  } catch {
+    /* storage unavailable — ignore */
+  }
 }
 
 /** Persisted window prefs (position, size, opacity, filter toggles). */
@@ -42,12 +213,21 @@ interface CmdListPrefs {
   opacity: number
   favoriteOnly: boolean
   showHidden: boolean
+  /** Show only the active terminal's connection (+ general) commands. */
+  activeConnectionOnly: boolean
 }
 
 const CMDLIST_PREFS_KEY = 'wrolp.cmdListPrefs'
 
 function defaultPrefs(): CmdListPrefs {
-  return { pos: null, size: null, opacity: 1, favoriteOnly: false, showHidden: false }
+  return {
+    pos: null,
+    size: null,
+    opacity: 1,
+    favoriteOnly: false,
+    showHidden: false,
+    activeConnectionOnly: true,
+  }
 }
 
 function loadCmdListPrefs(): CmdListPrefs {
@@ -61,6 +241,7 @@ function loadCmdListPrefs(): CmdListPrefs {
       opacity: typeof parsed.opacity === 'number' ? parsed.opacity : 1,
       favoriteOnly: parsed.favoriteOnly ?? false,
       showHidden: parsed.showHidden ?? false,
+      activeConnectionOnly: parsed.activeConnectionOnly ?? true,
     }
   } catch {
     return defaultPrefs()
@@ -80,14 +261,84 @@ interface CommandListPanelProps {
   onClose: () => void
   /** Active terminal tab, or null when no terminal is active. */
   activeTabId: number | null
+  /** Configured connections (for grouping + the editor's scope picker). */
+  connections: ConnectionConfig[]
+  /** connectionId of the focused terminal pane, or null (no tab / local shell). */
+  activeConnectionId: string | null
   /** Send the command text to the terminal WITHOUT executing it (no Enter). */
   onSendToTerminal: (command: string) => void
 }
 
-/** A `${name}` placeholder awaiting a value before the snippet can be sent. */
-interface PendingVar {
+/** Fill dialog state: resolved defs plus per-item checkbox/value state. */
+interface FillState {
+  snippet: CommandSnippetDto
+  params: CommandParam[]
+  options: CommandOption[]
+  pEnabled: Record<string, boolean>
+  pValues: Record<string, string>
+  oEnabled: Record<string, boolean>
+  oValues: Record<string, string>
+}
+
+/** Editable param row (options are edited as text in the UI). */
+interface EditingParam {
   name: string
-  description?: string
+  type: CommandParamType
+  defaultValue: string
+  optionsText: string
+  description: string
+  defaultEnabled: boolean
+  /** Created automatically from a `${name}` in the command (pruned when the
+   *  placeholder disappears). Rows the user added are never auto-removed. */
+  auto: boolean
+}
+
+/** Editable option row. */
+interface EditingOption {
+  id: string
+  text: string
+  label: string
+  description: string
+  valueType: 'none' | 'text' | 'select'
+  optionsText: string
+  valueDefault: string
+  defaultEnabled: boolean
+}
+
+function splitList(text: string): string[] {
+  return [
+    ...new Set(
+      text
+        .split(/[\n,]/)
+        .map((v) => v.trim())
+        .filter(Boolean),
+    ),
+  ]
+}
+
+function toEditingParams(params: CommandParam[]): EditingParam[] {
+  return params.map((p) => ({
+    name: p.name,
+    type: p.type === 'select' ? 'select' : 'text',
+    defaultValue: p.defaultValue ?? '',
+    optionsText: (p.options ?? []).join('\n'),
+    description: p.description ?? '',
+    defaultEnabled: p.defaultEnabled !== false,
+    auto: false,
+  }))
+}
+
+function toEditingOptions(options: CommandOption[]): EditingOption[] {
+  return options.map((o) => ({
+    id: o.id,
+    text: o.text,
+    label: o.label ?? '',
+    description: o.description ?? '',
+    valueType: o.value ? (o.value.type === 'select' ? 'select' : 'text') : 'none',
+    optionsText: (o.value?.options ?? []).join('\n'),
+    valueDefault: o.value?.defaultValue ?? '',
+    defaultEnabled: o.defaultEnabled !== false,
+  }))
 }
 
 /**
@@ -104,6 +355,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   open,
   onClose,
   activeTabId,
+  connections,
+  activeConnectionId,
   onSendToTerminal,
 }) => {
   const { t } = useI18n()
@@ -113,6 +366,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const [query, setQuery] = useState('')
   const [favoriteOnly, setFavoriteOnly] = useState(() => loadCmdListPrefs().favoriteOnly)
   const [showHidden, setShowHidden] = useState(() => loadCmdListPrefs().showHidden)
+  const [activeConnectionOnly, setActiveConnectionOnly] = useState(
+    () => loadCmdListPrefs().activeConnectionOnly,
+  )
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<{ x: number; y: number; snippet: CommandSnippetDto } | null>(
     null,
   )
@@ -120,14 +377,14 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const [isAdding, setIsAdding] = useState(false)
   const [editingAlias, setEditingAlias] = useState('')
   const [editingCommand, setEditingCommand] = useState('')
+  const [editingConnectionId, setEditingConnectionId] = useState('')
+  const [editingParams, setEditingParams] = useState<EditingParam[]>([])
+  const [editingOptions, setEditingOptions] = useState<EditingOption[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [showVarManager, setShowVarManager] = useState(false)
-  // Snippet awaiting variable values before we can send it.
-  const [filling, setFilling] = useState<{
-    snippet: CommandSnippetDto
-    pending: PendingVar[]
-    values: Record<string, string>
-  } | null>(null)
+  // Snippet awaiting parameter/option values before we can send it.
+  const [filling, setFilling] = useState<FillState | null>(null)
+  const [fillError, setFillError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     try {
@@ -222,8 +479,47 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   // Persist window prefs whenever they change (also on close since the panel
   // stays mounted and `open` just hides it).
   useEffect(() => {
-    saveCmdListPrefs({ pos, size, opacity: panelOpacity, favoriteOnly, showHidden })
-  }, [pos, size, panelOpacity, favoriteOnly, showHidden])
+    saveCmdListPrefs({
+      pos,
+      size,
+      opacity: panelOpacity,
+      favoriteOnly,
+      showHidden,
+      activeConnectionOnly,
+    })
+  }, [pos, size, panelOpacity, favoriteOnly, showHidden, activeConnectionOnly])
+
+  // Auto-declare a param row for every `${name}` that has no definition yet.
+  // Placeholders owned by an option's value slot are skipped. Debounced so a
+  // placeholder being typed inside `${}` does not spawn one row per keystroke
+  // (`a`, `al`, `alp`, ...); once typing pauses, intermediate rows created by
+  // an earlier pass are pruned and only the finished name remains. Rows the
+  // user added or edited by hand are never auto-removed.
+  useEffect(() => {
+    if (!editing) return
+    const handle = setTimeout(() => {
+      const optionSlots = new Set(editingOptions.flatMap((o) => extractVariables(o.text)))
+      const needed = new Set(extractVariables(editingCommand).filter((n) => !optionSlots.has(n)))
+      setEditingParams((cur) => {
+        const kept = cur.filter((p) => !p.auto || needed.has(p.name))
+        const names = new Set(kept.map((p) => p.name))
+        const added: EditingParam[] = [...needed]
+          .filter((n) => !names.has(n))
+          .map((n) => ({
+            name: n,
+            type: 'text' as CommandParamType,
+            defaultValue: '',
+            optionsText: '',
+            description: '',
+            defaultEnabled: true,
+            auto: true,
+          }))
+        if (kept.length === cur.length && added.length === 0) return cur
+        return [...kept, ...added]
+      })
+    }, 500)
+    return () => clearTimeout(handle)
+  }, [editingCommand, editingOptions, editing])
 
   if (!open) return null
 
@@ -237,30 +533,177 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     return true
   })
 
-  /** Send a snippet, substituting global defaults and prompting for the rest. */
+  // Scope to the active terminal's connection (+ general) when enabled.
+  const scoped =
+    activeConnectionOnly && activeConnectionId
+      ? filtered.filter((s) => !s.connectionId || s.connectionId === activeConnectionId)
+      : filtered
+
+  // Group by connection: general first, then configured connections, then any
+  // dangling connection ids (deleted connections). Empty groups are hidden.
+  const groups: Array<{ id: string; title: string; items: CommandSnippetDto[] }> = []
+  const generalItems = scoped.filter((s) => !s.connectionId)
+  if (generalItems.length > 0) {
+    groups.push({ id: '__general__', title: t('snippetGroupGeneral'), items: generalItems })
+  }
+  const knownConnIds = new Set(connections.map((c) => c.id))
+  for (const c of connections) {
+    const items = scoped.filter((s) => s.connectionId === c.id)
+    // Prefix the group so two connections that share a name (and possibly IP)
+    // in different groups are told apart — mirrors the editor's grouped
+    // <optgroup> labels.
+    if (items.length > 0) {
+      groups.push({
+        id: c.id,
+        title: c.group ? `${c.group} / ${c.name}` : c.name,
+        items,
+      })
+    }
+  }
+  const unknownItems = scoped.filter((s) => s.connectionId && !knownConnIds.has(s.connectionId))
+  if (unknownItems.length > 0) {
+    groups.push({ id: '__unknown__', title: t('snippetGroupUnknown'), items: unknownItems })
+  }
+
+  const toggleGroup = (id: string) => {
+    setCollapsedGroups((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const sendNow = (resolved: string) => {
+    const tid = activeTabId
+    onSendToTerminal(resolved)
+    if (tid != null) requestAnimationFrame(() => focusTerminal(tid))
+  }
+
+  /** Send a snippet, opening the fill dialog when it has params/options. */
   const send = (s: CommandSnippetDto) => {
     setMenu(null)
-    const names = extractVariables(s.command)
-    const defs = new Map(globalVars.map((v) => [v.name, v]))
+    setFillError(null)
+    const params = resolveParamDefs(s)
+    const options = s.options ?? []
 
-    const pending: PendingVar[] = names
-      .filter((n) => !defs.has(n) || defs.get(n)!.defaultValue.length === 0)
-      .map((n) => ({ name: n, description: defs.get(n)?.description }))
-
-    if (pending.length === 0) {
-      const values: Record<string, string> = {}
-      for (const n of names) values[n] = defs.get(n)?.defaultValue ?? ''
-      onSendToTerminal(applyVariables(s.command, values))
-      const tid = activeTabId
-      if (tid != null) requestAnimationFrame(() => focusTerminal(tid))
+    if (params.length > 0 || options.length > 0) {
+      const saved = loadSnippetState(s.id)
+      const pEnabled: Record<string, boolean> = {}
+      const pValues: Record<string, string> = {}
+      for (const p of params) {
+        pEnabled[p.name] = saved?.pEnabled[p.name] ?? p.defaultEnabled !== false
+        pValues[p.name] = saved?.pValues[p.name] ?? p.defaultValue ?? ''
+      }
+      const oEnabled: Record<string, boolean> = {}
+      const oValues: Record<string, string> = {}
+      for (const o of options) {
+        oEnabled[o.id] = saved?.oEnabled[o.id] ?? o.defaultEnabled !== false
+        oValues[o.id] = saved?.oValues[o.id] ?? o.value?.defaultValue ?? ''
+      }
+      setFilling({ snippet: s, params, options, pEnabled, pValues, oEnabled, oValues })
       return
     }
 
-    // Prefill values from global defaults (all empty here since non-empty
-    // defaults were filtered out above — but keep it explicit).
-    const initial: Record<string, string> = {}
-    for (const p of pending) initial[p.name] = defs.get(p.name)?.defaultValue ?? ''
-    setFilling({ snippet: s, pending, values: initial })
+    // Legacy: no declared params -> global-variable flow (unchanged).
+    const names = extractVariables(s.command)
+    const defs = new Map(globalVars.map((v) => [v.name, v]))
+    const pEnabled: Record<string, boolean> = {}
+    const pValues: Record<string, string> = {}
+    const ephParams: CommandParam[] = []
+    let needsDialog = false
+    for (const n of names) {
+      const d = defs.get(n)
+      const dv = d?.defaultValue ?? ''
+      if (!d || dv.length === 0) needsDialog = true
+      ephParams.push({
+        name: n,
+        type: 'text',
+        defaultValue: dv,
+        options: [],
+        description: d?.description,
+        defaultEnabled: true,
+      })
+      pEnabled[n] = true
+      pValues[n] = dv
+    }
+    if (!needsDialog) {
+      const values: Record<string, string> = {}
+      for (const n of names) values[n] = defs.get(n)?.defaultValue ?? ''
+      sendNow(applyVariables(s.command, values))
+      return
+    }
+    setFilling({
+      snippet: s,
+      params: ephParams,
+      options: [],
+      pEnabled,
+      pValues,
+      oEnabled: {},
+      oValues: {},
+    })
+  }
+
+  /** Only declared params/options are worth remembering across sends. */
+  const isDeclared = (s: CommandSnippetDto) =>
+    (s.params?.length ?? 0) > 0 || (s.options?.length ?? 0) > 0
+
+  /** Whether the current fill state matches the declared defaults. */
+  const matchesDefaults = (f: FillState): boolean => {
+    for (const p of f.params) {
+      if ((f.pEnabled[p.name] !== false) !== (p.defaultEnabled !== false)) return false
+      if ((f.pValues[p.name] ?? '') !== (p.defaultValue ?? '')) return false
+    }
+    for (const o of f.options) {
+      if ((f.oEnabled[o.id] !== false) !== (o.defaultEnabled !== false)) return false
+      if ((f.oValues[o.id] ?? '') !== (o.value?.defaultValue ?? '')) return false
+    }
+    return true
+  }
+
+  /** Persist the last selection (or clear it when everything is at default). */
+  const persistFillState = (f: FillState) => {
+    if (!isDeclared(f.snippet)) return
+    if (matchesDefaults(f)) {
+      clearSnippetState(f.snippet.id)
+    } else {
+      saveSnippetState(f.snippet.id, {
+        pEnabled: f.pEnabled,
+        pValues: f.pValues,
+        oEnabled: f.oEnabled,
+        oValues: f.oValues,
+      })
+    }
+  }
+
+  const closeFill = () => {
+    if (filling) persistFillState(filling)
+    setFillError(null)
+    setFilling(null)
+  }
+
+  const submitFill = () => {
+    if (!filling) return
+    const missing = filling.params.find(
+      (p) => filling.pEnabled[p.name] !== false && !(filling.pValues[p.name] ?? '').trim(),
+    )
+    if (missing) {
+      setFillError(t('snippetFillVarsRequired', { name: missing.name }))
+      return
+    }
+    const resolved = resolveCommand(
+      filling.snippet.command,
+      filling.params,
+      filling.options,
+      filling.pEnabled,
+      filling.pValues,
+      filling.oEnabled,
+      filling.oValues,
+    )
+    persistFillState(filling)
+    setFillError(null)
+    setFilling(null)
+    sendNow(resolved)
   }
 
   const updateSnippet = async (s: CommandSnippetDto) => {
@@ -288,6 +731,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setEditing(s)
     setEditingAlias(s.alias ?? '')
     setEditingCommand(s.command)
+    setEditingConnectionId(s.connectionId ?? '')
+    setEditingParams(toEditingParams(s.params ?? []))
+    setEditingOptions(toEditingOptions(s.options ?? []))
   }
 
   /** Open the dialog in "add new" mode (blank snippet, created on save). */
@@ -297,6 +743,16 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setEditing({} as CommandSnippetDto)
     setEditingAlias('')
     setEditingCommand('')
+    // Default the scope to the focused terminal's connection. Falls back to
+    // "general" when there is no active terminal, or the active pane isn't a
+    // saved connection (e.g. a local shell).
+    setEditingConnectionId(
+      activeConnectionId && connections.some((c) => c.id === activeConnectionId)
+        ? activeConnectionId
+        : '',
+    )
+    setEditingParams([])
+    setEditingOptions([])
   }
 
   const closeDialog = () => {
@@ -305,9 +761,94 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setDialogPos(null)
   }
 
+  const newOptionId = () =>
+    `opt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+
+  /** Validate the editable rows and freeze them into persisted DTO fields. */
+  const buildParamAndOptionDefs = (
+    command: string,
+  ): { params: CommandParam[]; options: CommandOption[] } | null => {
+    const placeholders = extractVariables(command)
+    const names = new Set<string>()
+    const params: CommandParam[] = []
+    for (const p of editingParams) {
+      const name = p.name.trim()
+      if (name.length === 0) continue
+      if (!placeholders.includes(name)) continue // orphan — dropped
+      if (!VAR_NAME_REGEX.test(name)) {
+        alert(t('snippetParamNameInvalid'))
+        return null
+      }
+      if (names.has(name)) {
+        alert(t('snippetParamDuplicate', { name }))
+        return null
+      }
+      const options = p.type === 'select' ? splitList(p.optionsText) : []
+      if (p.type === 'select' && options.length === 0) {
+        alert(t('snippetParamOptionsRequired'))
+        return null
+      }
+      names.add(name)
+      params.push({
+        name,
+        type: p.type,
+        defaultValue: p.defaultValue,
+        options,
+        description: p.description.trim() || undefined,
+        defaultEnabled: p.defaultEnabled,
+      })
+    }
+
+    const options: CommandOption[] = []
+    const usedIds = new Set<string>()
+    for (const o of editingOptions) {
+      const text = o.text.trim()
+      if (text.length === 0) continue
+      if (!command.includes(text)) continue // orphan — dropped
+      const slots = extractVariables(text)
+      if (slots.length > 1) {
+        alert(t('snippetOptionMultiValueSlot'))
+        return null
+      }
+      let value: CommandOptionValue | undefined
+      if (o.valueType !== 'none') {
+        const slot = slots[0]
+        if (!slot) {
+          alert(t('snippetOptionValueRequired'))
+          return null
+        }
+        if (names.has(slot)) {
+          alert(t('snippetParamDuplicate', { name: slot }))
+          return null
+        }
+        const opts = o.valueType === 'select' ? splitList(o.optionsText) : []
+        if (o.valueType === 'select' && opts.length === 0) {
+          alert(t('snippetParamOptionsRequired'))
+          return null
+        }
+        names.add(slot)
+        value = { type: o.valueType, options: opts, defaultValue: o.valueDefault }
+      }
+      const id = o.id && !usedIds.has(o.id) ? o.id : newOptionId()
+      usedIds.add(id)
+      options.push({
+        id,
+        text,
+        label: o.label.trim() || undefined,
+        description: o.description.trim() || undefined,
+        value,
+        defaultEnabled: o.defaultEnabled,
+      })
+    }
+    return { params, options }
+  }
+
   const saveEdit = async () => {
     const command = editingCommand.trim()
     if (command.length === 0) return
+    const defs = buildParamAndOptionDefs(command)
+    if (!defs) return
+    const now = new Date().toISOString()
     if (isAdding) {
       try {
         await saveCommandSnippet({
@@ -317,8 +858,11 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
           favorite: false,
           hidden: false,
           sortOrder: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          connectionId: editingConnectionId || null,
+          params: defs.params,
+          options: defs.options,
+          createdAt: now,
+          updatedAt: now,
         })
         await reload()
       } catch (e) {
@@ -329,7 +873,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         ...editing,
         alias: editingAlias.trim() || null,
         command,
-        updatedAt: new Date().toISOString(),
+        connectionId: editingConnectionId || null,
+        params: defs.params,
+        options: defs.options,
+        updatedAt: now,
       })
     }
     closeDialog()
@@ -340,6 +887,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setMenu(null)
     try {
       await deleteCommandSnippet(s.id)
+      clearSnippetState(s.id)
       await reload()
     } catch (e) {
       console.error('Failed to delete command snippet:', e)
@@ -466,6 +1014,59 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     ['--cmd-opacity' as string]: panelOpacity,
   }
 
+  /** Badge count: declared params+options, else inferred `${...}` placeholders. */
+  const badgeCount = (s: CommandSnippetDto) =>
+    (s.params?.length ?? 0) + (s.options?.length ?? 0) || extractVariables(s.command).length
+
+  // ---- Editor helpers ----
+  const updateParam = (idx: number, patch: Partial<EditingParam>) =>
+    setEditingParams((cur) => cur.map((p, i) => (i === idx ? { ...p, ...patch } : p)))
+  const updateOption = (idx: number, patch: Partial<EditingOption>) =>
+    setEditingOptions((cur) => cur.map((o, i) => (i === idx ? { ...o, ...patch } : o)))
+  const addParamRow = () =>
+    setEditingParams((cur) => [
+      ...cur,
+      {
+        name: '',
+        type: 'text',
+        defaultValue: '',
+        optionsText: '',
+        description: '',
+        defaultEnabled: true,
+        auto: false,
+      },
+    ])
+  const addOptionRow = (text = '') =>
+    setEditingOptions((cur) => [
+      ...cur,
+      {
+        id: newOptionId(),
+        text,
+        label: '',
+        description: '',
+        valueType: 'none',
+        optionsText: '',
+        valueDefault: '',
+        defaultEnabled: true,
+      },
+    ])
+
+  const editingPlaceholders = extractVariables(editingCommand)
+  const orphanParams = new Set(
+    editingParams
+      .map((p) => p.name.trim())
+      .filter((n) => n.length > 0 && !editingPlaceholders.includes(n)),
+  )
+  const orphanOptions = new Set(
+    editingOptions
+      .map((o) => o.text.trim())
+      .filter((x) => x.length > 0 && !editingCommand.includes(x)),
+  )
+  const flagCandidates = detectFlagCandidates(
+    editingCommand,
+    editingOptions.map((o) => o.text),
+  )
+
   return (
     <div className="cmd-list-float" style={panelStyle}>
       <div
@@ -496,6 +1097,18 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
               />
               <Icon name="eye" size={11} />
               <span className="cmd-list-toggle-text">{t('showHidden')}</span>
+            </label>
+            <label
+              className={'cmd-list-toggle' + (activeConnectionId === null ? ' disabled' : '')}
+              title={t('snippetFilterActiveConnection')}
+            >
+              <input
+                type="checkbox"
+                checked={activeConnectionOnly && activeConnectionId !== null}
+                disabled={activeConnectionId === null}
+                onChange={(e) => setActiveConnectionOnly(e.target.checked)}
+              />
+              <span className="cmd-list-toggle-text">{t('snippetFilterActiveConnection')}</span>
             </label>
           </div>
           <div className="cmd-list-header-actions">
@@ -528,67 +1141,89 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         <div className="cmd-list-body">
           {loading ? (
             <div className="cmd-list-empty">{t('loading')}</div>
-          ) : filtered.length === 0 ? (
-            <div className="cmd-list-empty">{t('commandListEmpty')}</div>
+          ) : groups.length === 0 ? (
+            <div className="cmd-list-empty">
+              {filtered.length > 0 ? t('snippetNoCommandsForConnection') : t('commandListEmpty')}
+            </div>
           ) : (
-            filtered.map((s) => (
-              <div
-                key={s.id}
-                className={
-                  'cmd-list-item' + (s.favorite ? ' favorite' : '') + (s.hidden ? ' hidden' : '')
-                }
-                title={s.command}
-                onClick={() => send(s)}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setMenu({ x: e.clientX, y: e.clientY, snippet: s })
-                }}
-              >
-                {s.favorite && <Icon name="pin" size={11} className="cmd-list-star" />}
-                <div className="cmd-list-item-text">
-                  {s.alias && <span className="cmd-list-alias">{s.alias}</span>}
-                  <span className="cmd-list-command">{truncate(s.command)}</span>
-                  {extractVariables(s.command).length > 0 && (
-                    <span className="cmd-list-var-badge" title={t('cmdVarManager')}>
-                      {'$'}
-                      {extractVariables(s.command).length}
-                    </span>
-                  )}
-                </div>
-                {s.hidden && <Icon name="eyeOff" size={11} className="cmd-list-hidden-icon" />}
-                <div className="cmd-list-item-actions" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    className={'cmd-list-action' + (s.favorite ? ' active' : '')}
-                    title={s.favorite ? t('unfavorite') : t('favorite')}
-                    onClick={() => toggleFavorite(s)}
-                  >
-                    <Icon name="pin" size={11} />
-                  </button>
-                  <button
+            groups.map((g) => (
+              <div key={g.id} className="cmd-list-section">
+                <div className="cmd-list-section-header" onClick={() => toggleGroup(g.id)}>
+                  <Icon
+                    name="chevronDown"
+                    size={12}
                     className={
-                      'cmd-list-action cmd-list-action--hidden' + (s.hidden ? ' active' : '')
+                      'cmd-list-section-chevron' + (collapsedGroups.has(g.id) ? ' collapsed' : '')
                     }
-                    title={s.hidden ? t('unhideCommand') : t('hideCommand')}
-                    onClick={() => toggleHidden(s)}
-                  >
-                    <Icon name={s.hidden ? 'eyeOff' : 'eye'} size={11} />
-                  </button>
-                  <button
-                    className="cmd-list-action"
-                    title={t('edit')}
-                    onClick={() => startEdit(s)}
-                  >
-                    <Icon name="edit" size={11} />
-                  </button>
-                  <button
-                    className="cmd-list-action danger"
-                    title={t('delete')}
-                    onClick={() => remove(s)}
-                  >
-                    <Icon name="trash" size={11} />
-                  </button>
+                  />
+                  <span className="cmd-list-section-title">{g.title}</span>
+                  <span className="cmd-list-section-count">{g.items.length}</span>
                 </div>
+                {!collapsedGroups.has(g.id) &&
+                  g.items.map((s) => (
+                    <div
+                      key={s.id}
+                      className={
+                        'cmd-list-item' +
+                        (s.favorite ? ' favorite' : '') +
+                        (s.hidden ? ' hidden' : '')
+                      }
+                      title={s.command}
+                      onClick={() => send(s)}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setMenu({ x: e.clientX, y: e.clientY, snippet: s })
+                      }}
+                    >
+                      {s.favorite && <Icon name="pin" size={11} className="cmd-list-star" />}
+                      <div className="cmd-list-item-text">
+                        {s.alias && <span className="cmd-list-alias">{s.alias}</span>}
+                        <span className="cmd-list-command">{truncate(s.command)}</span>
+                        {badgeCount(s) > 0 && (
+                          <span className="cmd-list-var-badge" title={t('snippetParamsBadge')}>
+                            {'$'}
+                            {badgeCount(s)}
+                          </span>
+                        )}
+                      </div>
+                      {s.hidden && (
+                        <Icon name="eyeOff" size={11} className="cmd-list-hidden-icon" />
+                      )}
+                      <div className="cmd-list-item-actions" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          className={'cmd-list-action' + (s.favorite ? ' active' : '')}
+                          title={s.favorite ? t('unfavorite') : t('favorite')}
+                          onClick={() => toggleFavorite(s)}
+                        >
+                          <Icon name="pin" size={11} />
+                        </button>
+                        <button
+                          className={
+                            'cmd-list-action cmd-list-action--hidden' + (s.hidden ? ' active' : '')
+                          }
+                          title={s.hidden ? t('unhideCommand') : t('hideCommand')}
+                          onClick={() => toggleHidden(s)}
+                        >
+                          <Icon name={s.hidden ? 'eyeOff' : 'eye'} size={11} />
+                        </button>
+                        <button
+                          className="cmd-list-action"
+                          title={t('edit')}
+                          onClick={() => startEdit(s)}
+                        >
+                          <Icon name="edit" size={11} />
+                        </button>
+                        <button
+                          className="cmd-list-action danger"
+                          title={t('delete')}
+                          onClick={() => remove(s)}
+                        >
+                          <Icon name="trash" size={11} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
               </div>
             ))
           )}
@@ -665,6 +1300,61 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                   />
                 </div>
                 <div className="form-group">
+                  <label>{t('snippetConnection')}</label>
+                  <div className="snippet-scope-radios">
+                    <label>
+                      <input
+                        type="radio"
+                        name="snippetScope"
+                        checked={editingConnectionId === ''}
+                        onChange={() => setEditingConnectionId('')}
+                      />
+                      {t('general')}
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="snippetScope"
+                        checked={editingConnectionId !== ''}
+                        disabled={connections.length === 0}
+                        onChange={() => {
+                          if (editingConnectionId) return
+                          // Prefer the active pane's connection, else the first
+                          // configured one, so the radio stays on "connections".
+                          const active =
+                            activeConnectionId &&
+                            connections.some((c) => c.id === activeConnectionId)
+                              ? activeConnectionId
+                              : ''
+                          setEditingConnectionId(active || connections[0]?.id || '')
+                        }}
+                      />
+                      {t('connections')}
+                    </label>
+                  </div>
+                  {editingConnectionId !== '' && (
+                    <select
+                      value={editingConnectionId}
+                      onChange={(e) => setEditingConnectionId(e.target.value)}
+                    >
+                      {/* Preserve a scope whose connection was deleted: show it
+                          as an explicit option instead of a blank select. */}
+                      {!connections.some((c) => c.id === editingConnectionId) && (
+                        <option value={editingConnectionId}>{t('snippetGroupUnknown')}</option>
+                      )}
+                      {groupConnections(connections).map(({ group, items }) => (
+                        <optgroup key={group || '__ungrouped__'} label={group || t('ungrouped')}>
+                          {items.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div className="form-group">
                   <label>{t('snippetCommand')}</label>
                   <textarea
                     value={editingCommand}
@@ -672,6 +1362,178 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                     placeholder={t('snippetCommandPlaceholder')}
                     rows={4}
                   />
+                </div>
+
+                <div className="form-group">
+                  <label>{t('snippetParamSection')}</label>
+                  <div className="snip-vars">
+                    {editingParams.map((p, idx) => (
+                      <div
+                        key={idx}
+                        className={
+                          'snip-param-row' + (orphanParams.has(p.name.trim()) ? ' orphan' : '')
+                        }
+                      >
+                        <input
+                          className="snip-var-name"
+                          value={p.name}
+                          onChange={(e) => updateParam(idx, { name: e.target.value })}
+                          placeholder={t('snippetParamName')}
+                          spellCheck={false}
+                        />
+                        <select
+                          value={p.type}
+                          onChange={(e) =>
+                            updateParam(idx, { type: e.target.value as CommandParamType })
+                          }
+                          title={t('snippetParamType')}
+                        >
+                          <option value="text">{t('snippetParamTypeText')}</option>
+                          <option value="select">{t('snippetParamTypeSelect')}</option>
+                        </select>
+                        <input
+                          value={p.defaultValue}
+                          onChange={(e) => updateParam(idx, { defaultValue: e.target.value })}
+                          placeholder={t('snippetParamDefault')}
+                          spellCheck={false}
+                        />
+                        {p.type === 'select' && (
+                          <input
+                            className="snip-param-options"
+                            value={p.optionsText}
+                            onChange={(e) => updateParam(idx, { optionsText: e.target.value })}
+                            placeholder={t('snippetParamOptions')}
+                            spellCheck={false}
+                          />
+                        )}
+                        <input
+                          value={p.description}
+                          onChange={(e) => updateParam(idx, { description: e.target.value })}
+                          placeholder={t('snippetParamDescription')}
+                        />
+                        <label
+                          className="snip-param-enabled"
+                          title={t('snippetParamEnabledByDefault')}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={p.defaultEnabled}
+                            onChange={(e) => updateParam(idx, { defaultEnabled: e.target.checked })}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="snip-var-remove"
+                          onClick={() => setEditingParams((cur) => cur.filter((_, i) => i !== idx))}
+                          title={t('snippetParamRemove')}
+                        >
+                          <Icon name="trash" size={12} />
+                        </button>
+                        {orphanParams.has(p.name.trim()) && (
+                          <div className="snip-param-hint">{t('snippetParamOrphan')}</div>
+                        )}
+                      </div>
+                    ))}
+                    <button type="button" className="snip-var-add" onClick={addParamRow}>
+                      <Icon name="plus" size={12} /> {t('snippetParamAdd')}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>{t('snippetOptionSection')}</label>
+                  <div className="snip-vars">
+                    {editingOptions.map((o, idx) => (
+                      <div
+                        key={o.id}
+                        className={
+                          'snip-option-row' + (orphanOptions.has(o.text.trim()) ? ' orphan' : '')
+                        }
+                      >
+                        <input
+                          className="snip-option-text"
+                          value={o.text}
+                          onChange={(e) => updateOption(idx, { text: e.target.value })}
+                          placeholder={t('snippetOptionText')}
+                          spellCheck={false}
+                        />
+                        <input
+                          value={o.label}
+                          onChange={(e) => updateOption(idx, { label: e.target.value })}
+                          placeholder={t('snippetOptionLabel')}
+                        />
+                        <select
+                          value={o.valueType}
+                          onChange={(e) =>
+                            updateOption(idx, {
+                              valueType: e.target.value as EditingOption['valueType'],
+                            })
+                          }
+                          title={t('snippetOptionValueType')}
+                        >
+                          <option value="none">{t('snippetOptionValueNone')}</option>
+                          <option value="text">{t('snippetOptionValueText')}</option>
+                          <option value="select">{t('snippetOptionValueSelect')}</option>
+                        </select>
+                        {o.valueType !== 'none' && (
+                          <input
+                            value={o.valueDefault}
+                            onChange={(e) => updateOption(idx, { valueDefault: e.target.value })}
+                            placeholder={t('snippetParamDefault')}
+                            spellCheck={false}
+                          />
+                        )}
+                        {o.valueType === 'select' && (
+                          <input
+                            className="snip-option-options"
+                            value={o.optionsText}
+                            onChange={(e) => updateOption(idx, { optionsText: e.target.value })}
+                            placeholder={t('snippetParamOptions')}
+                            spellCheck={false}
+                          />
+                        )}
+                        <label
+                          className="snip-param-enabled"
+                          title={t('snippetParamEnabledByDefault')}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={o.defaultEnabled}
+                            onChange={(e) =>
+                              updateOption(idx, { defaultEnabled: e.target.checked })
+                            }
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="snip-var-remove"
+                          onClick={() =>
+                            setEditingOptions((cur) => cur.filter((_, i) => i !== idx))
+                          }
+                          title={t('snippetOptionRemove')}
+                        >
+                          <Icon name="trash" size={12} />
+                        </button>
+                        {orphanOptions.has(o.text.trim()) && (
+                          <div className="snip-param-hint">{t('snippetOptionOrphan')}</div>
+                        )}
+                      </div>
+                    ))}
+                    <div className="snip-param-actions">
+                      <button type="button" className="snip-var-add" onClick={() => addOptionRow()}>
+                        <Icon name="plus" size={12} /> {t('snippetOptionAdd')}
+                      </button>
+                      {flagCandidates.length > 0 && (
+                        <button
+                          type="button"
+                          className="snip-var-add"
+                          onClick={() => flagCandidates.forEach((f) => addOptionRow(f))}
+                        >
+                          <Icon name="plus" size={12} /> {t('snippetOptionDetect')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="modal-footer">
@@ -689,24 +1551,70 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         {filling && (
           <SnippetFillDialog
             snippet={filling.snippet}
-            pending={filling.pending}
-            values={filling.values}
-            onChangeValue={(name, v) =>
-              setFilling((cur) => (cur ? { ...cur, values: { ...cur.values, [name]: v } } : cur))
+            params={filling.params}
+            options={filling.options}
+            pEnabled={filling.pEnabled}
+            pValues={filling.pValues}
+            oEnabled={filling.oEnabled}
+            oValues={filling.oValues}
+            error={fillError}
+            onChangeParamEnabled={(name, v) =>
+              setFilling((cur) =>
+                cur ? { ...cur, pEnabled: { ...cur.pEnabled, [name]: v } } : cur,
+              )
             }
-            onClose={() => setFilling(null)}
-            onSubmit={() => {
-              if (!filling) return
-              // Merge global defaults with what the user filled in the dialog.
-              const full: Record<string, string> = {}
-              for (const v of globalVars) full[v.name] = v.defaultValue
-              for (const [k, v] of Object.entries(filling.values)) full[k] = v
-              const resolved = applyVariables(filling.snippet.command, full)
-              const tid = activeTabId
-              setFilling(null)
-              onSendToTerminal(resolved)
-              if (tid != null) requestAnimationFrame(() => focusTerminal(tid))
-            }}
+            onChangeParamValue={(name, v) =>
+              setFilling((cur) => (cur ? { ...cur, pValues: { ...cur.pValues, [name]: v } } : cur))
+            }
+            onChangeOptionEnabled={(id, v) =>
+              setFilling((cur) => (cur ? { ...cur, oEnabled: { ...cur.oEnabled, [id]: v } } : cur))
+            }
+            onChangeOptionValue={(id, v) =>
+              setFilling((cur) => (cur ? { ...cur, oValues: { ...cur.oValues, [id]: v } } : cur))
+            }
+            onResetItem={(kind, key) =>
+              setFilling((cur) => {
+                if (!cur) return cur
+                clearSnippetState(cur.snippet.id)
+                if (kind === 'param') {
+                  const p = cur.params.find((x) => x.name === key)
+                  if (!p) return cur
+                  return {
+                    ...cur,
+                    pEnabled: { ...cur.pEnabled, [key]: p.defaultEnabled !== false },
+                    pValues: { ...cur.pValues, [key]: p.defaultValue ?? '' },
+                  }
+                }
+                const o = cur.options.find((x) => x.id === key)
+                if (!o) return cur
+                return {
+                  ...cur,
+                  oEnabled: { ...cur.oEnabled, [key]: o.defaultEnabled !== false },
+                  oValues: { ...cur.oValues, [key]: o.value?.defaultValue ?? '' },
+                }
+              })
+            }
+            onResetAll={() =>
+              setFilling((cur) => {
+                if (!cur) return cur
+                clearSnippetState(cur.snippet.id)
+                const pEnabled: Record<string, boolean> = {}
+                const pValues: Record<string, string> = {}
+                const oEnabled: Record<string, boolean> = {}
+                const oValues: Record<string, string> = {}
+                for (const p of cur.params) {
+                  pEnabled[p.name] = p.defaultEnabled !== false
+                  pValues[p.name] = p.defaultValue ?? ''
+                }
+                for (const o of cur.options) {
+                  oEnabled[o.id] = o.defaultEnabled !== false
+                  oValues[o.id] = o.value?.defaultValue ?? ''
+                }
+                return { ...cur, pEnabled, pValues, oEnabled, oValues }
+              })
+            }
+            onClose={closeFill}
+            onSubmit={submitFill}
           />
         )}
 
@@ -736,31 +1644,65 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   )
 }
 
-// ===== Variable fill dialog =====
+// ===== Fill dialog (params + options) =====
 
 interface SnippetFillDialogProps {
   snippet: CommandSnippetDto
-  pending: PendingVar[]
-  values: Record<string, string>
-  onChangeValue: (name: string, value: string) => void
+  params: CommandParam[]
+  options: CommandOption[]
+  pEnabled: Record<string, boolean>
+  pValues: Record<string, string>
+  oEnabled: Record<string, boolean>
+  oValues: Record<string, string>
+  error: string | null
+  onChangeParamEnabled: (name: string, value: boolean) => void
+  onChangeParamValue: (name: string, value: string) => void
+  onChangeOptionEnabled: (id: string, value: boolean) => void
+  onChangeOptionValue: (id: string, value: string) => void
+  onResetItem: (kind: 'param' | 'option', key: string) => void
+  onResetAll: () => void
   onClose: () => void
   onSubmit: () => void
 }
 
+/** Select options including the current value, so a stale value is never lost. */
+function selectOptions(def: string[], current: string): string[] {
+  return current && !def.includes(current) ? [current, ...def] : def
+}
+
 const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
   snippet,
-  pending,
-  values,
-  onChangeValue,
+  params,
+  options,
+  pEnabled,
+  pValues,
+  oEnabled,
+  oValues,
+  error,
+  onChangeParamEnabled,
+  onChangeParamValue,
+  onChangeOptionEnabled,
+  onChangeOptionValue,
+  onResetItem,
+  onResetAll,
   onClose,
   onSubmit,
 }) => {
   const { t } = useI18n()
+  const preview = resolveCommand(
+    snippet.command,
+    params,
+    options,
+    pEnabled,
+    pValues,
+    oEnabled,
+    oValues,
+  )
   return (
     <div className="modal-overlay">
       <div className="modal snip-fill-modal">
         <div className="modal-header">
-          <h3>{t('snippetFillVarsTitle')}</h3>
+          <h3>{t('snippetFillParamsTitle')}</h3>
           <span
             onClick={onClose}
             style={{ cursor: 'pointer', fontSize: 18, color: '#888' }}
@@ -770,25 +1712,135 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
           </span>
         </div>
         <div className="modal-body">
-          <div className="snip-fill-desc">{t('snippetFillVarsDesc')}</div>
-          <div className="snip-fill-command-preview">{snippet.command}</div>
-          {pending.map((v) => (
-            <div key={v.name} className="form-group">
-              <label>{v.name}</label>
-              <input
-                value={values[v.name] ?? ''}
-                onChange={(e) => onChangeValue(v.name, e.target.value)}
-                placeholder={v.description ?? ''}
-                autoFocus={pending[0]?.name === v.name}
-                spellCheck={false}
-              />
-              {v.description && <div className="snip-fill-hint">{v.description}</div>}
+          <div className="snip-fill-desc">{t('snippetFillParamsDesc')}</div>
+          <div className="snip-fill-command-preview">{preview}</div>
+
+          {options.length > 0 && (
+            <div className="snip-fill-group">
+              <div className="snip-fill-group-title">{t('snippetOptionSection')}</div>
+              {options.map((o, idx) => {
+                const on = oEnabled[o.id] !== false
+                const valueName = optionValueName(o)
+                return (
+                  <div
+                    key={o.id}
+                    className={'snip-fill-row' + (on ? '' : ' snip-fill-row--disabled')}
+                  >
+                    <label className="snip-fill-check" title={t('snippetFillToggle')}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(e) => onChangeOptionEnabled(o.id, e.target.checked)}
+                      />
+                    </label>
+                    <div className="snip-fill-label">
+                      <span className="snip-fill-name">{o.label || o.text}</span>
+                      {o.description && <span className="snip-fill-hint">{o.description}</span>}
+                    </div>
+                    {o.value &&
+                      (o.value.type === 'select' ? (
+                        <select
+                          value={oValues[o.id] ?? ''}
+                          disabled={!on}
+                          autoFocus={idx === 0}
+                          onChange={(e) => onChangeOptionValue(o.id, e.target.value)}
+                        >
+                          {selectOptions(o.value.options, oValues[o.id] ?? '').map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          value={oValues[o.id] ?? ''}
+                          disabled={!on}
+                          spellCheck={false}
+                          autoFocus={idx === 0}
+                          onChange={(e) => onChangeOptionValue(o.id, e.target.value)}
+                        />
+                      ))}
+                    {valueName && <span className="snip-fill-slot">{`\${${valueName}}`}</span>}
+                    <button
+                      type="button"
+                      className="snip-fill-reset"
+                      onClick={() => onResetItem('option', o.id)}
+                      title={t('snippetFillResetItem')}
+                    >
+                      <Icon name="refresh" size={12} />
+                    </button>
+                  </div>
+                )
+              })}
             </div>
-          ))}
+          )}
+
+          {params.length > 0 && (
+            <div className="snip-fill-group">
+              <div className="snip-fill-group-title">{t('snippetParamSection')}</div>
+              {params.map((p, idx) => {
+                const on = pEnabled[p.name] !== false
+                return (
+                  <div
+                    key={p.name}
+                    className={'snip-fill-row' + (on ? '' : ' snip-fill-row--disabled')}
+                  >
+                    <label className="snip-fill-check" title={t('snippetFillToggle')}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(e) => onChangeParamEnabled(p.name, e.target.checked)}
+                      />
+                    </label>
+                    <div className="snip-fill-label">
+                      <span className="snip-fill-name">{p.name}</span>
+                      {p.description && <span className="snip-fill-hint">{p.description}</span>}
+                    </div>
+                    {p.type === 'select' ? (
+                      <select
+                        value={pValues[p.name] ?? ''}
+                        disabled={!on}
+                        autoFocus={options.length === 0 && idx === 0}
+                        onChange={(e) => onChangeParamValue(p.name, e.target.value)}
+                      >
+                        {selectOptions(p.options, pValues[p.name] ?? '').map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={pValues[p.name] ?? ''}
+                        disabled={!on}
+                        spellCheck={false}
+                        autoFocus={options.length === 0 && idx === 0}
+                        placeholder={p.description ?? ''}
+                        onChange={(e) => onChangeParamValue(p.name, e.target.value)}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      className="snip-fill-reset"
+                      onClick={() => onResetItem('param', p.name)}
+                      title={t('snippetFillResetItem')}
+                    >
+                      <Icon name="refresh" size={12} />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {error && <div className="snip-fill-error">{error}</div>}
         </div>
         <div className="modal-footer">
           <button className="btn-cancel" onClick={onClose}>
             {t('cancel')}
+          </button>
+          <button className="btn-secondary" onClick={onResetAll}>
+            {t('snippetFillResetAll')}
           </button>
           <button className="btn-primary" onClick={onSubmit}>
             {t('snippetSend')}

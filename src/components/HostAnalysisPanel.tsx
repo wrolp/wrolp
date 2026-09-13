@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { analyzeHost, commandHelp } from '../commands'
-import type { HostAnalysis, PackageInfo, ToolInfo, ConnectionConfig } from '../types'
+import type { HostAnalysis, ConnectionConfig } from '../types'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 

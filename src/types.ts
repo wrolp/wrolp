@@ -152,6 +152,43 @@ export interface CommandSetDto {
   updatedAt: string
 }
 
+export type CommandParamType = 'text' | 'select'
+
+/** A per-command parameter. `${name}` in the command maps to this definition. */
+export interface CommandParam {
+  name: string
+  type: CommandParamType
+  defaultValue: string
+  /** `type === 'select'` only: the allowed choices. */
+  options: string[]
+  description?: string
+  /** Checkbox state when the fill dialog opens. `false` => placeholder removed. */
+  defaultEnabled: boolean
+}
+
+/** Value configuration for an option that carries a value. */
+export interface CommandOptionValue {
+  type: CommandParamType
+  options: string[]
+  defaultValue: string
+}
+
+/**
+ * A toggleable literal fragment of a command (`-it`, `--rm`, `--env=${env}`,
+ * `-p 8080:80`). Checked = kept in the command; unchecked = the whole fragment
+ * is removed. A fragment embedding exactly one `${name}` carries a fillable
+ * value, described by `value`.
+ */
+export interface CommandOption {
+  id: string
+  /** Exact fragment as it appears in the command text. */
+  text: string
+  label?: string
+  description?: string
+  value?: CommandOptionValue
+  defaultEnabled: boolean
+}
+
 /** Single command snippet for the floating command list (sent to the terminal
  *  without executing). */
 export interface CommandSnippetDto {
@@ -161,6 +198,12 @@ export interface CommandSnippetDto {
   favorite: boolean
   hidden: boolean
   sortOrder: number
+  /** Connection scope; null = general (visible for every connection). */
+  connectionId: string | null
+  /** Per-command parameters. Empty falls back to the global-variable flow. */
+  params: CommandParam[]
+  /** Toggleable literal fragments of the command. */
+  options: CommandOption[]
   createdAt: string
   updatedAt: string
 }

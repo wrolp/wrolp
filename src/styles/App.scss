@@ -8982,6 +8982,267 @@ input[type='password']::-ms-clear {
   color: $text-dim;
 }
 
+// ===== Command list: connection grouping =====
+.cmd-list-section {
+  margin-bottom: 4px;
+}
+
+.cmd-list-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 3px;
+
+  &:hover {
+    background: rgba($accent, 0.12);
+  }
+}
+
+.cmd-list-section-chevron {
+  color: $text-muted;
+  flex-shrink: 0;
+  transition: transform 0.12s ease;
+
+  &.collapsed {
+    transform: rotate(-90deg);
+  }
+}
+
+.cmd-list-section-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: $text-secondary;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-list-section-count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 10px;
+  color: $text-dim;
+  background: $bg-hover;
+  border-radius: 8px;
+}
+
+.cmd-list-toggle.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+// ===== Command list: param / option editor rows =====
+.cmd-list-modal-drag {
+  width: 640px;
+  max-width: 94vw;
+
+  .modal-body {
+    max-height: 66vh;
+    overflow-y: auto;
+  }
+}
+
+// Add-command dialog: "general vs connection" scope picker. Radios sit inline
+// on one row (the shared `.form-group label` rule renders labels as blocks, so
+// this later rule overrides it for the radio labels).
+.snippet-scope-radios {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+
+  label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  input[type='radio'] {
+    margin: 0;
+  }
+}
+
+.snip-param-row,
+.snip-option-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+
+  input,
+  select {
+    flex: 1 1 90px;
+    min-width: 0;
+    padding: 5px 8px;
+    background: $bg-primary;
+    border: 1px solid $border;
+    color: $text-primary;
+    border-radius: 3px;
+    font-size: 12.5px;
+    outline: none;
+
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  select {
+    flex: 0 0 auto;
+  }
+
+  .snip-var-name,
+  .snip-option-text {
+    flex: 1 1 110px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-weight: 600;
+  }
+
+  .snip-param-options,
+  .snip-option-options {
+    flex: 1 1 130px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+  }
+
+  &.orphan input,
+  &.orphan select {
+    border-color: rgba(208, 138, 74, 0.8);
+  }
+}
+
+.snip-param-enabled {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.snip-param-hint {
+  flex-basis: 100%;
+  margin-left: 2px;
+  font-size: 11px;
+  color: #d08a4a;
+}
+
+.snip-param-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+// ===== Command list: fill dialog groups =====
+.snip-fill-modal .btn-secondary {
+  background: $bg-input;
+  color: $text-primary;
+
+  &:hover {
+    background: #4c4c4c;
+  }
+}
+
+.snip-fill-group {
+  margin-bottom: 12px;
+}
+
+.snip-fill-group-title {
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: $text-secondary;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.snip-fill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+
+  input,
+  select {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px;
+    background: $bg-primary;
+    border: 1px solid $border;
+    color: $text-primary;
+    border-radius: 3px;
+    font-size: 12.5px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    outline: none;
+
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  select {
+    font-family: inherit;
+  }
+}
+
+.snip-fill-row--disabled {
+  opacity: 0.5;
+}
+
+.snip-fill-check {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.snip-fill-label {
+  display: flex;
+  flex: 0 0 34%;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.snip-fill-name {
+  font-size: 12.5px;
+  color: $text-primary;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snip-fill-slot {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: $text-dim;
+  font-family: 'Cascadia Code', Consolas, monospace;
+}
+
+.snip-fill-reset {
+  flex-shrink: 0;
+  padding: 4px 6px;
+  background: none;
+  border: 1px solid transparent;
+  color: $text-muted;
+  cursor: pointer;
+  border-radius: 3px;
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+}
+
+.snip-fill-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #e06c6c;
+}
+
 // ===== Network scan dialog =====
 .scan-dialog {
   width: 720px;
