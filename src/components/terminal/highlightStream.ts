@@ -234,20 +234,24 @@ export class AnsiHighlighter {
    * Emit any held-back fragment now. A partial escape sequence is passed
    * through literally.
    *
-   * Plain tails follow a strict safety ladder:
+   * Plain tails follow a safety ladder:
    *   1. a fragment that already forms one complete colored token (a whole
    *      IPv4/IPv6/MAC/… that only lacked its trailing newline) is colorized —
    *      it is finished regardless of what comes next;
-   *   2. a still-incomplete fragment (e.g. half an IPv6) is KEPT HELD unless
-   *      `force` — emitting it would let the remainder, when it arrives, be
-   *      colorized separately (time/port/number colors inside an address).
-   *      Output chunks are ≤~100ms apart while polling, so holding through a
-   *      quiet gap is always the correct bet;
-   *   3. anything else is emitted plain.
-   * `force` (session reset / clear / oversized-chunk passthrough) always emits
-   * so no characters are ever lost, best-effort plain for incomplete tokens.
+   *   2. anything else is emitted PLAIN, never re-held.
+   *
+   * Issue #26: `flush()` must never keep a fragment held. `push()` already holds
+   * each chunk's tail so a token split by a chunk boundary (an IPv6 address, say)
+   * is still colorized as one unit — but `flush()` only runs after
+   * `HL_FLUSH_DELAY_MS` of silence, which is longer than the output-poll cadence,
+   * so by then no further bytes are coming for that token. Holding it any longer
+   * left a trailing number (e.g. the `50` of a command echoed without a newline
+   * when a snippet is sent into a non-empty input line) invisible until the next
+   * output arrived, and left the terminal out of sync with the shell. A hidden
+   * tail is far worse than a token colored in pieces when a slow producer pauses
+   * mid-token.
    */
-  flush(force = false): string {
+  flush(): string {
     const t = this.pending
     if (!t) return ''
     if (t.includes('\x1b')) {
@@ -278,7 +282,6 @@ export class AnsiHighlighter {
     // the address into yellow time / orange number fragments).
     const portEnd = /[[\]]/.test(t) && /:\d{1,5}$/.test(t)
     const complete = singleComplete || multiComplete || portEnd
-    if (!force && !complete && t.length <= 128 && this.isFragment(t)) return '' // keep holding
     this.pending = ''
     if (complete) return this.engine.colorize(t, this.curBase)
     return t

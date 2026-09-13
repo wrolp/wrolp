@@ -56,6 +56,33 @@ export const pasteToTerminal = (tabId: number, text: string): void => {
   if (fn) fn(text)
 }
 
+// Terminal instances raise a per-tab "awaiting input echo" gate while the shell
+// is expected to echo a line that was just sent. Typing raises it automatically
+// (it lives in the terminal's own onData handler), but a PROGRAMMATIC send that
+// bypasses onData must raise it too — e.g. a snippet appended to a non-empty
+// input line (`sendInput(' && <cmd>')`, no trailing newline). That echo is an
+// INPUT line owned by the command-line colorizer, and the stream highlighter
+// would otherwise hold its trailing token back (a number such as `50` stayed
+// invisible until the next output arrived — issue #26). Mirrors `registerPaste`.
+export const expectEchoFnByTab = new Map<number, () => void>()
+
+export const registerExpectEcho = (tabId: number, fn: () => void): void => {
+  expectEchoFnByTab.set(tabId, fn)
+}
+
+// Only clear our entry when it still belongs to this instance (same guard as
+// `unregisterPaste`: a transient double-mount must not delete the live entry).
+export const unregisterExpectEcho = (tabId: number, fn: () => void): void => {
+  if (expectEchoFnByTab.get(tabId) === fn) expectEchoFnByTab.delete(tabId)
+}
+
+/** Mark `tabId` as about to receive the echo of a sent input line. No-op if the
+ *  terminal is not mounted / not registered. */
+export const markInputEcho = (tabId: number): void => {
+  const fn = expectEchoFnByTab.get(tabId)
+  if (fn) fn()
+}
+
 // Preserves terminal scrollback across transient re-mounts (float pop-out / dock
 // back). React tears down the xterm instance when its portal container changes,
 // so we serialize the full buffer (ANSI colors included, via @xterm/addon-serialize)

@@ -287,6 +287,66 @@ test('the allowed-values field is a textarea: commas survive, newlines addable',
     .toBe('a|b|c')
 })
 
+// When every variable already resolves (declared default or remembered last
+// value) the row offers a one-click send that skips the fill dialog entirely.
+test('a fully-resolved snippet offers a one-click send (no fill dialog)', async ({ page }) => {
+  await openPanelWithTerminal(page, [
+    baseSnippet({
+      id: 'q1',
+      command: 'echo ${name} done',
+      params: [
+        { name: 'name', type: 'text', defaultValue: 'world', options: [], defaultEnabled: true },
+      ],
+    }),
+  ])
+
+  const send = page.locator('.cmd-list-send')
+  await expect(send).toHaveCount(1)
+  await send.click()
+
+  await expect(page.locator('.snip-fill-modal')).toHaveCount(0)
+  await expect.poll(() => sentJoined(page)).toContain('echo world done')
+})
+
+test('a snippet with an unfilled variable has no one-click send', async ({ page }) => {
+  await openPanelWithTerminal(page, [
+    baseSnippet({
+      id: 'q2',
+      command: 'echo ${who}',
+      params: [{ name: 'who', type: 'text', defaultValue: '', options: [], defaultEnabled: true }],
+    }),
+  ])
+
+  await expect(page.locator('.cmd-list-send')).toHaveCount(0)
+  await page.locator('.cmd-list-item').click()
+  await expect(page.locator('.snip-fill-modal')).toBeVisible()
+})
+
+test('a value remembered from last time enables the one-click send', async ({ page }) => {
+  await openPanelWithTerminal(page, [
+    baseSnippet({
+      id: 'q3',
+      command: 'echo ${who}',
+      params: [{ name: 'who', type: 'text', defaultValue: '', options: [], defaultEnabled: true }],
+    }),
+  ])
+  await expect(page.locator('.cmd-list-send')).toHaveCount(0)
+
+  // Fill it once through the dialog…
+  await page.locator('.cmd-list-item').click()
+  const dialog = page.locator('.snip-fill-modal')
+  await dialog.locator('.snip-fill-row input:not([type="checkbox"])').first().fill('alice')
+  await dialog.getByRole('button', { name: 'Send' }).click()
+  await expect(dialog).toHaveCount(0)
+
+  // …and the remembered value now makes the shortcut available.
+  const send = page.locator('.cmd-list-send')
+  await expect(send).toHaveCount(1)
+  await send.click()
+  await expect(page.locator('.snip-fill-modal')).toHaveCount(0)
+  await expect.poll(() => sentJoined(page)).toContain('echo alice')
+})
+
 // Regression: the floating panel is moved with a CSS `transform` (drag/resize
 // offset), which made it the containing block for the fill dialog's
 // `position: fixed` overlay — so a tall dialog (many params) was clamped to the
@@ -348,4 +408,67 @@ test('the fill dialog stays inside the window when the panel is transformed', as
   const box = (await dialog.boundingBox())!
   expect(box.y).toBeGreaterThanOrEqual(0)
   expect(box.y + box.height).toBeLessThanOrEqual(vp.height + 1)
+})
+
+// Regression: a remembered value written BEFORE the option gained its default
+// (or before the option existed at all) used to SHADOW that default — the memory
+// held "", and `??` treated it as a real value, so every send baked in an empty
+// `--tail=` and the option's value never reached the terminal.
+test('a stale empty remembered option value cannot shadow its declared default', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'wrolp.cmdSnippetState',
+      JSON.stringify({
+        q4: {
+          pEnabled: { container: true },
+          pValues: { container: 'hello' },
+          oEnabled: { 'o-f': true, 'o-tail': true },
+          oValues: { 'o-f': '', 'o-tail': '' },
+        },
+      }),
+    )
+  })
+  await openPanelWithTerminal(page, [
+    baseSnippet({
+      id: 'q4',
+      command: 'docker logs ${container} --tail=${tail} -f',
+      params: [
+        {
+          name: 'container',
+          type: 'text',
+          defaultValue: '',
+          options: [],
+          defaultEnabled: true,
+        },
+      ],
+      options: [
+        { id: 'o-f', text: '-f', value: null, defaultEnabled: true },
+        {
+          id: 'o-tail',
+          text: '--tail=${tail}',
+          value: { type: 'text', options: [], defaultValue: '200' },
+          defaultEnabled: true,
+        },
+      ],
+    }),
+  ])
+
+  // The fill dialog resolves the declared default, not the stale empty memory…
+  await page.locator('.cmd-list-item').click()
+  const dialog = page.locator('.snip-fill-modal')
+  await expect(dialog.locator('.snip-fill-command-preview')).toHaveText(
+    'docker logs hello --tail=200 -f',
+  )
+  await dialog.getByRole('button', { name: 'Send' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect.poll(() => sentJoined(page)).toContain('docker logs hello --tail=200 -f')
+
+  // …and so does the one-click send.
+  const send = page.locator('.cmd-list-send')
+  await expect(send).toHaveCount(1)
+  await send.click()
+  await expect(page.locator('.snip-fill-modal')).toHaveCount(0)
+  await expect.poll(() => sentJoined(page)).toContain('docker logs hello --tail=200 -f')
 })

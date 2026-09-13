@@ -56,6 +56,8 @@ import {
   replayScrollback,
   registerPaste,
   unregisterPaste,
+  registerExpectEcho,
+  unregisterExpectEcho,
 } from './terminal/registry'
 import type { CaptureState } from './terminal/capture'
 import {
@@ -102,7 +104,12 @@ import type { TableCaptureState } from './terminal/tableCapture'
 import { feedTable } from './terminal/tableCapture'
 import type { TerminalComponentProps } from './terminal/types'
 
-export { focusTerminal, getTerminalInputText, pasteToTerminal } from './terminal/registry'
+export {
+  focusTerminal,
+  getTerminalInputText,
+  pasteToTerminal,
+  markInputEcho,
+} from './terminal/registry'
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
@@ -925,9 +932,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const hl = highlighterRef.current
     const term = termRef.current
     if (!hl || !term) return
-    // Forced: at session boundaries we must drain every held character even if
-    // a token is still incomplete (emitted plain, never lost).
-    const f = hl.flush(true)
+    // Drain every held character (emitted plain when a token is still
+    // incomplete, never lost) — `flush()` never re-holds it.
+    const f = hl.flush()
     if (f) term.write(f)
   }
 
@@ -1091,14 +1098,25 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // while we're still awaiting a typed-line echo (that line is repainted by
     // the command-line colorizer with cursor math we must not disturb).
     const hl = highlighterRef.current
+    // xterm parses `write()` asynchronously — WriteBuffer defers to a later
+    // macrotask unless the write directly follows user input — so the terminal
+    // buffer is NOT yet updated when `write()` returns. recolorLiveLine reads
+    // that buffer back, so it must run from the write callback: running it
+    // inline repainted the line as it was BEFORE this chunk and its trailing
+    // `\x1b[K` then wiped the freshly written bytes, so an appended snippet's
+    // ` && …` echo never showed up (a keystroke echo survived only because a
+    // post-input write is parsed synchronously).
+    const afterWrite = () => {
+      if (shellReadyRef.current) recolorLiveLine()
+    }
     if (hl && hlEnabledRef.current && !expectingEchoRef.current && chunk.length <= HL_MAX_CHUNK) {
-      term.write(hl.push(chunk))
+      term.write(hl.push(chunk), afterWrite)
       scheduleHlFlush()
     } else {
       // Huge chunk (or highlight disabled) bypasses the highlighter — drain any
       // held-back fragment first so it isn't lost.
       flushHlNow()
-      term.write(chunk)
+      term.write(chunk, afterWrite)
     }
     // A newline means a command started producing output — we're no longer
     // awaiting a typed-line echo, so drop the gate to avoid recoloring output.
@@ -1118,14 +1136,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         shellReadyRef.current = true
       }
     }
-    // Recolor the live input line after the echo is written: this colors the
-    // newest keystroke (which arrives a frame after the per-keystroke highlight
-    // in onData). recolorLiveLine is gated by expectingEchoRef, so
-    // it only fires while we're awaiting a keystroke echo — program output is
-    // never recolored, which keeps input working.
-    // For Telnet/Serial this is also gated by shellReadyRef so login/password
-    // prompts are not corrupted by the prompt-recognition heuristics.
-    if (shellReadyRef.current) recolorLiveLine()
   }
 
   const startPrintCapture = (
@@ -2759,6 +2769,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     registerPaste(tabId, pasteIntoTerminal)
     return () => unregisterPaste(tabId, pasteIntoTerminal)
   }, [pasteIntoTerminal, tabId])
+
+  // Expose the "awaiting input echo" gate so a programmatic send that bypasses
+  // `onData` (a snippet appended to a non-empty input line via `sendInput`) is
+  // treated like typed input: its echo must NOT be run through the stream
+  // highlighter, which would hold the trailing token back (issue #26).
+  const markEcho = useCallback(() => {
+    expectingEchoRef.current = true
+  }, [])
+  useEffect(() => {
+    registerExpectEcho(tabId, markEcho)
+    return () => unregisterExpectEcho(tabId, markEcho)
+  }, [markEcho, tabId])
 
   // Ctrl+V / Shift+Insert land on xterm's hidden textarea and never reach the
   // context-menu handler, so the same guard is applied to the DOM paste event

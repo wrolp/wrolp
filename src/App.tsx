@@ -13,6 +13,7 @@ import {
   TerminalComponent,
   focusTerminal,
   getTerminalInputText,
+  markInputEcho,
   pasteToTerminal,
 } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
@@ -2888,7 +2889,11 @@ export default function App() {
         pasteToTerminal(tabId, command)
       } else {
         // Single-line snippet on top of a partially-typed command: continue the
-        // pipeline with `&&` (legacy behaviour).
+        // pipeline with `&&` (legacy behaviour). This bypasses `onData`, so the
+        // terminal's "awaiting echo" gate must be raised explicitly — otherwise
+        // the stream highlighter runs the shell's echo through its tokenizer and
+        // holds its trailing token back (issue #26).
+        markInputEcho(tabId)
         const joined = ` && ${command}`
         const isLocal = tab.tabType === 'localShell'
         const send = isLocal ? localSendInput : sendInput

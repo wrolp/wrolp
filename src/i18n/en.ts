@@ -670,6 +670,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   snippetFillVarsTitle: 'Fill Variables',
   snippetFillVarsDesc: 'Provide values for the variables in this command before sending.',
   snippetSend: 'Send',
+  snippetSendDirect: 'All values are available — send straight to the terminal',
   snippetFillVarsRequired: 'Please provide a value for "{name}"',
   // Global variables (shared library for command snippets)
   cmdVarManager: 'Variables',

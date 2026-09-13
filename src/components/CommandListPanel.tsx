@@ -734,31 +734,89 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     if (tid != null) requestAnimationFrame(() => focusTerminal(tid))
   }
 
+  /**
+   * Fill state for a snippet: remembered last-selection over declared defaults.
+   * `null` when the snippet declares neither params nor options (legacy flow).
+   * `memory` lets a caller reuse one localStorage read across many snippets.
+   */
+  const buildFillState = (
+    s: CommandSnippetDto,
+    memory?: Record<string, SnippetMemory>,
+  ): FillState | null => {
+    const params = resolveParamDefs(s)
+    const options = s.options ?? []
+    if (params.length === 0 && options.length === 0) return null
+    const saved = memory ? (memory[s.id] ?? null) : loadSnippetState(s.id)
+    const pEnabled: Record<string, boolean> = {}
+    const pValues: Record<string, string> = {}
+    for (const p of params) {
+      pEnabled[p.name] = saved?.pEnabled[p.name] ?? p.defaultEnabled !== false
+      // `||`, not `??`: an EMPTY remembered value counts as "never set". A
+      // remembered entry can be stale (written before the param was declared, or
+      // before it gained a default), and `??` let that empty string shadow the
+      // declared default forever. To drop an item instead of blanking it, the
+      // user unchecks it — an empty field always falls back to the default.
+      pValues[p.name] = saved?.pValues[p.name] || p.defaultValue || ''
+    }
+    const oEnabled: Record<string, boolean> = {}
+    const oValues: Record<string, string> = {}
+    for (const o of options) {
+      oEnabled[o.id] = saved?.oEnabled[o.id] ?? o.defaultEnabled !== false
+      // Same rule as params: an empty remembered slot value must not suppress
+      // the declared one. `--tail=${tail}` declared `200` used to send an empty
+      // `--tail=` once a stale empty entry was remembered for it.
+      oValues[o.id] = saved?.oValues[o.id] || o.value?.defaultValue || ''
+    }
+    // A mis-authored default (or stale memory) could enable two members of one
+    // exclusive group — collapse to the first.
+    normalizeExclusive(params, options, pEnabled, oEnabled)
+    return { snippet: s, params, options, pEnabled, pValues, oEnabled, oValues }
+  }
+
+  /** True once every enabled param already has a value (nothing left to ask). */
+  const fillIsComplete = (f: FillState): boolean =>
+    !f.params.some((p) => f.pEnabled[p.name] !== false && !(f.pValues[p.name] ?? '').trim())
+
+  /**
+   * The command a snippet would send right now from defaults / remembered
+   * values — or `null` when a value is still missing (the fill dialog is then
+   * required). Also drives the row's one-click "send directly" button.
+   */
+  const resolveSilently = (
+    s: CommandSnippetDto,
+    memory?: Record<string, SnippetMemory>,
+  ): string | null => {
+    const f = buildFillState(s, memory)
+    if (f) {
+      if (!fillIsComplete(f)) return null
+      return resolveCommand(
+        s.command,
+        f.params,
+        f.options,
+        f.pEnabled,
+        f.pValues,
+        f.oEnabled,
+        f.oValues,
+      )
+    }
+    // Legacy: no declared params -> every `${name}` needs a global default.
+    const defs = new Map(globalVars.map((v) => [v.name, v]))
+    const values: Record<string, string> = {}
+    for (const n of extractVariables(s.command)) {
+      const dv = defs.get(n)?.defaultValue ?? ''
+      if (dv.length === 0) return null
+      values[n] = dv
+    }
+    return applyVariables(s.command, values)
+  }
+
   /** Send a snippet, opening the fill dialog when it has params/options. */
   const send = (s: CommandSnippetDto) => {
     setMenu(null)
     setFillError(null)
-    const params = resolveParamDefs(s)
-    const options = s.options ?? []
-
-    if (params.length > 0 || options.length > 0) {
-      const saved = loadSnippetState(s.id)
-      const pEnabled: Record<string, boolean> = {}
-      const pValues: Record<string, string> = {}
-      for (const p of params) {
-        pEnabled[p.name] = saved?.pEnabled[p.name] ?? p.defaultEnabled !== false
-        pValues[p.name] = saved?.pValues[p.name] ?? p.defaultValue ?? ''
-      }
-      const oEnabled: Record<string, boolean> = {}
-      const oValues: Record<string, string> = {}
-      for (const o of options) {
-        oEnabled[o.id] = saved?.oEnabled[o.id] ?? o.defaultEnabled !== false
-        oValues[o.id] = saved?.oValues[o.id] ?? o.value?.defaultValue ?? ''
-      }
-      // A mis-authored default (or stale memory) could enable two members of
-      // one exclusive group — collapse to the first before showing the dialog.
-      normalizeExclusive(params, options, pEnabled, oEnabled)
-      setFilling({ snippet: s, params, options, pEnabled, pValues, oEnabled, oValues })
+    const declared = buildFillState(s)
+    if (declared) {
+      setFilling(declared)
       return
     }
 
@@ -799,6 +857,22 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       oEnabled: {},
       oValues: {},
     })
+  }
+
+  /**
+   * One-click send that skips the fill dialog. Only offered for snippets whose
+   * variables already resolve from defaults / remembered values; otherwise it
+   * falls back to opening the dialog.
+   */
+  const sendDirect = (s: CommandSnippetDto) => {
+    setMenu(null)
+    const resolved = resolveSilently(s)
+    if (resolved == null) {
+      send(s)
+      return
+    }
+    setFillError(null)
+    sendNow(resolved)
   }
 
   /** Only declared params/options are worth remembering across sends. */
@@ -1266,6 +1340,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     editingOptions.map((o) => o.text),
   )
 
+  // One localStorage read, reused for every row's quick-send button.
+  const snippetMemory = loadAllSnippetStates()
+
   return (
     <div className="cmd-list-float" style={panelStyle}>
       <div
@@ -1388,6 +1465,20 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                       </div>
                       {s.hidden && (
                         <Icon name="eyeOff" size={11} className="cmd-list-hidden-icon" />
+                      )}
+                      {/* Every variable already resolves from defaults / last
+                          values -> one click sends without the fill dialog. */}
+                      {resolveSilently(s, snippetMemory) !== null && (
+                        <button
+                          className="cmd-list-action cmd-list-send"
+                          title={t('snippetSendDirect')}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            sendDirect(s)
+                          }}
+                        >
+                          <Icon name="send" size={11} />
+                        </button>
                       )}
                       <div className="cmd-list-item-actions" onClick={(e) => e.stopPropagation()}>
                         <button

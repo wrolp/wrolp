@@ -8671,6 +8671,19 @@ input[type='password']::-ms-clear {
   background: rgba(255, 255, 255, 0.08);
 }
 
+// Quick-send shortcut (only rendered when every variable already has a value).
+// Unlike the hover-only row actions it stays visible, so the shortcut is
+// discoverable without hovering.
+.cmd-list-send {
+  color: $accent;
+  opacity: 0.7;
+
+  &:hover {
+    opacity: 1;
+    background: rgba($accent, 0.2);
+  }
+}
+
 .cmd-list-alias {
   font-size: 11px;
   color: $text-dim;
