@@ -471,7 +471,7 @@ function toEditingParams(params: CommandParam[]): EditingParam[] {
     name: p.name,
     type: p.type === 'select' ? 'select' : 'text',
     defaultValue: p.defaultValue ?? '',
-    optionsText: (p.options ?? []).join('\n'),
+    optionsText: (p.options ?? []).join(', '),
     description: p.description ?? '',
     defaultEnabled: p.defaultEnabled !== false,
     exclusiveGroup: p.exclusiveGroup ?? '',
@@ -486,7 +486,7 @@ function toEditingOptions(options: CommandOption[]): EditingOption[] {
     label: o.label ?? '',
     description: o.description ?? '',
     valueType: o.value ? (o.value.type === 'select' ? 'select' : 'text') : 'none',
-    optionsText: (o.value?.options ?? []).join('\n'),
+    optionsText: (o.value?.options ?? []).join(', '),
     valueDefault: o.value?.defaultValue ?? '',
     defaultEnabled: o.defaultEnabled !== false,
     exclusiveGroup: o.exclusiveGroup ?? '',
@@ -1597,12 +1597,13 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           spellCheck={false}
                         />
                         {p.type === 'select' && (
-                          <input
+                          <textarea
                             className="snip-param-options"
                             value={p.optionsText}
                             onChange={(e) => updateParam(idx, { optionsText: e.target.value })}
                             placeholder={t('snippetParamOptions')}
                             spellCheck={false}
+                            rows={2}
                           />
                         )}
                         <input
@@ -1691,12 +1692,13 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           />
                         )}
                         {o.valueType === 'select' && (
-                          <input
+                          <textarea
                             className="snip-option-options"
                             value={o.optionsText}
                             onChange={(e) => updateOption(idx, { optionsText: e.target.value })}
                             placeholder={t('snippetParamOptions')}
                             spellCheck={false}
+                            rows={2}
                           />
                         )}
                         {o.valueType !== 'none' && (

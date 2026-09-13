@@ -242,6 +242,51 @@ test('param and option rows are each drawn as a bordered card', async ({ page })
   expect(sepText.scroll).toBeLessThanOrEqual(sepText.client + 1)
 })
 
+// The "allowed values" list accepts comma- OR newline-separated entries, so it
+// is a textarea: a plain single-line input silently swallowed the newlines the
+// editor wrote back on re-edit (values showed up mashed together, e.g.
+// "ab" instead of "a, b").
+test('the allowed-values field is a textarea: commas survive, newlines addable', async ({
+  page,
+}) => {
+  await openPanelWithTerminal(page, [
+    baseSnippet({
+      id: 'lv1',
+      command: 'tool --mode=${mode}',
+      params: [
+        {
+          name: 'mode',
+          type: 'select',
+          defaultValue: 'a',
+          options: ['a', 'b'],
+          defaultEnabled: true,
+        },
+      ],
+    }),
+  ])
+  await page.locator('.cmd-list-item').click({ button: 'right' })
+  await page.locator('.cmd-list-menu .context-menu-item').filter({ hasText: 'Edit' }).click()
+  const editor = page.locator('.cmd-list-modal-drag')
+  const area = editor.locator('textarea.snip-param-options')
+  await expect(area).toBeVisible()
+  expect(await area.evaluate((el) => el.tagName)).toBe('TEXTAREA')
+  // Round-tripped values are comma-separated, so the separator stays visible.
+  await expect(area).toHaveValue('a, b')
+
+  // …and new values can still be added one per line.
+  await area.fill('a\nb\nc')
+  await editor.locator('.modal-footer .btn-primary').click()
+  await expect
+    .poll(async () => {
+      const calls = (await invokedCalls(page)).filter((c) => c.cmd === 'save_command_snippet')
+      const snippet = calls.at(-1)?.args.snippet as
+        | { params?: Array<{ options?: string[] }> }
+        | undefined
+      return snippet?.params?.[0]?.options?.join('|')
+    })
+    .toBe('a|b|c')
+})
+
 // Regression: the floating panel is moved with a CSS `transform` (drag/resize
 // offset), which made it the containing block for the fill dialog's
 // `position: fixed` overlay — so a tall dialog (many params) was clamped to the

@@ -9120,7 +9120,8 @@ input[type='password']::-ms-clear {
   border-radius: 6px;
 
   input,
-  select {
+  select,
+  textarea {
     flex: 1 1 90px;
     min-width: 0;
     padding: 5px 8px;
@@ -9142,6 +9143,13 @@ input[type='password']::-ms-clear {
     // a whole row and squeeze every other field (and its placeholder hint).
     flex: 0 0 auto;
     width: auto;
+  }
+
+  // Allowed-values lists accept one value per line, so they're textareas.
+  textarea {
+    min-height: 44px;
+    resize: vertical;
+    line-height: 1.35;
   }
 
   .snip-var-name,
