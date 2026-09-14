@@ -7,11 +7,14 @@
 // `scrollBeyondLastLine` defaults to ON — it leaves one screen of room after the
 // last line so the tail of a file can be scrolled up to the top of the viewport
 // (Monaco would otherwise pin the last line to the bottom edge and stop there).
+// `stickyScroll` defaults to OFF, matching Monaco's own default, so the editor
+// keeps behaving as before until the toolbar switch is used.
 
 /** localStorage keys — a user-data contract, never rename them. */
 export const EDITOR_PREF_KEYS = {
   scrollBeyondLastLine: 'wrolp-editor-scroll-beyond-last-line',
   wordWrap: 'wrolp-editor-word-wrap',
+  stickyScroll: 'wrolp-editor-sticky-scroll',
 } as const
 
 export interface EditorPrefs {
@@ -19,11 +22,14 @@ export interface EditorPrefs {
   scrollBeyondLastLine: boolean
   /** Soft-wrap long lines (display only — the file itself is untouched). */
   wordWrap: boolean
+  /** Pin the enclosing scope (function/class/block) to the top while scrolling. */
+  stickyScroll: boolean
 }
 
 export const EDITOR_PREFS_DEFAULTS: EditorPrefs = {
   scrollBeyondLastLine: true,
   wordWrap: false,
+  stickyScroll: false,
 }
 
 type Listener = (prefs: EditorPrefs) => void
@@ -55,6 +61,7 @@ export function loadEditorPrefs(): EditorPrefs {
       EDITOR_PREFS_DEFAULTS.scrollBeyondLastLine,
     ),
     wordWrap: readFlag(EDITOR_PREF_KEYS.wordWrap, EDITOR_PREFS_DEFAULTS.wordWrap),
+    stickyScroll: readFlag(EDITOR_PREF_KEYS.stickyScroll, EDITOR_PREFS_DEFAULTS.stickyScroll),
   }
 }
 
@@ -65,6 +72,9 @@ export function saveEditorPrefs(patch: Partial<EditorPrefs>): EditorPrefs {
   }
   if (patch.wordWrap !== undefined) {
     writeFlag(EDITOR_PREF_KEYS.wordWrap, patch.wordWrap)
+  }
+  if (patch.stickyScroll !== undefined) {
+    writeFlag(EDITOR_PREF_KEYS.stickyScroll, patch.stickyScroll)
   }
   const next = loadEditorPrefs()
   for (const fn of [...listeners]) fn(next)

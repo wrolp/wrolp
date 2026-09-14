@@ -112,6 +112,10 @@ export function FileEditor({
       // line to the bottom edge). Default on, toggleable in the toolbar.
       scrollBeyondLastLine: prefs.scrollBeyondLastLine,
       wordWrap: prefs.wordWrap ? 'on' : 'off',
+      // Pin the enclosing scope (function / class / block) to the top of the
+      // viewport while the body is scrolled through. Off by default (Monaco's own
+      // default), toggleable in the toolbar.
+      stickyScroll: { enabled: prefs.stickyScroll },
       scrollbar: {
         verticalScrollbarSize: 4,
         horizontalScrollbarSize: 4,
@@ -213,6 +217,13 @@ export function FileEditor({
     if (!editor) return
     editor.updateOptions({ wordWrap: prefs.wordWrap ? 'on' : 'off' })
   }, [prefs.wordWrap])
+
+  // Sync sticky scroll (the pinned enclosing-scope header).
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.updateOptions({ stickyScroll: { enabled: prefs.stickyScroll } })
+  }, [prefs.stickyScroll])
 
   // Widen the scrollbar while the pointer is in the grab zone (4px → 10px) so it
   // is comfortable to drag. `active?.key` is a dependency because switching tabs
@@ -387,6 +398,14 @@ export function FileEditor({
                 title={t('editorWrapLinesTitle')}
               >
                 ↵ {t('editorWrapLines')} {t(prefs.wordWrap ? 'on' : 'off')}
+              </button>
+              <button
+                className={`editor-btn sticky-toggle${prefs.stickyScroll ? ' active' : ''}`}
+                aria-pressed={prefs.stickyScroll}
+                onClick={() => setPrefs(saveEditorPrefs({ stickyScroll: !prefs.stickyScroll }))}
+                title={t('editorStickyScrollTitle')}
+              >
+                📌 {t('editorStickyScroll')} {t(prefs.stickyScroll ? 'on' : 'off')}
               </button>
               <button
                 className={`editor-btn${showWhitespace !== 'none' ? ' active' : ''}`}

@@ -242,8 +242,10 @@ const en = {
   editorTailRoomTitle:
     'Leave one screen of room after the last line, so the end of the file can be scrolled up to the top of the viewport. Also applies to the hex viewer.',
   editorWrapLines: 'Wrap',
-  editorWrapLinesTitle:
-    'Soft-wrap long lines (display only — the file itself is not modified).',
+  editorWrapLinesTitle: 'Soft-wrap long lines (display only — the file itself is not modified).',
+  editorStickyScroll: 'Sticky',
+  editorStickyScrollTitle:
+    'Pin the enclosing scope (function / class / block) to the top while scrolling, so the nesting level stays visible.',
 
   // Ask-before-close guard (closing a terminal / pane that still has open files)
   closeTerminalWithFilesTitle: 'Close terminal with open files?',
