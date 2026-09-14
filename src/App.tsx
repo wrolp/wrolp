@@ -2756,8 +2756,12 @@ export default function App() {
               : t,
           ),
         )
-        // Refresh file tree after save
-        fileTreeRef.current?.refresh()
+        // Refresh the saved file's own directory (partial refresh). The whole
+        // tree used to be reloaded here — `refresh()` re-lists the current
+        // directory *and* recursively re-lists every expanded one, so saving a
+        // single file fired one `list_files` per expanded directory and made the
+        // panel flash its loading state (BUGS.md B36).
+        fileTreeRef.current?.refreshForFile(target.path)
         return true
       } catch (e) {
         setEditorTabs((prev) =>

@@ -44,6 +44,13 @@ export interface TauriMockOptions {
   aiConfig?: Record<string, unknown>
   /** Value returned by `list_files` (the file panel's directory listing). */
   fileEntries?: unknown[]
+  /**
+   * Per-directory `list_files` listings keyed by the exact requested path
+   * (falls back to `fileEntries`). Needed to expand a subdirectory in the file
+   * tree — and therefore to tell a partial refresh (one listing) from a full
+   * tree refresh (one listing per expanded directory, BUGS.md B36).
+   */
+  filesByDir?: Record<string, unknown[]>
   /** Value returned by `read_file_content` (opening a file in the editor). */
   fileContent?: Record<string, unknown>
   /** Value returned by `list_docker_containers` (the sidebar Docker section). */
@@ -228,7 +235,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return null
           }
           case 'list_files':
-            return opts.fileEntries ?? []
+            return opts.filesByDir?.[String(args.path)] ?? opts.fileEntries ?? []
           case 'read_file_content':
             return opts.fileContent ?? null
           case 'get_recording_enabled':

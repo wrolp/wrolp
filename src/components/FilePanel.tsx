@@ -153,6 +153,9 @@ export interface FileTreeHandle {
   /** Reload a single directory's listing (partial refresh), preserving the
    *  expansion state of subdirectories still present. */
   refreshDirectory: (path: string) => void
+  /** Partial refresh of the directory holding `filePath` — used after the
+   *  editor saved a file, so one save never re-lists the whole tree. */
+  refreshForFile: (filePath: string) => void
 }
 
 /* ---------- helpers ---------- */
@@ -203,6 +206,19 @@ function normalizePath(p: string): string {
   if (p === '/' || p === '.') return p
   if (/^[A-Za-z]:\/$/.test(p)) return p
   return p.endsWith('/') ? p.slice(0, -1) : p
+}
+
+// True when `dir` is the directory the *top-level* listing was read from.
+//
+// The panel may be rooted at a relative path (`.` = home, or a subdirectory)
+// while the backend hands back absolute child paths, so comparing against
+// `currentPath` alone is not enough: with `currentPath === '.'` a file's
+// absolute parent (e.g. `/home/root`) is not a tree node and never equals
+// `'.'`. Deriving the listing root from a child's parent covers that case, so
+// a partial refresh still replaces the visible listing instead of falling back
+// to a full tree reload.
+function isListingRoot(tree: TreeNode[], dir: string): boolean {
+  return tree.some((n) => normalizePath(getParentDir(n.path)) === dir)
 }
 
 function toNode(e: FileEntry): TreeNode {
@@ -610,32 +626,32 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         const result = await fsListFiles(target, path)
         const fresh = result.map(toNode)
         const norm = normalizePath(path)
-        if (norm === normalizePath(currentPath)) {
+        const node = findNode(tree, norm)
+        // A visible node wins over the listing-root test: a directory that is
+        // itself rendered must have *its* children swapped, never the root.
+        if (norm === normalizePath(currentPath) || (!node && isListingRoot(tree, norm))) {
           // Top-level listing: merge, preserving expansion of surviving dirs.
           setTree((t) => mergePreservingExpansion(t, fresh))
+        } else if (node && node.isDir) {
+          // The directory is visible in the tree: swap only its children.
+          // `getParentDir` returns a trailing slash (`/a/b/`) while tree node
+          // paths never carry one, so match against the normalized path —
+          // otherwise deletes/renames deep inside an expanded subtree would
+          // silently fail to refresh the listing.
+          setTree((t) =>
+            updateNode(t, norm, (n) => ({
+              ...n,
+              loaded: true,
+              loading: false,
+              children: mergePreservingExpansion(n.children ?? [], fresh),
+            })),
+          )
         } else {
-          const node = findNode(tree, norm)
-          if (node && node.isDir) {
-            // The directory is visible in the tree: swap only its children.
-            // `getParentDir` returns a trailing slash (`/a/b/`) while tree node
-            // paths never carry one, so match against the normalized path —
-            // otherwise deletes/renames deep inside an expanded subtree would
-            // silently fail to refresh the listing.
-            setTree((t) =>
-              updateNode(t, norm, (n) => ({
-                ...n,
-                loaded: true,
-                loading: false,
-                children: mergePreservingExpansion(n.children ?? [], fresh),
-              })),
-            )
-          } else {
-            // The target directory isn't in the visible tree (e.g. the panel
-            // is rooted at home '.' where the absolute parent has no tree node,
-            // or the directory was never expanded). Fall back to a full refresh
-            // so the change still shows up.
-            await refresh()
-          }
+          // The target directory isn't in the visible tree (e.g. the panel
+          // is rooted at a path whose absolute form was never rendered, or the
+          // directory was never expanded). Fall back to a full refresh so the
+          // change still shows up.
+          await refresh()
         }
       } catch (e) {
         setError(String(e))
@@ -644,10 +660,22 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     [target, currentPath, tree, refresh],
   )
 
-  useImperativeHandle(ref, () => ({ refresh, refreshDirectory: reloadDirectory }), [
-    refresh,
-    reloadDirectory,
-  ])
+  // Refresh the listing that holds `filePath` — the editor's save path. Kept
+  // separate from `refreshDirectory` so callers outside the panel never have to
+  // duplicate `getParentDir`'s edge cases (Windows drive roots, multi-level
+  // `/`, trailing slashes).
+  const refreshForFile = useCallback(
+    (filePath: string) => {
+      void reloadDirectory(getParentDir(filePath))
+    },
+    [reloadDirectory],
+  )
+
+  useImperativeHandle(
+    ref,
+    () => ({ refresh, refreshDirectory: reloadDirectory, refreshForFile }),
+    [refresh, reloadDirectory, refreshForFile],
+  )
 
   // Load the local drive list once for the location dropdown (Windows only;
   // returns empty on other platforms).
