@@ -237,6 +237,14 @@ const en = {
   saveAndClose: 'Save & Close',
   discardAndClose: "Don't Save",
 
+  // Editor toolbar (file editor pane)
+  editorTailRoom: 'Tail room',
+  editorTailRoomTitle:
+    'Leave one screen of room after the last line, so the end of the file can be scrolled up to the top of the viewport. Also applies to the hex viewer.',
+  editorWrapLines: 'Wrap',
+  editorWrapLinesTitle:
+    'Soft-wrap long lines (display only — the file itself is not modified).',
+
   // Ask-before-close guard (closing a terminal / pane that still has open files)
   closeTerminalWithFilesTitle: 'Close terminal with open files?',
   closeTerminalWithFilesMessage:

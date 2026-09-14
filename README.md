@@ -285,4 +285,3 @@ Released under the [MIT License](./LICENSE). See [LICENSE](./LICENSE) for detail
 - [xterm.js](https://xtermjs.org/) — terminal rendering
 - [Monaco Editor](https://microsoft.github.io/monaco-editor/) — code editor
 - …and many other open-source libraries that make this project possible.
-

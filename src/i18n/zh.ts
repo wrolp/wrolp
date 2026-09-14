@@ -237,6 +237,13 @@ const zh: Partial<Record<TranslationKey, string>> = {
   saveAndClose: '保存并关闭',
   discardAndClose: '不保存',
 
+  // 编辑器工具栏（文件编辑器 pane）
+  editorTailRoom: '末尾留白',
+  editorTailRoomTitle:
+    '末行之后保留一屏留白，使文件末尾几行能滚到视口最上方；Hex 查看器同样生效。',
+  editorWrapLines: '自动换行',
+  editorWrapLinesTitle: '长行自动换行（仅显示效果，不修改文件内容）。',
+
   // 关闭终端前确认（终端/pane 仍有打开文件时）
   closeTerminalWithFilesTitle: '终端仍有打开的文件，确认关闭？',
   closeTerminalWithFilesMessage: '“{name}” 仍有 {count} 个打开的文件，关闭终端会一并丢弃。',

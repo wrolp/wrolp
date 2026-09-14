@@ -6,6 +6,10 @@ import { installTauriMock } from './helpers/tauriMock'
 // the last lines can be read with the room after them in view. Without that room
 // the last line is pinned to the BOTTOM edge of the viewport and the view stops
 // there.
+//
+// The room is a PREFERENCE (`wrolp-editor-scroll-beyond-last-line`), enabled by
+// default and toggled by the editor toolbar's `.tail-toggle`; the hex viewer
+// follows the same switch.
 // See task/todo.md → 「编辑器 / Hex 查看器：末尾几行可滚到视口顶部」.
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
@@ -101,6 +105,24 @@ async function offsetInLines(page: Page, text: string): Promise<number> {
   }, text)
 }
 
+/** Scroll the hex dump to its very bottom (the browser clamps to the maximum). */
+async function scrollHexToBottom(page: Page) {
+  await page.evaluate(() => {
+    const body = document.querySelector<HTMLElement>('.hex-body')!
+    body.scrollTop = body.scrollHeight
+  })
+}
+
+/** Distance from the top of the hex viewport to its last row, in px. */
+async function lastHexRowOffset(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const body = document.querySelector<HTMLElement>('.hex-body')!
+    const all = body.querySelectorAll<HTMLElement>('.hex-row')
+    const last = all[all.length - 1]
+    return last.getBoundingClientRect().top - body.getBoundingClientRect().top
+  })
+}
+
 test('the editor can scroll the last line up to the top of the viewport', async ({ page }) => {
   await openFile(page, 'big.txt', {
     ...FILE_ARGS,
@@ -114,6 +136,33 @@ test('the editor can scroll the last line up to the top of the viewport', async 
 
   // `< 1` line: the marker is the topmost line on screen, roughly flush with the
   // viewport top instead of parked against its bottom edge.
+  await expect.poll(() => offsetInLines(page, LAST_LINE), { timeout: 15_000 }).toBeLessThan(1)
+})
+
+test('the tail-room toggle is on by default and can turn the room off again', async ({ page }) => {
+  await openFile(page, 'big.txt', {
+    ...FILE_ARGS,
+    path: TEXT_PATH,
+    content: TEXT_CONTENT,
+    size: TEXT_CONTENT.length,
+  })
+
+  await expect(page.locator('.monaco-editor .view-line').first()).toBeVisible()
+  const toggle = page.locator('.editor-btn.tail-toggle')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true') // default: enabled
+
+  // Off → the last line is back to being pinned to the bottom edge.
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await wheelToBottom(page)
+  await expect
+    .poll(() => offsetInLines(page, LAST_LINE), { timeout: 15_000 })
+    .toBeGreaterThan(5)
+
+  // On again → the tail room is back.
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await wheelToBottom(page)
   await expect.poll(() => offsetInLines(page, LAST_LINE), { timeout: 15_000 }).toBeLessThan(1)
 })
 
@@ -137,18 +186,34 @@ test('the hex dump can scroll its last row up to the top of the viewport', async
   })
   expect(overflow).toBeGreaterThan(200)
 
-  await page.evaluate(() => {
-    const body = document.querySelector<HTMLElement>('.hex-body')!
-    body.scrollTop = body.scrollHeight // clamped by the browser to the maximum
+  await scrollHexToBottom(page)
+
+  // One line height (18px) at worst, instead of the whole viewport height without
+  // the tail room.
+  expect(await lastHexRowOffset(page)).toBeLessThan(20)
+})
+
+test('the hex dump drops its tail room when the preference is turned off', async ({ page }) => {
+  // The preference is read at mount (default = on), so seed it before the app boots.
+  await page.addInitScript(() => {
+    localStorage.setItem('wrolp-editor-scroll-beyond-last-line', '0')
   })
 
-  const offset = await page.evaluate(() => {
-    const body = document.querySelector<HTMLElement>('.hex-body')!
-    const all = body.querySelectorAll<HTMLElement>('.hex-row')
-    const last = all[all.length - 1]
-    // Distance from the viewport top to the last row — one line height (18px) at
-    // worst, instead of the whole viewport height without the tail room.
-    return last.getBoundingClientRect().top - body.getBoundingClientRect().top
+  await openFile(page, 'data.bin', {
+    ...FILE_ARGS,
+    path: BIN_PATH,
+    size: BIN_BYTES,
+    isBinary: true,
+    content: '',
+    hexBase64: BIN_B64,
   })
-  expect(offset).toBeLessThan(20)
+
+  await expect(page.locator('.hex-body .hex-row')).toHaveCount(BIN_BYTES / 16)
+  await expect(page.locator('.hex-tail')).toHaveCount(0)
+
+  await scrollHexToBottom(page)
+
+  // Without the tail the last row stops at the bottom edge — a whole viewport away
+  // from the top.
+  expect(await lastHexRowOffset(page)).toBeGreaterThan(200)
 })

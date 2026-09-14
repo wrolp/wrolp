@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { loadEditorPrefs, subscribeEditorPrefs } from '../lib/editorPrefs'
 
 interface HexViewerProps {
   /** Raw file bytes as Base64. */
@@ -40,6 +41,9 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
   }, [base64])
 
   const [shownBytes, setShownBytes] = useState(1_048_576) // 1 MiB
+  // Tail room is the editor's `scrollBeyondLastLine` preference (see editorPrefs):
+  // one switch for both views, toggled in the editor toolbar.
+  const [prefs, setPrefs] = useState(() => loadEditorPrefs())
   const slice = bytes.subarray(0, Math.min(shownBytes, bytes.length))
   const more = bytes.length - slice.length
 
@@ -47,6 +51,8 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
   useEffect(() => {
     setShownBytes(1_048_576)
   }, [base64])
+
+  useEffect(() => subscribeEditorPrefs(setPrefs), [])
 
   const rows = useMemo(() => {
     const out: React.ReactNode[] = []
@@ -99,7 +105,7 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
         {rows}
         {/* Tail room (see `.hex-tail`) so the last rows can be scrolled up to the
             top of the viewport, matching the code editor's `scrollBeyondLastLine`. */}
-        <div className="hex-tail" aria-hidden="true" />
+        {prefs.scrollBeyondLastLine && <div className="hex-tail" aria-hidden="true" />}
       </div>
       {more > 0 && (
         <div className="hex-more">

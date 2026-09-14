@@ -749,7 +749,8 @@ body.resize-v * {
 
     &:hover {
       background: rgba(86, 156, 214, 0.3);
-      color: #569cd6;
+      // 同色文字压同色浅底 = 2.2:1（两套主题都不够）：改用可读的强调色文字 token。
+      color: var(--accent-soft-40);
     }
   }
 
@@ -1304,6 +1305,9 @@ body.resize-v * {
     display: flex;
     align-items: center;
     gap: 8px;
+    // Wrap instead of spilling: a narrow pane must never hide the Save button
+    // (the display toggles alone take ~450px).
+    flex-wrap: wrap;
     padding: 4px 10px;
     background: $bg-secondary;
     border-bottom: 1px solid $border;
@@ -1374,7 +1378,9 @@ body.resize-v * {
     background: $bg-input;
     border: 1px solid $border;
     border-radius: 3px;
-    color: $text-muted;
+    // `$text-muted` on `$bg-input` is only 2.8:1 in the dark theme (its label was
+    // as hard to read as the blue states below); secondary is 4.8:1 / 6.9:1.
+    color: $text-secondary;
     cursor: pointer;
     font-size: 11px;
     padding: 3px 10px;
@@ -1390,19 +1396,22 @@ body.resize-v * {
       cursor: default;
     }
 
-    &.active {
-      background: rgba($accent, 0.15);
-      border-color: $accent;
-      color: $accent;
-    }
-
+    // "On" state of a toolbar toggle + the primary action (Save): a solid accent
+    // fill with on-accent text (6.4:1 dark / 5.9:1 light). The previous
+    // `rgba($accent, .15)` fill with `color: $accent` text was blue-on-blue-grey —
+    // 2.0:1 in the dark theme, 4.3:1 in the light one — so both states were
+    // unreadable. The `color` has to be repeated on hover: the `:hover` rule above
+    // is more specific and would otherwise win.
+    &.active,
     &.primary {
-      background: rgba($accent, 0.15);
-      border-color: rgba($accent, 0.3);
-      color: $accent;
+      background: $accent;
+      border-color: $accent;
+      color: var(--text-on-accent);
 
       &:hover:not(:disabled) {
-        background: rgba($accent, 0.25);
+        background: $accent-hover;
+        border-color: $accent-hover;
+        color: var(--text-on-accent);
       }
     }
   }
@@ -1587,7 +1596,7 @@ body.resize-v * {
     top: 8px;
     right: 12px;
     font-size: 12px;
-    color: $accent;
+    color: var(--accent-soft-40);
     background: $bg-secondary;
     padding: 2px 8px;
     border-radius: 4px;
@@ -3278,7 +3287,7 @@ input[type='password']::-ms-clear {
         }
 
         &.sync-active {
-          color: $accent;
+          color: var(--accent-soft-40);
           background: rgba($accent, 0.15);
         }
 
@@ -3290,7 +3299,7 @@ input[type='password']::-ms-clear {
 
       .file-sftp-user {
         font-size: 11px;
-        color: $accent;
+        color: var(--accent-soft-40);
         background: rgba($accent, 0.12);
         border: 1px solid rgba($accent, 0.25);
         border-radius: 3px;
@@ -3372,7 +3381,7 @@ input[type='password']::-ms-clear {
       background: rgba($accent, 0.15);
       border: 1px solid rgba($accent, 0.3);
       border-radius: 3px;
-      color: $accent;
+      color: var(--accent-soft-40);
       cursor: pointer;
       line-height: 1;
 
@@ -3530,7 +3539,7 @@ input[type='password']::-ms-clear {
       padding: 1px 6px;
       border-radius: 2px;
       font-size: 10px;
-      color: $accent;
+      color: var(--accent-soft-40);
       background: rgba(0, 122, 204, 0.12);
       white-space: nowrap;
       overflow: hidden;
@@ -4224,7 +4233,7 @@ input[type='password']::-ms-clear {
 
   .add-btn {
     margin-left: auto;
-    color: $accent;
+    color: var(--accent-soft-40);
     border-color: rgba($accent, 0.3);
     background: rgba($accent, 0.1);
     &:hover {
@@ -5387,7 +5396,7 @@ input[type='password']::-ms-clear {
     right: 8px;
     background: rgba($accent, 0.15);
     border: 1px solid rgba($accent, 0.3);
-    color: $accent;
+    color: var(--accent-soft-40);
     font-size: 11px;
     padding: 2px 10px;
     border-radius: 3px;
@@ -6081,7 +6090,8 @@ input[type='password']::-ms-clear {
     border-radius: 50%;
     border: 1px solid rgba($accent, 0.4);
     background: rgba(#0d1117, 0.85);
-    color: $accent;
+    // 悬浮在日志区（两套主题下都是深色底）上的圆钮：用强调色上的文字色。
+    color: var(--text-on-accent);
     font-size: 16px;
     cursor: pointer;
     display: flex;
@@ -6335,7 +6345,7 @@ input[type='password']::-ms-clear {
   }
 
   &.active {
-    color: $accent;
+    color: var(--accent-soft-40);
     border-color: rgba($accent, 0.4);
     background: rgba($accent, 0.12);
 
@@ -8215,7 +8225,7 @@ input[type='password']::-ms-clear {
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.2px;
-  color: $accent;
+  color: var(--accent-soft-40);
   background: rgba($accent, 0.14);
   border: 1px solid rgba($accent, 0.35);
   border-radius: 999px;
@@ -8241,7 +8251,7 @@ input[type='password']::-ms-clear {
     background 0.15s;
 
   &:hover {
-    color: $accent;
+    color: var(--accent-soft-40);
     border-color: rgba($accent, 0.5);
     background: rgba($accent, 0.08);
   }
@@ -8509,7 +8519,7 @@ input[type='password']::-ms-clear {
   border: 1px solid rgba($accent, 0.55);
   border-radius: 5px;
   background: rgba($accent, 0.15);
-  color: $accent-hover;
+  color: var(--accent-soft-40);
   font-size: 11px;
   cursor: pointer;
   user-select: none;
@@ -8904,7 +8914,7 @@ input[type='password']::-ms-clear {
   margin-left: 6px;
   padding: 1px 5px;
   background: rgba($accent, 0.22);
-  color: $accent;
+  color: var(--accent-soft-40);
   border-radius: 3px;
   font-size: 10px;
   font-weight: 600;
@@ -9582,7 +9592,7 @@ input[type='password']::-ms-clear {
 
       &.service-ssh {
         background: rgba($accent, 0.18);
-        color: #6cb8e8;
+        color: var(--accent-soft-40);
       }
 
       &.service-telnet {

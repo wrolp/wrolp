@@ -6,6 +6,8 @@ import HexViewer from './HexViewer'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 import { monacoThemeId } from '../lib/theme'
 import { getResolvedTheme, subscribeTheme } from '../lib/themeStore'
+import { loadEditorPrefs, saveEditorPrefs, subscribeEditorPrefs } from '../lib/editorPrefs'
+import { useI18n } from '../i18n'
 
 export interface EditorTab {
   key: string
@@ -76,8 +78,14 @@ export function FileEditor({
     'none',
   )
   const [tabSize, setTabSize] = useState(2)
+  // Persisted display preferences (see lib/editorPrefs) — the hex viewer reads
+  // the same store, so one switch covers both views.
+  const [prefs, setPrefs] = useState(() => loadEditorPrefs())
 
-  const active = tabs.find((t) => t.key === activeKey) || null
+  const { t } = useI18n()
+
+  // `tab` (not `t`): `t` is the i18n translator below.
+  const active = tabs.find((tab) => tab.key === activeKey) || null
 
   // Monaco's scrollbar is a 4px sliver by default — widen it while the pointer
   // is in the grab zone so it can actually be grabbed and dragged.
@@ -101,8 +109,9 @@ export function FileEditor({
       minimap: { enabled: showMinimap },
       // One viewport of spare room below the last line, so the tail of the file can
       // be scrolled up to the top of the viewport (Monaco otherwise pins the last
-      // line to the bottom edge).
-      scrollBeyondLastLine: true,
+      // line to the bottom edge). Default on, toggleable in the toolbar.
+      scrollBeyondLastLine: prefs.scrollBeyondLastLine,
+      wordWrap: prefs.wordWrap ? 'on' : 'off',
       scrollbar: {
         verticalScrollbarSize: 4,
         horizontalScrollbarSize: 4,
@@ -188,6 +197,23 @@ export function FileEditor({
     editor.updateOptions({ tabSize })
   }, [tabSize])
 
+  // Follow preference changes made in another pane / by the hex viewer.
+  useEffect(() => subscribeEditorPrefs(setPrefs), [])
+
+  // Sync the tail room (one screen of room after the last line).
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.updateOptions({ scrollBeyondLastLine: prefs.scrollBeyondLastLine })
+  }, [prefs.scrollBeyondLastLine])
+
+  // Sync soft wrapping.
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.updateOptions({ wordWrap: prefs.wordWrap ? 'on' : 'off' })
+  }, [prefs.wordWrap])
+
   // Widen the scrollbar while the pointer is in the grab zone (4px → 10px) so it
   // is comfortable to drag. `active?.key` is a dependency because switching tabs
   // builds a brand-new editor that starts at the default width.
@@ -210,20 +236,20 @@ export function FileEditor({
       {/* Tab bar (hidden when tabs live in the shell pane header) */}
       {!hideTabs && (
         <div className="editor-tabs">
-          {tabs.map((t) => (
+          {tabs.map((tab) => (
             <div
-              key={t.key}
-              className={`editor-tab ${t.key === activeKey ? 'active' : ''} ${t.isDirty ? 'dirty' : ''}`}
-              onClick={() => onSelect(t.key)}
-              title={t.path}
+              key={tab.key}
+              className={`editor-tab ${tab.key === activeKey ? 'active' : ''} ${tab.isDirty ? 'dirty' : ''}`}
+              onClick={() => onSelect(tab.key)}
+              title={tab.path}
             >
-              <span className="editor-tab-name">{t.name}</span>
-              {t.isDirty && <span className="editor-tab-dirty">●</span>}
+              <span className="editor-tab-name">{tab.name}</span>
+              {tab.isDirty && <span className="editor-tab-dirty">●</span>}
               <span
                 className="editor-tab-close"
                 onClick={(e) => {
                   e.stopPropagation()
-                  onClose(t.key)
+                  onClose(tab.key)
                 }}
               >
                 ×
@@ -344,6 +370,24 @@ export function FileEditor({
                   <option value="CRLF">CRLF</option>
                 </select>
               </label>
+              <button
+                className={`editor-btn tail-toggle${prefs.scrollBeyondLastLine ? ' active' : ''}`}
+                aria-pressed={prefs.scrollBeyondLastLine}
+                onClick={() =>
+                  setPrefs(saveEditorPrefs({ scrollBeyondLastLine: !prefs.scrollBeyondLastLine }))
+                }
+                title={t('editorTailRoomTitle')}
+              >
+                ⇣ {t('editorTailRoom')} {t(prefs.scrollBeyondLastLine ? 'on' : 'off')}
+              </button>
+              <button
+                className={`editor-btn wrap-toggle${prefs.wordWrap ? ' active' : ''}`}
+                aria-pressed={prefs.wordWrap}
+                onClick={() => setPrefs(saveEditorPrefs({ wordWrap: !prefs.wordWrap }))}
+                title={t('editorWrapLinesTitle')}
+              >
+                ↵ {t('editorWrapLines')} {t(prefs.wordWrap ? 'on' : 'off')}
+              </button>
               <button
                 className={`editor-btn${showWhitespace !== 'none' ? ' active' : ''}`}
                 onClick={() => setShowWhitespace((v) => (v === 'none' ? 'all' : 'none'))}
