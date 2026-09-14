@@ -3818,7 +3818,9 @@ export default function App() {
       const dl = dockerLogTabs.find((d) => d.tabId === item.dockerLogTabId)
       if (!dl) return null
       return (
+        // `key`: see the pane-side render below — one instance per docker-log tab.
         <DockerLogViewer
+          key={dl.tabId}
           tabId={dl.tabId}
           jumpTabId={dl.jumpTabId!}
           containerName={dl.containerName!}
@@ -5914,7 +5916,16 @@ export default function App() {
                     flexDirection: 'column',
                   }}
                 >
+                  {/* `key` per docker-log tab: without it React reuses the
+                      same instance when the pane's shellView switches from
+                      `dockerlog:<A>` to `dockerlog:<B>` (same tree position,
+                      only props change) — and since DockerLogViewer's initial
+                      load lives in a mount-only effect (`[]`), the header would
+                      show B while the body still held A's logs and A's live
+                      stream (BUGS.md B35). Remounting also stops the old
+                      stream via its unmount cleanup. */}
                   <DockerLogViewer
+                    key={dl.tabId}
                     tabId={dl.tabId}
                     jumpTabId={dl.jumpTabId!}
                     containerName={dl.containerName!}

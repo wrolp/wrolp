@@ -53,6 +53,13 @@ export interface TauriMockOptions {
   /** Raw string returned by `docker_container_logs` (ANSI escapes included). */
   dockerLogs?: string
   /**
+   * Per-container `docker_container_logs` payloads keyed by container **name**
+   * (falls back to `dockerLogs`). Two containers need two different payloads to
+   * assert that two log tabs really show their own container's output
+   * (BUGS.md B35).
+   */
+  dockerLogsByContainer?: Record<string, string>
+  /**
    * Value returned by `get_local_terminals` (the sidebar's saved local-terminal
    * entries). The section also renders an always-present "open default local
    * shell" row, so a test that needs a *specific* shell type (e.g. a POSIX one,
@@ -192,8 +199,18 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return opts.dockerContainers ?? []
           case 'analyze_docker_container':
             return opts.dockerAnalysis ?? null
-          case 'docker_container_logs':
-            return opts.dockerLogs ?? ''
+          case 'docker_container_logs': {
+            const byName = opts.dockerLogsByContainer
+            const name = String(args.containerName ?? '')
+            return byName?.[name] ?? opts.dockerLogs ?? ''
+          }
+          // Follow mode (the viewer's default) streams instead of fetching; the
+          // stream command/ids are unused by tests that turn Follow off, but a
+          // defined `poll_docker_logs` keeps the poll loop from throwing.
+          case 'docker_logs_stream_start':
+            return 'mock-stream'
+          case 'poll_docker_logs':
+            return []
           case 'list_command_snippets':
             return snippets
           case 'save_command_snippet': {
