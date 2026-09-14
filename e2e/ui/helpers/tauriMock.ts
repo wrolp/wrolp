@@ -52,6 +52,13 @@ export interface TauriMockOptions {
   dockerAnalysis?: Record<string, unknown>
   /** Raw string returned by `docker_container_logs` (ANSI escapes included). */
   dockerLogs?: string
+  /**
+   * Value returned by `get_local_terminals` (the sidebar's saved local-terminal
+   * entries). The section also renders an always-present "open default local
+   * shell" row, so a test that needs a *specific* shell type (e.g. a POSIX one,
+   * to get `clear` instead of `cls`) must provide an entry here.
+   */
+  localTerminals?: unknown[]
 }
 
 /**
@@ -170,6 +177,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'load_ai_config':
             return opts.aiConfig ?? {}
           case 'get_local_terminals':
+            return opts.localTerminals ?? []
           case 'get_local_shell_dirs':
           case 'list_local_drives':
           case 'list_tunnels':

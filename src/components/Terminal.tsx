@@ -30,6 +30,7 @@ import { stripAnsi, highlightTableText } from '../lib/termHighlight'
 import { highlightStore } from '../lib/highlightStore'
 import type { HighlightConfig } from '../lib/highlightRules'
 import {
+  isPosixLocalShell,
   isPosixSession,
   loadPasteGuard,
   pasteLineCount,
@@ -2850,16 +2851,45 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     termRef.current?.selectAll()
   }, [])
 
+  // Clear the screen. For SSH / Telnet / serial this stays purely local:
+  // `term.clear()` wipes xterm's buffer (scrollback included) and the peer's line
+  // editor redraws *relative* to wherever the cursor now is, so both stay in sync.
+  //
+  // A local shell is different: its peer is ConPTY, which repaints with ABSOLUTE
+  // cursor positioning relative to its own screen buffer (same root cause as the
+  // `term.reset()` on reconnect above). A local-only `term.clear()` desyncs the
+  // two — ConPTY still believes the prompt sits on the pre-clear row, so its next
+  // repaint (a keystroke, Enter, or a prompt refresh) puts cursor and prompt
+  // straight back there (BUGS.md B34). So clear *inside* the shell instead: run
+  // its native clear command and let ConPTY wipe its own buffer, which returns
+  // its origin to row 0. `CSI 3 J` is written locally to drop xterm's scrollback
+  // too, keeping the "clear means everything is gone" semantics of `clear()`.
+  //
+  // Alternate screen (vim / less / top …) has no shell prompt to clear for —
+  // injecting a command there would type it into the running program — so fall
+  // back to the local wipe.
   const handleClear = useCallback(() => {
     setCtxMenu(null)
-    termRef.current?.focus()
-    termRef.current?.clear()
+    const term = termRef.current
+    if (!term) return
+    term.focus()
+    const atShellPrompt = term.buffer.active.type !== 'alternate'
+    if (isLocal && connectedRef.current && atShellPrompt) {
+      // `clear` for POSIX local shells (WSL / git-bash / bash / zsh …);
+      // `cls` is the cmd / PowerShell builtin.
+      const clearCommand = isPosixLocalShell(localShellType) ? 'clear' : 'cls'
+      sendRawToSession(`${clearCommand}\r`)
+      // Scrollback only — the viewport belongs to the shell's own clear.
+      term.write('\x1b[3J')
+    } else {
+      term.clear()
+    }
     flushHlNow()
     highlighterRef.current?.reset()
     clearLsLinks()
     resetLsCapture()
     resetTableCapture()
-  }, [])
+  }, [isLocal, localShellType, sendRawToSession])
 
   // Erase whatever the user has typed on the shell's current input line without
   // submitting it. The shell owns that line, so we drive its line editor:
