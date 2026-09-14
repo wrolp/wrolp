@@ -53,6 +53,13 @@ $themes: (
     accent-soft-40: color.adjust($dark-accent, $lightness: 40%),
     border-l12: color.adjust(#3e3e3e, $lightness: 12%),
     success-l8: color.adjust(#1fa87e, $lightness: 8%),
+    // 语义色的「当文字用」变体：语义色本身作前景压在**自己的浅底**上时对比度不足
+    // （深色 1.9–3.3:1），与 accent-soft-40 同思路——深色主题提亮、浅色主题加深。
+    danger-soft-40: color.adjust(#c42b1c, $lightness: 40%),
+    success-soft-40: color.adjust(#1fa87e, $lightness: 40%),
+    warning-soft-40: color.adjust(#cca700, $lightness: 40%),
+    // 实心成功按钮的底色（配 --text-on-accent 白字，两套主题均 ≥5:1）。
+    success-solid: #107c10,
 
     // ---- L2 半透明叠加 / 阴影 / 遮罩 ----
     overlay-1: rgba(255, 255, 255, 0.06),
@@ -116,6 +123,12 @@ $themes: (
     accent-soft-40: #0a5f9e,
     border-l12: #b9b9b9,
     success-l8: #0a5c0a,
+    // 见深色表同名的注释：浅色主题必须显著加深才压得住自己的浅底。
+    danger-soft-40: #8f1d17,
+    success-soft-40: #0e5c39,
+    warning-soft-40: #7a5200,
+    // 与浅色 success 同值：白字压它约 5.4:1。
+    success-solid: #107c10,
 
     // ---- L2 半透明叠加：深色主题用"提亮"（白+低 alpha），浅色必须反转为"压暗"（黑+低 alpha）----
     overlay-1: rgba(0, 0, 0, 0.04),

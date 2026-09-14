@@ -373,20 +373,23 @@ body,
   border-radius: 10px;
   background: $bg-active;
   color: $text-secondary;
+  // 变体一律「soft 文字 + 自身同色浅底」：语义色本体当文字用在这层浅底上对比度
+  // 不足（深色 1.9–3.1:1、浅色 1.2–1.9:1），故文字取 *-soft-40，底色走 rgba($x, a)
+  // 垫片以便浅色主题自动换成更浅的底。
   &.running {
-    background: rgba(31, 168, 126, 0.18);
-    color: $success;
+    background: rgba($success, 0.18);
+    color: var(--success-soft-40);
   }
   &.done {
-    background: rgba(14, 99, 156, 0.25);
-    color: #6cb8ff;
+    background: rgba($accent, 0.12);
+    color: var(--accent-soft-40);
   }
   &.error {
-    background: rgba(196, 43, 28, 0.2);
-    color: $danger;
+    background: rgba($danger, 0.2);
+    color: var(--danger-soft-40);
   }
   &.canceled {
     background: $bg-active;
-    color: $warning;
+    color: var(--warning-soft-40);
   }
 }

@@ -135,10 +135,10 @@ body.resize-v * {
 }
 
 .pin-btn.active {
-  color: #ffd76a;
+  color: var(--warning-soft-40);
 
   &:hover {
-    color: #ffd76a;
+    color: var(--warning-soft-40);
     background: rgba(255, 215, 106, 0.12);
   }
 }
@@ -722,15 +722,15 @@ body.resize-v * {
 
     &:hover {
       background: rgba(78, 201, 176, 0.2);
-      color: #4ec9b0;
+      color: var(--success-soft-40);
     }
 
     &.active {
-      color: #4ec9b0;
+      color: var(--success-soft-40);
 
       &:hover {
         background: rgba(210, 70, 70, 0.3);
-        color: #ff7d7d;
+        color: var(--danger-soft-40);
       }
     }
   }
@@ -768,7 +768,7 @@ body.resize-v * {
 
     &:hover {
       background: rgba(210, 70, 70, 0.3);
-      color: #ff7d7d;
+      color: var(--danger-soft-40);
     }
   }
 
@@ -1007,14 +1007,14 @@ body.resize-v * {
   border-right: 1px solid $border;
   cursor: pointer;
   font-size: 12px;
-  color: #999999;
+  color: $text-secondary;
   white-space: nowrap;
   transition: background 0.1s;
   gap: 6px;
   min-width: 0;
 
   &:hover {
-    background: #353535;
+    background: $bg-hover;
   }
 
   &.active {
@@ -1030,13 +1030,13 @@ body.resize-v * {
 
   .tab-close {
     font-size: 14px;
-    color: #666;
+    color: $text-muted;
     cursor: pointer;
     padding: 0 2px;
     line-height: 1;
 
     &:hover {
-      color: #ccc;
+      color: $text-primary;
     }
   }
 }
@@ -1198,8 +1198,10 @@ body.resize-v * {
     border-radius: 3px;
 
     &:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.08);
+      // 白字压白 8% 底在浅色主题下完全看不见（1.0:1）——改用可随主题翻转的
+      // text-primary + 同色低透明度底。
+      color: $text-primary;
+      background: rgba($text-primary, 0.08);
     }
   }
 }
@@ -1339,7 +1341,7 @@ body.resize-v * {
   .enc-warn {
     font-size: 10px;
     background: rgba(#d4a72c, 0.2);
-    color: #d4a72c;
+    color: var(--warning-soft-40);
     padding: 1px 5px;
     border-radius: 3px;
     border: 1px solid rgba(#d4a72c, 0.3);
@@ -1678,8 +1680,8 @@ body.resize-v * {
     line-height: 1;
 
     &:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.12);
+      color: $text-primary;
+      background: rgba($text-primary, 0.12);
     }
   }
 
@@ -1764,12 +1766,12 @@ body.resize-v * {
     line-height: 1;
 
     &:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.12);
+      color: $text-primary;
+      background: rgba($text-primary, 0.12);
     }
 
     &:active {
-      background: rgba(255, 255, 255, 0.2);
+      background: rgba($text-primary, 0.2);
     }
   }
 
@@ -1787,12 +1789,12 @@ body.resize-v * {
     line-height: 1;
 
     &:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.12);
+      color: $text-primary;
+      background: rgba($text-primary, 0.12);
     }
 
     &:active {
-      background: rgba(255, 255, 255, 0.2);
+      background: rgba($text-primary, 0.2);
     }
   }
 
@@ -1825,12 +1827,12 @@ body.resize-v * {
     user-select: none;
 
     &:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.1);
+      color: $text-primary;
+      background: rgba($text-primary, 0.1);
     }
 
     &.active {
-      color: #fff;
+      color: var(--success-soft-40);
       background: rgba(76, 175, 80, 0.35);
       border-color: rgba(76, 175, 80, 0.6);
     }
@@ -1852,8 +1854,8 @@ body.resize-v * {
     user-select: none;
 
     &:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.1);
+      color: $text-primary;
+      background: rgba($text-primary, 0.1);
     }
   }
 
@@ -1937,13 +1939,13 @@ body.resize-v * {
   border: 1px solid transparent;
 
   &:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.08);
+    color: $text-primary;
+    background: rgba($text-primary, 0.08);
   }
 
   &.active {
     color: $text-primary;
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba($text-primary, 0.12);
     border-color: $border;
   }
 
@@ -2240,13 +2242,13 @@ body.resizing-v .term-scrollbar-thumb {
   &.term-ai-status-done {
     background: rgba(59, 145, 83, 0.2);
     border: 1px solid rgba(93, 198, 108, 0.6);
-    color: #7be372;
+    color: var(--success-soft-40);
   }
 
   &.term-ai-status-error {
     background: rgba(210, 70, 70, 0.22);
     border: 1px solid rgba(244, 71, 71, 0.7);
-    color: #ff7d7d;
+    color: var(--danger-soft-40);
   }
 
   .term-ai-status-meta {
@@ -3409,7 +3411,7 @@ input[type='password']::-ms-clear {
     margin: 4px 8px 0;
     padding: 3px 8px;
     font-size: 11px;
-    color: $text-dim;
+    color: $text-secondary;
     background: rgba($accent, 0.1);
     border: 1px solid rgba($accent, 0.3);
     border-radius: 4px;
@@ -3421,7 +3423,7 @@ input[type='password']::-ms-clear {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      color: #6ec3f0;
+      color: var(--accent-soft-40);
       font-weight: 600;
     }
   }
@@ -3435,7 +3437,7 @@ input[type='password']::-ms-clear {
     border-bottom: 1px solid $border;
     flex-shrink: 0;
     font-size: 11px;
-    color: $text-muted;
+    color: $text-secondary;
     overflow: hidden;
 
     .file-path-jump-wrap {
@@ -3664,11 +3666,13 @@ input[type='password']::-ms-clear {
     // A directory row currently under a dragged file/folder: show it as the
     // upload target so the user knows where the items will land.
     &.drop-target {
-      background: rgba($accent, 0.35);
+      // 白字压 35% 强调色浅底在浅色主题只有 1.7:1：文字改用可读的强调色 token，
+      // 底色同时收窄到 18%（浅色下才压得住这个蓝）。
+      background: rgba($accent, 0.18);
       outline: 1px solid $accent;
       outline-offset: -1px;
       box-shadow: inset 0 0 0 1px rgba($accent, 0.6);
-      color: #fff;
+      color: var(--accent-soft-40);
     }
 
     // The node currently staged for a remote-internal paste (after "Copy").
@@ -3870,7 +3874,7 @@ input[type='password']::-ms-clear {
 
       &:hover {
         background: rgba(244, 71, 71, 0.15);
-        color: #f44747;
+        color: var(--danger-soft-40);
       }
     }
 
@@ -4487,8 +4491,9 @@ input[type='password']::-ms-clear {
 .file-target-chip {
   font-size: 10px;
   font-weight: 600;
-  color: #6ec3f0;
-  background: rgba($accent, 0.28);
+  color: var(--accent-soft-40);
+  // 28% 的强调色浅底在浅色主题下压不住 accent-soft-40（4.35:1），收窄到 20%。
+  background: rgba($accent, 0.2);
   border: 1px solid rgba(#6ec3f0, 0.55);
   border-radius: 3px;
   padding: 0 5px;
@@ -4502,13 +4507,13 @@ input[type='password']::-ms-clear {
 // Distinct, higher-contrast styling for Docker targets so the container name
 // is readable at a glance on the dark panel.
 .file-target-chip.docker {
-  color: #ffd27f;
+  color: var(--warning-soft-40);
   background: rgba(#cca700, 0.22);
   border-color: rgba(#ffd27f, 0.6);
 }
 
 .file-target-chip.docker-ssh {
-  color: #b4f0c4;
+  color: var(--success-soft-40);
   background: rgba(#4ec9b0, 0.2);
   border-color: rgba(#b4f0c4, 0.55);
 }
@@ -4868,17 +4873,17 @@ input[type='password']::-ms-clear {
     text-transform: lowercase;
     background: $bg-secondary;
     border: 1px solid $border;
-    color: $text-dim;
+    color: $text-secondary;
 
     &.running {
-      color: #4ec9b0;
+      color: var(--success-soft-40);
       border-color: rgba(#4ec9b0, 0.35);
       background: rgba(#4ec9b0, 0.1);
     }
     &.exited,
     &.dead,
     &.paused {
-      color: #f48771;
+      color: var(--danger-soft-40);
       border-color: rgba(#f48771, 0.35);
       background: rgba(#f48771, 0.08);
     }
@@ -5105,7 +5110,7 @@ input[type='password']::-ms-clear {
 
   .analysis-error {
     padding: 8px 12px;
-    color: $danger;
+    color: var(--danger-soft-40);
     font-size: 12px;
     background: rgba($danger, 0.1);
     border-bottom: 1px solid $border;
@@ -5205,7 +5210,7 @@ input[type='password']::-ms-clear {
     &.active {
       border-color: $accent;
       background: rgba($accent, 0.2);
-      color: #fff;
+      color: var(--accent-soft-40);
     }
   }
 
@@ -5293,7 +5298,7 @@ input[type='password']::-ms-clear {
       text-align: left;
       padding: 3px 6px;
       border-bottom: 1px solid $border;
-      color: $text-muted;
+      color: $text-secondary;
       font-weight: 600;
       font-size: 11px;
     }
@@ -5475,7 +5480,7 @@ input[type='password']::-ms-clear {
 
     .orch-inferred-tag {
       font-size: 9px;
-      color: $text-dim;
+      color: $text-secondary;
       background: rgba($accent, 0.12);
       padding: 1px 5px;
       border-radius: 2px;
@@ -5628,7 +5633,7 @@ input[type='password']::-ms-clear {
     background: rgba(#f85149, 0.1);
     border: 1px solid rgba(#f85149, 0.3);
     border-radius: 4px;
-    color: #f85149;
+    color: var(--danger-soft-40);
     font-size: 12px;
     font-family: 'Cascadia Code', Consolas, monospace;
   }
@@ -5638,7 +5643,7 @@ input[type='password']::-ms-clear {
     background: rgba($border, 0.1);
     border: 1px solid $border;
     border-radius: 4px;
-    color: $text-muted;
+    color: $text-secondary;
     font-size: 12px;
     text-align: center;
   }
@@ -5653,7 +5658,7 @@ input[type='password']::-ms-clear {
       text-align: left;
       padding: 3px 6px;
       border-bottom: 1px solid $border;
-      color: $text-muted;
+      color: $text-secondary;
       font-weight: 600;
       font-size: 11px;
       background: $bg-secondary;
@@ -5769,7 +5774,7 @@ input[type='password']::-ms-clear {
       text-align: left;
       padding: 3px 6px;
       border-bottom: 1px solid $border;
-      color: $text-muted;
+      color: $text-secondary;
       font-weight: 600;
       font-size: 11px;
     }
@@ -5954,7 +5959,7 @@ input[type='password']::-ms-clear {
     background: rgba($text-muted, 0.08);
     border: 1px solid rgba($text-muted, 0.2);
     border-radius: 3px;
-    color: $text-muted;
+    color: $text-secondary;
     font-size: 12px;
     cursor: pointer;
     transition:
@@ -5963,7 +5968,7 @@ input[type='password']::-ms-clear {
 
     &:hover {
       background: rgba(#e74c3c, 0.15);
-      color: #e74c3c;
+      color: var(--danger-soft-40);
       border-color: rgba(#e74c3c, 0.3);
     }
   }
@@ -6066,7 +6071,7 @@ input[type='password']::-ms-clear {
     padding: 16px 12px;
     background: rgba(#f85149, 0.08);
     border-left: 3px solid #f85149;
-    color: #f85149;
+    color: var(--danger-soft-40);
     font-size: 12px;
     font-family: 'Cascadia Code', Consolas, monospace;
   }
@@ -6204,12 +6209,12 @@ input[type='password']::-ms-clear {
       border-radius: 4px;
 
       &:hover {
-        color: #fff;
-        background: rgba(255, 255, 255, 0.1);
+        color: $text-primary;
+        background: rgba($text-primary, 0.1);
       }
 
       &.active {
-        color: #fff;
+        color: var(--success-soft-40);
         background: rgba(76, 175, 80, 0.35);
         border-color: rgba(76, 175, 80, 0.6);
       }
@@ -6233,8 +6238,8 @@ input[type='password']::-ms-clear {
       border-radius: 4px;
 
       &:hover {
-        color: #fff;
-        background: rgba(255, 255, 255, 0.12);
+        color: $text-primary;
+        background: rgba($text-primary, 0.12);
       }
     }
   }
@@ -6756,7 +6761,7 @@ input[type='password']::-ms-clear {
 .ai-tmpl-item-cat {
   display: inline-block;
   font-size: 10px;
-  color: $text-dim;
+  color: $text-secondary;
   background: $bg-input;
   border: 1px solid $border;
   border-radius: 4px;
@@ -7162,7 +7167,9 @@ input[type='password']::-ms-clear {
     top: 4px;
     left: 8px;
     font-size: 10px;
-    color: $text-dim;
+    // 代码块底色是**固定深色** #1a1f2b（两套主题一致），所以这里必须用浅色文字，
+    // 不能跟主题走的 $text-dim（浅色主题下 #999 压黑底也不够亮 / 深色下 #666 太暗）。
+    color: rgba(255, 255, 255, 0.6);
     background: rgba(0, 0, 0, 0.3);
     padding: 1px 6px;
     border-radius: 3px;
@@ -7190,7 +7197,8 @@ input[type='password']::-ms-clear {
   .ai-chat-code-send {
     font-size: 12px;
     line-height: 1;
-    color: $text-dim;
+    // 同上：固定深色代码块上的按钮。
+    color: rgba(255, 255, 255, 0.75);
     background: rgba(0, 0, 0, 0.35);
     border: 1px solid $border;
     border-radius: 3px;
@@ -7201,7 +7209,7 @@ input[type='password']::-ms-clear {
       background 0.15s;
 
     &:hover {
-      color: $text-primary;
+      color: #fff;
       background: rgba(0, 0, 0, 0.55);
     }
   }
@@ -7214,10 +7222,10 @@ input[type='password']::-ms-clear {
 .ai-chat-inline-code {
   font-family: $font-mono;
   font-size: 12px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba($text-primary, 0.08);
   padding: 1px 5px;
   border-radius: 3px;
-  color: #e2c08d;
+  color: var(--warning-soft-40);
 }
 
 .ai-chat-cursor {
@@ -7249,7 +7257,7 @@ input[type='password']::-ms-clear {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #f44747;
+  color: var(--danger-soft-40);
   font-size: 12px;
   padding: 8px 12px;
   background: rgba(#f44747, 0.08);
@@ -7393,7 +7401,9 @@ input[type='password']::-ms-clear {
 .ai-tool-result {
   margin: 0;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.35);
+  // 黑色半透明底在浅色主题下会压成中灰，$text-secondary 压不住——换成随主题
+  // 翻转的「代码/结果表面」token（深色仍是近黑的嵌板）。
+  background: var(--editor-blank);
   color: $text-secondary;
   font-family: $font-mono;
   font-size: 11px;
@@ -7435,8 +7445,8 @@ input[type='password']::-ms-clear {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: $text-dim;
-  background: rgba(0, 0, 0, 0.2);
+  color: $text-secondary;
+  background: rgba($text-primary, 0.06);
 }
 
 // Pretty-printed, syntax-highlighted JSON in tool-call arguments / results.
@@ -7511,12 +7521,14 @@ input[type='password']::-ms-clear {
 }
 
 .ai-tool-confirm-allow {
-  color: #fff;
-  background: #67c23a;
-  border-color: #67c23a;
+  color: var(--text-on-accent);
+  // #67c23a 上白字只有 2.24:1（两套主题都不够）——实心成功按钮统一用
+  // success-solid（两套主题都 ≥5:1），hover 往深走。
+  background: var(--success-solid);
+  border-color: var(--success-solid);
 
   &:hover {
-    background: #85ce61;
+    background: #0a5c0a;
   }
 }
 
@@ -7673,7 +7685,9 @@ input[type='password']::-ms-clear {
     border-radius: 6px;
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.2);
-    color: $text-primary;
+    // Lightbox 底色是**固定深色**（#0b0d10，两套主题一致），所以这里的白底/白字
+    // 不是"浅色主题下白压白"，必须保持浅色文字。
+    color: #fff;
     cursor: pointer;
 
     &:hover {
@@ -8116,7 +8130,7 @@ input[type='password']::-ms-clear {
   justify-content: center;
   background: $bg-input;
   border: 1px solid $border;
-  color: $text-muted;
+  color: $text-secondary;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.15s;
@@ -8303,7 +8317,7 @@ input[type='password']::-ms-clear {
 
   &:hover:not(:disabled) {
     background: rgba($danger, 0.16);
-    color: $danger;
+    color: var(--danger-soft-40);
   }
 
   &:disabled {
@@ -8525,8 +8539,8 @@ input[type='password']::-ms-clear {
   user-select: none;
 
   &:hover {
-    background: rgba($accent, 0.3);
-    color: #fff;
+    background: rgba($accent, 0.2);
+    color: var(--accent-soft-40);
   }
 }
 
@@ -8546,7 +8560,7 @@ input[type='password']::-ms-clear {
 
   &:hover {
     background: rgba($accent, 0.2);
-    color: #fff;
+    color: var(--accent-soft-40);
   }
 }
 
@@ -8680,8 +8694,8 @@ input[type='password']::-ms-clear {
   cursor: pointer;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
+    background: rgba($text-primary, 0.12);
+    color: $text-primary;
   }
 
   &.active {
@@ -8690,15 +8704,15 @@ input[type='password']::-ms-clear {
 
   &.danger:hover {
     background: rgba(210, 70, 70, 0.35);
-    color: #ff7d7d;
+    color: var(--danger-soft-40);
   }
 }
 
 // A "hidden" snippet uses a dimmed eye-off icon that is still visible against
 // the row background (distinct from the gold favorite state).
 .cmd-list-action--hidden.active {
-  color: $text-muted;
-  background: rgba(255, 255, 255, 0.08);
+  color: $text-secondary;
+  background: rgba($text-primary, 0.08);
 }
 
 // Quick-send shortcut (only rendered when every variable already has a value).
@@ -9084,7 +9098,7 @@ input[type='password']::-ms-clear {
   flex-shrink: 0;
   padding: 0 6px;
   font-size: 10px;
-  color: $text-dim;
+  color: $text-secondary;
   background: $bg-hover;
   border-radius: 8px;
 }
@@ -9394,15 +9408,16 @@ input[type='password']::-ms-clear {
 
     .btn-primary {
       padding: 7px 20px;
-      background: $success;
+      // $success 在深色主题 (#1fa87e) 上白字只有 3.0:1 → 统一用 success-solid。
+      background: var(--success-solid);
       color: #fff;
 
       &:hover {
-        background: var(--success-l8);
+        background: #0a5c0a;
       }
 
       &:disabled {
-        background: $success;
+        background: var(--success-solid);
         opacity: 0.6;
       }
     }
@@ -9437,7 +9452,7 @@ input[type='password']::-ms-clear {
     border: 1px solid rgba($danger, 0.4);
     border-radius: 4px;
     font-size: 12px;
-    color: #e57368;
+    color: var(--danger-soft-40);
     word-break: break-all;
   }
 
@@ -9546,7 +9561,7 @@ input[type='password']::-ms-clear {
       top: 0;
       z-index: 1;
       background: $bg-secondary;
-      color: $text-muted;
+      color: $text-secondary;
       font-weight: 500;
       font-size: 11.5px;
       text-transform: uppercase;
@@ -9597,12 +9612,12 @@ input[type='password']::-ms-clear {
 
       &.service-telnet {
         background: rgba($warning, 0.16);
-        color: #d8c06a;
+        color: var(--warning-soft-40);
       }
 
       &.service-unknown {
         background: $bg-input;
-        color: $text-muted;
+        color: $text-secondary;
       }
     }
 
