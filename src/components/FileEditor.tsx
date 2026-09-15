@@ -126,6 +126,16 @@ export function FileEditor({
     })
     editorRef.current = editor
 
+    // Tab size is a *model* option (Monaco's editor option list has no `tabSize`), and
+    // the model picks its own value from the file contents — `detectIndentation` is on by
+    // default. That detected value is what sizes the tab, the auto-indent and the
+    // indent-guide grid, so mirror it in the toolbar: the select then shows the step the
+    // file is really rendered with (BUGS.md B38).
+    const detectedTabSize = editor.getModel()?.getOptions().tabSize
+    if (detectedTabSize === 2 || detectedTabSize === 4 || detectedTabSize === 8) {
+      setTabSize(detectedTabSize)
+    }
+
     const disposable = editor.onDidChangeModelContent(() => {
       if (suppressRef.current) return
       handlersRef.current.onContentChange(active.key, editor.getValue())
@@ -193,13 +203,6 @@ export function FileEditor({
     if (!editor) return
     editor.updateOptions({ renderWhitespace: showWhitespace })
   }, [showWhitespace])
-
-  // Sync tab size
-  useEffect(() => {
-    const editor = editorRef.current
-    if (!editor) return
-    editor.updateOptions({ tabSize })
-  }, [tabSize])
 
   // Follow preference changes made in another pane / by the hex viewer.
   useEffect(() => subscribeEditorPrefs(setPrefs), [])
@@ -415,7 +418,20 @@ export function FileEditor({
                 ¶ {showWhitespace !== 'none' ? 'On' : 'Off'}
               </button>
               <label className="editor-select tab-size" title="Tab size">
-                <select value={tabSize} onChange={(e) => setTabSize(Number(e.target.value))}>
+                <select
+                  value={tabSize}
+                  onChange={(e) => {
+                    const next = Number(e.target.value)
+                    setTabSize(next)
+                    // `tabSize` is a *model* option — the editor itself has no such
+                    // option, so `editor.updateOptions({ tabSize })` (what this used to
+                    // call) was a silent no-op. Writing the model is also what re-grids
+                    // the indent guides, so `indentSize` follows along. See BUGS.md B38.
+                    editorRef.current
+                      ?.getModel()
+                      ?.updateOptions({ tabSize: next, indentSize: 'tabSize' })
+                  }}
+                >
                   <option value={2}>2</option>
                   <option value={4}>4</option>
                   <option value={8}>8</option>
