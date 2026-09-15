@@ -245,6 +245,11 @@ const zh: Partial<Record<TranslationKey, string>> = {
   editorStickyScroll: '粘滞滚动',
   editorStickyScrollTitle:
     '滚动时把当前所在的作用域（函数 / 类 / 代码块）固定显示在顶部，分不清滚到哪一层时可打开。',
+  editorPreview: '预览',
+  editorPreviewTitle:
+    '以渲染后的 Markdown 阅读当前文件（只读，仅 .md 文件提供）；编辑内容会实时反映到预览。',
+  mdPreviewImageLocal: '相对路径图片无法在预览里加载：文件在远程主机上，不经 HTTP 提供服务。',
+  mdPreviewTooLarge: '文件过大，已改用纯文本显示。',
 
   // 关闭终端前确认（终端/pane 仍有打开文件时）
   closeTerminalWithFilesTitle: '终端仍有打开的文件，确认关闭？',

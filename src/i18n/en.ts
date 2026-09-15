@@ -246,6 +246,12 @@ const en = {
   editorStickyScroll: 'Sticky',
   editorStickyScrollTitle:
     'Pin the enclosing scope (function / class / block) to the top while scrolling, so the nesting level stays visible.',
+  editorPreview: 'Preview',
+  editorPreviewTitle:
+    'Read the file as rendered Markdown (read-only, offered for .md files). Edits show up in the preview live.',
+  mdPreviewImageLocal:
+    'Relative image paths cannot be loaded here — the file lives on the remote host and is not served over HTTP.',
+  mdPreviewTooLarge: 'File is too large to render — showing plain text.',
 
   // Ask-before-close guard (closing a terminal / pane that still has open files)
   closeTerminalWithFilesTitle: 'Close terminal with open files?',

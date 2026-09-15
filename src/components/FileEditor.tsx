@@ -3,6 +3,7 @@ import monaco from '../editor/monacoSetup'
 import { LANGUAGE_OPTIONS_SORTED, ENCODING_OPTIONS } from '../editor/languages'
 import type { TargetRef } from '../types'
 import HexViewer from './HexViewer'
+import MarkdownPreview from './MarkdownPreview'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 import { monacoThemeId } from '../lib/theme'
 import { getResolvedTheme, subscribeTheme } from '../lib/themeStore'
@@ -74,6 +75,9 @@ export function FileEditor({
   handlersRef.current = { onContentChange, onSave }
 
   const [showMinimap, setShowMinimap] = useState(false)
+  // Rendering the Markdown instead of the source (only offered for `markdown` files).
+  // Pane-scoped, like `showWhitespace` / `showMinimap` — no persistence.
+  const [showPreview, setShowPreview] = useState(false)
   const [showWhitespace, setShowWhitespace] = useState<'none' | 'all' | 'boundary' | 'trailing'>(
     'none',
   )
@@ -244,6 +248,11 @@ export function FileEditor({
 
   const editable =
     active && !active.loading && !active.error && !active.isBinary && !active.isTooLarge
+
+  // Markdown files can be read as source or as rendered HTML (the toggle is only shown
+  // for them). The language select drives this, so it also follows a manual switch.
+  const isMarkdown = active?.language === 'markdown'
+  const previewOn = isMarkdown && showPreview
 
   return (
     <div className="file-editor">
@@ -444,6 +453,16 @@ export function FileEditor({
               >
                 {showMinimap ? '◫' : '▢'} Map
               </button>
+              {isMarkdown && (
+                <button
+                  className={`editor-btn preview-toggle${showPreview ? ' active' : ''}`}
+                  aria-pressed={showPreview}
+                  onClick={() => setShowPreview((v) => !v)}
+                  title={t('editorPreviewTitle')}
+                >
+                  👁 {t('editorPreview')} {t(showPreview ? 'on' : 'off')}
+                </button>
+              )}
               <button
                 className="editor-btn primary"
                 onClick={() => onSave(active.key)}
@@ -454,7 +473,15 @@ export function FileEditor({
               </button>
             </div>
             {active.saving && <div className="editor-saving">Saving…</div>}
-            <div className="editor-host" ref={containerRef} />
+            <div className={`editor-views${previewOn ? ' is-preview' : ''}`}>
+              {/* Monaco stays mounted (only hidden) while previewing — unmounting its
+                  host would leave the editor instance without a home and the source
+                  view would come back blank. */}
+              <div className="editor-host" ref={containerRef} />
+              {previewOn && (
+                <MarkdownPreview content={active.content} onSave={() => onSave(active.key)} />
+              )}
+            </div>
           </>
         )}
       </div>

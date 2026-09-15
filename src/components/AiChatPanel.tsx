@@ -23,7 +23,8 @@ import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { focusTerminal } from './Terminal'
-import { open } from '@tauri-apps/plugin-shell'
+import { handleMarkdownLinkClick } from '../lib/externalLink'
+import { copyText } from '../lib/clipboard'
 
 // Map markdown elements to our existing chat styles so the look stays
 // consistent with the previous (hand-rolled) renderer.
@@ -54,15 +55,13 @@ function makeMarkdownComponents(onSendToShell: (text: string) => void) {
     // links in the OS browser instead, which keeps the app intact.
     a(props: { href?: string; children?: React.ReactNode }) {
       const { href, children } = props
-      const handleClick = (e: React.MouseEvent) => {
-        if (!href || !/^https?:\/\//i.test(href)) return
-        e.preventDefault()
-        open(href).catch(() => {
-          window.open(href, '_blank', 'noopener,noreferrer')
-        })
-      }
       return (
-        <a href={href} target="_blank" rel="noopener noreferrer" onClick={handleClick}>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => handleMarkdownLinkClick(e, href)}
+        >
           {children}
         </a>
       )
@@ -85,24 +84,10 @@ function CodeBlock({
   const [sent, setSent] = useState(false)
   const [hovered, setHovered] = useState(false)
   const handleCopy = useCallback(() => {
-    const write = async () => {
-      try {
-        await navigator.clipboard.writeText(code)
-      } catch {
-        // Fallback for non-secure contexts / older WebViews.
-        const ta = document.createElement('textarea')
-        ta.value = code
-        ta.style.position = 'fixed'
-        ta.style.opacity = '0'
-        document.body.appendChild(ta)
-        ta.select()
-        document.execCommand('copy')
-        document.body.removeChild(ta)
-      }
+    void copyText(code).then(() => {
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
-    }
-    write()
+    })
   }, [code])
 
   const handleSend = useCallback(() => {
@@ -643,7 +628,7 @@ export default function AiChatPanel({
 
   const handleCtxCopy = useCallback(() => {
     if (!ctxMenu) return
-    navigator.clipboard.writeText(ctxMenu.text).catch(() => {})
+    void copyText(ctxMenu.text)
     setCtxMenu(null)
   }, [ctxMenu])
 
@@ -687,23 +672,10 @@ export default function AiChatPanel({
   // (messages ref + right-click context-menu state are declared above, near the
   //  selection/copy handlers)
   const copyMessage = useCallback((id: string, text: string) => {
-    const write = async () => {
-      try {
-        await navigator.clipboard.writeText(text)
-      } catch {
-        const ta = document.createElement('textarea')
-        ta.value = text
-        ta.style.position = 'fixed'
-        ta.style.opacity = '0'
-        document.body.appendChild(ta)
-        ta.select()
-        document.execCommand('copy')
-        document.body.removeChild(ta)
-      }
+    void copyText(text).then(() => {
       setMsgCopied(id)
       window.setTimeout(() => setMsgCopied((cur) => (cur === id ? null : cur)), 1500)
-    }
-    write()
+    })
   }, [])
 
   const bottomRef = useRef<HTMLDivElement>(null)
