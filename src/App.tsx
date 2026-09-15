@@ -2663,33 +2663,33 @@ export default function App() {
   }, [])
 
   const closeEditorTab = useCallback((key: string) => {
-    setEditorTabs((prev) => {
-      const idx = prev.findIndex((t) => t.key === key)
-      if (idx < 0) return prev
-      const sshTabId = prev[idx].sshTabId
-      const next = prev.filter((t) => t.key !== key)
-      // If the closed file was the active one for its session, pick the next
-      // file of that same session (if any).
-      const sessionFiles = next.filter((t) => t.sshTabId === sshTabId)
-      setActiveEditorKey((aek) => {
-        if (aek[sshTabId] === key) {
-          return {
-            ...aek,
-            [sshTabId]:
-              sessionFiles.length > 0
-                ? sessionFiles[Math.min(idx, sessionFiles.length - 1)].key
-                : '',
-          }
-        }
-        return aek
-      })
-      if (sessionFiles.length === 0) {
-        setShellView((prev) => {
-          const nextView = { ...prev }
-          delete nextView[sshTabId]
-          return nextView
-        })
-      }
+    const prev = editorTabsRef.current
+    const closing = prev.find((t) => t.key === key)
+    if (!closing) return
+    const sshTabId = closing.sshTabId
+    // Neighbour is picked *within the closing file's own session*: the pane's
+    // file tabs are per session, so a global index would jump to an unrelated
+    // file when another session has files open too.
+    const sessionBefore = prev.filter((t) => t.sshTabId === sshTabId)
+    const posInSession = sessionBefore.findIndex((t) => t.key === key)
+    const sessionFiles = sessionBefore.filter((t) => t.key !== key)
+    // The tab sliding into the freed slot (its right neighbour), else the last
+    // remaining one; '' once the session has no files left.
+    const nextKey = sessionFiles.length
+      ? sessionFiles[Math.min(posInSession, sessionFiles.length - 1)].key
+      : ''
+
+    setEditorTabs((tabs) => tabs.filter((t) => t.key !== key))
+    setActiveEditorKey((aek) => (aek[sshTabId] === key ? { ...aek, [sshTabId]: nextKey } : aek))
+    // The pane decides *whether* an overlay is shown from `shellView` but the
+    // editor reads `activeEditorKey`, so leaving shellView on the closed key
+    // hides the terminal (sv !== 'terminal') while rendering no editor (its tab
+    // is gone) — an empty pane. Follow the close: next file, else the terminal.
+    setShellView((view) => {
+      if (view[sshTabId] !== key) return view
+      const next = { ...view }
+      if (nextKey) next[sshTabId] = nextKey
+      else delete next[sshTabId]
       return next
     })
   }, [])
