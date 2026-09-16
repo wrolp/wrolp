@@ -1137,6 +1137,35 @@ body.resize-v * {
     }
   }
 
+  // Tail-room switch: the terminal's own blank space below the last line. Lives in the
+  // status bar so it is reachable without digging into a hidden context menu.
+  .tsb-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    color: $text-secondary;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: nowrap;
+    cursor: pointer;
+
+    &:hover {
+      border-color: $border;
+      color: $text-primary;
+    }
+
+    &.active {
+      border-color: rgba($accent, 0.45);
+      background: rgba($accent, 0.18);
+      color: $text-primary;
+    }
+  }
+
   .tsb-dot {
     width: 8px;
     height: 8px;

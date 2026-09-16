@@ -5,7 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { ansiThemeColors, xtermTheme } from '../lib/theme'
 import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
-import { getTerminalAppearance, subscribeAppSettings } from '../lib/appSettings'
+import { getTerminalAppearance, readSetting, subscribeAppSettings } from '../lib/appSettings'
 import { listen } from '@tauri-apps/api/event'
 import '@xterm/xterm/css/xterm.css'
 import {
@@ -124,6 +124,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   autoConnect,
   maxScrollback,
   onStatusChange,
+  tailRoomOverride,
+  onSetTailRoom,
   onSizeChange,
   onAskAi,
   onAddCommandSnippet,
@@ -312,6 +314,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // menu opens, so "Clear input" can be disabled when there is nothing to clear.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; pending: string } | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement | null>(null)
+  // Tail room: blank scrollable space below the last line, like the editor's
+  // `scrollBeyondLastLine`. The per-terminal override is owned by the pane — its status
+  // bar is the switch — and arrives as a prop; `null` means "follow the global setting"
+  // (pane-scoped state, deliberately not persisted: reconnecting falls back to global).
+  const [tailRoomGlobal, setTailRoomGlobal] = useState(
+    () => readSetting('terminal.tailRoom')?.value === true,
+  )
+  const tailRoomOn = tailRoomOverride ?? tailRoomGlobal
+  // Read by `syncTailRoom` (inside the init effect, so it can't capture the state) and
+  // by the effect that re-applies it whenever the value changes.
+  const tailRoomRef = useRef(false)
+  const tailRoomSyncRef = useRef<() => void>(() => {})
+  // How far `.xterm-screen` is currently shifted up (0 when the room is off) — the link
+  // tooltip anchors with `getBoundingClientRect()` and has to subtract it.
+  const tailRoomShiftRef = useRef(0)
   // Clickable hover card shown over a clickable `ls`/`dir` entry, like VSCode's
   // terminal link tooltip ("Enter folder" / "Open file" + modifier hint). The
   // card itself is clickable and triggers the same action as the link. It is
@@ -358,7 +375,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const rowInViewport = bufferRow - baseY
     return {
       x: rect.left + col * cellW,
-      y: rect.top + rowInViewport * cellH,
+      // The content layer can be shifted up by the tail room — anchor on where it is.
+      y: rect.top + rowInViewport * cellH - tailRoomShiftRef.current,
       cellH,
     }
   }
@@ -1409,6 +1427,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       term.options.lineHeight = a.lineHeight
       term.options.cursorStyle = a.cursorStyle
       term.options.cursorBlink = a.cursorBlink
+      setTailRoomGlobal(readSetting('terminal.tailRoom')?.value === true)
       fitAddon.fit()
     })
     // Register this instance so external callers (reconnect, "send to terminal")
@@ -1650,11 +1669,74 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       scheduleScrollHide.current()
     }
 
+    // ---- tail room (末尾留白): xterm has no `scrollBeyondLastLine` equivalent ----
+    //
+    // xterm does not translate the DOM when scrolling: `Viewport.handleWheel` moves
+    // `scrollTop`, `_handleScroll` maps it to `ydisp` (clamped to the buffer bottom) and
+    // the renderer *repaints* the rows. A plain spacer would therefore be invisible — the
+    // room needs two pieces:
+    //
+    //  1. `padding-bottom` on `.xterm-scroll-area`, which gives the viewport real scroll
+    //     range *below* the buffer. The element is content-box and xterm only writes its
+    //     inline `height` (its own `syncScrollArea` recomputes that on every buffer change,
+    //     so a height tweak would be overwritten at once) — hence padding, and hence the
+    //     explicit `box-sizing`: the app's global reset is border-box, which would make the
+    //     padding eat into that height instead of extending it. The room is one viewport
+    //     *minus one row*, so the last line comes to rest on the top edge of the view
+    //     instead of being pushed out of it.
+    //  2. Translating `.xterm-screen` by the overflow past the buffer bottom — that is what
+    //     reveals the blank space. Only the *content* moves: `.xterm` (and with it the
+    //     scrollable `.xterm-viewport`) has to keep covering the whole pane, otherwise the
+    //     revealed strip is a dead zone where the wheel cannot scroll the terminal back.
+    //     xterm's mouse maths reads `.xterm-screen`'s rect (`SelectionService`,
+    //     `getCoordsRelativeToElement`), so selection / link hover stay aligned;
+    //     `computeLinkAnchor` compensates with `tailRoomShiftRef`.
+    const syncTailRoom = () => {
+      const el = term.element
+      const vp = viewportRef.current
+      if (!el || !vp) return
+      const screen = el.querySelector<HTMLElement>('.xterm-screen')
+      const scrollArea = el.querySelector<HTMLElement>('.xterm-scroll-area')
+      if (!tailRoomRef.current) {
+        if (scrollArea?.style.paddingBottom) scrollArea.style.paddingBottom = ''
+        if (scrollArea?.style.boxSizing) scrollArea.style.boxSizing = ''
+        if (screen?.style.transform) screen.style.transform = ''
+        tailRoomShiftRef.current = 0
+        return
+      }
+
+      const rowHeight = screen && term.rows > 0 ? screen.clientHeight / term.rows : 0
+      const room = `${Math.max(0, Math.round(vp.clientHeight - rowHeight))}px`
+      if (scrollArea) {
+        if (scrollArea.style.boxSizing !== 'content-box') {
+          scrollArea.style.boxSizing = 'content-box'
+        }
+        if (scrollArea.style.paddingBottom !== room) scrollArea.style.paddingBottom = room
+      }
+
+      // `ydisp` is clamped to `baseY`, so everything past `baseY * rowHeight` is pure
+      // overflow — exactly the room added above.
+      const bufferBottom = rowHeight > 0 ? term.buffer.active.baseY * rowHeight : 0
+      const extra = rowHeight > 0 ? Math.max(0, vp.scrollTop - bufferBottom) : 0
+      const transform = extra > 0.5 ? `translateY(${-extra}px)` : ''
+      if (screen && screen.style.transform !== transform) screen.style.transform = transform
+      tailRoomShiftRef.current = extra > 0.5 ? extra : 0
+    }
+    tailRoomSyncRef.current = syncTailRoom
+
     const viewport = term.element?.querySelector('.xterm-viewport') as HTMLElement | null
     if (viewport) {
       viewportRef.current = viewport
-      viewport.addEventListener('scroll', updateThumb, { passive: true })
+      viewport.addEventListener(
+        'scroll',
+        () => {
+          updateThumb()
+          syncTailRoom()
+        },
+        { passive: true },
+      )
       updateThumb()
+      syncTailRoom()
     }
 
     const onViewportMouseEnter = () => {
@@ -1672,10 +1754,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       vpEl.addEventListener('mouseleave', onViewportMouseLeave)
     }
 
-    // ResizeObserver on the viewport so the thumb updates when xterm re-flows.
+    // ResizeObserver on the viewport so the thumb updates when xterm re-flows — and so
+    // the tail room is recomputed: both the room and the shift derive from the viewport
+    // height and the row height, which `fit()` changes.
     let viewportRO: ResizeObserver | null = null
     if (viewport) {
-      viewportRO = new ResizeObserver(() => updateThumb())
+      viewportRO = new ResizeObserver(() => {
+        updateThumb()
+        syncTailRoom()
+      })
       viewportRO.observe(viewport)
     }
 
@@ -2640,6 +2727,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }, [shellView])
 
+  // Tail room: refresh the init-scope sync function's snapshot of the value and
+  // re-apply it whenever it changes — the global setting or this pane's override.
+  useEffect(() => {
+    tailRoomRef.current = tailRoomOn
+    tailRoomSyncRef.current()
+  }, [tailRoomOn])
+
   // Close context menu on click anywhere
   useEffect(() => {
     if (!ctxMenu) return
@@ -2891,6 +2985,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     resetTableCapture()
   }, [isLocal, localShellType, sendRawToSession])
 
+  // Tail room: the terminal's own menu pins the opposite of the current (effective)
+  // value; the pane status bar writes the same override through `onSetTailRoom`.
+  const handleToggleTailRoom = useCallback(() => {
+    setCtxMenu(null)
+    onSetTailRoom?.(!tailRoomOn)
+  }, [onSetTailRoom, tailRoomOn])
+
   // Erase whatever the user has typed on the shell's current input line without
   // submitting it. The shell owns that line, so we drive its line editor:
   // Ctrl+A (start of line) + Ctrl+K (kill to end) — correct even when the caret
@@ -3069,6 +3170,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleClear}>
             🧹 {t('clear')}
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={handleToggleTailRoom}
+            title={t('termTailRoomTitle')}
+          >
+            ⬓ {t('termTailRoom')} {t(tailRoomOn ? 'on' : 'off')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleAskAi}>

@@ -127,6 +127,8 @@ import {
   listAppearanceHistory,
   subscribeAppSettings,
   undoAppearance,
+  applySettingChanges,
+  readSetting,
   type AppearanceSnapshot,
   type SettingGroup,
 } from './lib/appSettings'
@@ -420,6 +422,62 @@ function CloseGuardSettingsCard({
         <span className="settings-help">{t('closeGuardHint')}</span>
       </div>
     </div>
+  )
+}
+
+/** Per-terminal tail-room switch for the pane's status bar. The effective value is
+ *  "pane override ?? global setting"; clicking pins the opposite for this pane only.
+ *  The global default itself lives in Settings → General (`TerminalTailRoomSetting`). */
+function TailRoomStatusToggle({
+  override,
+  onChange,
+}: {
+  override: boolean | null
+  onChange: (on: boolean) => void
+}) {
+  const { t } = useI18n()
+  const [globalOn, setGlobalOn] = useState(() => readSetting('terminal.tailRoom')?.value === true)
+  useEffect(
+    () => subscribeAppSettings(() => setGlobalOn(readSetting('terminal.tailRoom')?.value === true)),
+    [],
+  )
+  const on = override ?? globalOn
+  return (
+    <button
+      type="button"
+      className={`tsb-toggle${on ? ' active' : ''}`}
+      aria-pressed={on}
+      title={t('termTailRoomTitle')}
+      onClick={() => onChange(!on)}
+    >
+      ⬓ {t('termTailRoom')}
+    </button>
+  )
+}
+
+/** Settings → General: global default for the terminal tail room (one viewport of
+ *  blank scrollable space below the last line). The per-terminal switch is in the
+ *  terminal pane's status bar; both go through the appearance registry so the AI
+ *  bridge and every open terminal share one read/write/subscribe path. */
+function TerminalTailRoomSetting() {
+  const { t } = useI18n()
+  const [on, setOn] = useState(() => readSetting('terminal.tailRoom')?.value === true)
+  useEffect(
+    () => subscribeAppSettings(() => setOn(readSetting('terminal.tailRoom')?.value === true)),
+    [],
+  )
+  return (
+    <>
+      <label className="settings-field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => applySettingChanges({ 'terminal.tailRoom': e.target.checked }, 'user')}
+        />
+        <span className="settings-label">{t('termTailRoom')}</span>
+      </label>
+      <span className="settings-help">{t('termTailRoomHelp')}</span>
+    </>
   )
 }
 
@@ -918,6 +976,10 @@ export default function App() {
   // Per-pane terminal size, keyed by leaf id so each shell window shows its
   // own dimensions in its status bar.
   const [termSizes, setTermSizes] = useState<Record<string, { cols: number; rows: number }>>({})
+
+  // Tail room (末尾留白) per pane: missing = follow the global setting
+  // (`terminal.tailRoom`, ON by default). The pane's status bar is the switch.
+  const [tailRoomByPane, setTailRoomByPane] = useState<Record<string, boolean>>({})
 
   // ---------------------------------------------------------------------------
   // Terminal split layout (Phase 2). The tree is ephemeral (tabIds are
@@ -4058,6 +4120,10 @@ export default function App() {
                   }
                 }
               }}
+              tailRoomOverride={leafId ? (tailRoomByPane[leafId] ?? null) : null}
+              onSetTailRoom={(on) => {
+                if (leafId) setTailRoomByPane((prev) => ({ ...prev, [leafId]: on }))
+              }}
               onSizeChange={(cols, rows) => {
                 if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
               }}
@@ -4221,6 +4287,8 @@ export default function App() {
                         />
                         <span className="settings-help">{t('appliesToNewTabs')}</span>
                       </div>
+
+                      <TerminalTailRoomSetting />
 
                       <div className="settings-field">
                         <label className="settings-label" htmlFor="maxFileOpenSize">
@@ -5620,6 +5688,12 @@ export default function App() {
                 />
               </div>
               <div className="tsb-right">
+                {leaf.tabId != null && (
+                  <TailRoomStatusToggle
+                    override={tailRoomByPane[leaf.id] ?? null}
+                    onChange={(on) => setTailRoomByPane((prev) => ({ ...prev, [leaf.id]: on }))}
+                  />
+                )}
                 {termSizes[leaf.id]?.cols > 0 && (
                   <span className="tsb-size" title="SSH terminal width × height">
                     {termSizes[leaf.id].cols} × {termSizes[leaf.id].rows}

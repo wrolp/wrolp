@@ -207,6 +207,18 @@ const DEFS: SettingDef[] = [
     storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.cursorBlink },
     describe: 'Whether the terminal cursor blinks.',
   },
+  {
+    key: 'terminal.tailRoom',
+    kind: 'boolean',
+    group: 'terminal',
+    default: true,
+    // Behaviour, not appearance — but it lives in this registry so the settings page,
+    // the AI bridge and the per-terminal override all share one storage/subscribe path.
+    // ON by default; each terminal can switch it off from the pane's status bar.
+    storage: { kind: 'localStorage', key: 'wrolp-terminal-tail-room' },
+    describe:
+      'Leave one viewport of scrollable blank space below the last line (per-terminal switch in the pane status bar).',
+  },
 
   // ---- highlight ---------------------------------------------------------
   {
@@ -223,8 +235,7 @@ const DEFS: SettingDef[] = [
       if (id === 'custom') highlightStore.save({ ...cur, schemeId: 'custom' })
       else if (isBuiltinSchemeId(id)) highlightStore.save(applyScheme(cur, id))
     },
-    describe:
-      'Colour scheme for terminal output category highlighting (ip/url/error/…).',
+    describe: 'Colour scheme for terminal output category highlighting (ip/url/error/…).',
   },
   ...CATEGORY_ORDER.map<SettingDef>((key: CategoryKey) => ({
     key: `highlight.color.${key}`,
@@ -334,7 +345,10 @@ export function validateSettingValue(def: SettingDef, raw: unknown): Validated {
     }
     case 'color': {
       if (typeof raw !== 'string' || !HEX_RE.test(raw)) {
-        return { ok: false, error: `"${def.key}": invalid colour "${String(raw)}" (use hex, e.g. #aabbcc)` }
+        return {
+          ok: false,
+          error: `"${def.key}": invalid colour "${String(raw)}" (use hex, e.g. #aabbcc)`,
+        }
       }
       return { ok: true, value: raw.toLowerCase() }
     }
@@ -350,13 +364,17 @@ export function validateSettingValue(def: SettingDef, raw: unknown): Validated {
       return { ok: true, value: n }
     }
     case 'boolean': {
-      if (typeof raw !== 'boolean') return { ok: false, error: `"${def.key}" must be true or false` }
+      if (typeof raw !== 'boolean')
+        return { ok: false, error: `"${def.key}" must be true or false` }
       return { ok: true, value: raw }
     }
     case 'string': {
       if (typeof raw !== 'string') return { ok: false, error: `"${def.key}" must be a string` }
       if (raw.length > MAX_STRING_LEN) {
-        return { ok: false, error: `"${def.key}": value too long (max ${MAX_STRING_LEN} characters)` }
+        return {
+          ok: false,
+          error: `"${def.key}": value too long (max ${MAX_STRING_LEN} characters)`,
+        }
       }
       return { ok: true, value: raw }
     }

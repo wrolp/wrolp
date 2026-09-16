@@ -60,6 +60,13 @@ export interface TerminalComponentProps {
     status: 'connecting' | 'connected' | 'error' | 'disconnected',
     errorMessage?: string,
   ) => void
+  /** Tail room (末尾留白) for this terminal: `null`/absent = follow the global setting
+   *  (`terminal.tailRoom`). The pane's status bar is the switch, so the value is owned
+   *  by the pane and passed down. */
+  tailRoomOverride?: boolean | null
+  /** Set the tail room from the terminal's own context menu (the status bar has its own
+   *  path to the same state). */
+  onSetTailRoom?: (on: boolean) => void
   onSizeChange?: (cols: number, rows: number) => void
   onAskAi?: (selectedText: string) => void
   /** Save the selected text as a command snippet (floating command list). */
