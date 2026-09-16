@@ -211,10 +211,11 @@ const DEFS: SettingDef[] = [
     key: 'terminal.tailRoom',
     kind: 'boolean',
     group: 'terminal',
-    default: true,
+    default: false,
     // Behaviour, not appearance — but it lives in this registry so the settings page,
     // the AI bridge and the per-terminal override all share one storage/subscribe path.
-    // ON by default; each terminal can switch it off from the pane's status bar.
+    // OFF by default: the room changes how scrolling feels, so it stays opt-in (each
+    // terminal can switch it on from the pane's status bar).
     storage: { kind: 'localStorage', key: 'wrolp-terminal-tail-room' },
     describe:
       'Leave one viewport of scrollable blank space below the last line (per-terminal switch in the pane status bar).',

@@ -285,8 +285,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   appliesToNewTabs: '适用于新标签页。',
   termTailRoom: '末尾留白',
   termTailRoomTitle:
-    '在最后一行下方留出一个视口高度的可滚动空白：滚到底时最后一行能停在视口顶部。开关在终端 pane 底部的状态栏里，点一下即可单独关掉。',
-  termTailRoomHelp: '新终端默认开启；想单独关掉某个终端，就点它底部状态栏里的「末尾留白」。',
+    '在最后一行下方留出一个视口高度的可滚动空白：滚到底时最后一行能停在视口顶部。开关在终端 pane 底部的状态栏里，点一下即可单独开启。',
+  termTailRoomHelp: '新终端默认关闭；想单独开启某个终端，就点它底部状态栏里的「末尾留白」。',
   maxFileOpenSize: '可打开文件最大大小（MB）',
   maxFileOpenSizeDesc: '超过此大小的文件将无法在内置编辑器中打开。',
   updates: '更新',

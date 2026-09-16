@@ -23,9 +23,27 @@ const SECOND_OUTPUT = 'more-output\r\nroot@demo:~$ '
 
 const ROOM_KEY = 'wrolp-terminal-tail-room'
 
+/** Seed the *global* tail-room setting (the registry default is OFF, so tests that
+ *  exercise the room have to ask for it). */
+async function seedTailRoom(page: Page, on: boolean) {
+  await page.addInitScript(
+    ([key, value]) => {
+      try {
+        localStorage.setItem(key, value)
+      } catch {
+        /* ignore */
+      }
+    },
+    [ROOM_KEY, on ? '1' : '0'] as const,
+  )
+}
+
+/** Opens the demo connection. `tailRoom` seeds the *global* setting in localStorage;
+ *  omit it to leave the registry default in place (which is OFF — the room is opt-in per
+ *  terminal, so the tests that exercise it pass `{ tailRoom: true }` explicitly). */
 async function openTerminal(page: Page, opts: { tailRoom?: boolean } = {}) {
   // Stable language for the context-menu assertion (the status-bar switch is matched by
-  // class, so it does not care). No value written = the registry default, which is ON.
+  // class, so it does not care).
   await page.addInitScript((lang) => {
     try {
       localStorage.setItem('wrolp-lang', lang)
@@ -33,18 +51,7 @@ async function openTerminal(page: Page, opts: { tailRoom?: boolean } = {}) {
       /* ignore */
     }
   }, 'en')
-  if (opts.tailRoom !== undefined) {
-    await page.addInitScript(
-      ([key, value]) => {
-        try {
-          localStorage.setItem(key, value)
-        } catch {
-          /* ignore */
-        }
-      },
-      [ROOM_KEY, opts.tailRoom ? '1' : '0'] as const,
-    )
-  }
+  if (opts.tailRoom !== undefined) await seedTailRoom(page, opts.tailRoom)
 
   await installTauriMock(page, {
     connections: [DEMO_CONN],
@@ -65,6 +72,7 @@ async function openTerminal(page: Page, opts: { tailRoom?: boolean } = {}) {
 /** The same, opened from a sidebar local-terminal entry (a PTY / ConPTY shell) — the
  *  environment the room was reported broken in (BUGS.md B40). */
 async function openLocalShell(page: Page) {
+  await seedTailRoom(page, true)
   await installTauriMock(page, {
     localTerminals: [LOCAL_ENTRY],
     pollOutputChunks: [FIRST_OUTPUT, SECOND_OUTPUT],
@@ -84,6 +92,7 @@ async function openLocalShell(page: Page) {
 /** A connection whose only output is a couple of lines: the buffer never grows scrollback
  *  (`baseY === 0`), i.e. "内容还没满一屏" (BUGS.md B41). */
 async function openShortTerminal(page: Page) {
+  await seedTailRoom(page, true)
   await installTauriMock(page, {
     connections: [DEMO_CONN],
     pollOutputChunks: [['first line\r\nsecond line\r\nroot@demo:~$ ']],
@@ -250,7 +259,7 @@ async function installEchoingShell(page: Page) {
 }
 
 test('the last line stays in view and the wheel can scroll back', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
   // Let the buffered output settle: the room alone already satisfies the scrollback wait.
   await page.waitForTimeout(500)
 
@@ -271,17 +280,23 @@ test('the last line stays in view and the wheel can scroll back', async ({ page 
   await expect.poll(async () => shiftOf((await geom(page)).transform)).toBe(0)
 })
 
-test('tail room is on by default, with the switch in the pane status bar', async ({ page }) => {
+test('tail room is off by default, with the switch in the pane status bar', async ({ page }) => {
+  // No global value written: the registry default (OFF) applies. The room changes how
+  // scrolling feels, so it is opt-in — per terminal, from the status bar.
   await openTerminal(page)
 
-  const g = await geom(page)
-  expect(parseFloat(g.pad)).toBeGreaterThan(0)
+  expect((await geom(page)).pad).toBe('')
   await expect(statusSwitch(page)).toBeVisible()
+  await expect(statusSwitch(page)).toHaveAttribute('aria-pressed', 'false')
+
+  // …and this pane can switch it on for itself.
+  await toggleViaStatusBar(page)
   await expect(statusSwitch(page)).toHaveAttribute('aria-pressed', 'true')
+  expect(parseFloat((await geom(page)).pad)).toBeGreaterThan(0)
 })
 
 test('the status-bar switch turns the room off for this pane only', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
 
   const on = await geom(page)
   expect(parseFloat(on.pad)).toBeGreaterThan(0)
@@ -312,7 +327,7 @@ test('the status-bar switch turns the room off for this pane only', async ({ pag
 test('the global setting seeds the switch, and the switch still overrides it', async ({ page }) => {
   await openTerminal(page, { tailRoom: false })
 
-  // Global default switched off in Settings → no room, the switch shows that.
+  // Global setting off (that is also the default) → no room, the switch shows that.
   expect((await geom(page)).pad).toBe('')
   await expect(statusSwitch(page)).toHaveAttribute('aria-pressed', 'false')
 
@@ -323,7 +338,7 @@ test('the global setting seeds the switch, and the switch still overrides it', a
 })
 
 test('the terminal context menu still toggles the room', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
 
   await toggleViaContextMenu(page)
   await expect(statusSwitch(page)).toHaveAttribute('aria-pressed', 'false')
@@ -331,7 +346,7 @@ test('the terminal context menu still toggles the room', async ({ page }) => {
 })
 
 test('output while parked in the room keeps the view parked there', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
   await installEchoingShell(page)
   await wheelToBottom(page)
   const parked = await geom(page)
@@ -359,7 +374,7 @@ test('output while parked in the room keeps the view parked there', async ({ pag
 })
 
 test('a repaint that rewrites the last line does not drop the room either', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
   await wheelToBottom(page)
   expect(shiftOf((await geom(page)).transform)).toBeGreaterThan(0)
 
@@ -370,7 +385,7 @@ test('a repaint that rewrites the last line does not drop the room either', asyn
 })
 
 test('scrolling back out of the room resumes following the output', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
   await installEchoingShell(page)
   await wheelToBottom(page)
   expect(shiftOf((await geom(page)).transform)).toBeGreaterThan(0)
@@ -407,7 +422,7 @@ test('a local shell gets the same room, and its constant repaints keep it', asyn
 })
 
 test('no room while a full-screen app owns the alternate buffer', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
   expect(parseFloat((await geom(page)).pad)).toBeGreaterThan(0)
 
   // `\x1b[?1049h` — what vim / less / top do. The room would push the app out of the pane.
@@ -444,7 +459,7 @@ test('a screen that is not full gives only as much room as the content', async (
 })
 
 test('cls/reset leaves nothing to scroll past and cannot move the prompt', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
   expect(parseFloat((await geom(page)).pad)).toBeGreaterThan(0)
 
   // `\x1b[2J\x1b[H` is what `cls` / `reset` / `clear` do to xterm: screen wiped, cursor home.
@@ -464,7 +479,7 @@ test('cls/reset leaves nothing to scroll past and cannot move the prompt', async
 })
 
 test('the room comes back once the content fills a screen again', async ({ page }) => {
-  await openTerminal(page)
+  await openTerminal(page, { tailRoom: true })
   await pushOutput(page, '\x1b[2J\x1b[Hroot@demo:~$ ')
   await wheel(page, 20, 200)
   expect((await geom(page)).pad).toBe('')

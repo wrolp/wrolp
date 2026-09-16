@@ -294,7 +294,7 @@ const en = {
   termTailRoomTitle:
     'Leave one viewport of scrollable blank space below the last line, so the last line can be scrolled to the top of the view. The switch lives in the pane status bar at the bottom of the terminal.',
   termTailRoomHelp:
-    'New terminals start with it on; click “Tail room” in a terminal pane’s status bar to turn it off for that one.',
+    'New terminals start with it off; click “Tail room” in a terminal pane’s status bar to turn it on for that one.',
   maxFileOpenSize: 'Max File Open Size (MB)',
   maxFileOpenSizeDesc: 'Files larger than this cannot be opened in the editor.',
   updates: 'Updates',

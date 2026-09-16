@@ -978,7 +978,7 @@ export default function App() {
   const [termSizes, setTermSizes] = useState<Record<string, { cols: number; rows: number }>>({})
 
   // Tail room (末尾留白) per pane: missing = follow the global setting
-  // (`terminal.tailRoom`, ON by default). The pane's status bar is the switch.
+  // (`terminal.tailRoom`, OFF by default). The pane's status bar is the switch.
   const [tailRoomByPane, setTailRoomByPane] = useState<Record<string, boolean>>({})
 
   // ---------------------------------------------------------------------------
