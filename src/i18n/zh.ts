@@ -287,6 +287,16 @@ const zh: Partial<Record<TranslationKey, string>> = {
   termTailRoomTitle:
     '在最后一行下方留出一个视口高度的可滚动空白：滚到底时最后一行能停在视口顶部。开关在终端 pane 底部的状态栏里，点一下即可单独开启。',
   termTailRoomHelp: '新终端默认关闭；想单独开启某个终端，就点它底部状态栏里的「末尾留白」。',
+  termLineNumbers: '行号',
+  termLineNumbersTitle:
+    '在终端左侧显示行号列（真实占位，终端的列数会相应减少，远端会收到一次窗口变化）。折行只给逻辑行的首行编号，续行行显示折行标记（标记样式见设置 → 通用 → 终端）；全屏程序（vim / less / top）接管屏幕时行号留空。开关在终端 pane 底部的状态栏里，点一下即可单独开启。',
+  termLineNumbersHelp: '新终端默认关闭；想单独开启某个终端，就点它底部状态栏里的「行号」。',
+  termContinuationSymbol: '折行续行标记',
+  termContinuationReturn: '回车符（↵）',
+  termContinuationArrow: '折行箭头（↪）',
+  termContinuationDash: '连字符（-）',
+  termContinuationNone: '不显示',
+  termContinuationHelp: '行号列里，折行的续行行显示什么（仅在开启行号时生效）。',
   maxFileOpenSize: '可打开文件最大大小（MB）',
   maxFileOpenSizeDesc: '超过此大小的文件将无法在内置编辑器中打开。',
   updates: '更新',

@@ -95,6 +95,7 @@ import { resolveLsEntryPath } from './terminal/lsCapture'
 import { fixLowContrastSgr } from './terminal/sgrContrast'
 import { createCwdQueryStripper } from './terminal/cwdQuery'
 import type { CwdQueryStripper } from './terminal/cwdQuery'
+import { computeRowLabels, continuationGlyph, lineNumberDigits } from './terminal/lineNumbers'
 import {
   getCurrentCommandLine,
   splitPromptCommand,
@@ -116,6 +117,17 @@ export {
   markInputEcho,
 } from './terminal/registry'
 
+/** Give the line-number gutter the terminal's own font, so its `1ch` column matches the
+ *  terminal cells and the labels look like part of the terminal. Called on mount and
+ *  whenever the appearance registry pushes a font change (never per frame — it reads
+ *  localStorage). */
+function applyGutterFont(el: HTMLElement | null): void {
+  if (!el) return
+  const a = getTerminalAppearance()
+  el.style.fontFamily = a.fontFamily
+  el.style.fontSize = `${a.fontSize}px`
+}
+
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
   isActive,
@@ -128,6 +140,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onStatusChange,
   tailRoomOverride,
   onSetTailRoom,
+  lineNumbersOverride,
+  onSetLineNumbers,
   onSizeChange,
   onAskAi,
   onAddCommandSnippet,
@@ -323,6 +337,31 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // our overlay scrollbar). A scroll event alone cannot tell "the user moved back down"
   // from "xterm re-pinned the view on a write", hence this window.
   const tailRoomUserScrollAtRef = useRef(0)
+  // Line numbers (the left gutter): the same override model as the tail room — the
+  // pane's status bar owns the per-terminal value, `null` = follow the global setting.
+  const [lnGlobal, setLnGlobal] = useState(() => getTerminalAppearance().lineNumbers)
+  const lineNumbersOn = lineNumbersOverride ?? lnGlobal
+  // Read by `syncGutter` (inside the init effect, so it can't capture the state) and by
+  // the effect that re-applies it whenever the value changes.
+  const lnRef = useRef(false)
+  const lnSyncRef = useRef<() => void>(() => {})
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const gutterRef = useRef<HTMLDivElement | null>(null)
+  const gutterRowsRef = useRef<HTMLDivElement | null>(null)
+  // Label rows the gutter renders (= `term.rows`). React state because the row list is
+  // rendered declaratively; `lnRowsRef` mirrors it for the sync path.
+  const [lnRows, setLnRows] = useState(0)
+  const lnRowsRef = useRef(0)
+  // Gutter width (digits, grow-only) and row height (px, = xterm's cell height). Both are
+  // pushed to the root as CSS custom properties so the styling stays in the stylesheet.
+  const lnDigitsRef = useRef(0)
+  const lnRowHRef = useRef(0)
+  // What a wrapped line's continuation rows draw (`terminal.continuationSymbol` → glyph;
+  // an empty string = off). Read once + on every appearance change, never per frame.
+  const [lnSymbol, setLnSymbol] = useState(() =>
+    continuationGlyph(getTerminalAppearance().continuationSymbol),
+  )
+  const lnSymbolRef = useRef(lnSymbol)
   // Clickable hover card shown over a clickable `ls`/`dir` entry, like VSCode's
   // terminal link tooltip ("Enter folder" / "Open file" + modifier hint). The
   // card itself is clickable and triggers the same action as the link. It is
@@ -1422,6 +1461,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       term.options.cursorStyle = a.cursorStyle
       term.options.cursorBlink = a.cursorBlink
       setTailRoomGlobal(readSetting('terminal.tailRoom')?.value === true)
+      setLnGlobal(a.lineNumbers)
+      setLnSymbol(continuationGlyph(a.continuationSymbol))
+      applyGutterFont(gutterRef.current)
       fitAddon.fit()
     })
     // Register this instance so external callers (reconnect, "send to terminal")
@@ -1709,10 +1751,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (!el || !vp) return
       const screen = el.querySelector<HTMLElement>('.xterm-screen')
       const scrollArea = el.querySelector<HTMLElement>('.xterm-scroll-area')
+      // The line-number labels have to travel with the content, so they take the same
+      // shift — otherwise the numbers would stay behind while their rows move up.
+      const lnRowsEl = gutterRowsRef.current
       const clearRoom = () => {
         if (scrollArea?.style.paddingBottom) scrollArea.style.paddingBottom = ''
         if (scrollArea?.style.boxSizing) scrollArea.style.boxSizing = ''
         if (screen?.style.transform) screen.style.transform = ''
+        if (lnRowsEl?.style.transform) lnRowsEl.style.transform = ''
         tailRoomShiftRef.current = 0
         tailRoomOffsetRef.current = 0
       }
@@ -1774,16 +1820,90 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const extra = rowHeight > 0 ? Math.max(0, Math.min(vp.scrollTop - bufferBottom, maxShift)) : 0
       const transform = extra > 0.5 ? `translateY(${-extra}px)` : ''
       if (screen && screen.style.transform !== transform) screen.style.transform = transform
+      if (lnRowsEl && lnRowsEl.style.transform !== transform) lnRowsEl.style.transform = transform
       tailRoomShiftRef.current = extra > 0.5 ? extra : 0
     }
     tailRoomSyncRef.current = syncTailRoom
+
+    // --- Line-number gutter --------------------------------------------------
+    // xterm has no gutter API, so this column is our own DOM: a real flex sibling of the
+    // terminal (`.term-ln-gutter`) that takes width *away* from it rather than overlaying
+    // it — which also means the existing `ResizeObserver` + `fit()` pick up the new `cols`
+    // by themselves. Only the labels are ours to keep in step: xterm repaints its rows on
+    // every scroll and every write, so `onRender` (and `onResize` for the row count) is
+    // the only signal that knows which buffer line sits on which screen row.
+    applyGutterFont(gutterRef.current)
+    const syncGutter = () => {
+      const root = rootRef.current
+      const rows = gutterRowsRef.current
+      const el = term.element
+      if (!root || !rows || !el) return
+      const on = lnRef.current
+      if (root.classList.contains('has-line-numbers') !== on) {
+        root.classList.toggle('has-line-numbers', on)
+      }
+      // The alternate buffer (vim / less / top) gets no numbers — they would be
+      // meaningless and jitter every frame. The *column* stays in place while it is
+      // blank: collapsing it would narrow the terminal, and the SIGWINCH that follows
+      // would make the full-screen app re-lay-out on every open/close.
+      const alt = term.buffer.active.type === 'alternate'
+      if (root.classList.contains('is-alt') !== alt) root.classList.toggle('is-alt', alt)
+      if (!on || alt) return
+      // Keep the row list in step with the terminal. Self-healing on purpose: this covers
+      // the initial fit, every resize and every font change without another subscription.
+      if (lnRowsRef.current !== term.rows) {
+        lnRowsRef.current = term.rows
+        setLnRows(term.rows)
+      }
+      const buf = term.buffer.active
+      // Width grows with the digit count only (never back down): the width change re-fits
+      // the terminal and re-flows whatever runs on the far end, which is worth paying when
+      // the count gains a digit but not when the scrollback prunes and it would shrink.
+      const digits = lineNumberDigits(buf.length)
+      if (digits > lnDigitsRef.current) {
+        lnDigitsRef.current = digits
+        root.style.setProperty('--ln-digits', String(digits))
+      }
+      // Row height = the cell height xterm is really using (the same read `syncTailRoom`
+      // already does in this frame), so the labels sit on the glyph rows instead of
+      // drifting by the 1–2px a `1lh` guess is out by.
+      const screen = el.querySelector<HTMLElement>('.xterm-screen')
+      const h = screen && term.rows > 0 ? screen.clientHeight / term.rows : 0
+      if (h > 0 && Math.abs(h - lnRowHRef.current) > 0.5) {
+        lnRowHRef.current = h
+        root.style.setProperty('--ln-row-h', `${h}px`)
+      }
+      // Labels: O(rows) buffer reads, and a DOM write only where the text actually
+      // changes — this runs once per rendered frame.
+      const labels = computeRowLabels(buf, term.rows, lnSymbolRef.current)
+      const nodes = rows.children
+      for (let r = 0; r < labels.length && r < nodes.length; r++) {
+        const node = nodes[r] as HTMLElement
+        const next = labels[r] == null ? '' : String(labels[r])
+        if (node.textContent !== next) node.textContent = next
+      }
+    }
+    lnSyncRef.current = syncGutter
+    // A `rows` change rebuilds the label list; `onRender` would only catch it on the next
+    // painted frame, and a resize can arrive with nothing left to paint.
+    const lnResizeDisposable = term.onResize(() => syncGutter())
+
     // Switching into the alternate buffer (vim / less / top) must drop the room even if
-    // nothing scrolls — the guard above lives in `syncTailRoom`, so revisit it here.
-    const bufferChangeDisposable = term.buffer.onBufferChange(() => syncTailRoom())
+    // nothing scrolls — the guard above lives in `syncTailRoom`, so revisit it here. The
+    // line numbers react to the same switch (they go blank), hence both syncs.
+    const bufferChangeDisposable = term.buffer.onBufferChange(() => {
+      syncTailRoom()
+      syncGutter()
+    })
     // The room's size depends on the *content* since B41, so it has to be revisited when the
     // content changes — `onRender` is the cheap signal for that (the renderer already batches
-    // it once per frame, unlike `onWriteParsed`, which fires per output chunk).
-    const tailRoomRenderDisposable = term.onRender(() => syncTailRoom())
+    // it once per frame, unlike `onWriteParsed`, which fires per output chunk). The gutter
+    // reads the same signal: xterm repaints its rows on every scroll and every write, so
+    // this is the only place that knows which buffer line sits on which screen row.
+    const tailRoomRenderDisposable = term.onRender(() => {
+      syncTailRoom()
+      syncGutter()
+    })
 
     const viewport = term.element?.querySelector('.xterm-viewport') as HTMLElement | null
     if (viewport) {
@@ -2389,6 +2509,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       lsLinkProviderDisposable.dispose()
       bufferChangeDisposable.dispose()
       tailRoomRenderDisposable.dispose()
+      lnResizeDisposable.dispose()
       unsubTheme()
       unsubAppearance()
       if (linkTooltipShowTimer.current) clearTimeout(linkTooltipShowTimer.current)
@@ -2822,6 +2943,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     tailRoomSyncRef.current()
   }, [tailRoomOn])
 
+  // Line numbers: same as the tail room — refresh the init-scope snapshot of the value
+  // and re-apply it whenever the global setting or this pane's override changes.
+  useEffect(() => {
+    lnRef.current = lineNumbersOn
+    lnSyncRef.current()
+  }, [lineNumbersOn])
+
+  // The continuation glyph is drawn by `syncGutter`, which lives in the init effect's
+  // scope — refresh its snapshot and repaint the labels when the setting changes.
+  useEffect(() => {
+    lnSymbolRef.current = lnSymbol
+    lnSyncRef.current()
+  }, [lnSymbol])
+
   // Close context menu on click anywhere
   useEffect(() => {
     if (!ctxMenu) return
@@ -3080,6 +3215,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     onSetTailRoom?.(!tailRoomOn)
   }, [onSetTailRoom, tailRoomOn])
 
+  // Line numbers: the same contract as the tail room — the menu pins the opposite of the
+  // current (effective) value, and the pane status bar writes the same override. The
+  // menu is what a *floating* window has, since it has no status bar.
+  const handleToggleLineNumbers = useCallback(() => {
+    setCtxMenu(null)
+    onSetLineNumbers?.(!lineNumbersOn)
+  }, [onSetLineNumbers, lineNumbersOn])
+
   // Erase whatever the user has typed on the shell's current input line without
   // submitting it. The shell owns that line, so we drive its line editor:
   // Ctrl+A (start of line) + Ctrl+K (kill to end) — correct even when the caret
@@ -3157,10 +3300,24 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }, [])
 
   return (
-    <div className="term-scrollbar-wrapper">
+    <div
+      className="term-scrollbar-wrapper"
+      ref={rootRef}
+      data-term-line-numbers={lineNumbersOn ? 'on' : 'off'}
+    >
+      {/* Line-number gutter: a real flex column in front of the terminal, not an
+          overlay — it must take width away from it (see `syncGutter`). The rows are
+          rendered here; only their text is written by the sync. */}
+      <div className="term-ln-gutter" ref={gutterRef} aria-hidden="true">
+        <div className="term-ln-rows" ref={gutterRowsRef}>
+          {Array.from({ length: lnRows }, (_, r) => (
+            <div className="term-ln-row" key={r} />
+          ))}
+        </div>
+      </div>
       <div
         ref={containerRef}
-        style={{ height: '100%', width: '100%', minHeight: 0, overflow: 'hidden' }}
+        style={{ flex: '1 1 auto', minWidth: 0, height: '100%', minHeight: 0, overflow: 'hidden' }}
       />
       {/* Overlay custom scrollbar (B13) */}
       {scrollThumb.show && scrollThumb.h > 0 && (
@@ -3269,6 +3426,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             title={t('termTailRoomTitle')}
           >
             ⬓ {t('termTailRoom')} {t(tailRoomOn ? 'on' : 'off')}
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={handleToggleLineNumbers}
+            title={t('termLineNumbersTitle')}
+          >
+            # {t('termLineNumbers')} {t(lineNumbersOn ? 'on' : 'off')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleAskAi}>

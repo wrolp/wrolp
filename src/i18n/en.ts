@@ -295,6 +295,18 @@ const en = {
     'Leave one viewport of scrollable blank space below the last line, so the last line can be scrolled to the top of the view. The switch lives in the pane status bar at the bottom of the terminal.',
   termTailRoomHelp:
     'New terminals start with it off; click “Tail room” in a terminal pane’s status bar to turn it on for that one.',
+  termLineNumbers: 'Line numbers',
+  termLineNumbersTitle:
+    'Show a line-number gutter on the left of the terminal (it takes real width, so the terminal gets fewer columns and the other end sees a resize). A wrapped line numbers its first row only — its continuation rows carry the wrapped-line marker (pick the marker in Settings → General → Terminal). The labels go blank while a full-screen app (vim / less / top) owns the screen. The switch lives in the pane status bar at the bottom.',
+  termLineNumbersHelp:
+    'New terminals start with it off; click “Line numbers” in a terminal pane’s status bar to turn it on for that one.',
+  termContinuationSymbol: 'Wrapped-line marker',
+  termContinuationReturn: 'Return (↵)',
+  termContinuationArrow: 'Wrap arrow (↪)',
+  termContinuationDash: 'Dash (-)',
+  termContinuationNone: 'Nothing',
+  termContinuationHelp:
+    'What the line-number gutter shows on a wrapped line’s continuation rows (only applies while line numbers are on).',
   maxFileOpenSize: 'Max File Open Size (MB)',
   maxFileOpenSizeDesc: 'Files larger than this cannot be opened in the editor.',
   updates: 'Updates',

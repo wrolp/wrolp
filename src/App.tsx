@@ -425,58 +425,125 @@ function CloseGuardSettingsCard({
   )
 }
 
-/** Per-terminal tail-room switch for the pane's status bar. The effective value is
- *  "pane override ?? global setting"; clicking pins the opposite for this pane only.
- *  The global default itself lives in Settings → General (`TerminalTailRoomSetting`). */
-function TailRoomStatusToggle({
+/** Per-terminal switch for the pane's status bar (tail room / line numbers). The
+ *  effective value is "pane override ?? global setting"; clicking pins the opposite for
+ *  this pane only. `settingKey` is also the `data-setting` the e2e specs locate the
+ *  switch by. The global defaults live in Settings → General (`TerminalToggleSetting`). */
+function PaneAppearanceToggle({
+  settingKey,
+  label,
+  title,
   override,
   onChange,
 }: {
+  settingKey: string
+  label: string
+  title: string
   override: boolean | null
   onChange: (on: boolean) => void
 }) {
-  const { t } = useI18n()
-  const [globalOn, setGlobalOn] = useState(() => readSetting('terminal.tailRoom')?.value === true)
+  const [globalOn, setGlobalOn] = useState(() => readSetting(settingKey)?.value === true)
   useEffect(
-    () => subscribeAppSettings(() => setGlobalOn(readSetting('terminal.tailRoom')?.value === true)),
-    [],
+    () => subscribeAppSettings(() => setGlobalOn(readSetting(settingKey)?.value === true)),
+    [settingKey],
   )
   const on = override ?? globalOn
   return (
     <button
       type="button"
       className={`tsb-toggle${on ? ' active' : ''}`}
+      data-setting={settingKey}
       aria-pressed={on}
-      title={t('termTailRoomTitle')}
+      title={title}
       onClick={() => onChange(!on)}
     >
-      ⬓ {t('termTailRoom')}
+      {label}
     </button>
   )
 }
 
-/** Settings → General: global default for the terminal tail room (one viewport of
- *  blank scrollable space below the last line). The per-terminal switch is in the
- *  terminal pane's status bar; both go through the appearance registry so the AI
- *  bridge and every open terminal share one read/write/subscribe path. */
-function TerminalTailRoomSetting() {
-  const { t } = useI18n()
-  const [on, setOn] = useState(() => readSetting('terminal.tailRoom')?.value === true)
+/** Settings → General: the global default of one of the terminal's display behaviours
+ *  (tail room / line numbers). The per-terminal switches are in the pane status bar;
+ *  both go through the appearance registry so the AI bridge and every open terminal
+ *  share one read/write/subscribe path. */
+function TerminalToggleSetting({
+  settingKey,
+  label,
+  help,
+}: {
+  settingKey: string
+  label: string
+  help: string
+}) {
+  const [on, setOn] = useState(() => readSetting(settingKey)?.value === true)
   useEffect(
-    () => subscribeAppSettings(() => setOn(readSetting('terminal.tailRoom')?.value === true)),
-    [],
+    () => subscribeAppSettings(() => setOn(readSetting(settingKey)?.value === true)),
+    [settingKey],
   )
   return (
     <>
-      <label className="settings-field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <label
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
         <input
           type="checkbox"
           checked={on}
-          onChange={(e) => applySettingChanges({ 'terminal.tailRoom': e.target.checked }, 'user')}
+          onChange={(e) => applySettingChanges({ [settingKey]: e.target.checked }, 'user')}
         />
-        <span className="settings-label">{t('termTailRoom')}</span>
+        <span className="settings-label">{label}</span>
       </label>
-      <span className="settings-help">{t('termTailRoomHelp')}</span>
+      <span className="settings-help">{help}</span>
+    </>
+  )
+}
+
+/** Settings → General: what the line-number gutter draws on a wrapped line's
+ *  continuation rows (`terminal.continuationSymbol`, an id — the glyphs live in
+ *  `components/terminal/lineNumbers.ts`). Same registry path as the toggles above, so
+ *  the AI bridge can set it too (e.g. `{"terminal.continuationSymbol": "arrow"}`). */
+function TerminalContinuationSetting() {
+  const { t } = useI18n()
+  const read = () => String(readSetting('terminal.continuationSymbol')?.value || 'return')
+  const [value, setValue] = useState(read)
+  useEffect(() => subscribeAppSettings(() => setValue(read)), [])
+  const options: Array<[string, string]> = [
+    ['return', t('termContinuationReturn')],
+    ['arrow', t('termContinuationArrow')],
+    ['dash', t('termContinuationDash')],
+    ['none', t('termContinuationNone')],
+  ]
+  return (
+    <>
+      <div
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
+        <label
+          htmlFor="term-continuation-symbol"
+          className="settings-label"
+          style={{ whiteSpace: 'nowrap' }}
+        >
+          {t('termContinuationSymbol')}
+        </label>
+        <select
+          id="term-continuation-symbol"
+          className="settings-input"
+          data-setting="terminal.continuationSymbol"
+          value={value}
+          style={{ width: 220 }}
+          onChange={(e) =>
+            applySettingChanges({ 'terminal.continuationSymbol': e.target.value }, 'user')
+          }
+        >
+          {options.map(([id, label]) => (
+            <option key={id} value={id}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <span className="settings-help">{t('termContinuationHelp')}</span>
     </>
   )
 }
@@ -583,7 +650,7 @@ function AiAppearanceSettingsCard() {
                 </span>
                 <button
                   type="button"
-                  className="settings-help"
+                  className="settings-inline-btn"
                   onClick={() => {
                     undoAppearance(h.undoId)
                     setHistory(listAppearanceHistory())
@@ -596,6 +663,7 @@ function AiAppearanceSettingsCard() {
             <div>
               <button
                 type="button"
+                className="settings-inline-btn danger"
                 onClick={() => {
                   clearAppearanceHistory()
                   setHistory([])
@@ -740,6 +808,10 @@ function HighlightSettingsCard({
           </span>
           <button
             type="button"
+            // Same small secondary button as the appearance-history rows: the inline styles
+            // it used to carry were a hand-rolled copy of it — with a *hardcoded white*
+            // border (`rgba(255,255,255,0.25)`) that vanished in the light theme.
+            className="settings-inline-btn"
             onClick={() =>
               onSave(
                 upsertCustomRule(cfg, {
@@ -751,16 +823,6 @@ function HighlightSettingsCard({
                 }),
               )
             }
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.25)',
-              borderRadius: 4,
-              color: 'inherit',
-              padding: '1px 8px',
-              fontSize: 12,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
           >
             {t('highlightCustomAdd')}
           </button>
@@ -980,6 +1042,10 @@ export default function App() {
   // Tail room (末尾留白) per pane: missing = follow the global setting
   // (`terminal.tailRoom`, OFF by default). The pane's status bar is the switch.
   const [tailRoomByPane, setTailRoomByPane] = useState<Record<string, boolean>>({})
+
+  // Line numbers (行号) per pane: same override model as the tail room — the pane's
+  // status bar owns the switch, `terminal.lineNumbers` is the global default (OFF).
+  const [lineNumbersByPane, setLineNumbersByPane] = useState<Record<string, boolean>>({})
 
   // ---------------------------------------------------------------------------
   // Terminal split layout (Phase 2). The tree is ephemeral (tabIds are
@@ -4124,6 +4190,10 @@ export default function App() {
               onSetTailRoom={(on) => {
                 if (leafId) setTailRoomByPane((prev) => ({ ...prev, [leafId]: on }))
               }}
+              lineNumbersOverride={leafId ? (lineNumbersByPane[leafId] ?? null) : null}
+              onSetLineNumbers={(on) => {
+                if (leafId) setLineNumbersByPane((prev) => ({ ...prev, [leafId]: on }))
+              }}
               onSizeChange={(cols, rows) => {
                 if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
               }}
@@ -4288,7 +4358,19 @@ export default function App() {
                         <span className="settings-help">{t('appliesToNewTabs')}</span>
                       </div>
 
-                      <TerminalTailRoomSetting />
+                      <TerminalToggleSetting
+                        settingKey="terminal.tailRoom"
+                        label={t('termTailRoom')}
+                        help={t('termTailRoomHelp')}
+                      />
+
+                      <TerminalToggleSetting
+                        settingKey="terminal.lineNumbers"
+                        label={t('termLineNumbers')}
+                        help={t('termLineNumbersHelp')}
+                      />
+
+                      <TerminalContinuationSetting />
 
                       <div className="settings-field">
                         <label className="settings-label" htmlFor="maxFileOpenSize">
@@ -5689,9 +5771,21 @@ export default function App() {
               </div>
               <div className="tsb-right">
                 {leaf.tabId != null && (
-                  <TailRoomStatusToggle
+                  <PaneAppearanceToggle
+                    settingKey="terminal.tailRoom"
+                    label={`⬓ ${t('termTailRoom')}`}
+                    title={t('termTailRoomTitle')}
                     override={tailRoomByPane[leaf.id] ?? null}
                     onChange={(on) => setTailRoomByPane((prev) => ({ ...prev, [leaf.id]: on }))}
+                  />
+                )}
+                {leaf.tabId != null && (
+                  <PaneAppearanceToggle
+                    settingKey="terminal.lineNumbers"
+                    label={`# ${t('termLineNumbers')}`}
+                    title={t('termLineNumbersTitle')}
+                    override={lineNumbersByPane[leaf.id] ?? null}
+                    onChange={(on) => setLineNumbersByPane((prev) => ({ ...prev, [leaf.id]: on }))}
                   />
                 )}
                 {termSizes[leaf.id]?.cols > 0 && (

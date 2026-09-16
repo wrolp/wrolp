@@ -172,8 +172,10 @@ async function clickPaneCenter(page: Page, button: 'left' | 'right' = 'left') {
   await page.waitForTimeout(100)
 }
 
-/** The per-terminal switch in the pane's status bar. */
-const statusSwitch = (page: Page) => page.locator('.term-pane-statusbar .tsb-toggle')
+/** The per-terminal switch in the pane's status bar (the status bar also holds the
+ *  line-number switch, hence the explicit `data-setting`). */
+const statusSwitch = (page: Page) =>
+  page.locator('.term-pane-statusbar [data-setting="terminal.tailRoom"]')
 
 /** Flip the room through the status-bar switch (the primary path). */
 async function toggleViaStatusBar(page: Page) {

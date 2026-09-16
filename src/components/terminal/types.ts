@@ -67,6 +67,12 @@ export interface TerminalComponentProps {
   /** Set the tail room from the terminal's own context menu (the status bar has its own
    *  path to the same state). */
   onSetTailRoom?: (on: boolean) => void
+  /** Line-number gutter for this terminal: `null`/absent = follow the global setting
+   *  (`terminal.lineNumbers`). Like the tail room, the value is owned by the pane and
+   *  switched from its status bar. */
+  lineNumbersOverride?: boolean | null
+  /** Set the line numbers from the terminal's own context menu. */
+  onSetLineNumbers?: (on: boolean) => void
   onSizeChange?: (cols: number, rows: number) => void
   onAskAi?: (selectedText: string) => void
   /** Save the selected text as a command snippet (floating command list). */

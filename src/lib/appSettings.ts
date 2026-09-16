@@ -107,6 +107,8 @@ export const TERMINAL_APPEARANCE_KEYS = {
   lineHeight: 'wrolp-terminal-line-height',
   cursorStyle: 'wrolp-terminal-cursor-style',
   cursorBlink: 'wrolp-terminal-cursor-blink',
+  lineNumbers: 'wrolp-terminal-line-numbers',
+  continuationSymbol: 'wrolp-terminal-continuation-symbol',
 } as const
 
 export type TerminalCursorStyle = 'block' | 'underline' | 'bar'
@@ -118,6 +120,13 @@ export interface TerminalAppearance {
   lineHeight: number
   cursorStyle: TerminalCursorStyle
   cursorBlink: boolean
+  /** Line-number gutter on the left of the terminal (drawn by us — xterm has no
+   *  gutter API). Read here so the settings card, the pane status bar and the AI
+   *  bridge all share one storage/subscribe path. */
+  lineNumbers: boolean
+  /** What that gutter draws on a wrapped line's continuation rows — one of
+   *  `CONTINUATION_SYMBOLS` in `components/terminal/lineNumbers.ts`. */
+  continuationSymbol: string
 }
 
 const MAX_STRING_LEN = 200
@@ -219,6 +228,35 @@ const DEFS: SettingDef[] = [
     storage: { kind: 'localStorage', key: 'wrolp-terminal-tail-room' },
     describe:
       'Leave one viewport of scrollable blank space below the last line (per-terminal switch in the pane status bar).',
+  },
+  {
+    key: 'terminal.lineNumbers',
+    kind: 'boolean',
+    group: 'terminal',
+    default: false,
+    // Same reasoning as `terminal.tailRoom`: behaviour, not appearance, but living in
+    // this registry is what gives the settings page, the AI bridge and the per-terminal
+    // switch one shared storage/subscribe path. OFF by default — the gutter costs
+    // terminal columns, so it stays opt-in (each terminal switches it on from the
+    // pane's status bar).
+    storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.lineNumbers },
+    describe:
+      'Show a line-number gutter on the left of the terminal (per-terminal switch in the pane status bar; hidden while a full-screen app owns the screen).',
+  },
+  {
+    key: 'terminal.continuationSymbol',
+    kind: 'enum',
+    values: ['return', 'arrow', 'dash', 'none'],
+    group: 'terminal',
+    default: 'arrow',
+    // Only meaningful while `terminal.lineNumbers` is on (see Settings → General).
+    // Stored as an id rather than the glyph itself so the AI-facing contract stays
+    // plain ASCII: "return" (↵), "arrow" (↪), "dash" (-), "none" (blank).
+    // ↪ by default (user's choice): ↵ reads as "Enter was pressed here", which is not
+    // what the row means — the wrapped-line arrow says "continues from the row above".
+    storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.continuationSymbol },
+    describe:
+      'What a wrapped line shows on its continuation rows in the line-number gutter: "return" (↵), "arrow" (↪), "dash" (-) or "none" (nothing).',
   },
 
   // ---- highlight ---------------------------------------------------------
@@ -428,6 +466,8 @@ export function getTerminalAppearance(): TerminalAppearance {
     lineHeight: Number(get('terminal.lineHeight')) || 1,
     cursorStyle: (get('terminal.cursorStyle') as TerminalCursorStyle) ?? 'block',
     cursorBlink: get('terminal.cursorBlink') !== false,
+    lineNumbers: get('terminal.lineNumbers') === true,
+    continuationSymbol: String(get('terminal.continuationSymbol') || 'arrow'),
   }
 }
 
