@@ -455,6 +455,11 @@ function PaneAppearanceToggle({
       data-setting={settingKey}
       aria-pressed={on}
       title={title}
+      // Flipping a switch is meant to be a side trip inside the shell: the terminal must
+      // keep the keyboard so the user can type straight after clicking. Focus-on-mousedown
+      // is a default action, so cancelling it is what keeps xterm focused — and because a
+      // keyboard activation has no mousedown, Tab/Enter still reach the button.
+      onMouseDown={(e) => e.preventDefault()}
       onClick={() => onChange(!on)}
     >
       {label}
@@ -504,7 +509,7 @@ function TerminalToggleSetting({
  *  the AI bridge can set it too (e.g. `{"terminal.continuationSymbol": "arrow"}`). */
 function TerminalContinuationSetting() {
   const { t } = useI18n()
-  const read = () => String(readSetting('terminal.continuationSymbol')?.value || 'return')
+  const read = () => String(readSetting('terminal.continuationSymbol')?.value || 'arrow')
   const [value, setValue] = useState(read)
   useEffect(() => subscribeAppSettings(() => setValue(read)), [])
   const options: Array<[string, string]> = [
@@ -5583,7 +5588,13 @@ export default function App() {
             leaf.tabId != null && (
               <button
                 className={'term-pane-ai-toggle' + (showAiByTab[leaf.tabId] ? ' active' : '')}
-                onMouseDown={(e) => e.stopPropagation()}
+                // `stopPropagation` keeps the pane from reading this as a drag; the
+                // `preventDefault` keeps the click from pulling keyboard focus out of the
+                // shell (same rule as the status-bar switches, see `PaneAppearanceToggle`).
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                }}
                 onClick={(e) => {
                   e.stopPropagation()
                   setShowAiByTab((prev) => ({

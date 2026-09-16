@@ -341,8 +341,21 @@ export function FileEditor({
 
         {editable && (
           <>
-            {/* Toolbar */}
-            <div className="editor-toolbar">
+            {/* Toolbar. Clicking a button here is a side trip inside the file: cancelling
+                the mousedown's default action is what keeps the keyboard in Monaco (a
+                `<button>` takes focus on mousedown otherwise), so the very next keystroke
+                still lands in the document. It also covers `Save`, which used to drop the
+                focus to `<body>` — the button it was clicked on turns `disabled` as soon as
+                the file is clean, and a disabled button cannot hold focus. Keyboard
+                activation has no mousedown, so Tab/Enter still reach every button.
+                `<select>`s are deliberately left out: they need the mousedown to open and
+                are meant to keep focus themselves. */}
+            <div
+              className="editor-toolbar"
+              onMouseDown={(e) => {
+                if ((e.target as HTMLElement).closest('button')) e.preventDefault()
+              }}
+            >
               <span className="editor-filename" title={active.path}>
                 {active.name}
                 {active.isDirty && (
