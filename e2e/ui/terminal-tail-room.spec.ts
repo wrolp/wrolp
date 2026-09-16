@@ -4,12 +4,17 @@ import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 // Terminal tail room (task/plans/terminal-tail-room-plan.md).
 //
 // xterm does not translate the DOM when scrolling — `ydisp` is clamped to the buffer
-// bottom and the rows are repainted — so the room needs two pieces: `padding-bottom`
-// on `.xterm-scroll-area` (real scroll range below the buffer) plus a `translateY`
-// applied to `.xterm` by the overflow past the buffer bottom (what actually reveals
-// the blank space).
+// bottom and the rows are repainted — so the room needs three pieces: `padding-bottom`
+// on `.xterm-scroll-area` (real scroll range below the buffer), a `translateY` applied to
+// `.xterm-screen` by the overflow past the buffer bottom (what actually reveals the blank
+// space) and a hold on that offset, because xterm re-pins `scrollTop` to the buffer bottom
+// on every write (which used to wipe the room out on any output — a Windows local shell
+// repaints on every keystroke, so it looked broken there).
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
+
+// A local (PTY / ConPTY) shell from the sidebar, like `terminal-local-clear.spec.ts`.
+const LOCAL_ENTRY = { id: 'lt-bash', name: 'Bash', cwd: '', shell: 'bash' }
 
 // Far more lines than the pane has rows, so there is real scrollback to scroll through.
 const FIRST_OUTPUT =
@@ -57,6 +62,39 @@ async function openTerminal(page: Page, opts: { tailRoom?: boolean } = {}) {
   await page.waitForTimeout(200)
 }
 
+/** The same, opened from a sidebar local-terminal entry (a PTY / ConPTY shell) — the
+ *  environment the room was reported broken in (BUGS.md B40). */
+async function openLocalShell(page: Page) {
+  await installTauriMock(page, {
+    localTerminals: [LOCAL_ENTRY],
+    pollOutputChunks: [FIRST_OUTPUT, SECOND_OUTPUT],
+  })
+  await page.goto('/')
+  await page.locator('.conn-item.local-term-item').filter({ hasText: LOCAL_ENTRY.name }).click()
+  await expect(page.locator('.xterm-helper-textarea')).toBeAttached()
+  await expect
+    .poll(async () => (await invokedCalls(page)).filter((c) => c.cmd === 'open_local_shell').length)
+    .toBeGreaterThanOrEqual(1)
+  await expect
+    .poll(async () => (await geom(page)).scrollHeight - (await geom(page)).clientHeight)
+    .toBeGreaterThan(100)
+  await page.waitForTimeout(200)
+}
+
+/** A connection whose only output is a couple of lines: the buffer never grows scrollback
+ *  (`baseY === 0`), i.e. "内容还没满一屏" (BUGS.md B41). */
+async function openShortTerminal(page: Page) {
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    pollOutputChunks: [['first line\r\nsecond line\r\nroot@demo:~$ ']],
+  })
+  await page.goto('/')
+  await page.locator('.connection-item').click()
+  await expect(page.locator('.xterm-helper-textarea')).toBeAttached()
+  await expect.poll(async () => (await geom(page)).lastTextRow).toContain('root@demo')
+  await page.waitForTimeout(200)
+}
+
 /** Geometry of the *visible* pane's terminal (the hidden pool has instances too). */
 async function geom(page: Page) {
   return page.evaluate(() => {
@@ -66,6 +104,23 @@ async function geom(page: Page) {
     const screen = document.querySelector('.term-pane-term .xterm-screen') as HTMLElement | null
     const paneRect = document.querySelector('.term-pane-term')?.getBoundingClientRect()
     const screenRect = screen?.getBoundingClientRect()
+    // The lowest row that actually holds text — what the room must never push out of the
+    // pane. `.xterm-screen`'s own bottom edge moves with the shift, so it cannot tell
+    // whether the last line is still visible.
+    const rows = Array.from(document.querySelectorAll('.term-pane-term .xterm-rows > div'))
+    let lastTextRow = ''
+    let lastTextRowTop = 0
+    let lastTextRowBottom = 0
+    for (let i = rows.length - 1; i >= 0; i--) {
+      // Monaco/xterm render leading whitespace as `\u00a0`; trailing blanks are padding.
+      const text = (rows[i].textContent ?? '').replace(/\u00a0/g, ' ').replace(/\s+$/, '')
+      if (!text) continue
+      const rect = rows[i].getBoundingClientRect()
+      lastTextRow = text.slice(0, 24)
+      lastTextRowTop = rect.top
+      lastTextRowBottom = rect.bottom
+      break
+    }
     return {
       pad: area?.style.paddingBottom ?? '',
       /** Shift of the terminal *content* — it lives on `.xterm-screen`. */
@@ -79,6 +134,10 @@ async function geom(page: Page) {
       paneBottom: paneRect?.bottom ?? 0,
       /** Bottom edge of the painted content — the last line's baseline end. */
       contentBottom: screenRect?.bottom ?? 0,
+      /** Lowest row holding text, and where its edges sit relative to the pane top. */
+      lastTextRow,
+      lastTextRowTopOffset: paneRect ? Math.round(lastTextRowTop - paneRect.top) : null,
+      lastTextRowBottomOffset: paneRect ? Math.round(lastTextRowBottom - paneRect.top) : null,
     }
   })
 }
@@ -121,13 +180,35 @@ async function toggleViaContextMenu(page: Page) {
   await page.waitForTimeout(150)
 }
 
-/** Scroll the terminal's viewport all the way down (into the room, when there is one). */
-async function scrollToBottom(page: Page) {
-  await page.evaluate(() => {
-    const vp = document.querySelector('.term-pane-term .xterm-viewport') as HTMLElement | null
-    if (vp) vp.scrollTop = vp.scrollHeight
-  })
-  await page.waitForTimeout(150)
+/** Wheel the viewport all the way down (into the room, when there is one). It has to be
+ *  a real gesture: only a scroll gesture counts as "the user parked here", which is the
+ *  position the room holds on to (see the tail-room hold in `Terminal.tsx`). */
+async function wheelToBottom(page: Page) {
+  await wheel(page, 40, 200)
+}
+
+/** Push a chunk into the terminal after the initial drain (`poll_output` traffic). */
+async function pushOutput(page: Page, chunk: string) {
+  await page.evaluate((c) => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+        }
+      }
+    ).__TAURI_INTERNALS__
+    const orig = internals.invoke.bind(internals)
+    let sent = false
+    internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
+      const res = await orig(cmd, args)
+      if (cmd === 'poll_output' && !sent) {
+        sent = true
+        return [...(res as string[]), c]
+      }
+      return res
+    }
+  }, chunk)
+  await page.waitForTimeout(300)
 }
 
 const shiftOf = (transform: string) => {
@@ -211,7 +292,7 @@ test('the status-bar switch turns the room off for this pane only', async ({ pag
   const off = await geom(page)
   expect(off.pad).toBe('')
   expect(off.transform).toBe('')
-  await scrollToBottom(page)
+  await wheelToBottom(page)
   expect((await geom(page)).transform).toBe('')
 
   // On again: the room is back (vs. the default state, one viewport of scroll range).
@@ -220,9 +301,9 @@ test('the status-bar switch turns the room off for this pane only', async ({ pag
   expect(parseFloat(back.pad)).toBeGreaterThan(0)
   expect(back.scrollHeight - off.scrollHeight).toBeGreaterThan(back.clientHeight * 0.8)
 
-  // Scrolled all the way down the overflow past the buffer bottom is shifted up —
-  // about a viewport, i.e. the last line comes to rest at the top of the view.
-  await scrollToBottom(page)
+  // Wheeled all the way down the overflow past the buffer bottom is shifted up — about
+  // a viewport, i.e. the last line comes to rest at the top of the view.
+  await wheelToBottom(page)
   await expect.poll(async () => (await geom(page)).transform).toMatch(/translateY\(-/)
   const shifted = await geom(page)
   expect(shiftOf(shifted.transform)).toBeGreaterThan(shifted.clientHeight * 0.8)
@@ -249,11 +330,12 @@ test('the terminal context menu still toggles the room', async ({ page }) => {
   expect((await geom(page)).pad).toBe('')
 })
 
-test('typing still reaches the shell and new output re-pins the view', async ({ page }) => {
+test('output while parked in the room keeps the view parked there', async ({ page }) => {
   await openTerminal(page)
   await installEchoingShell(page)
-  await scrollToBottom(page)
-  await expect.poll(async () => (await geom(page)).transform).toMatch(/translateY\(-/)
+  await wheelToBottom(page)
+  const parked = await geom(page)
+  expect(shiftOf(parked.transform)).toBeGreaterThan(parked.clientHeight * 0.8)
 
   // Input is untouched by the room (nothing in the buffer/PTY path changed).
   const beforeInput = (await invokedCalls(page)).filter((c) => c.cmd === 'send_input').length
@@ -264,8 +346,141 @@ test('typing still reaches the shell and new output re-pins the view', async ({ 
     .poll(async () => (await invokedCalls(page)).filter((c) => c.cmd === 'send_input').length)
     .toBeGreaterThan(beforeInput)
 
-  // New output follows the buffer bottom again: xterm re-syncs the scroll area from
-  // `ydisp`, which drops the shift — the room can never hide incoming output.
-  await expect.poll(async () => (await geom(page)).transform).toBe('')
+  // The echo reaches the buffer…
   await expect(page.locator('.term-pane-term .xterm-rows')).toContainText('ls')
+  // …but the view is NOT yanked back to the buffer bottom: xterm re-pins `scrollTop`
+  // from `ydisp` on every write (and `ydisp` is already clamped to the bottom while the
+  // room is shown), which used to make the room unusable — a Windows local shell repaints
+  // on every keystroke, so the room vanished there immediately.
+  await page.waitForTimeout(300)
+  const after = await geom(page)
+  expect(shiftOf(after.transform)).toBeGreaterThan(after.clientHeight * 0.8)
+  expect(parseFloat(after.pad)).toBeGreaterThan(0)
+})
+
+test('a repaint that rewrites the last line does not drop the room either', async ({ page }) => {
+  await openTerminal(page)
+  await wheelToBottom(page)
+  expect(shiftOf((await geom(page)).transform)).toBeGreaterThan(0)
+
+  // What ConPTY does on every keystroke: cursor home + rewrite the prompt line.
+  await pushOutput(page, '\x1b[H\x1b[2Kroot@demo:~$ ')
+  const after = await geom(page)
+  expect(shiftOf(after.transform)).toBeGreaterThan(after.clientHeight * 0.8)
+})
+
+test('scrolling back out of the room resumes following the output', async ({ page }) => {
+  await openTerminal(page)
+  await installEchoingShell(page)
+  await wheelToBottom(page)
+  expect(shiftOf((await geom(page)).transform)).toBeGreaterThan(0)
+
+  // Back to the buffer bottom: a plain terminal again…
+  await wheel(page, 40, -300)
+  await expect.poll(async () => shiftOf((await geom(page)).transform)).toBe(0)
+
+  // …so new output follows the bottom instead of being held in the room.
+  await clickPaneCenter(page)
+  await page.keyboard.type('ls')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.term-pane-term .xterm-rows')).toContainText('ls')
+  await page.waitForTimeout(300)
+  expect(shiftOf((await geom(page)).transform)).toBe(0)
+})
+
+test('a local shell gets the same room, and its constant repaints keep it', async ({ page }) => {
+  await openLocalShell(page)
+  expect(parseFloat((await geom(page)).pad)).toBeGreaterThan(0)
+
+  await wheelToBottom(page)
+  expect(shiftOf((await geom(page)).transform)).toBeGreaterThan(0)
+
+  // What a Windows local shell does constantly: cursor home + a reprinted prompt line
+  // (ConPTY repaints on every keystroke). This is the reported case — the room used to
+  // vanish the moment anything was written, so it never seemed to work locally.
+  await pushOutput(page, '\x1b[H\x1b[2Kuser@host:~$ ls')
+  await pushOutput(page, '\r\nfile-a  file-b\r\nuser@host:~$ ')
+
+  const after = await geom(page)
+  expect(shiftOf(after.transform)).toBeGreaterThan(after.clientHeight * 0.8)
+  expect(parseFloat(after.pad)).toBeGreaterThan(0)
+})
+
+test('no room while a full-screen app owns the alternate buffer', async ({ page }) => {
+  await openTerminal(page)
+  expect(parseFloat((await geom(page)).pad)).toBeGreaterThan(0)
+
+  // `\x1b[?1049h` — what vim / less / top do. The room would push the app out of the pane.
+  await pushOutput(page, '\x1b[?1049h')
+  await expect.poll(async () => (await geom(page)).pad).toBe('')
+  expect((await geom(page)).transform).toBe('')
+
+  // Leaving it brings the room back.
+  await pushOutput(page, '\x1b[?1049l')
+  await expect.poll(async () => parseFloat((await geom(page)).pad)).toBeGreaterThan(0)
+})
+
+// ---- B41: the room is capped by the content, not by the buffer ----------------------
+//
+// `bufferBottom = baseY * rowHeight` only equals "the bottom of the content" while the
+// buffer is at least one page tall. In a partly filled screen (`baseY = 0`) it is the
+// screen *top*, so the old formula pushed the handful of real lines a whole screen up.
+
+test('a screen that is not full gives only as much room as the content', async ({ page }) => {
+  await openShortTerminal(page)
+
+  // Three lines of content: a couple of rows of room at most, not a whole viewport.
+  const before = await geom(page)
+  expect(parseFloat(before.pad)).toBeLessThan(before.clientHeight * 0.4)
+  expect(before.lastTextRowBottomOffset).toBeGreaterThan(0)
+
+  await wheel(page, 20, 200)
+  const after = await geom(page)
+  // The last line may come up to the top edge of the pane, never above it — and the
+  // shift stays within the content's own height (the old bug moved it a whole screen).
+  expect(after.lastTextRowBottomOffset).toBeGreaterThanOrEqual(0)
+  expect(after.lastTextRowBottomOffset).toBeLessThan(after.clientHeight)
+  expect(shiftOf(after.transform)).toBeLessThan(after.clientHeight * 0.4)
+})
+
+test('cls/reset leaves nothing to scroll past and cannot move the prompt', async ({ page }) => {
+  await openTerminal(page)
+  expect(parseFloat((await geom(page)).pad)).toBeGreaterThan(0)
+
+  // `\x1b[2J\x1b[H` is what `cls` / `reset` / `clear` do to xterm: screen wiped, cursor home.
+  await pushOutput(page, '\x1b[2J\x1b[Hroot@demo:~$ ')
+  await expect.poll(async () => (await geom(page)).lastTextRow).toContain('root@demo')
+
+  // Wheeling now: syncTailRoom runs on the scroll, finds only the prompt, and drops the
+  // room — so the viewport cannot be scrolled and the prompt does not budge.
+  const resting = await geom(page)
+  await wheel(page, 20, 200)
+  const after = await geom(page)
+  expect(after.pad).toBe('')
+  expect(after.transform).toBe('')
+  expect(after.lastTextRowBottomOffset).toBe(resting.lastTextRowBottomOffset)
+  expect(after.lastTextRowBottomOffset).toBeGreaterThan(0)
+  expect(after.lastTextRowBottomOffset).toBeLessThan(after.clientHeight)
+})
+
+test('the room comes back once the content fills a screen again', async ({ page }) => {
+  await openTerminal(page)
+  await pushOutput(page, '\x1b[2J\x1b[Hroot@demo:~$ ')
+  await wheel(page, 20, 200)
+  expect((await geom(page)).pad).toBe('')
+
+  // 60 more lines push the content past one screen.
+  await pushOutput(
+    page,
+    Array.from({ length: 60 }, (_, i) => `line-${i}\r\n`).join('') + 'root@demo:~$ ',
+  )
+  await expect
+    .poll(async () => parseFloat((await geom(page)).pad))
+    .toBeGreaterThan((await geom(page)).clientHeight * 0.5)
+
+  await wheelToBottom(page)
+  const bottom = await geom(page)
+  expect(shiftOf(bottom.transform)).toBeGreaterThan(bottom.clientHeight * 0.5)
+  expect(bottom.lastTextRowBottomOffset).toBeGreaterThanOrEqual(0)
+  expect(bottom.lastTextRowBottomOffset).toBeLessThanOrEqual(bottom.clientHeight)
 })

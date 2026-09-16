@@ -93,6 +93,8 @@ import {
 import type { LsCaptureState, LsClickableEntry } from './terminal/lsCapture'
 import { resolveLsEntryPath } from './terminal/lsCapture'
 import { fixLowContrastSgr } from './terminal/sgrContrast'
+import { createCwdQueryStripper } from './terminal/cwdQuery'
+import type { CwdQueryStripper } from './terminal/cwdQuery'
 import {
   getCurrentCommandLine,
   splitPromptCommand,
@@ -200,18 +202,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // neither can tell us the real directory. The only reliable source is the
   // interactive shell itself. We send a marker-wrapped `pwd`, capture the result
   // from the output stream, and strip the echo+result from the terminal so the
-  // user never sees it.
-  // Begin/end markers for the hidden `pwd` query. They are fixed per terminal
-  // instance so any stale/cancelled query output is always stripped from the
-  // screen. The regex distinguishes the *result* line (`BEG<path>END`) from the
-  // *echoed command* line by requiring the captured text to start with a real
-  // path prefix (`/`, `~`, or a Windows drive).
-  const cwdQueryBegRef = useRef<string>(
-    `__WROLP_CWD_BEG_${Math.random().toString(36).slice(2, 10)}__`,
-  )
-  const cwdQueryEndRef = useRef<string>(
-    `__WROLP_CWD_END_${Math.random().toString(36).slice(2, 10)}__`,
-  )
+  // user never sees it. The strip itself lives in ./terminal/cwdQuery.ts: it has
+  // to survive chunk boundaries and the shell's own line wrapping (a per-chunk
+  // marker regex leaked half the echoed command to the screen).
+  const cwdQueryRef = useRef<CwdQueryStripper | null>(null)
+  cwdQueryRef.current ??= createCwdQueryStripper()
+  const cwdQuery = cwdQueryRef.current
   // Single in-flight cwd query. Only the latest query is ever honored — starting
   // a new one cancels the previous (stale) one so a late `pwd` result can never
   // clobber a newer, correctly-tracked working directory (e.g. the connect-time
@@ -220,28 +216,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     resolve: (v: string | null) => void
     timer: ReturnType<typeof setTimeout> | null
   } | null>(null)
-  const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  // A real cwd starts with `/`, `~`, or a Windows drive. The echoed command's
-  // `$(pwd)` text does NOT, so anchoring the capture on this prefix is what
-  // stops us from matching the echoed command line and harvesting `$(pwd)`.
-  const CWD_PATH_PREFIX = '(?:\\/|~|(?:[A-Za-z]:[\\\\/]))'
   // Strip our hidden `pwd` query from a chunk, resolving the pending cwd promise
   // with the captured path. Returns the cleaned chunk (may be empty).
   const stripCwdQuery = (chunk: string): string => {
-    const beg = cwdQueryBegRef.current
-    const end = cwdQueryEndRef.current
-    if (!beg || !end || !chunk.includes(beg) || !chunk.includes(end)) return chunk
-    const escB = escapeRegex(beg)
-    const escE = escapeRegex(end)
-    const m = chunk.match(new RegExp(escB + '(' + CWD_PATH_PREFIX + '[^\n]*?)' + escE))
-    if (m && cwdQueryPendingRef.current) {
+    const { text, path } = cwdQuery.strip(chunk)
+    if (path && cwdQueryPendingRef.current) {
       const pending = cwdQueryPendingRef.current
       cwdQueryPendingRef.current = null
       if (pending.timer) clearTimeout(pending.timer)
-      pending.resolve(m[1])
+      pending.resolve(path)
     }
-    // Remove every line that contains a marker (the echoed command + the result).
-    return chunk.replace(new RegExp('[^\n]*(?:' + escB + '|' + escE + ')[^\n]*\n?', 'g'), '')
+    return text
   }
   // Ask the interactive shell for its real absolute cwd. Resolves with the path
   // (or null on timeout/error). The query output is stripped by stripCwdQuery.
@@ -257,8 +242,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       old.resolve(null)
     }
     return new Promise((resolve) => {
-      const beg = cwdQueryBegRef.current
-      const end = cwdQueryEndRef.current
       const timer = setTimeout(() => {
         if (cwdQueryPendingRef.current && cwdQueryPendingRef.current.resolve === resolve) {
           cwdQueryPendingRef.current = null
@@ -272,7 +255,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // shell would run `ls` + `echo …` as a single line (`lsecho …` — and `cd /`
       // + `echo …` as a `cd` with too many arguments). A macrotask lets the
       // newline go first, so the query lands as its own line at the next prompt.
-      setTimeout(() => sendInput(tabIdRef.current, `echo "${beg}$(pwd)${end}"\r`), 0)
+      setTimeout(() => sendInput(tabIdRef.current, `${cwdQuery.command}\r`), 0)
     })
   }
   // Seed the best-known remote cwd right after connecting: a configured startup
@@ -329,6 +312,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // How far `.xterm-screen` is currently shifted up (0 when the room is off) — the link
   // tooltip anchors with `getBoundingClientRect()` and has to subtract it.
   const tailRoomShiftRef = useRef(0)
+  // Where the user parked the view: px past the buffer bottom (0 = at the buffer bottom,
+  // i.e. a plain terminal that follows its output). xterm re-pins `scrollTop` to the
+  // buffer bottom on *every* write while `ydisp` sits at the bottom — which is exactly
+  // where the room lives — so the offset is held by us and restored after such a re-pin.
+  // Without that, any output (a Windows local shell repaints on every keystroke) yanked
+  // the view back to the bottom and the room was effectively unusable.
+  const tailRoomOffsetRef = useRef(0)
+  // Timestamp of the last *scroll gesture* (wheel, xterm's Shift+Page/arrow keys, dragging
+  // our overlay scrollbar). A scroll event alone cannot tell "the user moved back down"
+  // from "xterm re-pinned the view on a write", hence this window.
+  const tailRoomUserScrollAtRef = useRef(0)
   // Clickable hover card shown over a clickable `ls`/`dir` entry, like VSCode's
   // terminal link tooltip ("Enter folder" / "Open file" + modifier hint). The
   // card itself is clickable and triggers the same action as the link. It is
@@ -1681,9 +1675,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     //     inline `height` (its own `syncScrollArea` recomputes that on every buffer change,
     //     so a height tweak would be overwritten at once) — hence padding, and hence the
     //     explicit `box-sizing`: the app's global reset is border-box, which would make the
-    //     padding eat into that height instead of extending it. The room is one viewport
-    //     *minus one row*, so the last line comes to rest on the top edge of the view
-    //     instead of being pushed out of it.
+    //     padding eat into that height instead of extending it. The range is
+    //     `min(viewport − one row, content − one row)`: the first term is the full-page
+    //     case (the last line comes to rest on the top edge of the view instead of being
+    //     pushed out of it), the second keeps a partly filled screen — a fresh shell, or
+    //     one right after `cls` / `reset` / `clear` — from having blank scroll range where
+    //     the wheel moves but nothing on screen does.
     //  2. Translating `.xterm-screen` by the overflow past the buffer bottom — that is what
     //     reveals the blank space. Only the *content* moves: `.xterm` (and with it the
     //     scrollable `.xterm-viewport`) has to keep covering the whole pane, otherwise the
@@ -1691,38 +1688,102 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     //     xterm's mouse maths reads `.xterm-screen`'s rect (`SelectionService`,
     //     `getCoordsRelativeToElement`), so selection / link hover stay aligned;
     //     `computeLinkAnchor` compensates with `tailRoomShiftRef`.
+    //  3. Holding the user's offset against xterm's own re-pin. `Viewport._innerRefresh`
+    //     writes `scrollTop = ydisp * rowHeight` on every buffer change, and while the user
+    //     is in the room `ydisp` is already clamped to `baseY` (the bottom) — so any output
+    //     snapped the view straight back to the buffer bottom and the room vanished. A
+    //     Windows local shell (ConPTY) repaints on every keystroke, which made it look like
+    //     the room never worked there at all.
+    //  4. Anchoring on the *content* rather than the buffer. `scrollTop − bufferBottom` is
+    //     how far past the last line the user has scrolled — but only while the buffer is
+    //     at least one page tall, where "the buffer bottom" and "the bottom of the content"
+    //     are the same row. In a partly filled screen (`baseY = 0`, i.e. the screen top)
+    //     that formula pushed the handful of real lines straight out of the pane — exactly
+    //     what a fresh shell, or one right after `cls` / `reset`, looks like. The last
+    //     non-empty line is therefore the anchor, and both the room and the shift are
+    //     clamped to it. On a full page the clamp equals the old value, so nothing about
+    //     the established behaviour changes there.
     const syncTailRoom = () => {
       const el = term.element
       const vp = viewportRef.current
       if (!el || !vp) return
       const screen = el.querySelector<HTMLElement>('.xterm-screen')
       const scrollArea = el.querySelector<HTMLElement>('.xterm-scroll-area')
-      if (!tailRoomRef.current) {
+      const clearRoom = () => {
         if (scrollArea?.style.paddingBottom) scrollArea.style.paddingBottom = ''
         if (scrollArea?.style.boxSizing) scrollArea.style.boxSizing = ''
         if (screen?.style.transform) screen.style.transform = ''
         tailRoomShiftRef.current = 0
+        tailRoomOffsetRef.current = 0
+      }
+      // The alternate buffer (vim / less / top …) has no scrollback to reveal below, and
+      // the room would push the full-screen app out of the pane — never apply it there.
+      if (!tailRoomRef.current || term.buffer.active.type === 'alternate') {
+        clearRoom()
         return
       }
 
       const rowHeight = screen && term.rows > 0 ? screen.clientHeight / term.rows : 0
-      const room = `${Math.max(0, Math.round(vp.clientHeight - rowHeight))}px`
+      const buf = term.buffer.active
+      // The last non-empty line of the *viewport*: the anchor everything is clamped to.
+      // Scanning up from the bottom is O(1) in practice (the shell prompt is the bottom
+      // line) and bounded by `term.rows`; `getLine` may return undefined for rows the
+      // buffer has not grown into yet, hence the `length - 1 - baseY` cap.
+      const bottomRow = Math.min(term.rows - 1, buf.length - 1 - buf.baseY)
+      let lastContentRow = 0
+      for (let r = bottomRow; r > 0; r--) {
+        const line = buf.getLine(buf.baseY + r)
+        if (line && line.translateToString(true).length > 0) {
+          lastContentRow = r
+          break
+        }
+      }
+      // How far the content may be pushed up: far enough for its last line to sit on the
+      // top edge of the view, not one pixel further. On a full page this is
+      // `(rows - 1) * rowHeight` — the value the room has always used.
+      const maxShift = Math.max(0, lastContentRow * rowHeight)
+      const roomPx = Math.max(0, Math.min(Math.round(vp.clientHeight - rowHeight), maxShift))
+      const room = roomPx > 0 ? `${roomPx}px` : ''
       if (scrollArea) {
-        if (scrollArea.style.boxSizing !== 'content-box') {
-          scrollArea.style.boxSizing = 'content-box'
+        if (roomPx > 0) {
+          if (scrollArea.style.boxSizing !== 'content-box') {
+            scrollArea.style.boxSizing = 'content-box'
+          }
+        } else if (scrollArea.style.boxSizing) {
+          // The content does not fill the view: there is no room to scroll into.
+          scrollArea.style.boxSizing = ''
         }
         if (scrollArea.style.paddingBottom !== room) scrollArea.style.paddingBottom = room
       }
 
       // `ydisp` is clamped to `baseY`, so everything past `baseY * rowHeight` is pure
       // overflow — exactly the room added above.
-      const bufferBottom = rowHeight > 0 ? term.buffer.active.baseY * rowHeight : 0
-      const extra = rowHeight > 0 ? Math.max(0, vp.scrollTop - bufferBottom) : 0
+      const bufferBottom = rowHeight > 0 ? buf.baseY * rowHeight : 0
+      if (rowHeight > 0) {
+        const userMoved = performance.now() - tailRoomUserScrollAtRef.current < 250
+        if (userMoved) {
+          // A real gesture: this offset is the user's choice (clamped to the room, so a
+          // resize or a cleared screen can only shorten it).
+          tailRoomOffsetRef.current = Math.max(0, Math.min(vp.scrollTop - bufferBottom, roomPx))
+        } else if (vp.scrollTop < bufferBottom + tailRoomOffsetRef.current - 1) {
+          // xterm pulled the view back to the buffer bottom (a write, a fit, a repaint).
+          // Restore where the user put it; output keeps flowing below the last line.
+          vp.scrollTop = bufferBottom + tailRoomOffsetRef.current
+        }
+      }
+      const extra = rowHeight > 0 ? Math.max(0, Math.min(vp.scrollTop - bufferBottom, maxShift)) : 0
       const transform = extra > 0.5 ? `translateY(${-extra}px)` : ''
       if (screen && screen.style.transform !== transform) screen.style.transform = transform
       tailRoomShiftRef.current = extra > 0.5 ? extra : 0
     }
     tailRoomSyncRef.current = syncTailRoom
+    // Switching into the alternate buffer (vim / less / top) must drop the room even if
+    // nothing scrolls — the guard above lives in `syncTailRoom`, so revisit it here.
+    const bufferChangeDisposable = term.buffer.onBufferChange(() => syncTailRoom())
+    // The room's size depends on the *content* since B41, so it has to be revisited when the
+    // content changes — `onRender` is the cheap signal for that (the renderer already batches
+    // it once per frame, unlike `onWriteParsed`, which fires per output chunk).
+    const tailRoomRenderDisposable = term.onRender(() => syncTailRoom())
 
     const viewport = term.element?.querySelector('.xterm-viewport') as HTMLElement | null
     if (viewport) {
@@ -1738,6 +1799,29 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       updateThumb()
       syncTailRoom()
     }
+
+    // Scroll *gestures*, told apart from xterm's own re-pin (see
+    // `tailRoomUserScrollAtRef`): the wheel and xterm's Shift+Page/arrow scrolling. Plain
+    // keystrokes deliberately do not count — typing while parked in the room keeps it.
+    // Dragging the overlay scrollbar marks itself in `handleThumbMouseDown`.
+    const markUserScroll = () => {
+      tailRoomUserScrollAtRef.current = performance.now()
+    }
+    const tailRoomScrollKeys = new Set([
+      'PageUp',
+      'PageDown',
+      'ArrowUp',
+      'ArrowDown',
+      'Home',
+      'End',
+    ])
+    const onTailRoomWheel = () => markUserScroll()
+    const onTailRoomKeyDown = (e: KeyboardEvent) => {
+      if (e.shiftKey && tailRoomScrollKeys.has(e.key)) markUserScroll()
+    }
+    const gestureEl = containerRef.current
+    gestureEl.addEventListener('wheel', onTailRoomWheel, { passive: true, capture: true })
+    gestureEl.addEventListener('keydown', onTailRoomKeyDown, { capture: true })
 
     const onViewportMouseEnter = () => {
       if (scrollHideTimer.current) clearTimeout(scrollHideTimer.current)
@@ -2303,6 +2387,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       resetLsCapture()
       clearLsLinks()
       lsLinkProviderDisposable.dispose()
+      bufferChangeDisposable.dispose()
+      tailRoomRenderDisposable.dispose()
       unsubTheme()
       unsubAppearance()
       if (linkTooltipShowTimer.current) clearTimeout(linkTooltipShowTimer.current)
@@ -2318,6 +2404,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       }
       containerRef.current?.removeEventListener('click', handleClick)
       containerRef.current?.removeEventListener('contextmenu', handleContextMenu)
+      containerRef.current?.removeEventListener('wheel', onTailRoomWheel)
+      containerRef.current?.removeEventListener('keydown', onTailRoomKeyDown)
       window.removeEventListener('resize', handleResize)
       resizeObserverRef.current?.disconnect()
       resizeObserverRef.current = null
@@ -3035,6 +3123,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // ---- overlay scrollbar thumb drag ----
   const handleThumbMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
+    // A drag is a scroll gesture: it may move the view out of (or deeper into) the tail
+    // room, and the room must not fight it back.
+    tailRoomUserScrollAtRef.current = performance.now()
     scrollThumbDragging.current = true
     // Keep the bar wide for the whole gesture even if the pointer strays out of
     // the grab zone — CSS :hover alone would collapse it mid-drag.
@@ -3045,6 +3136,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const thumbH = (e.target as HTMLElement).offsetHeight
     const onMove = (ev: MouseEvent) => {
       if (!scrollThumbDragging.current) return
+      tailRoomUserScrollAtRef.current = performance.now()
       const vp2 = viewportRef.current
       if (!vp2) return
       const dY = ev.clientY - scrollThumbDragY.current
