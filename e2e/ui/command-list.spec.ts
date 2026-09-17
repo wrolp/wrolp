@@ -41,6 +41,45 @@ test('command list shows the empty state when no snippets exist', async ({ page 
   await expect(page.locator('.cmd-list-empty')).toContainText('No commands saved yet')
 })
 
+// "Add to command list" from the terminal's right-click menu must show up in a
+// command list that is ALREADY open: the panel stays mounted while open, so
+// `open` does not change and its load effect never re-runs — the app therefore
+// bumps a reload key once the row is persisted.
+test('a snippet added from the terminal context menu appears in the open list', async ({
+  page,
+}) => {
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    // A bare command line (no prompt) so a triple-click selects exactly it.
+    pollOutputChunks: ['docker ps -a\r\n'],
+  })
+  await page.goto('/')
+  await page.locator('.connection-item').click()
+  await expect
+    .poll(() => page.locator('.term-pane-term .xterm-rows').innerText())
+    .toContain('docker ps -a')
+
+  // Open the command list FIRST — it must refresh itself, not just on re-open.
+  await page.keyboard.press('Control+Shift+p')
+  await expect(page.locator('.cmd-list-float')).toBeVisible()
+  await expect(page.locator('.cmd-list-item')).toHaveCount(0)
+
+  // Triple click is xterm's "select the whole line" gesture; the menu's
+  // "Add to command list" entry is a no-op without a selection.
+  const row = (await page.locator('.term-pane-term .xterm-rows > div').first().boundingBox())!
+  await page.mouse.click(row.x + 30, row.y + row.height / 2, { clickCount: 3 })
+
+  await page.locator('.term-pane-term .xterm-screen').click({
+    button: 'right',
+    position: { x: 30, y: row.height / 2 },
+  })
+  await expect(page.locator('.context-menu')).toBeVisible()
+  await page.locator('.context-menu-item', { hasText: 'Add to command list' }).click()
+
+  await expect(page.locator('.cmd-list-item')).toHaveCount(1)
+  await expect(page.locator('.cmd-list-command')).toHaveText('docker ps -a')
+})
+
 // A multi-line snippet must be sent the SAME way as a Ctrl+V paste: the guard
 // opens for a non-bracketed POSIX shell, and "insert without executing" applies
 // the `\` continuation + quoted-insert so the block is one buffered command.

@@ -410,6 +410,13 @@ interface CommandListPanelProps {
   activeConnectionId: string | null
   /** Send the command text to the terminal WITHOUT executing it (no Enter). */
   onSendToTerminal: (command: string) => void
+  /**
+   * Bumped by the app once a snippet created OUTSIDE this panel (terminal / AI
+   * context menu → "Add to command list") has been persisted, so an
+   * already-open panel re-reads the backend list. Opening the panel is not
+   * enough on its own: `open` does not change while it stays open.
+   */
+  reloadKey?: number
 }
 
 /** Fill dialog state: resolved defs plus per-item checkbox/value state. */
@@ -511,6 +518,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   connections,
   activeConnectionId,
   onSendToTerminal,
+  reloadKey = 0,
 }) => {
   const { t } = useI18n()
   const [snippets, setSnippets] = useState<CommandSnippetDto[]>([])
@@ -572,6 +580,19 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       setFilling(null)
     }
   }, [open, reload, loadVars])
+
+  // Re-read the list when a snippet is created outside the panel (terminal / AI
+  // context menu) while it is already open — `open` never changes in that case,
+  // so the effect above would not run and the new entry stayed invisible until
+  // the panel was closed and re-opened. Deliberately does NOT touch the search
+  // box / filters: only the data is refreshed. The panel's own add/edit/delete
+  // paths call `reload()` directly.
+  const lastReloadKeyRef = useRef(reloadKey)
+  useEffect(() => {
+    if (lastReloadKeyRef.current === reloadKey) return
+    lastReloadKeyRef.current = reloadKey
+    if (open) void reload()
+  }, [reloadKey, open, reload])
 
   // Close the context menu on outside click / Escape.
   useEffect(() => {

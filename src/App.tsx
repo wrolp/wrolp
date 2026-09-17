@@ -995,6 +995,11 @@ export default function App() {
     setCwdByTab((prev) => (prev[tabId] === cwd ? prev : { ...prev, [tabId]: cwd }))
   }, [])
   const [commandListOpen, setCommandListOpen] = useState(false)
+  // Bumped after a snippet is saved from outside the panel (terminal / AI
+  // context menu) so an ALREADY-OPEN command list re-reads the backend instead
+  // of showing a stale list — opening it again was the only way to see the new
+  // entry before.
+  const [commandListReloadKey, setCommandListReloadKey] = useState(0)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
@@ -3008,7 +3013,11 @@ export default function App() {
         options: [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      }).catch((e) => console.error('save_command_snippet failed:', e))
+      })
+        // Bump only once the row is actually persisted: reloading before the
+        // write lands would re-read the list without the new snippet.
+        .then(() => setCommandListReloadKey((k) => k + 1))
+        .catch((e) => console.error('save_command_snippet failed:', e))
       setCommandListOpen(true)
     },
     [activeSnippetConnectionId],
@@ -7229,6 +7238,7 @@ export default function App() {
         connections={connections}
         activeConnectionId={activeSnippetConnectionId}
         onSendToTerminal={handleSendSnippetToTerminal}
+        reloadKey={commandListReloadKey}
       />
 
       {/* Built-in FTP / HTTP / TFTP file servers + TFTP client */}
