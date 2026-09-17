@@ -68,6 +68,10 @@ pub struct CommandParam {
   /// Non-empty group name: options/params sharing it are mutually exclusive.
   #[serde(default)]
   pub exclusive_group: Option<String>,
+  /// Items switched ON together with this one ("linkage"), keyed
+  /// `param:<name>` / `option:<id>`. Directional, so mutual links form a pair.
+  #[serde(default)]
+  pub enables: Vec<String>,
 }
 
 /// Value configuration for an option that carries a value.
@@ -102,6 +106,10 @@ pub struct CommandOption {
   /// Non-empty group name: options/params sharing it are mutually exclusive.
   #[serde(default)]
   pub exclusive_group: Option<String>,
+  /// Items switched ON together with this one ("linkage"), keyed
+  /// `param:<name>` / `option:<id>`. Directional, so mutual links form a pair.
+  #[serde(default)]
+  pub enables: Vec<String>,
 }
 
 fn default_true() -> bool {

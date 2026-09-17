@@ -168,6 +168,10 @@ export interface CommandParam {
    *  checking one in the fill dialog unchecks the others (across options and
    *  params alike). */
   exclusiveGroup?: string
+  /** Items switched ON together with this one ("linkage"). Keys are namespaced:
+   *  `param:<name>` / `option:<id>`. Directional — pointing at each other makes
+   *  a pair; unchecking never cascades back. */
+  enables?: string[]
 }
 
 /** Value configuration for an option that carries a value. */
@@ -195,6 +199,10 @@ export interface CommandOption {
    *  checking one in the fill dialog unchecks the others (across options and
    *  params alike). */
   exclusiveGroup?: string
+  /** Items switched ON together with this one ("linkage"). Keys are namespaced:
+   *  `param:<name>` / `option:<id>`. Directional — pointing at each other makes
+   *  a pair; unchecking never cascades back. */
+  enables?: string[]
 }
 
 /** Single command snippet for the floating command list (sent to the terminal

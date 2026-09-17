@@ -298,6 +298,7 @@ async fn command_snippets_crud() {
       description: Some("base image".into()),
       default_enabled: true,
       exclusive_group: None,
+      enables: vec![],
     }],
     options: vec![
       CommandOption {
@@ -312,6 +313,7 @@ async fn command_snippets_crud() {
         }),
         default_enabled: true,
         exclusive_group: None,
+        enables: vec!["param:image".into()],
       },
       CommandOption {
         id: "o2".into(),
@@ -321,6 +323,7 @@ async fn command_snippets_crud() {
         value: None,
         default_enabled: false,
         exclusive_group: None,
+        enables: vec![],
       },
     ],
     created_at: "2026-08-28T00:00:00Z".into(),
@@ -344,6 +347,10 @@ async fn command_snippets_crud() {
   assert_eq!(list[0].options.len(), 2);
   assert_eq!(list[0].options[0].value.as_ref().unwrap().default_value, "prod");
   assert!(!list[0].options[1].default_enabled);
+  // Linkage survives the JSON round-trip (keys are namespaced).
+  assert_eq!(list[0].options[0].enables, vec!["param:image".to_string()]);
+  assert!(list[0].options[1].enables.is_empty());
+  assert!(list[0].params[0].enables.is_empty());
 
   commands::delete_command_snippet(app.state(), "snip1".into())
     .await

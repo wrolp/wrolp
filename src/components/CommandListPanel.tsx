@@ -288,6 +288,129 @@ function normalizeExclusive(
   }
 }
 
+// ===== Item linkage ("enabling A switches B on too") =====
+
+/**
+ * Namespaced key of a fill-dialog item (`param:<name>` / `option:<id>`), as
+ * stored in `enables`. Namespacing keeps a param name from colliding with an
+ * option id.
+ */
+export function linkKeyOf(kind: 'param' | 'option', key: string): string {
+  return `${kind === 'param' ? 'param' : 'option'}:${key}`
+}
+
+/** Split a link key back into its kind and plain key. */
+function splitLinkKey(link: string): { kind: 'param' | 'option'; key: string } | null {
+  const at = link.indexOf(':')
+  if (at <= 0) return null
+  const ns = link.slice(0, at)
+  if (ns !== 'param' && ns !== 'option') return null
+  return { kind: ns, key: link.slice(at + 1) }
+}
+
+/** The other items an item switches on when enabled (declared order, deduped). */
+function linksOf(
+  params: CommandParam[],
+  options: CommandOption[],
+  kind: 'param' | 'option',
+  key: string,
+): string[] {
+  const raw =
+    kind === 'param'
+      ? params.find((p) => p.name === key)?.enables
+      : options.find((o) => o.id === key)?.enables
+  return [...new Set((raw ?? []).filter((k) => k.length > 0))]
+}
+
+/** Whether a link target still exists among the declared items. */
+function linkTargetExists(params: CommandParam[], options: CommandOption[], link: string): boolean {
+  const parsed = splitLinkKey(link)
+  if (!parsed) return false
+  return parsed.kind === 'param'
+    ? params.some((p) => p.name === parsed.key)
+    : options.some((o) => o.id === parsed.key)
+}
+
+/**
+ * Turn an item ON together with everything it links to, transitively: a snippet
+ * whose flags must be used together must never be sent half-configured. Cycles
+ * are tolerated (visited set). Every item switched on this way still obeys the
+ * exclusive-group rule — exclusivity wins over linkage, so a linked item that
+ * shares a group with an already-enabled item cancels that sibling.
+ */
+function applyLinkedToggle(
+  f: FillState,
+  target: { kind: 'param' | 'option'; key: string },
+  on: boolean,
+): Pick<FillState, 'pEnabled' | 'oEnabled'> {
+  // Unchecking never cascades: the user stays in control of every other box.
+  if (!on) return applyExclusiveToggle(f, target, on)
+
+  let state = applyExclusiveToggle(f, target, true)
+  const visited = new Set<string>([linkKeyOf(target.kind, target.key)])
+  const queue = linksOf(f.params, f.options, target.kind, target.key)
+  while (queue.length > 0) {
+    const link = queue.shift()!
+    if (visited.has(link)) continue
+    const parsed = splitLinkKey(link)
+    if (!parsed || !linkTargetExists(f.params, f.options, link)) continue
+    visited.add(link)
+    state = applyExclusiveToggle({ ...f, ...state }, parsed, true)
+    queue.push(...linksOf(f.params, f.options, parsed.kind, parsed.key))
+  }
+  return state
+}
+
+/**
+ * Expand an initial/default enabled-state map through the linkage graph: every
+ * already-enabled item switches on the items it links to (transitively). Applied
+ * before `normalizeExclusive` when the dialog opens and after a reset, so a
+ * default (or a remembered state written before a link was authored) can never
+ * produce "A on, B off" for a pair that must travel together. Mutates the maps.
+ */
+function expandLinks(
+  params: CommandParam[],
+  options: CommandOption[],
+  pEnabled: Record<string, boolean>,
+  oEnabled: Record<string, boolean>,
+): void {
+  const queue: string[] = []
+  for (const p of params) if (pEnabled[p.name] !== false) queue.push(linkKeyOf('param', p.name))
+  for (const o of options) if (oEnabled[o.id] !== false) queue.push(linkKeyOf('option', o.id))
+
+  const visited = new Set<string>()
+  while (queue.length > 0) {
+    const link = queue.shift()!
+    if (visited.has(link)) continue
+    visited.add(link)
+    const parsed = splitLinkKey(link)
+    if (!parsed) continue
+    for (const next of linksOf(params, options, parsed.kind, parsed.key)) {
+      const target = splitLinkKey(next)
+      if (!target || !linkTargetExists(params, options, next)) continue
+      if (target.kind === 'param') pEnabled[target.key] = true
+      else oEnabled[target.key] = true
+      queue.push(next)
+    }
+  }
+}
+
+/** Display labels of an item's link targets; unknown/dead targets are skipped. */
+function linkLabels(
+  keys: string[] | undefined,
+  params: CommandParam[],
+  options: CommandOption[],
+): string[] {
+  return (keys ?? []).flatMap((k) => {
+    const parsed = splitLinkKey(k)
+    if (!parsed) return []
+    if (parsed.kind === 'param')
+      return params.some((p) => p.name === parsed.key) ? [parsed.key] : []
+    const o = options.find((x) => x.id === parsed.key)
+    return o ? [o.label?.trim() || o.text] : []
+  })
+}
+
 /** Flag-looking tokens in a command that are not yet declared as options. */
 function detectFlagCandidates(command: string, declaredTexts: string[]): string[] {
   const known = new Set(declaredTexts.map((t) => t.trim()))
@@ -440,6 +563,8 @@ interface EditingParam {
   defaultEnabled: boolean
   /** Name of the mutual-exclusion group this param belongs to ('' = none). */
   exclusiveGroup: string
+  /** Link keys (`param:<name>` / `option:<id>`) switched on with this param. */
+  enables: string[]
   /** Created automatically from a `${name}` in the command (pruned when the
    *  placeholder disappears). Rows the user added are never auto-removed. */
   auto: boolean
@@ -457,6 +582,8 @@ interface EditingOption {
   defaultEnabled: boolean
   /** Name of the mutual-exclusion group this option belongs to ('' = none). */
   exclusiveGroup: string
+  /** Link keys (`param:<name>` / `option:<id>`) switched on with this option. */
+  enables: string[]
   /** How the flag joins its value: `=` (`--x=v`) or a space (`--x v`). Encoded
    *  into the fragment text, kept here so the checkbox survives a type change. */
   valueSeparator: '=' | ' '
@@ -482,6 +609,7 @@ function toEditingParams(params: CommandParam[]): EditingParam[] {
     description: p.description ?? '',
     defaultEnabled: p.defaultEnabled !== false,
     exclusiveGroup: p.exclusiveGroup ?? '',
+    enables: p.enables ?? [],
     auto: false,
   }))
 }
@@ -497,6 +625,7 @@ function toEditingOptions(options: CommandOption[]): EditingOption[] {
     valueDefault: o.value?.defaultValue ?? '',
     defaultEnabled: o.defaultEnabled !== false,
     exclusiveGroup: o.exclusiveGroup ?? '',
+    enables: o.enables ?? [],
     valueSeparator: optionSeparator(o.text),
   }))
 }
@@ -543,6 +672,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const [editingOptions, setEditingOptions] = useState<EditingOption[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [showVarManager, setShowVarManager] = useState(false)
+  /** Which editor row has its linkage picker expanded (`p<idx>` / `o<idx>`). */
+  const [linkPicker, setLinkPicker] = useState<string | null>(null)
   // Snippet awaiting parameter/option values before we can send it.
   const [filling, setFilling] = useState<FillState | null>(null)
   const [fillError, setFillError] = useState<string | null>(null)
@@ -687,6 +818,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             description: '',
             defaultEnabled: true,
             exclusiveGroup: '',
+            enables: [],
             auto: true,
           }))
         if (kept.length === cur.length && added.length === 0) return cur
@@ -790,6 +922,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       // `--tail=` once a stale empty entry was remembered for it.
       oValues[o.id] = saved?.oValues[o.id] || o.value?.defaultValue || ''
     }
+    // Linked items travel together even in the INITIAL state: an enabled default
+    // (or a remembered state written before a link was authored) must not leave
+    // its partner off. Exclusivity is resolved afterwards — it wins over linkage.
+    expandLinks(params, options, pEnabled, oEnabled)
     // A mis-authored default (or stale memory) could enable two members of one
     // exclusive group — collapse to the first.
     normalizeExclusive(params, options, pEnabled, oEnabled)
@@ -988,6 +1124,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setEditingConnectionId(s.connectionId ?? '')
     setEditingParams(toEditingParams(s.params ?? []))
     setEditingOptions(toEditingOptions(s.options ?? []))
+    setLinkPicker(null)
   }
 
   /** Open the dialog in "add new" mode (blank snippet, created on save). */
@@ -1007,12 +1144,14 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     )
     setEditingParams([])
     setEditingOptions([])
+    setLinkPicker(null)
   }
 
   const closeDialog = () => {
     setEditing(null)
     setIsAdding(false)
     setDialogPos(null)
+    setLinkPicker(null)
   }
 
   const newOptionId = () =>
@@ -1051,6 +1190,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         description: p.description.trim() || undefined,
         defaultEnabled: p.defaultEnabled,
         exclusiveGroup: p.exclusiveGroup.trim() || undefined,
+        enables: p.enables,
       })
     }
 
@@ -1094,8 +1234,24 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         value,
         defaultEnabled: o.defaultEnabled,
         exclusiveGroup: o.exclusiveGroup.trim() || undefined,
+        enables: o.enables,
       })
     }
+
+    // Link targets are keyed (`param:<name>` / `option:<id>`), so pruning must
+    // happen AFTER the surviving rows — and their final option ids — are known:
+    // a removed row or a renamed parameter must never leave a dangling target.
+    const validKeys = new Set<string>([
+      ...params.map((p) => linkKeyOf('param', p.name)),
+      ...options.map((o) => linkKeyOf('option', o.id)),
+    ])
+    const pruneLinks = (keys: string[] | undefined) => {
+      const kept = [...new Set(keys ?? [])].filter((k) => validKeys.has(k))
+      return kept.length > 0 ? kept : undefined
+    }
+    for (const p of params) p.enables = pruneLinks(p.enables)
+    for (const o of options) o.enables = pruneLinks(o.enables)
+
     return { params, options }
   }
 
@@ -1327,6 +1483,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         description: '',
         defaultEnabled: true,
         exclusiveGroup: '',
+        enables: [],
         auto: false,
       },
     ])
@@ -1343,6 +1500,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         valueDefault: '',
         defaultEnabled: true,
         exclusiveGroup: '',
+        enables: [],
         valueSeparator: '=',
       },
     ])
@@ -1362,6 +1520,71 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     editingCommand,
     editingOptions.map((o) => o.text),
   )
+
+  // ---- Linkage picker (authoring) ----
+  // Every declared row is a possible link target. Keys are namespaced so a param
+  // name can never collide with an option id; duplicates keep the first row.
+  const linkTargets: Array<{ key: string; label: string }> = []
+  const seenTargets = new Set<string>()
+  const pushTarget = (key: string, label: string) => {
+    if (seenTargets.has(key)) return
+    seenTargets.add(key)
+    linkTargets.push({ key, label })
+  }
+  for (const p of editingParams) {
+    const name = p.name.trim()
+    if (name.length > 0) pushTarget(linkKeyOf('param', name), name)
+  }
+  for (const o of editingOptions) {
+    const label = o.label.trim() || o.text.trim()
+    if (label.length > 0) pushTarget(linkKeyOf('option', o.id), label)
+  }
+
+  /** Add/remove one link key on an editable row. */
+  const setLinks = (keys: string[], link: string, on: boolean) =>
+    on ? [...keys, link] : keys.filter((k) => k !== link)
+  const toggleParamLink = (idx: number, link: string, on: boolean) =>
+    setEditingParams((cur) =>
+      cur.map((p, i) => (i === idx ? { ...p, enables: setLinks(p.enables, link, on) } : p)),
+    )
+  const toggleOptionLink = (idx: number, link: string, on: boolean) =>
+    setEditingOptions((cur) =>
+      cur.map((o, i) => (i === idx ? { ...o, enables: setLinks(o.enables, link, on) } : o)),
+    )
+
+  /** The expanded picker for one row: a checkbox per other declared item. */
+  const renderLinkPanel = (
+    selfKey: string,
+    checked: string[],
+    onToggle: (key: string, on: boolean) => void,
+  ) => {
+    const candidates = linkTargets.filter((c) => c.key !== selfKey)
+    if (candidates.length === 0) {
+      return (
+        <div className="snip-link-panel">
+          <span className="snip-link-empty">{t('snippetLinkNone')}</span>
+        </div>
+      )
+    }
+    return (
+      <div className="snip-link-panel">
+        {candidates.map((c) => (
+          <label
+            key={c.key}
+            className={'snip-link-chip' + (checked.includes(c.key) ? ' active' : '')}
+            title={c.label}
+          >
+            <input
+              type="checkbox"
+              checked={checked.includes(c.key)}
+              onChange={(e) => onToggle(c.key, e.target.checked)}
+            />
+            <span className="snip-link-chip-text">{c.label}</span>
+          </label>
+        ))}
+      </div>
+    )
+  }
 
   // One localStorage read, reused for every row's quick-send button.
   const snippetMemory = loadAllSnippetStates()
@@ -1737,6 +1960,20 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           title={t('snippetExclusiveGroupHint')}
                           spellCheck={false}
                         />
+                        <button
+                          type="button"
+                          className={'snip-link-btn' + (p.enables.length > 0 ? ' active' : '')}
+                          onClick={() =>
+                            setLinkPicker((cur) => (cur === `p${idx}` ? null : `p${idx}`))
+                          }
+                          title={t('snippetLinkHint')}
+                          aria-expanded={linkPicker === `p${idx}`}
+                        >
+                          <Icon name="link" size={12} />
+                          {p.enables.length > 0 && (
+                            <span className="snip-link-count">{p.enables.length}</span>
+                          )}
+                        </button>
                         <label
                           className="snip-param-enabled"
                           title={t('snippetParamEnabledByDefault')}
@@ -1758,6 +1995,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                         {orphanParams.has(p.name.trim()) && (
                           <div className="snip-param-hint">{t('snippetParamOrphan')}</div>
                         )}
+                        {linkPicker === `p${idx}` &&
+                          renderLinkPanel(linkKeyOf('param', p.name.trim()), p.enables, (key, on) =>
+                            toggleParamLink(idx, key, on),
+                          )}
                       </div>
                     ))}
                     <button type="button" className="snip-var-add" onClick={addParamRow}>
@@ -1843,6 +2084,20 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           title={t('snippetExclusiveGroupHint')}
                           spellCheck={false}
                         />
+                        <button
+                          type="button"
+                          className={'snip-link-btn' + (o.enables.length > 0 ? ' active' : '')}
+                          onClick={() =>
+                            setLinkPicker((cur) => (cur === `o${idx}` ? null : `o${idx}`))
+                          }
+                          title={t('snippetLinkHint')}
+                          aria-expanded={linkPicker === `o${idx}`}
+                        >
+                          <Icon name="link" size={12} />
+                          {o.enables.length > 0 && (
+                            <span className="snip-link-count">{o.enables.length}</span>
+                          )}
+                        </button>
                         <label
                           className="snip-param-enabled"
                           title={t('snippetParamEnabledByDefault')}
@@ -1868,6 +2123,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                         {orphanOptions.has(o.text.trim()) && (
                           <div className="snip-param-hint">{t('snippetOptionOrphan')}</div>
                         )}
+                        {linkPicker === `o${idx}` &&
+                          renderLinkPanel(linkKeyOf('option', o.id), o.enables, (key, on) =>
+                            toggleOptionLink(idx, key, on),
+                          )}
                       </div>
                     ))}
                     <div className="snip-param-actions">
@@ -1911,9 +2170,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             error={fillError}
             onChangeParamEnabled={(name, v) =>
               setFilling((cur) =>
-                cur
-                  ? { ...cur, ...applyExclusiveToggle(cur, { kind: 'param', key: name }, v) }
-                  : cur,
+                cur ? { ...cur, ...applyLinkedToggle(cur, { kind: 'param', key: name }, v) } : cur,
               )
             }
             onChangeParamValue={(name, v) =>
@@ -1921,9 +2178,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             }
             onChangeOptionEnabled={(id, v) =>
               setFilling((cur) =>
-                cur
-                  ? { ...cur, ...applyExclusiveToggle(cur, { kind: 'option', key: id }, v) }
-                  : cur,
+                cur ? { ...cur, ...applyLinkedToggle(cur, { kind: 'option', key: id }, v) } : cur,
               )
             }
             onChangeOptionValue={(id, v) =>
@@ -1948,6 +2203,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                   oEnabled[key] = o.defaultEnabled !== false
                   oValues[key] = o.value?.defaultValue ?? ''
                 }
+                expandLinks(cur.params, cur.options, pEnabled, oEnabled)
                 normalizeExclusive(cur.params, cur.options, pEnabled, oEnabled)
                 return { ...cur, pEnabled, pValues, oEnabled, oValues }
               })
@@ -1968,6 +2224,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                   oEnabled[o.id] = o.defaultEnabled !== false
                   oValues[o.id] = o.value?.defaultValue ?? ''
                 }
+                expandLinks(cur.params, cur.options, pEnabled, oEnabled)
                 normalizeExclusive(cur.params, cur.options, pEnabled, oEnabled)
                 return { ...cur, pEnabled, pValues, oEnabled, oValues }
               })
@@ -2080,6 +2337,7 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
               {options.map((o, idx) => {
                 const on = oEnabled[o.id] !== false
                 const valueName = optionValueName(o)
+                const links = linkLabels(o.enables, params, options)
                 return (
                   <div
                     key={o.id}
@@ -2120,6 +2378,14 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
                         />
                       ))}
                     {valueName && <span className="snip-fill-slot">{`\${${valueName}}`}</span>}
+                    {links.length > 0 && (
+                      <span
+                        className="snip-fill-link"
+                        title={t('snippetFillLinkList', { items: links.join(', ') })}
+                      >
+                        <Icon name="link" size={11} />
+                      </span>
+                    )}
                     <button
                       type="button"
                       className="snip-fill-reset"
@@ -2139,6 +2405,7 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
               <div className="snip-fill-group-title">{t('snippetParamSection')}</div>
               {params.map((p, idx) => {
                 const on = pEnabled[p.name] !== false
+                const links = linkLabels(p.enables, params, options)
                 return (
                   <div
                     key={p.name}
@@ -2177,6 +2444,14 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
                         placeholder={p.description ?? ''}
                         onChange={(e) => onChangeParamValue(p.name, e.target.value)}
                       />
+                    )}
+                    {links.length > 0 && (
+                      <span
+                        className="snip-fill-link"
+                        title={t('snippetFillLinkList', { items: links.join(', ') })}
+                      >
+                        <Icon name="link" size={11} />
+                      </span>
                     )}
                     <button
                       type="button"

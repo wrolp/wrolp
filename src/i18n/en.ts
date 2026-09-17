@@ -741,6 +741,11 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   snippetExclusiveGroup: 'Exclusive group (optional)',
   snippetExclusiveGroupHint:
     'Items sharing this group are mutually exclusive; checking one unchecks the others',
+  snippetLink: 'Linked',
+  snippetLinkHint:
+    'Enabling this item also enables the ones selected here (unchecking never cascades)',
+  snippetLinkNone: 'No other items to link',
+  snippetFillLinkList: 'Turns on: {items}',
   snippetParamAdd: 'Add parameter',
   snippetParamRemove: 'Remove parameter',
   snippetParamOrphan: 'Not used in the command',

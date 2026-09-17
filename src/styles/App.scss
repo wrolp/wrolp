@@ -9536,20 +9536,27 @@ input[type='password']::-ms-clear {
 // Option row: "space-separated value" toggle (unchecked = `=`). Neither the
 // checkbox nor the text may grow/shrink (the row's `input { flex: 1 1 90px }`
 // would otherwise stretch the checkbox and squash the label to one letter).
-.snip-opt-sep {
+// `.snip-vars` prefix for the same reason as `.snip-link-chip` above: the shared
+// `.form-group label` rule would otherwise make this a block and the flex `gap`
+// would never apply.
+.snip-vars .snip-opt-sep {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 4px;
+  gap: 5px;
+  margin: 0;
   font-size: 12.5px;
   white-space: nowrap;
   cursor: pointer;
 
   input {
     flex: 0 0 auto;
-    width: auto;
+    width: 13px;
+    height: 13px;
     min-width: 0;
     margin: 0;
+    padding: 0;
+    accent-color: $accent;
   }
 
   .snip-opt-sep-text {
@@ -9636,6 +9643,126 @@ input[type='password']::-ms-clear {
   &.orphan select {
     border-color: rgba(208, 138, 74, 0.8);
   }
+}
+
+// Linkage (启用本项时自动勾选联动项): a compact button on the row plus an
+// inline, full-row candidate panel. Kept inline (no portal) because the editor
+// modal itself is dragged by a transform — see MEMORY on transformed containers
+// becoming the containing block for fixed descendants.
+.snip-link-btn {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 2px 6px;
+  background: $bg-primary;
+  border: 1px solid $border;
+  border-radius: 3px;
+  color: $text-secondary;
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: rgba($accent, 0.5);
+    color: $text-primary;
+  }
+
+  // Placed after `:hover` on purpose: same specificity, so an active button
+  // keeps its accent colour while hovered.
+  &.active {
+    border-color: $accent;
+    color: var(--accent-soft-40);
+  }
+}
+
+.snip-link-count {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+// The row is `flex-wrap: wrap`, so this takes a line of its own.
+.snip-link-panel {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  background: $bg-primary;
+  border: 1px solid $border;
+  border-radius: 4px;
+}
+
+// NOTE the `.snip-vars` prefix on this selector (and on `.snip-opt-sep` below):
+// the modal's shared `.form-group label { display: block; margin-bottom: 6px }`
+// (0,1,1) outranks a bare class (0,1,0), so a chip written as `.snip-link-chip`
+// silently became a BLOCK — which disabled the flex layout and with it the
+// `gap`, gluing the checkbox to its label. The extra class both fixes that and
+// neutralises the label rule's bottom margin.
+.snip-vars .snip-link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid $border;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: $text-secondary;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    border-color 0.12s,
+    background 0.12s,
+    color 0.12s;
+
+  &:hover {
+    border-color: var(--border-l12);
+    color: $text-primary;
+  }
+
+  // The row's `input { flex: 1 1 90px; padding: 5px 8px }` would stretch the
+  // checkbox and squash the label — same guard as `.snip-opt-sep`.
+  input {
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    accent-color: $accent;
+    cursor: pointer;
+  }
+
+  // Same accent-tag recipe as `.file-sftp-user` (placed after `:hover` on
+  // purpose: equal specificity, so a selected chip keeps its accent while
+  // hovered).
+  &.active {
+    border-color: rgba($accent, 0.45);
+    background: rgba($accent, 0.12);
+    color: var(--accent-soft-40);
+  }
+}
+
+.snip-link-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snip-link-empty {
+  font-size: 11px;
+  color: $text-dim;
+}
+
+// Fill dialog: explains why a checkbox turned itself on.
+.snip-fill-link {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--accent-soft-40);
 }
 
 .snip-param-enabled {
