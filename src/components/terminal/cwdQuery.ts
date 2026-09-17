@@ -28,6 +28,16 @@
  *   3. anything that turns out not to be one of those is emitted unchanged, so
  *      ordinary output is never touched.
  *
+ * Cross-chunk matching means *holding* a prefix that may still grow into the
+ * command or a marker — and a held character is invisible until something else
+ * arrives. That is fine for our own output, but a **partial prefix is ambiguous**:
+ * a typed `_` is exactly the first character of `beg`, and a typed `e` the first
+ * of `echo "…`. Holding those while the shell sits at the prompt made typing look
+ * like it did not echo at all (reported: three `_` typed, two shown — the last one
+ * only appeared once the next keystroke broke the match). So the stripper only
+ * holds while a query is actually in flight (`arm()` … `disarm()`); while idle it
+ * still removes *complete* hidden lines, but never delays a character.
+ *
  * Only small indices survive a chunk boundary. The range an in-progress attempt
  * already consumed is carried over with it (and skipped on the next chunk) so a
  * failed attempt can still be replayed verbatim — re-scanning that range would
@@ -53,6 +63,23 @@ export interface CwdQueryStripper {
   readonly command: string
   /** Remove the hidden query from an output chunk (chunk-boundary safe). */
   strip(chunk: string): StrippedChunk
+  /**
+   * Declare that a query is in flight. Only then does `strip` hold an *ambiguous*
+   * prefix back for the next chunk; see the module header for why that has to be
+   * tied to the query's lifetime.
+   */
+  arm(): void
+  /**
+   * Stand down once the query resolved (or was given up on) and hand back whatever a
+   * half-finished attempt was still holding, so the caller can put it on screen.
+   * `''` when nothing was held.
+   */
+  disarm(): string
+  /**
+   * Hand back what a half-finished attempt is holding *without* leaving the armed
+   * state — the caller's "output went quiet" safety net. `''` when nothing is held.
+   */
+  release(): string
 }
 
 /**
@@ -97,6 +124,20 @@ export function createCwdQueryStripper(
   let swallowEol = false // a hidden line was swallowed — eat its line break too
   let carry = '' // undecided range handed over to the next chunk
   let carryConsumed = 0 // how many chars of `carry` the attempt already ate
+  let armed = false // a query is in flight: an ambiguous prefix may be held
+
+  /** Drop the current attempt and return the text it was keeping off screen. */
+  const release = (): string => {
+    const held = carry
+    carry = ''
+    carryConsumed = 0
+    echoPos = 0
+    begPos = 0
+    inResult = false
+    resultPos = 0
+    body = ''
+    return held
+  }
 
   const strip = (chunk: string): StrippedChunk => {
     const text = carry + chunk
@@ -226,14 +267,35 @@ export function createCwdQueryStripper(
     // A pending attempt continues in the next chunk (carrying the range it already
     // consumed, so it is not scanned twice); everything before it is real output
     // and goes out now.
-    if (echoPos > 0 || begPos > 0 || inResult) {
+    //
+    // While idle only a *result* line may continue: it was entered through the whole
+    // `beg` marker, so it is unambiguously ours. A half-matched `command`/`beg` prefix
+    // is not — a typed `_` looks precisely like the start of the marker — and holding
+    // one there is what made typed input invisible until the next keystroke. Give such
+    // a prefix back instead.
+    if (inResult || (armed && (echoPos > 0 || begPos > 0))) {
       carry = text.slice(runStart)
       carryConsumed = i - runStart
     } else {
+      echoPos = 0
+      begPos = 0
       out += text.slice(runStart)
     }
     return { text: out, path }
   }
 
-  return { beg, end, command, strip }
+  return {
+    beg,
+    end,
+    command,
+    strip,
+    arm: () => {
+      armed = true
+    },
+    disarm: () => {
+      armed = false
+      return release()
+    },
+    release,
+  }
 }

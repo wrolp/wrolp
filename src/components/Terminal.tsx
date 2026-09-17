@@ -239,8 +239,45 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       cwdQueryPendingRef.current = null
       if (pending.timer) clearTimeout(pending.timer)
       pending.resolve(path)
+      // Query answered: stop holding ambiguous prefixes, and put anything the attempt
+      // still had in hand (e.g. a `_` typed while it was in flight) out with this chunk.
+      return text + cwdQuery.disarm()
     }
     return text
+  }
+  // Holding a partial prefix is only safe while the query is actually in flight — a
+  // typed `_` is exactly the first character of the marker. Disarming is not enough on
+  // its own though: inside that window a keystroke can still be held, and a held
+  // character is invisible until more output arrives (the very bug this guards). So
+  // anything the strip is still holding is handed back once output goes quiet.
+  const CWD_HOLD_FLUSH_MS = 300 // comfortably above the 100ms output-poll cadence
+  const cwdFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Put released text on screen through the highlighter but *around* the stripper —
+   *  feeding it back in would let the same prefix be held all over again. */
+  const writeReleasedCwd = (text: string) => {
+    const term = termRef.current
+    if (!term || !text) return
+    const hl = highlighterRef.current
+    if (hl && hlEnabledRef.current && text.length <= HL_MAX_CHUNK) {
+      term.write(hl.push(text), () => {
+        if (shellReadyRef.current) recolorLiveLine()
+      })
+      scheduleHlFlush()
+      return
+    }
+    term.write(text)
+  }
+  const flushHeldCwd = () => {
+    if (cwdFlushTimerRef.current) {
+      clearTimeout(cwdFlushTimerRef.current)
+      cwdFlushTimerRef.current = null
+    }
+    const held = cwdQuery.release()
+    if (held) writeReleasedCwd(held)
+  }
+  const scheduleCwdFlush = () => {
+    if (cwdFlushTimerRef.current) clearTimeout(cwdFlushTimerRef.current)
+    cwdFlushTimerRef.current = setTimeout(flushHeldCwd, CWD_HOLD_FLUSH_MS)
   }
   // Ask the interactive shell for its real absolute cwd. Resolves with the path
   // (or null on timeout/error). The query output is stripped by stripCwdQuery.
@@ -254,15 +291,25 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       cwdQueryPendingRef.current = null
       if (old.timer) clearTimeout(old.timer)
       old.resolve(null)
+      // The abandoned attempt may be holding part of the user's own typing; hand it
+      // back before the new query takes over the stream.
+      const held = cwdQuery.disarm()
+      if (held) writeReleasedCwd(held)
     }
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         if (cwdQueryPendingRef.current && cwdQueryPendingRef.current.resolve === resolve) {
           cwdQueryPendingRef.current = null
         }
+        // Gave up on the result: nothing may stay held for the query that never came.
+        const held = cwdQuery.disarm()
+        if (held) writeReleasedCwd(held)
         resolve(null)
       }, 4000)
       cwdQueryPendingRef.current = { resolve, timer }
+      // Until the result (or the timeout) the echo and the result line may arrive split
+      // across chunks, so the stripper is allowed to hold a partial prefix.
+      cwdQuery.arm()
       // Defer the injection by one macrotask. Callers run inside onData's Enter
       // handler, i.e. BEFORE the user's own `\r` is written to the pty; sending
       // now would put the query ahead of that newline in the input stream, so the
@@ -1130,6 +1177,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // Strip our hidden `pwd` query (the echoed command + its result) so the
     // terminal never shows it; the resolved cwd is captured separately.
     chunk = stripCwdQuery(chunk)
+    // Whatever that strip decided to hold (only ever a query's own output in flight)
+    // must not sit there unseen — give it back if output goes quiet.
+    scheduleCwdFlush()
     // dircolors paints world-writable dirs blue-on-green (34;42), which is
     // unreadable on the themed palettes — keep the background, fix the
     // foreground. See ./terminal/sgrContrast.ts for the (deliberately narrow)

@@ -1,4 +1,5 @@
-import { test, expect } from './helpers/fixtures'
+import { test, expect, type Page } from './helpers/fixtures'
+import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 import { createCwdQueryStripper } from '../../src/components/terminal/cwdQuery'
 
 // The hidden `pwd` query is injected into the interactive shell and its output
@@ -21,9 +22,17 @@ const ECHO = `echo "${BEG}$(pwd)${END}"`
 const RESULT = `${BEG}/tmp/ffmpeg-src${END}`
 
 /** Feed `chunks` through a fresh stripper: what the terminal would show, and
- *  every cwd captured along the way. */
-function feed(chunks: string[]): { out: string; paths: string[] } {
+ *  every cwd captured along the way. `armed` (the default) is the state these cases
+ *  happen in: the query is in flight, so a split echo/result may span chunks. */
+function feed(
+  chunks: string[],
+  { armed = true }: { armed?: boolean } = {},
+): {
+  out: string
+  paths: string[]
+} {
   const stripper = createCwdQueryStripper(BEG, END)
+  if (armed) stripper.arm()
   let out = ''
   const paths: string[] = []
   for (const chunk of chunks) {
@@ -105,11 +114,52 @@ test.describe('hidden pwd query strip', () => {
   })
 
   test('a lone trailing `e` is only delayed until the next chunk, never dropped', () => {
-    // A single `e` could be the start of the echoed command, so it is held back —
-    // and replayed ahead of whatever the next chunk brings, in order.
+    // A single `e` could be the start of the echoed command, so while the query is in
+    // flight it is held back — and replayed ahead of whatever the next chunk brings,
+    // in order.
     const stripper = createCwdQueryStripper(BEG, END)
+    stripper.arm()
     expect(stripper.strip('a_$ _e').text).toBe('a_$ _')
     expect(stripper.strip('bar\r\n').text).toBe('ebar\r\n')
+  })
+
+  test('while idle a typed `_` is never held back (it is the marker`s first char)', () => {
+    // Reported: typing `_` in the shell showed nothing until the next keystroke — the
+    // `_` looked like the beginning of `beg` and was carried over to a chunk that only
+    // arrives when the user types again (three typed, two shown). Idle is the normal
+    // state (no query in flight), and there an ambiguous prefix must pass straight
+    // through. Same for a typed `e`, which starts `echo "…`.
+    const stripper = createCwdQueryStripper(BEG, END)
+    for (const chunk of ['_', '__', 'e', 'ec', 'echo hi', 'my_file']) {
+      expect(stripper.strip(chunk).text, chunk).toBe(chunk)
+    }
+  })
+
+  test('while idle a complete hidden line is still stripped (stale output)', () => {
+    // The query's own output is dropped whether or not a query is currently in flight:
+    // a result line that completes inside one chunk is unambiguous.
+    const { out, paths } = feed([PROMPT, `${ECHO}\r\n${RESULT}\r\n${AT_PROMPT}`], { armed: false })
+    expect(out).toBe(PROMPT + AT_PROMPT)
+    expect(paths).toEqual(['/tmp/ffmpeg-src'])
+  })
+
+  test('while armed a held prefix comes back on release(), without disarming', () => {
+    const stripper = createCwdQueryStripper(BEG, END)
+    stripper.arm()
+    expect(stripper.strip('x_').text).toBe('x') // the `_` waits for the next chunk
+    // Output went quiet — the caller hands it back instead of leaving it invisible.
+    expect(stripper.release()).toBe('_')
+    // …and it is not repeated later on (the state was cleared, not just reported).
+    expect(stripper.strip('yz').text).toBe('yz')
+    expect(stripper.release()).toBe('')
+  })
+
+  test('disarm() ends the window: nothing stays held and prefixes pass through', () => {
+    const stripper = createCwdQueryStripper(BEG, END)
+    stripper.arm()
+    expect(stripper.strip('_').text).toBe('')
+    expect(stripper.disarm()).toBe('_')
+    expect(stripper.strip('_').text).toBe('_')
   })
 
   test('a stray begin marker cannot swallow the stream', () => {
@@ -139,6 +189,7 @@ test.describe('hidden pwd query strip', () => {
     const beg = '__WROLP_CWD_BEG_e1e2e3e4__'
     const end = '__WROLP_CWD_END_e5e6e7e8__'
     const stripper = createCwdQueryStripper(beg, end)
+    stripper.arm() // one character per chunk: only while the query is in flight
     let out = ''
     let path: string | null = null
     for (const ch of `${PROMPT}${stripper.command}\r\n${beg}/srv/app${end}\r\n${AT_PROMPT}`) {
@@ -149,4 +200,68 @@ test.describe('hidden pwd query strip', () => {
     expect(out).toBe(PROMPT + AT_PROMPT)
     expect(path).toBe('/srv/app')
   })
+})
+
+// --- End to end: the user types `_` while the query is in flight --------------
+
+const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
+const UI_PROMPT = 'root@demo:~$ '
+
+/** Echo `send_input` payloads back through `poll_output` like a real PTY. There is no
+ *  shell behind it, so the hidden `pwd` query is echoed as typed text (which the stripper
+ *  removes) but its result line never arrives — the query stays in flight. */
+async function installEchoingShell(page: Page) {
+  await page.evaluate(() => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+        }
+      }
+    ).__TAURI_INTERNALS__
+    const orig = internals.invoke.bind(internals)
+    const pending: string[] = []
+    internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
+      if (cmd === 'send_input') {
+        const raw = String(args.data ?? '')
+        const visible = raw
+          .replace(/\x1b\[20[01]~/g, '')
+          .replace(/\x16/g, '')
+          .replace(/[\r\n]/g, '')
+        if (visible) pending.push(visible)
+        if (/[\r\n]/.test(raw)) pending.push('\r\nroot@demo:~$ ')
+      }
+      const res = await orig(cmd, args)
+      if (cmd === 'poll_output') return [...(res as string[]), ...pending.splice(0)]
+      return res
+    }
+  })
+}
+
+test('a `_` typed while the hidden query is in flight still shows up', async ({ page }) => {
+  await installTauriMock(page, { connections: [DEMO_CONN], pollOutputChunks: [[UI_PROMPT]] })
+  await page.goto('/')
+  await installEchoingShell(page)
+  await page.locator('.connection-item').first().click()
+  await expect(page.locator('.xterm-rows')).toContainText('root@demo')
+  await page.locator('.xterm-screen').click()
+
+  // `ls` with no tracked cwd asks the shell for its real directory: the hidden
+  // `echo "…$(pwd)…"` goes out and the stripper is armed for its echo and result.
+  await page.keyboard.type('ls')
+  await page.keyboard.press('Enter')
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).some((c) =>
+        String(c.args.data ?? '').includes('__WROLP_CWD_BEG_'),
+      ),
+    )
+    .toBe(true)
+
+  // Typing underscores must not be mistaken for the start of the marker — all three
+  // have to end up on the input line (reported: three typed, two shown).
+  await page.keyboard.type('_', { delay: 80 })
+  await page.keyboard.type('_', { delay: 80 })
+  await page.keyboard.type('_', { delay: 80 })
+  await expect(page.locator('.term-pane-term .xterm-rows')).toContainText('___')
 })
