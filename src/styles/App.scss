@@ -9442,6 +9442,14 @@ input[type='password']::-ms-clear {
 // ===== Command list: connection grouping =====
 .cmd-list-section {
   margin-bottom: 4px;
+  border-radius: 6px;
+
+  // Expanded groups are drawn as a box so the header reads as belonging to the
+  // commands underneath it; collapsed groups stay flat list rows.
+  &.expanded {
+    border: 1px solid $border;
+    padding: 2px 4px 4px;
+  }
 }
 
 .cmd-list-section-header {

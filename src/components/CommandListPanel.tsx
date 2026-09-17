@@ -1425,7 +1425,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             </div>
           ) : (
             groups.map((g) => (
-              <div key={g.id} className="cmd-list-section">
+              <div
+                key={g.id}
+                className={'cmd-list-section' + (collapsedGroups.has(g.id) ? '' : ' expanded')}
+              >
                 <div className="cmd-list-section-header" onClick={() => toggleGroup(g.id)}>
                   <Icon
                     name="chevronDown"
