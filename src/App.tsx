@@ -3009,6 +3009,7 @@ export default function App() {
         hidden: false,
         sortOrder: 0,
         connectionId: activeSnippetConnectionId,
+        groupName: null,
         params: [],
         options: [],
         createdAt: new Date().toISOString(),

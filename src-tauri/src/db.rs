@@ -136,6 +136,9 @@ pub struct CommandSnippetDto {
   /// Toggleable literal fragments of the command.
   #[serde(default)]
   pub options: Vec<CommandOption>,
+  /// User-defined list group label; `None` / empty = ungrouped.
+  #[serde(default)]
+  pub group_name: Option<String>,
   pub created_at: String,
   pub updated_at: String,
 }
@@ -199,14 +202,16 @@ pub fn init_db(data_dir: &std::path::Path) -> Result<DbConn, String> {
         .map_err(|e| format!("Migration failed (sessions.{}): {}", column, e))?;
     }
   }
-  // Migration (command snippets): older DBs lack connection scoping and the
-  // per-command parameter / option definitions (stored as JSON arrays). NULL
-  // keeps legacy behaviour: general scope, no params/options -> the global
-  // variable flow applies at send time.
+  // Migration (command snippets): older DBs lack connection scoping, the
+  // per-command parameter / option definitions (stored as JSON arrays) and the
+  // user-defined list group label. NULL keeps legacy behaviour: general scope,
+  // no params/options -> the global variable flow applies at send time, and no
+  // group -> the snippet shows up under "ungrouped" in the grouped view.
   for (column, ddl) in [
     ("connection_id", "TEXT"),
     ("params", "TEXT"),
     ("options", "TEXT"),
+    ("group_name", "TEXT"),
   ] {
     if !has_column(&conn, "command_snippets", column)? {
       let sql = format!("ALTER TABLE command_snippets ADD COLUMN {} {}", column, ddl);
@@ -705,6 +710,9 @@ fn map_snippet_row(row: &rusqlite::Row) -> rusqlite::Result<CommandSnippetDto> {
     connection_id: row.get(8)?,
     params: parse_json_column(row.get::<_, Option<String>>(9)?),
     options: parse_json_column(row.get::<_, Option<String>>(10)?),
+    // Appended LAST on purpose: `map_snippet_row` reads by position, so new
+    // columns must never be inserted in the middle of the SELECT list.
+    group_name: row.get(11)?,
     created_at: row.get(6)?,
     updated_at: row.get(7)?,
   })
@@ -714,7 +722,7 @@ pub fn list_command_snippets(conn: &Connection) -> Result<Vec<CommandSnippetDto>
   let mut stmt = conn
     .prepare(
       "SELECT id, command, alias, favorite, hidden, sort_order, created_at, updated_at, \
-       connection_id, params, options \
+       connection_id, params, options, group_name \
        FROM command_snippets ORDER BY favorite DESC, sort_order ASC, updated_at DESC",
     )
     .map_err(|e| e.to_string())?;
@@ -732,8 +740,9 @@ pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Resu
   let updated = conn
     .execute(
       "UPDATE command_snippets SET command = ?1, alias = ?2, favorite = ?3, hidden = ?4, \
-       sort_order = ?5, updated_at = ?6, connection_id = ?7, params = ?8, options = ?9 \
-       WHERE id = ?10",
+       sort_order = ?5, updated_at = ?6, connection_id = ?7, params = ?8, options = ?9, \
+       group_name = ?10 \
+       WHERE id = ?11",
       params![
         snip.command,
         snip.alias,
@@ -744,6 +753,7 @@ pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Resu
         snip.connection_id,
         params_json,
         options_json,
+        snip.group_name,
         snip.id
       ],
     )
@@ -752,8 +762,8 @@ pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Resu
     conn
       .execute(
         "INSERT INTO command_snippets \
-         (id, command, alias, favorite, hidden, sort_order, created_at, updated_at, connection_id, params, options) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         (id, command, alias, favorite, hidden, sort_order, created_at, updated_at, connection_id, params, options, group_name) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
           snip.id,
           snip.command,
@@ -765,7 +775,8 @@ pub fn save_command_snippet(conn: &Connection, snip: &CommandSnippetDto) -> Resu
           snip.updated_at,
           snip.connection_id,
           params_json,
-          options_json
+          options_json,
+          snip.group_name
         ],
       )
       .map_err(|e| e.to_string())?;

@@ -3491,6 +3491,18 @@ input[type='password']::-ms-clear {
     background: $border;
     margin: 4px 0;
   }
+
+  // Non-interactive section caption (e.g. "Move to group" in the command list).
+  &-label {
+    padding: 4px 16px 2px;
+    font-size: 11px;
+    color: $text-dim;
+  }
+
+  // The item reflecting the current state (e.g. the snippet's current group).
+  &-item.active {
+    color: var(--accent-soft-40);
+  }
 }
 
 // ===== Sidebar Container =====
@@ -8929,7 +8941,8 @@ input[type='password']::-ms-clear {
   }
 }
 
-.cmd-list-var-btn {
+.cmd-list-var-btn,
+.cmd-list-newgroup-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8947,6 +8960,12 @@ input[type='password']::-ms-clear {
     background: rgba($accent, 0.2);
     color: var(--accent-soft-40);
   }
+}
+
+// The "new group" button stays lit while its input row is open.
+.cmd-list-newgroup-btn[aria-expanded='true'] {
+  background: rgba($accent, 0.2);
+  color: var(--accent-soft-40);
 }
 
 .cmd-list-close {
@@ -9494,6 +9513,122 @@ input[type='password']::-ms-clear {
   color: $text-secondary;
   background: $bg-hover;
   border-radius: 8px;
+}
+
+// ===== Command list: bucketing switch + custom groups =====
+
+// Segmented control at the right of the search row (by connection / by group).
+.cmd-list-mode-switch {
+  display: flex;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid $border;
+  border-radius: 3px;
+}
+
+.cmd-list-mode-btn {
+  padding: 2px 8px;
+  background: $bg-primary;
+  border: none;
+  color: $text-secondary;
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  & + & {
+    border-left: 1px solid $border;
+  }
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+
+  // Declared after `:hover` (equal specificity) so the selected side keeps its
+  // accent styling while hovered.
+  &.active {
+    background: rgba($accent, 0.18);
+    color: var(--accent-soft-40);
+  }
+}
+
+// Drag & drop feedback (custom view only). `inset` shadow rather than the
+// section's own border, so a COLLAPSED section lights up as well.
+.cmd-list-section.drag-over {
+  background: rgba($accent, 0.1);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgba($accent, 0.6);
+}
+
+.cmd-list-section-header[draggable='true'] {
+  cursor: grab;
+}
+
+// Inline group rename (Enter/blur commits, Esc cancels).
+.cmd-list-group-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  background: $bg-primary;
+  border: 1px solid $accent;
+  border-radius: 3px;
+  color: $text-primary;
+  font-size: 11.5px;
+  font-family: inherit;
+  outline: none;
+}
+
+// Placeholder row of a group that has no commands yet.
+.cmd-list-empty-group {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: $text-dim;
+}
+
+// "New group" input row at the end of the list.
+.cmd-list-new-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  color: $text-muted;
+
+  input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    background: $bg-primary;
+    border: 1px solid $border;
+    border-radius: 3px;
+    color: $text-primary;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  .cmd-list-new-group-ok,
+  .cmd-list-new-group-cancel {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    background: transparent;
+    border: 1px solid $border;
+    border-radius: 3px;
+    color: $text-secondary;
+    cursor: pointer;
+
+    &:hover {
+      border-color: rgba($accent, 0.5);
+      color: $text-primary;
+    }
+  }
 }
 
 .cmd-list-toggle.disabled {

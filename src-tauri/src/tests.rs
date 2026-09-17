@@ -328,6 +328,7 @@ async fn command_snippets_crud() {
     ],
     created_at: "2026-08-28T00:00:00Z".into(),
     updated_at: "2026-08-28T00:00:00Z".into(),
+    group_name: Some("Ops".into()),
   };
   let id = commands::save_command_snippet(app.state(), snip)
     .await
@@ -351,6 +352,8 @@ async fn command_snippets_crud() {
   assert_eq!(list[0].options[0].enables, vec!["param:image".to_string()]);
   assert!(list[0].options[1].enables.is_empty());
   assert!(list[0].params[0].enables.is_empty());
+  // User-defined group label round-trips too.
+  assert_eq!(list[0].group_name.as_deref(), Some("Ops"));
 
   commands::delete_command_snippet(app.state(), "snip1".into())
     .await
@@ -361,8 +364,9 @@ async fn command_snippets_crud() {
     .is_empty());
 }
 
-/// Rows written before the connection_id / params / options migration must
-/// still load: NULL columns default to "general" scope and empty defs.
+/// Rows written before the connection_id / params / options / group_name
+/// migration must still load: NULL columns default to "general" scope, empty
+/// defs and no group label.
 #[tokio::test]
 async fn command_snippets_legacy_row_defaults() {
   let app = build_test_app();
@@ -387,6 +391,7 @@ async fn command_snippets_legacy_row_defaults() {
   assert_eq!(list[0].connection_id, None);
   assert!(list[0].params.is_empty());
   assert!(list[0].options.is_empty());
+  assert_eq!(list[0].group_name, None);
 }
 
 #[tokio::test]

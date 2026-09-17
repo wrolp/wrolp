@@ -472,6 +472,9 @@ function clearSnippetState(id: string) {
   }
 }
 
+/** Which dimension the list is bucketed by (see `CmdListPrefs.groupMode`). */
+type GroupMode = 'connection' | 'custom'
+
 /** Persisted window prefs (position, size, opacity, filter toggles). */
 interface CmdListPrefs {
   pos: { x: number; y: number } | null
@@ -481,6 +484,8 @@ interface CmdListPrefs {
   showHidden: boolean
   /** Show only the active terminal's connection (+ general) commands. */
   activeConnectionOnly: boolean
+  /** "By connection" (derived, the original behaviour) or "by group" (labels). */
+  groupMode: GroupMode
 }
 
 const CMDLIST_PREFS_KEY = 'wrolp.cmdListPrefs'
@@ -493,6 +498,7 @@ function defaultPrefs(): CmdListPrefs {
     favoriteOnly: false,
     showHidden: false,
     activeConnectionOnly: true,
+    groupMode: 'connection',
   }
 }
 
@@ -508,6 +514,7 @@ function loadCmdListPrefs(): CmdListPrefs {
       favoriteOnly: parsed.favoriteOnly ?? false,
       showHidden: parsed.showHidden ?? false,
       activeConnectionOnly: parsed.activeConnectionOnly ?? true,
+      groupMode: parsed.groupMode === 'custom' ? 'custom' : 'connection',
     }
   } catch {
     return defaultPrefs()
@@ -520,6 +527,53 @@ function saveCmdListPrefs(p: CmdListPrefs) {
   } catch {
     /* storage unavailable — ignore */
   }
+}
+
+// ===== Custom groups: name order (display preference, localStorage) =====
+
+/**
+ * Group order lives in its own key rather than inside `CmdListPrefs`: the
+ * prefs object's shape is part of the e2e contract (specs seed it directly).
+ *
+ * Group EXISTENCE is the union of the two sources: the labels actually set on
+ * snippets (so a group is never lost even if this list is cleared) and this
+ * order list (so an explicitly created, still-empty group can exist).
+ */
+const CMD_GROUP_ORDER_KEY = 'wrolp.cmdGroupOrder'
+
+function loadGroupOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(CMD_GROUP_ORDER_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return [
+      ...new Set(parsed.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)),
+    ]
+  } catch {
+    return []
+  }
+}
+
+function saveGroupOrder(names: string[]) {
+  try {
+    localStorage.setItem(CMD_GROUP_ORDER_KEY, JSON.stringify(names))
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
+/** Key of the trailing "ungrouped" bucket in the custom-group view. */
+const UNGROUPED_KEY = '__ungrouped__'
+
+/** One rendered section of the command list (either view). */
+interface ListedGroup {
+  /** Connection id / `g:<name>` / the `__*__` buckets. */
+  id: string
+  title: string
+  items: CommandSnippetDto[]
+  /** Custom view only: a group that was created but has no commands yet. */
+  empty: boolean
 }
 
 interface CommandListPanelProps {
@@ -660,6 +714,28 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     () => loadCmdListPrefs().activeConnectionOnly,
   )
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  // The custom ("by group") view keeps its OWN collapse set: its keys are group
+  // names, and a connection id could legitimately equal one — sharing one Set
+  // would cross-collapse the two views.
+  const [collapsedCustomGroups, setCollapsedCustomGroups] = useState<Set<string>>(new Set())
+  const [groupMode, setGroupMode] = useState<GroupMode>(() => loadCmdListPrefs().groupMode)
+  const [groupOrder, setGroupOrder] = useState<string[]>(() => loadGroupOrder())
+  /** Inline "new group" input row at the end of the custom view. */
+  const [newGroupOpen, setNewGroupOpen] = useState(false)
+  const [newGroupDraft, setNewGroupDraft] = useState('')
+  /** Inline rename of a group header (Enter/blur commits, Esc cancels). */
+  const [renamingGroup, setRenamingGroup] = useState<{ name: string; draft: string } | null>(null)
+  /** Right-clicked group header (rename / delete). */
+  const [groupMenu, setGroupMenu] = useState<{ x: number; y: number; name: string } | null>(null)
+  /** Group name typed in the add/edit snippet dialog. */
+  const [editingGroupName, setEditingGroupName] = useState('')
+  /** Set while Enter/Esc already resolved a rename, so the follow-up blur
+   *  (the input is unmounted by then) does not commit a second time. */
+  const renameHandledRef = useRef(false)
+  // Drag & drop (custom view only): what is being dragged + the hovered target.
+  const dragSnippetRef = useRef<string | null>(null)
+  const dragGroupRef = useRef<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; snippet: CommandSnippetDto } | null>(
     null,
   )
@@ -725,12 +801,15 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     if (open) void reload()
   }, [reloadKey, open, reload])
 
-  // Close the context menu on outside click / Escape.
+  // Close either context menu (snippet row / group header) on outside click or Escape.
   useEffect(() => {
-    if (!menu) return
-    const close = () => setMenu(null)
+    if (!menu && !groupMenu) return
+    const close = () => {
+      setMenu(null)
+      setGroupMenu(null)
+    }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null)
+      if (e.key === 'Escape') close()
     }
     document.addEventListener('click', close)
     document.addEventListener('keydown', onKey)
@@ -738,7 +817,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       document.removeEventListener('click', close)
       document.removeEventListener('keydown', onKey)
     }
-  }, [menu])
+  }, [menu, groupMenu])
 
   // Auto-hide toast.
   useEffect(() => {
@@ -791,8 +870,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       favoriteOnly,
       showHidden,
       activeConnectionOnly,
+      groupMode,
     })
-  }, [pos, size, panelOpacity, favoriteOnly, showHidden, activeConnectionOnly])
+  }, [pos, size, panelOpacity, favoriteOnly, showHidden, activeConnectionOnly, groupMode])
 
   // Auto-declare a param row for every `${name}` that has no definition yet.
   // Placeholders owned by an option's value slot are skipped. Debounced so a
@@ -846,41 +926,196 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       ? filtered.filter((s) => !s.connectionId || s.connectionId === activeConnectionId)
       : filtered
 
+  // Every group name that exists: the explicitly created ones (order list, in
+  // the user's order) followed by names only seen as snippet labels.
+  const knownGroupNames = [
+    ...new Set([
+      ...groupOrder,
+      ...scoped.map((s) => s.groupName ?? '').filter((g) => g.length > 0),
+    ]),
+  ]
+
+  /**
+   * Custom ("by group") bucketing. Filters ran first (`scoped`), so the group
+   * view only changes the bucketing dimension — `favoriteOnly` / `showHidden` /
+   * `query` / `activeConnectionOnly` keep their meaning, and the latter still
+   * filters by CONNECTION while groups label by purpose (the two are orthogonal).
+   */
+  const buildCustomGroups = (): ListedGroup[] => {
+    const groups: ListedGroup[] = knownGroupNames
+      .map((name) => {
+        const items = scoped.filter((s) => s.groupName === name)
+        return { id: `g:${name}`, title: name, items, empty: items.length === 0 }
+      })
+      // A created-but-empty group is listed only when nothing is searched for,
+      // otherwise a query would fill the list with empty headers.
+      .filter((g) => g.items.length > 0 || (query.length === 0 && groupOrder.includes(g.title)))
+    // "Ungrouped" always sits last, mirroring the connection view's trailing
+    // general bucket.
+    const ungrouped = scoped.filter((s) => !s.groupName)
+    if (ungrouped.length > 0) {
+      groups.push({ id: UNGROUPED_KEY, title: t('ungrouped'), items: ungrouped, empty: false })
+    }
+    return groups
+  }
+
   // Group by connection: configured connections first, then any dangling
   // connection ids (deleted connections), and the general bucket last — most
   // snippets are connection-scoped, so unfiled ones must not push them down.
   // Empty groups are hidden.
-  const groups: Array<{ id: string; title: string; items: CommandSnippetDto[] }> = []
-  const knownConnIds = new Set(connections.map((c) => c.id))
-  for (const c of connections) {
-    const items = scoped.filter((s) => s.connectionId === c.id)
-    // Prefix the group so two connections that share a name (and possibly IP)
-    // in different groups are told apart — mirrors the editor's grouped
-    // <optgroup> labels.
-    if (items.length > 0) {
+  const buildConnectionGroups = (): ListedGroup[] => {
+    const groups: ListedGroup[] = []
+    const knownConnIds = new Set(connections.map((c) => c.id))
+    for (const c of connections) {
+      const items = scoped.filter((s) => s.connectionId === c.id)
+      // Prefix the group so two connections that share a name (and possibly IP)
+      // in different groups are told apart — mirrors the editor's grouped
+      // <optgroup> labels.
+      if (items.length > 0) {
+        groups.push({
+          id: c.id,
+          title: c.group ? `${c.group} / ${c.name}` : c.name,
+          items,
+          empty: false,
+        })
+      }
+    }
+    const unknownItems = scoped.filter((s) => s.connectionId && !knownConnIds.has(s.connectionId))
+    if (unknownItems.length > 0) {
       groups.push({
-        id: c.id,
-        title: c.group ? `${c.group} / ${c.name}` : c.name,
-        items,
+        id: '__unknown__',
+        title: t('snippetGroupUnknown'),
+        items: unknownItems,
+        empty: false,
       })
     }
-  }
-  const unknownItems = scoped.filter((s) => s.connectionId && !knownConnIds.has(s.connectionId))
-  if (unknownItems.length > 0) {
-    groups.push({ id: '__unknown__', title: t('snippetGroupUnknown'), items: unknownItems })
-  }
-  const generalItems = scoped.filter((s) => !s.connectionId)
-  if (generalItems.length > 0) {
-    groups.push({ id: '__general__', title: t('snippetGroupGeneral'), items: generalItems })
+    const generalItems = scoped.filter((s) => !s.connectionId)
+    if (generalItems.length > 0) {
+      groups.push({
+        id: '__general__',
+        title: t('snippetGroupGeneral'),
+        items: generalItems,
+        empty: false,
+      })
+    }
+    return groups
   }
 
+  const customView = groupMode === 'custom'
+  const groups = customView ? buildCustomGroups() : buildConnectionGroups()
+
+  const isCollapsed = (id: string) =>
+    customView ? collapsedCustomGroups.has(id) : collapsedGroups.has(id)
+
+  /** Collapse state is per view: the two key spaces must never mix. */
   const toggleGroup = (id: string) => {
-    setCollapsedGroups((cur) => {
+    const setter = customView ? setCollapsedCustomGroups : setCollapsedGroups
+    setter((cur) => {
       const next = new Set(cur)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
+  }
+
+  // ===== Custom group operations (all reuse save_command_snippet) =====
+
+  /** Write the order list (deduped); group existence is never stored anywhere. */
+  const commitGroupOrder = (names: string[]) => {
+    const deduped = [...new Set(names.map((n) => n.trim()).filter((n) => n.length > 0))]
+    setGroupOrder(deduped)
+    saveGroupOrder(deduped)
+  }
+
+  const createGroup = () => {
+    const name = newGroupDraft.trim()
+    if (name.length === 0) return
+    // Same name = same group (labels are the identity) — the list is a name set,
+    // so re-creating one would be a no-op. Tell the user instead of closing
+    // silently.
+    if (knownGroupNames.includes(name)) {
+      setToast(t('snippetGroupExists'))
+      return
+    }
+    // Register the label-only groups first, so a new group lands at the END
+    // instead of jumping ahead of names the order list had never seen.
+    commitGroupOrder([...knownGroupNames, name])
+    setNewGroupDraft('')
+    setNewGroupOpen(false)
+  }
+
+  /**
+   * Rename = rewrite the label on every member, then move the name in the order
+   * list. Renaming onto an existing name MERGES the two groups (labels cannot
+   * tell them apart afterwards) — the name keeps its first position.
+   */
+  const renameGroup = async (oldName: string, rawNew: string) => {
+    const next = rawNew.trim()
+    setRenamingGroup(null)
+    if (next.length === 0 || next === oldName) return
+    // Labels are the identity, so renaming onto an existing name MERGES the two
+    // groups — say so, otherwise the user thinks something went wrong.
+    const merging = knownGroupNames.includes(next)
+    const members = snippets.filter((s) => s.groupName === oldName)
+    for (const s of members) {
+      await saveCommandSnippet({ ...s, groupName: next, updatedAt: new Date().toISOString() })
+    }
+    commitGroupOrder(groupOrder.map((n) => (n === oldName ? next : n)))
+    if (merging) setToast(t('snippetGroupRenameMerge'))
+    await reload()
+  }
+
+  /** Delete = members fall back to "ungrouped"; the snippets themselves stay. */
+  const deleteGroup = async (name: string) => {
+    if (!window.confirm(t('snippetGroupDeleteConfirm', { name }))) return
+    const members = snippets.filter((s) => s.groupName === name)
+    for (const s of members) {
+      await saveCommandSnippet({ ...s, groupName: null, updatedAt: new Date().toISOString() })
+    }
+    commitGroupOrder(groupOrder.filter((n) => n !== name))
+    await reload()
+  }
+
+  /** Move one snippet into a group (`null` = ungrouped). */
+  const moveSnippetToGroup = async (s: CommandSnippetDto, groupName: string | null) => {
+    setMenu(null)
+    setGroupMenu(null)
+    if ((s.groupName ?? null) === groupName) return
+    await updateSnippet({ ...s, groupName, updatedAt: new Date().toISOString() })
+  }
+
+  /** Drop a dragged group header onto another one (insert before the target). */
+  const reorderGroups = (dragged: string, target: string) => {
+    if (dragged === target) return
+    const next = knownGroupNames.filter((n) => n !== dragged)
+    const at = next.indexOf(target)
+    if (at < 0) return
+    next.splice(at, 0, dragged)
+    commitGroupOrder(next)
+  }
+
+  /** Highlight a section while a snippet or another header hovers it. */
+  const onGroupDragOver = (e: React.DragEvent, groupId: string) => {
+    if (!dragSnippetRef.current && !dragGroupRef.current) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dropTarget !== groupId) setDropTarget(groupId)
+  }
+
+  /** A drop lands either a snippet (re-labelled) or a header (re-ordered). */
+  const onGroupDrop = (e: React.DragEvent, group: ListedGroup) => {
+    e.preventDefault()
+    setDropTarget(null)
+    const snippetId = dragSnippetRef.current
+    if (snippetId) {
+      dragSnippetRef.current = null
+      const s = snippets.find((x) => x.id === snippetId)
+      if (s) void moveSnippetToGroup(s, group.id === UNGROUPED_KEY ? null : group.title)
+      return
+    }
+    const dragged = dragGroupRef.current
+    dragGroupRef.current = null
+    if (dragged && group.id !== UNGROUPED_KEY) reorderGroups(dragged, group.title)
   }
 
   const sendNow = (resolved: string) => {
@@ -1122,6 +1357,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setEditingAlias(s.alias ?? '')
     setEditingCommand(s.command)
     setEditingConnectionId(s.connectionId ?? '')
+    setEditingGroupName(s.groupName ?? '')
     setEditingParams(toEditingParams(s.params ?? []))
     setEditingOptions(toEditingOptions(s.options ?? []))
     setLinkPicker(null)
@@ -1142,6 +1378,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         ? activeConnectionId
         : '',
     )
+    // A new command starts ungrouped; the datalist still offers existing names.
+    setEditingGroupName('')
     setEditingParams([])
     setEditingOptions([])
     setLinkPicker(null)
@@ -1271,6 +1509,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
           hidden: false,
           sortOrder: 0,
           connectionId: editingConnectionId || null,
+          groupName: editingGroupName.trim() || null,
           params: defs.params,
           options: defs.options,
           createdAt: now,
@@ -1286,6 +1525,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         alias: editingAlias.trim() || null,
         command,
         connectionId: editingConnectionId || null,
+        groupName: editingGroupName.trim() || null,
         params: defs.params,
         options: defs.options,
         updatedAt: now,
@@ -1641,6 +1881,21 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             >
               <Icon name="link" size={13} />
             </button>
+            {/* Creating a group only makes sense in the grouped view — it is
+                nothing but a name in the order list until commands join it. */}
+            {customView && (
+              <button
+                className="cmd-list-newgroup-btn"
+                aria-expanded={newGroupOpen}
+                onClick={() => {
+                  setNewGroupOpen((v) => !v)
+                  setNewGroupDraft('')
+                }}
+                title={t('snippetGroupNew')}
+              >
+                <Icon name="folder" size={13} />
+              </button>
+            )}
             <button className="cmd-list-add-btn" onClick={startAdd} title={t('addCommand')}>
               <Icon name="plus" size={13} />
             </button>
@@ -1658,6 +1913,24 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             placeholder={t('commandListSearch')}
             autoFocus
           />
+          <div className="cmd-list-mode-switch">
+            <button
+              className={'cmd-list-mode-btn' + (customView ? '' : ' active')}
+              aria-pressed={!customView}
+              title={t('snippetGroupByConnection')}
+              onClick={() => setGroupMode('connection')}
+            >
+              {t('snippetGroupByConnection')}
+            </button>
+            <button
+              className={'cmd-list-mode-btn' + (customView ? ' active' : '')}
+              aria-pressed={customView}
+              title={t('snippetGroupByCustom')}
+              onClick={() => setGroupMode('custom')}
+            >
+              {t('snippetGroupByCustom')}
+            </button>
+          </div>
         </div>
 
         <div className="cmd-list-body">
@@ -1668,103 +1941,235 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
               {filtered.length > 0 ? t('snippetNoCommandsForConnection') : t('commandListEmpty')}
             </div>
           ) : (
-            groups.map((g) => (
-              <div
-                key={g.id}
-                className={'cmd-list-section' + (collapsedGroups.has(g.id) ? '' : ' expanded')}
-              >
-                <div className="cmd-list-section-header" onClick={() => toggleGroup(g.id)}>
-                  <Icon
-                    name="chevronDown"
-                    size={12}
-                    className={
-                      'cmd-list-section-chevron' + (collapsedGroups.has(g.id) ? ' collapsed' : '')
-                    }
-                  />
-                  <span className="cmd-list-section-title">{g.title}</span>
-                  <span className="cmd-list-section-count">{g.items.length}</span>
-                </div>
-                {!collapsedGroups.has(g.id) &&
-                  g.items.map((s) => (
-                    <div
-                      key={s.id}
-                      className={
-                        'cmd-list-item' +
-                        (s.favorite ? ' favorite' : '') +
-                        (s.hidden ? ' hidden' : '')
-                      }
-                      title={s.command}
-                      onClick={() => send(s)}
-                      onContextMenu={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        setMenu({ x: e.clientX, y: e.clientY, snippet: s })
-                      }}
-                    >
-                      {s.favorite && <Icon name="pin" size={11} className="cmd-list-star" />}
-                      <div className="cmd-list-item-text">
-                        {s.alias && <span className="cmd-list-alias">{s.alias}</span>}
-                        <span className="cmd-list-command">{truncate(s.command)}</span>
-                        {badgeCount(s) > 0 && (
-                          <span className="cmd-list-var-badge" title={t('snippetParamsBadge')}>
-                            {'$'}
-                            {badgeCount(s)}
-                          </span>
-                        )}
-                      </div>
-                      {s.hidden && (
-                        <Icon name="eyeOff" size={11} className="cmd-list-hidden-icon" />
-                      )}
-                      {/* Every variable already resolves from defaults / last
-                          values -> one click sends without the fill dialog. */}
-                      {resolveSilently(s, snippetMemory) !== null && (
-                        <button
-                          className="cmd-list-action cmd-list-send"
-                          title={t('snippetSendDirect')}
-                          onClick={(e) => {
+            groups.map((g) => {
+              const collapsed = isCollapsed(g.id)
+              // The trailing "ungrouped" bucket is not a real group: it cannot be
+              // renamed, deleted or dragged (only dropped onto).
+              const groupHeaderActions = customView && g.id !== UNGROUPED_KEY
+              return (
+                <div
+                  key={g.id}
+                  className={
+                    'cmd-list-section' +
+                    (collapsed ? '' : ' expanded') +
+                    (customView && dropTarget === g.id ? ' drag-over' : '')
+                  }
+                  onDragOver={customView ? (e) => onGroupDragOver(e, g.id) : undefined}
+                  onDragLeave={
+                    customView
+                      ? () => setDropTarget((cur) => (cur === g.id ? null : cur))
+                      : undefined
+                  }
+                  onDrop={customView ? (e) => onGroupDrop(e, g) : undefined}
+                >
+                  <div
+                    className="cmd-list-section-header"
+                    onClick={() => {
+                      if (!renamingGroup) toggleGroup(g.id)
+                    }}
+                    onContextMenu={
+                      groupHeaderActions
+                        ? (e) => {
+                            e.preventDefault()
                             e.stopPropagation()
-                            sendDirect(s)
-                          }}
-                        >
-                          <Icon name="send" size={11} />
-                        </button>
-                      )}
-                      <div className="cmd-list-item-actions" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          className={'cmd-list-action' + (s.favorite ? ' active' : '')}
-                          title={s.favorite ? t('unfavorite') : t('favorite')}
-                          onClick={() => toggleFavorite(s)}
-                        >
-                          <Icon name="pin" size={11} />
-                        </button>
-                        <button
-                          className={
-                            'cmd-list-action cmd-list-action--hidden' + (s.hidden ? ' active' : '')
+                            setGroupMenu({ x: e.clientX, y: e.clientY, name: g.title })
                           }
-                          title={s.hidden ? t('unhideCommand') : t('hideCommand')}
-                          onClick={() => toggleHidden(s)}
-                        >
-                          <Icon name={s.hidden ? 'eyeOff' : 'eye'} size={11} />
-                        </button>
-                        <button
-                          className="cmd-list-action"
-                          title={t('edit')}
-                          onClick={() => startEdit(s)}
-                        >
-                          <Icon name="edit" size={11} />
-                        </button>
-                        <button
-                          className="cmd-list-action danger"
-                          title={t('delete')}
-                          onClick={() => remove(s)}
-                        >
-                          <Icon name="trash" size={11} />
-                        </button>
+                        : undefined
+                    }
+                    draggable={groupHeaderActions && !renamingGroup}
+                    onDragStart={
+                      groupHeaderActions
+                        ? (e) => {
+                            dragGroupRef.current = g.title
+                            e.dataTransfer.effectAllowed = 'move'
+                            e.dataTransfer.setData('text/plain', g.title)
+                          }
+                        : undefined
+                    }
+                    onDragEnd={
+                      groupHeaderActions
+                        ? () => {
+                            dragGroupRef.current = null
+                            setDropTarget(null)
+                          }
+                        : undefined
+                    }
+                  >
+                    <Icon
+                      name="chevronDown"
+                      size={12}
+                      className={'cmd-list-section-chevron' + (collapsed ? ' collapsed' : '')}
+                    />
+                    {renamingGroup?.name === g.title ? (
+                      <input
+                        className="cmd-list-group-rename-input"
+                        value={renamingGroup.draft}
+                        autoFocus
+                        spellCheck={false}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setRenamingGroup({ name: g.title, draft: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            renameHandledRef.current = true
+                            void renameGroup(g.title, renamingGroup.draft)
+                          } else if (e.key === 'Escape') {
+                            renameHandledRef.current = true
+                            setRenamingGroup(null)
+                          }
+                        }}
+                        onBlur={() => {
+                          if (renameHandledRef.current) {
+                            renameHandledRef.current = false
+                            return
+                          }
+                          void renameGroup(g.title, renamingGroup.draft)
+                        }}
+                      />
+                    ) : (
+                      <span className="cmd-list-section-title">{g.title}</span>
+                    )}
+                    <span className="cmd-list-section-count">{g.items.length}</span>
+                  </div>
+                  {!collapsed && g.empty && (
+                    <div className="cmd-list-empty-group">{t('snippetGroupEmptyHint')}</div>
+                  )}
+                  {!collapsed &&
+                    g.items.map((s) => (
+                      <div
+                        key={s.id}
+                        className={
+                          'cmd-list-item' +
+                          (s.favorite ? ' favorite' : '') +
+                          (s.hidden ? ' hidden' : '')
+                        }
+                        title={s.command}
+                        draggable={customView}
+                        onDragStart={
+                          customView
+                            ? (e) => {
+                                dragSnippetRef.current = s.id
+                                e.dataTransfer.effectAllowed = 'move'
+                                e.dataTransfer.setData('text/plain', s.id)
+                              }
+                            : undefined
+                        }
+                        onDragEnd={
+                          customView
+                            ? () => {
+                                dragSnippetRef.current = null
+                                setDropTarget(null)
+                              }
+                            : undefined
+                        }
+                        onClick={() => send(s)}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setMenu({ x: e.clientX, y: e.clientY, snippet: s })
+                        }}
+                      >
+                        {s.favorite && <Icon name="pin" size={11} className="cmd-list-star" />}
+                        <div className="cmd-list-item-text">
+                          {s.alias && <span className="cmd-list-alias">{s.alias}</span>}
+                          <span className="cmd-list-command">{truncate(s.command)}</span>
+                          {badgeCount(s) > 0 && (
+                            <span className="cmd-list-var-badge" title={t('snippetParamsBadge')}>
+                              {'$'}
+                              {badgeCount(s)}
+                            </span>
+                          )}
+                        </div>
+                        {s.hidden && (
+                          <Icon name="eyeOff" size={11} className="cmd-list-hidden-icon" />
+                        )}
+                        {/* Every variable already resolves from defaults / last
+                          values -> one click sends without the fill dialog. */}
+                        {resolveSilently(s, snippetMemory) !== null && (
+                          <button
+                            className="cmd-list-action cmd-list-send"
+                            title={t('snippetSendDirect')}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              sendDirect(s)
+                            }}
+                          >
+                            <Icon name="send" size={11} />
+                          </button>
+                        )}
+                        <div className="cmd-list-item-actions" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            className={'cmd-list-action' + (s.favorite ? ' active' : '')}
+                            title={s.favorite ? t('unfavorite') : t('favorite')}
+                            onClick={() => toggleFavorite(s)}
+                          >
+                            <Icon name="pin" size={11} />
+                          </button>
+                          <button
+                            className={
+                              'cmd-list-action cmd-list-action--hidden' +
+                              (s.hidden ? ' active' : '')
+                            }
+                            title={s.hidden ? t('unhideCommand') : t('hideCommand')}
+                            onClick={() => toggleHidden(s)}
+                          >
+                            <Icon name={s.hidden ? 'eyeOff' : 'eye'} size={11} />
+                          </button>
+                          <button
+                            className="cmd-list-action"
+                            title={t('edit')}
+                            onClick={() => startEdit(s)}
+                          >
+                            <Icon name="edit" size={11} />
+                          </button>
+                          <button
+                            className="cmd-list-action danger"
+                            title={t('delete')}
+                            onClick={() => remove(s)}
+                          >
+                            <Icon name="trash" size={11} />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-              </div>
-            ))
+                    ))}
+                </div>
+              )
+            })
+          )}
+          {customView && newGroupOpen && (
+            <div className="cmd-list-new-group">
+              <Icon name="folder" size={12} />
+              <input
+                value={newGroupDraft}
+                autoFocus
+                spellCheck={false}
+                placeholder={t('snippetGroupNewPlaceholder')}
+                onChange={(e) => setNewGroupDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') createGroup()
+                  else if (e.key === 'Escape') {
+                    setNewGroupOpen(false)
+                    setNewGroupDraft('')
+                  }
+                }}
+              />
+              <button
+                className="cmd-list-new-group-ok"
+                onClick={createGroup}
+                title={t('snippetGroupNew')}
+              >
+                <Icon name="plus" size={12} />
+              </button>
+              <button
+                className="cmd-list-new-group-cancel"
+                onClick={() => {
+                  setNewGroupOpen(false)
+                  setNewGroupDraft('')
+                }}
+                title={t('cancel')}
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
           )}
         </div>
 
@@ -1799,12 +2204,62 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
               <Icon name={menu.snippet.hidden ? 'eye' : 'eyeOff'} size={12} />{' '}
               {menu.snippet.hidden ? t('unhideCommand') : t('hideCommand')}
             </div>
+            {/* Moving is a property of the snippet, not of the view, but the
+                connection view is deliberately left untouched. */}
+            {customView && (
+              <>
+                <div className="context-menu-divider" />
+                <div className="context-menu-label">{t('snippetMoveToGroup')}</div>
+                {[...knownGroupNames, UNGROUPED_KEY].map((name) => {
+                  const target = name === UNGROUPED_KEY ? null : name
+                  const current = menu.snippet.groupName ?? null
+                  return (
+                    <div
+                      key={name}
+                      className={'context-menu-item' + (current === target ? ' active' : '')}
+                      onClick={() => void moveSnippetToGroup(menu.snippet, target)}
+                    >
+                      <Icon name="folder" size={12} />{' '}
+                      {name === UNGROUPED_KEY ? t('ungrouped') : name}
+                    </div>
+                  )
+                })}
+              </>
+            )}
             <div className="context-menu-divider" />
             <div className="context-menu-item" onClick={() => startEdit(menu.snippet)}>
               <Icon name="edit" size={12} /> {t('edit')}
             </div>
             <div className="context-menu-item danger" onClick={() => remove(menu.snippet)}>
               <Icon name="trash" size={12} /> {t('delete')}
+            </div>
+          </div>
+        )}
+
+        {groupMenu && customView && (
+          <div
+            className="context-menu cmd-list-menu"
+            style={{ left: groupMenu.x, top: groupMenu.y, position: 'fixed' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                setRenamingGroup({ name: groupMenu.name, draft: groupMenu.name })
+                setGroupMenu(null)
+              }}
+            >
+              <Icon name="edit" size={12} /> {t('snippetGroupRename')}
+            </div>
+            <div
+              className="context-menu-item danger"
+              onClick={() => {
+                const name = groupMenu.name
+                setGroupMenu(null)
+                void deleteGroup(name)
+              }}
+            >
+              <Icon name="trash" size={12} /> {t('snippetGroupDelete')}
             </div>
           </div>
         )}
@@ -1892,6 +2347,25 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                       ))}
                     </select>
                   )}
+                </div>
+                {/* Free-text group label with suggestions: picking an existing
+                    name joins that group, typing a new one creates it. */}
+                <div className="form-group">
+                  <label>{t('group')}</label>
+                  <input
+                    list="snippet-groups"
+                    value={editingGroupName}
+                    onChange={(e) => setEditingGroupName(e.target.value)}
+                    placeholder={t('snippetGroupNewPlaceholder')}
+                    spellCheck={false}
+                  />
+                  <datalist id="snippet-groups">
+                    {[...new Set([...groupOrder, ...snippets.map((s) => s.groupName ?? '')])]
+                      .filter((n) => n.length > 0)
+                      .map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                  </datalist>
                 </div>
                 <div className="form-group">
                   <label>{t('snippetCommand')}</label>

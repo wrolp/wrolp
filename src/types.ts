@@ -216,6 +216,10 @@ export interface CommandSnippetDto {
   sortOrder: number
   /** Connection scope; null = general (visible for every connection). */
   connectionId: string | null
+  /** User-defined list group label (the "by group" view); null/'' = ungrouped.
+   *  Groups have no table of their own — the name set is the labels here plus a
+   *  localStorage order list (`wrolp.cmdGroupOrder`). */
+  groupName: string | null
   /** Per-command parameters. Empty falls back to the global-variable flow. */
   params: CommandParam[]
   /** Toggleable literal fragments of the command. */

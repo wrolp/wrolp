@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS command_sets (
 -- common command, `hidden` hides it from the default list.
 -- `connection_id` scopes the snippet to one connection (NULL = general, shown
 -- for every connection). `params` / `options` hold the per-command parameter
--- and toggleable-fragment definitions as JSON arrays.
+-- and toggleable-fragment definitions as JSON arrays. `group_name` is the
+-- user-defined list group (NULL / '' = ungrouped); groups themselves have no
+-- table — the name set is the labels on snippets plus a localStorage order list.
 CREATE TABLE IF NOT EXISTS command_snippets (
   id            TEXT PRIMARY KEY,
   command       TEXT NOT NULL,
@@ -57,6 +59,7 @@ CREATE TABLE IF NOT EXISTS command_snippets (
   connection_id TEXT,
   params        TEXT,
   options       TEXT,
+  group_name    TEXT,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );

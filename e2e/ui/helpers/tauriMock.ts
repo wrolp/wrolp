@@ -219,7 +219,12 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'poll_docker_logs':
             return []
           case 'list_command_snippets':
-            return snippets
+            // Fresh objects per call: the real IPC serialises its response, while
+            // handing back the live store array would alias the app's state — a
+            // later `save_command_snippet` mutates an array the component already
+            // holds, React sees the identical reference and skips the re-render,
+            // so the UI silently keeps showing pre-save data.
+            return snippets.map((s) => ({ ...s }))
           case 'save_command_snippet': {
             const snippet = args.snippet as Record<string, unknown>
             const id = snippet.id as string
