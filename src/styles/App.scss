@@ -1927,6 +1927,10 @@ body.resize-v * {
   }
 
   .floating-window-close {
+    // Sit above the resize grips so it stays clickable where the NE corner grip
+    // would otherwise overlap it.
+    position: relative;
+    z-index: 30;
     flex: 0 0 auto;
     width: 18px;
     height: 18px;
@@ -1955,14 +1959,80 @@ body.resize-v * {
     flex-direction: column;
   }
 
+  // Resize grips. The window clips with `overflow: hidden`, so every grip lives
+  // INSIDE the box (no negative offsets) or its outward half would be cut away —
+  // which is why only the bottom-right corner used to be grabbable. `z-index`
+  // must beat the terminal's overlay scrollbar (`.term-scrollbar`, z-index 10)
+  // whose 14px grab zone covers the window's right edge.
   .floating-window-resize {
     position: absolute;
+    z-index: 20;
+  }
+
+  .fw-rh-n {
+    top: 0;
+    left: 8px;
+    right: 8px;
+    height: 5px;
+    cursor: ns-resize;
+  }
+
+  .fw-rh-s {
+    bottom: 0;
+    left: 8px;
+    right: 8px;
+    height: 5px;
+    cursor: ns-resize;
+  }
+
+  .fw-rh-e {
+    right: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 5px;
+    cursor: ew-resize;
+  }
+
+  .fw-rh-w {
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 5px;
+    cursor: ew-resize;
+  }
+
+  .fw-rh-ne {
+    right: 0;
+    top: 0;
+    width: 12px;
+    height: 12px;
+    cursor: nesw-resize;
+  }
+
+  .fw-rh-nw {
+    left: 0;
+    top: 0;
+    width: 12px;
+    height: 12px;
+    cursor: nwse-resize;
+  }
+
+  .fw-rh-sw {
+    left: 0;
+    bottom: 0;
+    width: 12px;
+    height: 12px;
+    cursor: nesw-resize;
+  }
+
+  // The bottom-right grip is invisible like the others — the diagonal corner
+  // marker was removed (users found the little triangle distracting).
+  .fw-rh-se {
     right: 0;
     bottom: 0;
     width: 16px;
     height: 16px;
     cursor: nwse-resize;
-    background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.35) 50%);
   }
 }
 
@@ -8866,7 +8936,24 @@ input[type='password']::-ms-clear {
   font-size: 13px;
   font-weight: 700;
   color: $text-primary;
-  flex-shrink: 0;
+  // Was `flex-shrink: 0`, which forced the trailing close ✕ off-screen (and
+  // clipped by the panel's `overflow: hidden`) once the panel was dragged
+  // narrower than its content. Let the title yield space — ellipsizing its
+  // label — so the close button always stays pinned to the top-right.
+  flex-shrink: 1;
+  min-width: 0;
+
+  // Keep the leading icon at full size; only the label text ellipsizes.
+  > svg {
+    flex-shrink: 0;
+  }
+
+  .cmd-list-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
 }
 
 .cmd-list-toggles {
@@ -8919,6 +9006,9 @@ input[type='password']::-ms-clear {
   align-items: center;
   gap: 6px;
   margin-left: auto;
+  // Never let the trailing buttons (incl. the close ✕) get squeezed off the
+  // edge and clipped by the panel's `overflow: hidden` when the header is busy.
+  flex-shrink: 0;
 }
 
 .cmd-list-add-btn {
@@ -8974,11 +9064,14 @@ input[type='password']::-ms-clear {
   justify-content: center;
   width: 24px;
   height: 24px;
-  border: none;
+  border: 1px solid $border;
   border-radius: 5px;
   background: transparent;
-  color: $text-muted;
+  // Kept clearly visible at rest (not the dim `$text-muted` it used to be) so
+  // the dismiss ✕ is always discoverable without hovering.
+  color: $text-secondary;
   cursor: pointer;
+  flex-shrink: 0;
 
   &:hover {
     background: $bg-hover;
@@ -9486,6 +9579,11 @@ input[type='password']::-ms-clear {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
+  // Deliberately NOT `grab` on the draggable ones: the header's primary action
+  // is click-to-expand, and the trailing "Ungrouped" bucket cannot be dragged at
+  // all — a grab hand on some headers only read as an inconsistency. Same choice
+  // as the sidebar's reorderable `.conn-group-header`; the drag itself still
+  // shows the browser's own move affordance.
   cursor: pointer;
   user-select: none;
   border-radius: 3px;
@@ -9570,9 +9668,7 @@ input[type='password']::-ms-clear {
   box-shadow: inset 0 0 0 1px rgba($accent, 0.6);
 }
 
-.cmd-list-section-header[draggable='true'] {
-  cursor: grab;
-}
+
 
 // Inline group rename (Enter/blur commits, Esc cancels).
 .cmd-list-group-rename-input {
