@@ -220,6 +220,9 @@ export interface CommandSnippetDto {
    *  Groups have no table of their own — the name set is the labels here plus a
    *  localStorage order list (`wrolp.cmdGroupOrder`). */
   groupName: string | null
+  /** Free-form note (may be multi-line): shown in the row's hover tooltip —
+   *  alias / command / description, one per line — and matched by the search. */
+  description: string | null
   /** Per-command parameters. Empty falls back to the global-variable flow. */
   params: CommandParam[]
   /** Toggleable literal fragments of the command. */

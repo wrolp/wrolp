@@ -3010,6 +3010,7 @@ export default function App() {
         sortOrder: 0,
         connectionId: activeSnippetConnectionId,
         groupName: null,
+        description: null,
         params: [],
         options: [],
         createdAt: new Date().toISOString(),

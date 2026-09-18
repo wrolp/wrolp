@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS command_sets (
 -- and toggleable-fragment definitions as JSON arrays. `group_name` is the
 -- user-defined list group (NULL / '' = ungrouped); groups themselves have no
 -- table — the name set is the labels on snippets plus a localStorage order list.
+-- `description` is the free-form (possibly multi-line) note shown in the row's
+-- hover tooltip and matched by the search box.
 CREATE TABLE IF NOT EXISTS command_snippets (
   id            TEXT PRIMARY KEY,
   command       TEXT NOT NULL,
@@ -60,6 +62,7 @@ CREATE TABLE IF NOT EXISTS command_snippets (
   params        TEXT,
   options       TEXT,
   group_name    TEXT,
+  description   TEXT,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );

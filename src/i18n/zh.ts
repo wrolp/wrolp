@@ -672,6 +672,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   deleteSnippetConfirm: '删除这条命令？',
   snippetAlias: '别名（可选）',
   snippetCommand: '命令',
+  snippetDescription: '描述（可选）',
+  snippetDescriptionPlaceholder: '例如：查看当前目录磁盘占用，需要 root 权限',
   snippetAliasPlaceholder: '例如：检查磁盘占用',
   snippetCommandPlaceholder: '例如：df -h',
   saveSnippet: '保存',

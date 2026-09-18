@@ -9452,6 +9452,16 @@ input[type='password']::-ms-clear {
   white-space: pre-wrap;
 }
 
+// Snippet's own description, shown in the fill dialog right under the preview.
+// Multi-line plain text — `pre-wrap` keeps the author's line breaks.
+.snip-fill-snippet-desc {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: $text-secondary;
+  white-space: pre-wrap;
+}
+
 .snip-fill-hint {
   margin-top: 4px;
   font-size: 11px;

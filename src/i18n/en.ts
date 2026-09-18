@@ -693,6 +693,8 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   hiddenCommand: 'Hidden',
   deleteSnippetConfirm: 'Delete this command?',
   snippetAlias: 'Alias (optional)',
+  snippetDescription: 'Description (optional)',
+  snippetDescriptionPlaceholder: 'e.g. Disk usage of the current directory; needs root',
   snippetCommand: 'Command',
   snippetAliasPlaceholder: 'e.g. Check disk usage',
   snippetCommandPlaceholder: 'e.g. df -h',

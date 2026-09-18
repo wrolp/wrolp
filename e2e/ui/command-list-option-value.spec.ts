@@ -50,7 +50,9 @@ test('setting a value type gives a bare flag a ${...} slot (fragment and command
   ])
   const row = editor.locator('.snip-option-row').first()
   const text = row.locator('input.snip-option-text')
-  const command = editor.locator('textarea')
+  // `.first()`: the dialog also holds the description textarea, which comes
+  // AFTER the command box in the DOM (see the editor's form-group order).
+  const command = editor.locator('textarea').first()
 
   await expect(text).toHaveValue('--tail')
   // No error dialog: the slot is composed with the default `=` separator.

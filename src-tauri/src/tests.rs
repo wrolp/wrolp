@@ -329,6 +329,7 @@ async fn command_snippets_crud() {
     created_at: "2026-08-28T00:00:00Z".into(),
     updated_at: "2026-08-28T00:00:00Z".into(),
     group_name: Some("Ops".into()),
+    description: Some("deploy the stack\nneeds root".into()),
   };
   let id = commands::save_command_snippet(app.state(), snip)
     .await
@@ -352,8 +353,9 @@ async fn command_snippets_crud() {
   assert_eq!(list[0].options[0].enables, vec!["param:image".to_string()]);
   assert!(list[0].options[1].enables.is_empty());
   assert!(list[0].params[0].enables.is_empty());
-  // User-defined group label round-trips too.
+  // User-defined group label round-trips too — newlines in the description included.
   assert_eq!(list[0].group_name.as_deref(), Some("Ops"));
+  assert_eq!(list[0].description.as_deref(), Some("deploy the stack\nneeds root"));
 
   commands::delete_command_snippet(app.state(), "snip1".into())
     .await
@@ -392,6 +394,7 @@ async fn command_snippets_legacy_row_defaults() {
   assert!(list[0].params.is_empty());
   assert!(list[0].options.is_empty());
   assert_eq!(list[0].group_name, None);
+  assert_eq!(list[0].description, None);
 }
 
 #[tokio::test]

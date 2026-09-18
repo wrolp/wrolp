@@ -146,7 +146,8 @@ test('typing a placeholder inside ${} declares a single parameter', async ({ pag
 
   await page.locator('.cmd-list-add-btn').click()
   const editor = page.locator('.cmd-list-modal-drag')
-  const textarea = editor.locator('textarea')
+  // `.first()` = the command box (the description textarea is the second one).
+  const textarea = editor.locator('textarea').first()
   await textarea.click()
   await page.keyboard.insertText('echo ${}')
   await page.keyboard.press('ArrowLeft')

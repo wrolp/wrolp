@@ -685,6 +685,19 @@ function toEditingOptions(options: CommandOption[]): EditingOption[] {
 }
 
 /**
+ * Hover tooltip of a list row: alias / full command / description, one per line
+ * (a native `<title>` renders `\n`). The row itself already shows the alias and
+ * the (truncated) command, so the tooltip's job is to add the untruncated text
+ * and the note — empty parts are dropped so no blank line can appear.
+ */
+function snippetTooltip(s: CommandSnippetDto): string {
+  return [s.alias, s.command, s.description]
+    .map((v) => (v ?? '').trim())
+    .filter((v) => v.length > 0)
+    .join('\n')
+}
+
+/**
  * Floating command list (command snippets). Select text in the terminal or the
  * AI chat → "Add to command list"; here click a snippet to drop it into the
  * terminal's input line (unexecuted). Supports favorites-only / show-hidden
@@ -729,6 +742,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const [groupMenu, setGroupMenu] = useState<{ x: number; y: number; name: string } | null>(null)
   /** Group name typed in the add/edit snippet dialog. */
   const [editingGroupName, setEditingGroupName] = useState('')
+  /** Free-form note typed in the add/edit snippet dialog (may be multi-line). */
+  const [editingDescription, setEditingDescription] = useState('')
   /** Set while Enter/Esc already resolved a rename, so the follow-up blur
    *  (the input is unmounted by then) does not commit a second time. */
   const renameHandledRef = useRef(false)
@@ -914,7 +929,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     if (s.hidden && !showHidden) return false
     if (favoriteOnly && !s.favorite) return false
     if (query.length > 0) {
-      const hay = `${s.command} ${s.alias ?? ''}`.toLowerCase()
+      // The description joins the haystack so a command can be found by what it
+      // does ("disk usage") without a matching alias. No tokenising: a phrase
+      // split across description lines is not a hit.
+      const hay = `${s.command} ${s.alias ?? ''} ${s.description ?? ''}`.toLowerCase()
       if (!hay.includes(query.toLowerCase())) return false
     }
     return true
@@ -1358,6 +1376,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setEditingCommand(s.command)
     setEditingConnectionId(s.connectionId ?? '')
     setEditingGroupName(s.groupName ?? '')
+    setEditingDescription(s.description ?? '')
     setEditingParams(toEditingParams(s.params ?? []))
     setEditingOptions(toEditingOptions(s.options ?? []))
     setLinkPicker(null)
@@ -1378,8 +1397,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         ? activeConnectionId
         : '',
     )
-    // A new command starts ungrouped; the datalist still offers existing names.
+    // A new command starts ungrouped and without a description; the datalist
+    // still offers existing group names.
     setEditingGroupName('')
+    setEditingDescription('')
     setEditingParams([])
     setEditingOptions([])
     setLinkPicker(null)
@@ -1510,6 +1531,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
           sortOrder: 0,
           connectionId: editingConnectionId || null,
           groupName: editingGroupName.trim() || null,
+          description: editingDescription.trim() || null,
           params: defs.params,
           options: defs.options,
           createdAt: now,
@@ -1526,6 +1548,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         command,
         connectionId: editingConnectionId || null,
         groupName: editingGroupName.trim() || null,
+        description: editingDescription.trim() || null,
         params: defs.params,
         options: defs.options,
         updatedAt: now,
@@ -2042,7 +2065,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           (s.favorite ? ' favorite' : '') +
                           (s.hidden ? ' hidden' : '')
                         }
-                        title={s.command}
+                        title={snippetTooltip(s)}
                         draggable={customView}
                         onDragStart={
                           customView
@@ -2374,6 +2397,18 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                     onChange={(e) => setEditingCommand(e.target.value)}
                     placeholder={t('snippetCommandPlaceholder')}
                     rows={4}
+                  />
+                </div>
+                {/* Sits right after the command, not after the alias: the note
+                    answers "what does this command do", so it belongs next to
+                    the command text. */}
+                <div className="form-group">
+                  <label>{t('snippetDescription')}</label>
+                  <textarea
+                    value={editingDescription}
+                    onChange={(e) => setEditingDescription(e.target.value)}
+                    placeholder={t('snippetDescriptionPlaceholder')}
+                    rows={2}
                   />
                 </div>
 
@@ -2804,6 +2839,11 @@ const SnippetFillDialog: React.FC<SnippetFillDialogProps> = ({
         <div className="modal-body">
           <div className="snip-fill-desc">{t('snippetFillParamsDesc')}</div>
           <div className="snip-fill-command-preview">{preview}</div>
+          {/* The dialog is where the values are actually decided, so the note is
+              more useful here than behind a hover. */}
+          {snippet.description && (
+            <div className="snip-fill-snippet-desc">{snippet.description}</div>
+          )}
 
           {options.length > 0 && (
             <div className="snip-fill-group">
