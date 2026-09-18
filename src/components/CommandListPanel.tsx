@@ -1878,7 +1878,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       >
         <div className="cmd-list-header" onMouseDown={startDrag}>
           <span className="cmd-list-title">
-            <Icon name="terminal" size={14} /> {t('commandList')}
+            <Icon name="terminal" size={14} />
+            <span className="cmd-list-title-text">{t('commandList')}</span>
           </span>
           <div className="cmd-list-toggles">
             <label className="cmd-list-toggle" title={t('favoriteOnly')}>
@@ -2770,15 +2771,21 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
           />
         )}
 
-        <div className="cmd-list-resize cmd-list-rh-n" onMouseDown={startResize('n')} />
-        <div className="cmd-list-resize cmd-list-rh-s" onMouseDown={startResize('s')} />
-        <div className="cmd-list-resize cmd-list-rh-e" onMouseDown={startResize('e')} />
-        <div className="cmd-list-resize cmd-list-rh-w" onMouseDown={startResize('w')} />
-        <div className="cmd-list-resize cmd-list-rh-ne" onMouseDown={startResize('ne')} />
-        <div className="cmd-list-resize cmd-list-rh-nw" onMouseDown={startResize('nw')} />
-        <div className="cmd-list-resize cmd-list-rh-se" onMouseDown={startResize('se')} />
-        <div className="cmd-list-resize cmd-list-rh-sw" onMouseDown={startResize('sw')} />
       </div>
+
+      {/* Resize handles live on the float wrapper, NOT inside `.cmd-list-panel`.
+          The panel clips with `overflow: hidden`, which cut away the outward half
+          of every handle and left only the bottom-right corner grabbable. The
+          wrapper has no overflow, so all eight edges/corners stay hit-testable.
+          The wrapper's box matches the panel's, so the offsets are unchanged. */}
+      <div className="cmd-list-resize cmd-list-rh-n" onMouseDown={startResize('n')} />
+      <div className="cmd-list-resize cmd-list-rh-s" onMouseDown={startResize('s')} />
+      <div className="cmd-list-resize cmd-list-rh-e" onMouseDown={startResize('e')} />
+      <div className="cmd-list-resize cmd-list-rh-w" onMouseDown={startResize('w')} />
+      <div className="cmd-list-resize cmd-list-rh-ne" onMouseDown={startResize('ne')} />
+      <div className="cmd-list-resize cmd-list-rh-nw" onMouseDown={startResize('nw')} />
+      <div className="cmd-list-resize cmd-list-rh-se" onMouseDown={startResize('se')} />
+      <div className="cmd-list-resize cmd-list-rh-sw" onMouseDown={startResize('sw')} />
 
       {toast && <div className="cmd-list-toast">{toast}</div>}
     </div>

@@ -166,6 +166,21 @@ test('the two views keep separate expand state', async ({ page }) => {
   await expect(page.locator('.cmd-list-item')).toHaveCount(2)
 })
 
+// Regression: the draggable headers used to show a `grab` (open hand) while the
+// non-draggable "Ungrouped" bucket showed a pointer — same list, two cursors.
+test('every group header uses the same cursor', async ({ page }) => {
+  await openPanel(page, [
+    baseSnippet({ id: 'g1', command: 'echo ops', groupName: 'Ops' }),
+    baseSnippet({ id: 'g2', command: 'echo free', groupName: null }),
+  ])
+  await switchToGroups(page)
+
+  const cursors = await page
+    .locator('.cmd-list-section-header')
+    .evaluateAll((els) => els.map((el) => getComputedStyle(el).cursor))
+  expect(cursors).toEqual(['pointer', 'pointer'])
+})
+
 test('a new group is stored in the order list and listed while empty', async ({ page }) => {
   await openPanel(page, [baseSnippet({ id: 'g1', command: 'echo one', groupName: 'Ops' })])
   await switchToGroups(page)
