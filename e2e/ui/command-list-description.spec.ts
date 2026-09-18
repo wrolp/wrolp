@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { expandAllGroups } from './helpers/commandList'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Command-snippet description (task/plans/COMMAND-SNIPPET-DESCRIPTION-PLAN.md):
@@ -32,6 +33,8 @@ async function openPanel(page: Page, snippets: unknown[]) {
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()
+  // Groups open collapsed; these tests work with the rows.
+  await expandAllGroups(page)
 }
 
 const tooltipOf = (page: Page, command: string) =>

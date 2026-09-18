@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { expandAllGroups } from './helpers/commandList'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Mutually-exclusive command-snippet options/params: items sharing a non-empty
@@ -30,6 +31,8 @@ async function openPanelWithTerminal(page: Page, snippets: unknown[]) {
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()
+  // Groups open collapsed; these tests work with the rows.
+  await expandAllGroups(page)
 }
 
 test('checking one exclusive option unchecks the other', async ({ page }) => {

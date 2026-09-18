@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { expandAllGroups } from './helpers/commandList'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Floating command-list (Ctrl+Shift+P) with a stubbed backend.
@@ -27,6 +28,7 @@ test('Ctrl+Shift+P opens the command list showing saved snippets', async ({ page
 
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()
+  await expandAllGroups(page)
   await expect(page.locator('.cmd-list-item')).toHaveCount(1)
   await expect(page.locator('.cmd-list-alias')).toHaveText('containers')
   await expect(page.locator('.cmd-list-command')).toHaveText('docker ps')
@@ -76,6 +78,9 @@ test('a snippet added from the terminal context menu appears in the open list', 
   await expect(page.locator('.context-menu')).toBeVisible()
   await page.locator('.context-menu-item', { hasText: 'Add to command list' }).click()
 
+  // The panel refreshed itself (that is what this test is about); its groups are
+  // collapsed by default, so open them to see the row.
+  await expandAllGroups(page)
   await expect(page.locator('.cmd-list-item')).toHaveCount(1)
   await expect(page.locator('.cmd-list-command')).toHaveText('docker ps -a')
 })
@@ -104,6 +109,7 @@ test('a multi-line snippet is inserted like a paste (guard + quoted-insert)', as
 
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()
+  await expandAllGroups(page)
   await expect(page.locator('.cmd-list-item')).toHaveCount(1)
 
   await page.locator('.cmd-list-item').click()

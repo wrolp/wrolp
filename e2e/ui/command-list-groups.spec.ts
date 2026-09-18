@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { expandAllGroups } from './helpers/commandList'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Custom command-list groups (task/plans/COMMAND-LIST-CUSTOM-GROUPS-PLAN.md).
@@ -24,8 +25,12 @@ const baseSnippet = (over: Record<string, unknown>) => ({
   ...over,
 })
 
-/** Connect to Demo so a focused terminal exists, then open the panel. */
-async function openPanel(page: Page, snippets: unknown[]) {
+/**
+ * Connect to Demo so a focused terminal exists, then open the panel. Groups
+ * start collapsed, so the rows are expanded by default — pass
+ * `{ expand: false }` to assert the collapsed default itself.
+ */
+async function openPanel(page: Page, snippets: unknown[], opts: { expand?: boolean } = {}) {
   await installTauriMock(page, { connections: [DEMO_CONN, OTHER_CONN], commandSnippets: snippets })
   await page.goto('/')
   await page.locator('.connection-item').first().click()
@@ -33,15 +38,21 @@ async function openPanel(page: Page, snippets: unknown[]) {
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()
+  if (opts.expand !== false) await expandAllGroups(page)
 }
 
-/** The default view is "by connection"; every group test starts by switching. */
-async function switchToGroups(page: Page) {
+/**
+ * The default view is "by connection"; every group test starts by switching.
+ * The group view has its OWN (collapsed) expand state, so the rows are expanded
+ * here too unless the caller asks otherwise.
+ */
+async function switchToGroups(page: Page, opts: { expand?: boolean } = {}) {
   await page.locator('.cmd-list-mode-btn', { hasText: 'By group' }).click()
   await expect(page.locator('.cmd-list-mode-btn', { hasText: 'By group' })).toHaveAttribute(
     'aria-pressed',
     'true',
   )
+  if (opts.expand !== false) await expandAllGroups(page)
 }
 
 const sectionTitles = (page: Page) => page.locator('.cmd-list-section-title')
@@ -100,23 +111,59 @@ test('the group view buckets by label with "Ungrouped" always last', async ({ pa
   await expect(page.locator('.cmd-list-section-count')).toHaveText(['1', '1', '1'])
 })
 
-test('the two views keep separate collapse state', async ({ page }) => {
-  await openPanel(page, [
-    baseSnippet({ id: 'g1', command: 'echo one', groupName: 'Ops' }),
-    baseSnippet({ id: 'g2', command: 'echo two', groupName: 'Net' }),
-  ])
+test('groups start collapsed, and a search reveals its matches', async ({ page }) => {
+  await openPanel(
+    page,
+    [
+      baseSnippet({ id: 'g1', command: 'echo one', groupName: 'Ops' }),
+      baseSnippet({ id: 'g2', command: 'df -h', groupName: 'Net' }),
+    ],
+    { expand: false },
+  )
+  await switchToGroups(page, { expand: false })
 
-  // Collapse in the connection view…
-  await page.locator('.cmd-list-section-header', { hasText: 'General' }).click()
+  // The default: titles only, no rows.
+  await expect(sectionTitles(page)).toHaveText(['Ops', 'Net'])
   await expect(page.locator('.cmd-list-item')).toHaveCount(0)
 
-  // …the group view is still expanded (different collapse set)…
-  await switchToGroups(page)
+  // Clicking a header expands just that group.
+  await page.locator('.cmd-list-section-header', { hasText: 'Ops' }).click()
+  await expect(page.locator('.cmd-list-item')).toHaveCount(1)
+
+  // A search shows what it matched without expanding anything…
+  await page.locator('.cmd-list-search input').fill('df -h')
+  await expect(sectionTitles(page)).toHaveText(['Net'])
+  await expect(page.locator('.cmd-list-item')).toHaveCount(1)
+
+  // …and clearing it restores the manual state (Ops open, Net closed).
+  await page.locator('.cmd-list-search input').fill('')
+  await expect(sectionTitles(page)).toHaveText(['Ops', 'Net'])
+  await expect(page.locator('.cmd-list-item')).toHaveCount(1)
+})
+
+test('the two views keep separate expand state', async ({ page }) => {
+  await openPanel(
+    page,
+    [
+      baseSnippet({ id: 'g1', command: 'echo one', groupName: 'Ops' }),
+      baseSnippet({ id: 'g2', command: 'echo two', groupName: 'Net' }),
+    ],
+    { expand: false },
+  )
+
+  // Expand the connection view's only group…
+  await page.locator('.cmd-list-section-header', { hasText: 'General' }).click()
   await expect(page.locator('.cmd-list-item')).toHaveCount(2)
 
-  // …and switching back keeps the connection view collapsed.
-  await page.locator('.cmd-list-mode-btn', { hasText: 'By connection' }).click()
+  // …the group view has its own set and is still collapsed…
+  await switchToGroups(page, { expand: false })
   await expect(page.locator('.cmd-list-item')).toHaveCount(0)
+  await page.locator('.cmd-list-section-header', { hasText: 'Ops' }).click()
+  await expect(page.locator('.cmd-list-item')).toHaveCount(1)
+
+  // …and switching back keeps whatever the connection view had.
+  await page.locator('.cmd-list-mode-btn', { hasText: 'By connection' }).click()
+  await expect(page.locator('.cmd-list-item')).toHaveCount(2)
 })
 
 test('a new group is stored in the order list and listed while empty', async ({ page }) => {

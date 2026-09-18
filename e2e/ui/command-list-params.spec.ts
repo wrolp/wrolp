@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { expandAllGroups } from './helpers/commandList'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Floating command-list (Ctrl+Shift+P): per-command parameters & options,
@@ -34,6 +35,8 @@ async function openPanelWithTerminal(page: Page, snippets: unknown[]) {
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()
+  // Groups open collapsed; these tests work with the rows.
+  await expandAllGroups(page)
 }
 
 test('a select option value is substituted before sending', async ({ page }) => {
@@ -171,9 +174,11 @@ test('groups snippets by connection and filters to the active connection', async
   await expect(page.locator('.cmd-list-item')).toHaveCount(2)
 
   // Turning the filter off reveals the other connection's group (still before
-  // the trailing general bucket).
+  // the trailing general bucket). Groups start collapsed, and a group that only
+  // appears now is not expanded yet — so expand again before counting rows.
   await page.getByText('This connection only').click()
   await expect(page.locator('.cmd-list-section')).toHaveCount(3)
+  await expandAllGroups(page)
   await expect(page.locator('.cmd-list-item')).toHaveCount(3)
   await expect(page.locator('.cmd-list-section-title').last()).toHaveText('General')
 })
@@ -395,6 +400,7 @@ test('the fill dialog stays inside the window when the panel is transformed', as
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toHaveAttribute('style', /transform/)
+  await expandAllGroups(page)
 
   await page.locator('.cmd-list-item').click()
   const dialog = page.locator('.snip-fill-modal')

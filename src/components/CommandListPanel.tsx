@@ -726,11 +726,14 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const [activeConnectionOnly, setActiveConnectionOnly] = useState(
     () => loadCmdListPrefs().activeConnectionOnly,
   )
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  // The custom ("by group") view keeps its OWN collapse set: its keys are group
-  // names, and a connection id could legitimately equal one — sharing one Set
-  // would cross-collapse the two views.
-  const [collapsedCustomGroups, setCollapsedCustomGroups] = useState<Set<string>>(new Set())
+  // Groups start COLLAPSED — the panel opens as a list of group headers and the
+  // user expands what they need. The state is therefore the EXPANDED ids, not
+  // the collapsed ones (an empty set = the default). Both sets are cleared again
+  // whenever the panel is (re)opened, so the default really is the default.
+  // The two views keep separate sets: a connection id could legitimately equal a
+  // custom group name.
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [expandedCustomGroups, setExpandedCustomGroups] = useState<Set<string>>(new Set())
   const [groupMode, setGroupMode] = useState<GroupMode>(() => loadCmdListPrefs().groupMode)
   const [groupOrder, setGroupOrder] = useState<string[]>(() => loadGroupOrder())
   /** Inline "new group" input row at the end of the custom view. */
@@ -800,6 +803,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       setQuery('')
       setMenu(null)
       setFilling(null)
+      // Every open starts from the collapsed default again.
+      setExpandedGroups(new Set())
+      setExpandedCustomGroups(new Set())
     }
   }, [open, reload, loadVars])
 
@@ -1022,12 +1028,16 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const customView = groupMode === 'custom'
   const groups = customView ? buildCustomGroups() : buildConnectionGroups()
 
-  const isCollapsed = (id: string) =>
-    customView ? collapsedCustomGroups.has(id) : collapsedGroups.has(id)
+  // A search must SHOW what it matched, so groups render expanded while a query
+  // is present; the recorded expand state takes over again once it is cleared.
+  const searchActive = query.trim().length > 0
 
-  /** Collapse state is per view: the two key spaces must never mix. */
+  const isCollapsed = (id: string) =>
+    searchActive ? false : !(customView ? expandedCustomGroups : expandedGroups).has(id)
+
+  /** Expand state is per view: the two key spaces must never mix. */
   const toggleGroup = (id: string) => {
-    const setter = customView ? setCollapsedCustomGroups : setCollapsedGroups
+    const setter = customView ? setExpandedCustomGroups : setExpandedGroups
     setter((cur) => {
       const next = new Set(cur)
       if (next.has(id)) next.delete(id)
@@ -1058,6 +1068,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     // Register the label-only groups first, so a new group lands at the END
     // instead of jumping ahead of names the order list had never seen.
     commitGroupOrder([...knownGroupNames, name])
+    // It is empty by definition and groups start collapsed — opening it is the
+    // only way the user sees the new group (and its "no commands yet" hint).
+    setExpandedCustomGroups((cur) => (cur.has(`g:${name}`) ? cur : new Set(cur).add(`g:${name}`)))
     setNewGroupDraft('')
     setNewGroupOpen(false)
   }
@@ -1129,6 +1142,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       dragSnippetRef.current = null
       const s = snippets.find((x) => x.id === snippetId)
       if (s) void moveSnippetToGroup(s, group.id === UNGROUPED_KEY ? null : group.title)
+      // Dropping onto a COLLAPSED group must show the result, otherwise the
+      // gesture looks like it did nothing.
+      setExpandedCustomGroups((cur) => (cur.has(group.id) ? cur : new Set(cur).add(group.id)))
       return
     }
     const dragged = dragGroupRef.current

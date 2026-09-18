@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { expandAllGroups } from './helpers/commandList'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Command-list option values: forcing a value on a bare flag (`--tail`) gives
@@ -30,6 +31,7 @@ async function openEditor(page: Page, snippets: unknown[]) {
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()
+  await expandAllGroups(page)
 
   await page.locator('.cmd-list-item').click({ button: 'right' })
   await page.locator('.cmd-list-menu .context-menu-item').filter({ hasText: 'Edit' }).click()

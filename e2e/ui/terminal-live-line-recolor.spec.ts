@@ -13,6 +13,7 @@
  * echo `send_input` payloads back through `poll_output`, like a real PTY.
  */
 import { test, expect, type Page } from './helpers/fixtures'
+import { expandAllGroups } from './helpers/commandList'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
@@ -94,6 +95,8 @@ test('a second one-click send appends ` && ` and the echo survives the recolor',
   await openTerminal(page)
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()
+  // Groups open collapsed, so the snippet row (and its send button) is hidden.
+  await expandAllGroups(page)
 
   const send = page.locator('.cmd-list-send')
   await expect(send).toHaveCount(1)
