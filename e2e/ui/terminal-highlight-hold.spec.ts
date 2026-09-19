@@ -44,6 +44,41 @@ test('flush() emits a held fragment instead of holding it forever', () => {
   expect(hl.hasPending()).toBe(false)
 })
 
+/**
+ * A truecolor escape split across a chunk boundary (`\x1b[38;2;` | `72;71;67m`)
+ * must survive the idle-flush timer. The old `flush()` emitted the held partial
+ * escape AND cleared `pending`, so the next chunk's leading bytes — the escape's
+ * tail — arrived with no `ESC` in scope, hit the fast path, and were colourised as
+ * plain text, leaking `72;71;67m` onto the screen (BUGS.md B46 ④). The timer now
+ * keeps a partial escape so the next `push()` reassembles it.
+ */
+test('the idle flush keeps a split escape so its tail is not leaked as text', () => {
+  const hl = new AnsiHighlighter(cloneDefaultConfig())
+
+  const a = hl.push('gray \x1b[38;2')
+  expect(hl.hasPending()).toBe(true)
+  // keepPartialEscape = true (the timer): release nothing, keep the bytes held.
+  expect(hl.flush(true)).toBe('')
+  expect(hl.hasPending()).toBe(true)
+  const b = hl.push(';72;71;67m done')
+
+  const visible = stripSgr(a + b)
+  expect(visible).toBe('gray  done')
+  expect(visible).not.toContain('72;71;67m')
+})
+
+/** The old drain-and-clear path is what leaked — pinned here so the fix is scoped. */
+test('draining a partial escape (keepPartialEscape=false) leaks its tail as text', () => {
+  const hl = new AnsiHighlighter(cloneDefaultConfig())
+
+  const a = hl.push('gray \x1b[38;2')
+  const f = hl.flush(false) // explicit drain (bypass / reset) still emits the bytes
+  const b = hl.push(';72;71;67m done')
+
+  // Without the reassembly the orphaned params survive as visible text.
+  expect(stripSgr(a + f + b)).toContain('72;71;67m')
+})
+
 test('a chunk ending in a number becomes visible once output goes quiet', async ({ page }) => {
   await installTauriMock(page, {
     connections: [DEMO_CONN],

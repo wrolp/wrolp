@@ -80,6 +80,25 @@ import { AnsiHighlighter, HL_MAX_CHUNK } from './terminal/highlightStream'
 // quiet. Must stay comfortably above the 100ms output-poll cadence below, or
 // the flush fires between two polls and colorizes a half-received token.
 const HL_FLUSH_DELAY_MS = 300
+// An inline TUI that uses neither the alternate buffer nor mouse tracking (e.g.
+// Qoder CLI) is invisible to `isApplicationScreen`, so the highlighter would run
+// on it and corrupt its frames (BUGS.md B46 ④): its cross-chunk holdback delays
+// bytes past the app's line-erase (leaving stale rows / duplicated group markers)
+// and orphans split escapes (leaving raw SGR params like `72;71;67m` on screen).
+// The app's tell that a shell's *linear* command output never produces is a cursor
+// REPOSITION — moving up/down/left/right, to an absolute cell, to a column, or to a
+// line — because a shell only ever advances the cursor with printable text + CR/LF.
+// Match a complete CSI whose final byte is a cursor-move (`A`B`C`D`E`F`G`H`, `f`,
+// `d`); params are digits/`;`, so SGR (`…m`), erase (`…K`/`…J`), mode sets
+// (`ESC[?1000h`) and save/restore (`s`/`u`) never match. Ink TUIs repaint by moving
+// up (`ESC[<n>A`) and rewriting, not only by absolute `H`, so the relative moves are
+// essential — matching just `H`/`f` let Qoder CLI's command list slip through.
+const CURSOR_REPOSITION = /\x1b\[[0-9;]*[ABCDEFGHdf]/
+// A frame can span several poll chunks; keep bypassing the highlighter briefly
+// after the last reposition byte so the frame's continuation chunks (which may
+// carry no move) are passed through untouched too. Above the 100ms poll cadence and
+// the 300ms flush delay, short enough to resume highlighting promptly on a shell.
+const APP_FRAME_HOLD_MS = 600
 import {
   LS_CAPTURE_TIMEOUT_MS,
   LS_MAX_BYTES,
@@ -1016,6 +1035,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Terminal output category highlighting (IP/URL/number/… with configurable colors).
   const highlighterRef = useRef<AnsiHighlighter | null>(null)
   const hlEnabledRef = useRef(true)
+  // Timestamp until which the stream is treated as application-owned because a
+  // recent chunk carried a cursor reposition (see CURSOR_REPOSITION). The
+  // highlighter bypasses while `performance.now() < appFrameUntilRef`.
+  const appFrameUntilRef = useRef(0)
   // The streaming highlighter holds back a trailing token fragment until it is
   // complete (or a newline arrives). A short debounce ensures such a fragment is
   // still flushed when output goes quiet (e.g. a prompt ending in a path char),
@@ -1028,7 +1051,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const hl = highlighterRef.current
       const term = termRef.current
       if (!hl || !term) return
-      const f = hl.flush()
+      // Keep a held partial escape (don't orphan its tail across the quiet gap);
+      // a plain token fragment is still released so nothing visible hangs.
+      const f = hl.flush(true)
       if (f) term.write(f)
     }, HL_FLUSH_DELAY_MS)
   }
@@ -1228,13 +1253,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // The highlighter holds a chunk's trailing word back when it may be the
     // leading fragment of a longer token (an IPv6 address, a path, `0%` …) and
     // releases it with the NEXT chunk. Safe for a shell's sequential stream,
-    // fatal for an application-owned screen: a TUI positions the cursor
-    // absolutely between every visible byte, so a delayed byte lands in the
-    // wrong cell AND advances the cursor, shifting all of the app's following
-    // relative cursor/erase math — ghost rows, stray box-drawing fragments and
-    // garbled overlaps (BUGS.md B46 ④). Category coloring means nothing on a
-    // TUI frame: pass it through untouched.
-    const appScreen = isApplicationScreen(term)
+    // fatal for an application-owned screen: a TUI repositions the cursor to
+    // repaint, so a delayed byte lands in the wrong cell AND advances the cursor,
+    // desyncing the app's following erase/relative math — stale rows, duplicated
+    // group markers, stray box-drawing and raw SGR params leaking as text
+    // (BUGS.md B46 ④). Category coloring means nothing on a TUI frame either.
+    // A chunk carrying a cursor reposition marks the stream as application-owned
+    // for a short window (see CURSOR_REPOSITION / APP_FRAME_HOLD_MS), so an inline
+    // TUI that opens neither the alternate buffer nor mouse tracking (Qoder CLI)
+    // is still recognised — Ink redraws by moving up + rewriting, which the
+    // absolute-`H`-only signal used to miss.
+    if (CURSOR_REPOSITION.test(chunk)) {
+      appFrameUntilRef.current = performance.now() + APP_FRAME_HOLD_MS
+    }
+    const appScreen =
+      isApplicationScreen(term) || performance.now() < appFrameUntilRef.current
     if (
       !appScreen &&
       hl &&

@@ -234,27 +234,39 @@ export class AnsiHighlighter {
    * Emit any held-back fragment now. A partial escape sequence is passed
    * through literally.
    *
+   * @param keepPartialEscape When true (the idle-flush timer), a held *partial*
+   *   escape sequence is left in `pending` instead of being emitted. A split
+   *   escape carries no visible bytes, so releasing nothing is harmless — but
+   *   emitting it and clearing `pending` orphans the next chunk's leading bytes
+   *   (the escape's tail): with no `ESC` in that chunk the fast path treats it
+   *   as plain text and colourises it, leaking raw SGR params like `72;71;67m`
+   *   onto the screen (BUGS.md B46 ④). Keeping it lets the next `push()`
+   *   reassemble the escape. An explicit drain (bypass / reset) passes false and
+   *   still emits the bytes so nothing held is lost.
+   *
    * Plain tails follow a safety ladder:
    *   1. a fragment that already forms one complete colored token (a whole
    *      IPv4/IPv6/MAC/… that only lacked its trailing newline) is colorized —
    *      it is finished regardless of what comes next;
    *   2. anything else is emitted PLAIN, never re-held.
    *
-   * Issue #26: `flush()` must never keep a fragment held. `push()` already holds
-   * each chunk's tail so a token split by a chunk boundary (an IPv6 address, say)
-   * is still colorized as one unit — but `flush()` only runs after
+   * Issue #26: `flush()` must never keep a *plain* fragment held. `push()` already
+   * holds each chunk's tail so a token split by a chunk boundary (an IPv6 address,
+   * say) is still colorized as one unit — but `flush()` only runs after
    * `HL_FLUSH_DELAY_MS` of silence, which is longer than the output-poll cadence,
    * so by then no further bytes are coming for that token. Holding it any longer
    * left a trailing number (e.g. the `50` of a command echoed without a newline
    * when a snippet is sent into a non-empty input line) invisible until the next
    * output arrived, and left the terminal out of sync with the shell. A hidden
    * tail is far worse than a token colored in pieces when a slow producer pauses
-   * mid-token.
+   * mid-token. A partial *escape* is the one exception (see above): it has no
+   * visible tail to hide.
    */
-  flush(): string {
+  flush(keepPartialEscape = false): string {
     const t = this.pending
     if (!t) return ''
     if (t.includes('\x1b')) {
+      if (keepPartialEscape) return ''
       this.pending = ''
       return t
     }
