@@ -62,7 +62,7 @@ export const NetworkScanDialog: React.FC<NetworkScanDialogProps> = ({
   const activeRef = useRef(false)
 
   useEffect(() => {
-    let unlisteners: UnlistenFn[] = []
+    const unlisteners: UnlistenFn[] = []
     let mounted = true
     const setup = async () => {
       unlisteners.push(

@@ -384,7 +384,7 @@ test.describe('line number gutter (UI)', () => {
 
   test('the marker can be turned off, and the AI bridge can change it live', async ({ page }) => {
     await openWrapped(page, 'none')
-    let res = await wrappedRun(page)
+    const res = await wrappedRun(page)
     // "none" leaves the continuation rows truly empty (not `null` — the row exists).
     for (const row of res.run.slice(1)) expect(res.labels[row]).toBe('')
 

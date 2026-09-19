@@ -1272,8 +1272,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     if (CURSOR_REPOSITION.test(chunk)) {
       appFrameUntilRef.current = performance.now() + APP_FRAME_HOLD_MS
     }
-    const appScreen =
-      isApplicationScreen(term) || performance.now() < appFrameUntilRef.current
+    const appScreen = isApplicationScreen(term) || performance.now() < appFrameUntilRef.current
     if (
       !appScreen &&
       hl &&
@@ -1289,9 +1288,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       flushHlNow()
       term.write(chunk, afterWrite)
     }
-    // A newline means a command started producing output — we're no longer
-    // awaiting a typed-line echo, so drop the gate to avoid recoloring output.
-    if (chunk.includes('\n') || chunk.includes('\r')) expectingEchoRef.current = false
+    // A NEWLINE (`\n`) means the line advanced — a command started producing
+    // output, so we're no longer awaiting a typed-line echo; drop the gate to
+    // avoid recoloring output. A bare carriage return (`\r`) is NOT that: bash /
+    // readline / ConPTY redraw the *same* input line with a leading `\r` on every
+    // keystroke, so clearing on `\r` disarmed the flag before the async recolor
+    // callback and killed live highlighting (the reported "typing after a command
+    // isn't highlighted until Enter"). Only `\n` (or the Enter submit handler)
+    // ends the echo-await.
+    if (chunk.includes('\n')) expectingEchoRef.current = false
     // Telnet/Serial: detect login vs shell-prompt state from the latest output.
     // Login/password prompts disable live coloring so the echoed first character
     // isn't duplicated; a real shell prompt re-enables it. This also handles sudo

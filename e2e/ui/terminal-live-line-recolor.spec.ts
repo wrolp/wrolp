@@ -70,6 +70,66 @@ test('the echo of ordinary typing stays on the input line', async ({ page }) => 
   await expect(page.locator('.xterm-rows')).toContainText(`${PROMPT}echo hi`)
 })
 
+/**
+ * After a command runs and a fresh prompt appears, typing the NEXT command must
+ * highlight live (not only after Enter). The mock echoes readline-style: each
+ * keystroke redraws the whole input line with a LEADING `\r` (bash/readline/ConPTY
+ * all do this) — the pattern that used to disarm the echo-await (`\r` cleared the
+ * flag before the async recolor) and kill live highlighting. On Enter it emits
+ * `\r\n` + a fake output line + a new prompt.
+ */
+test('typing on the prompt after a command completes highlights live', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    pollOutputChunks: [[PROMPT]],
+  })
+  await page.goto('/')
+  await page.evaluate(() => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+        }
+      }
+    ).__TAURI_INTERNALS__
+    const orig = internals.invoke.bind(internals)
+    const PROMPT = '[root@sip ~]# '
+    const outbox: string[] = []
+    let line = ''
+    internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
+      if (cmd === 'send_input') {
+        const d = String(args.data ?? '')
+        if (d === '\r' || d === '\n') {
+          outbox.push('\r\n', 'CONTAINER ID  IMAGE  STATUS\r\n', PROMPT)
+          line = ''
+        } else {
+          const visible = d.replace(/[\x00-\x1f\x7f]/g, '')
+          if (visible) {
+            line += visible
+            // Readline redraw: carriage return + prompt + whole line so far.
+            outbox.push(`\r${PROMPT}${line}`)
+          }
+        }
+      }
+      const res = await orig(cmd, args)
+      if (cmd === 'poll_output') return outbox.length ? outbox.splice(0) : (res as string[])
+      return res
+    }
+  })
+  await page.locator('.connection-item').first().click()
+  await expect(page.locator('.xterm-rows')).toContainText(PROMPT)
+  await page.locator('.xterm-screen').click()
+  // First command runs and produces a new prompt.
+  await page.keyboard.type('docker ps', { delay: 40 })
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.xterm-rows')).toContainText('CONTAINER ID')
+  // Second command typed on the fresh prompt must highlight live (despite the `\r` redraws).
+  await page.keyboard.type('docker', { delay: 40 })
+  await page.waitForTimeout(600)
+  const row = page.locator('.xterm-rows > div', { hasText: `${PROMPT}docker` }).last()
+  expect(await row.innerHTML()).toContain('xterm-fg-13')
+})
+
 test('a second one-click send appends ` && ` and the echo survives the recolor', async ({
   page,
 }) => {

@@ -56,7 +56,10 @@ const NAMED = {
 
 /** `#abc` / `#aabbcc` / `#aabbccdd` / `rgb()` / `rgba()` / `white` → {rgb, alpha}. */
 function parseColor(raw) {
-  const v = String(raw).trim().replace(/!important$/, '').trim()
+  const v = String(raw)
+    .trim()
+    .replace(/!important$/, '')
+    .trim()
   if (!v) return null
 
   const hex = /^#([0-9a-f]{3,8})$/i.exec(v)
@@ -76,7 +79,10 @@ function parseColor(raw) {
   const fn = /^rgba?\(([^)]*)\)$/i.exec(v)
   if (fn) {
     const [r, g, b, a] = splitTop(fn[1]).map((p) => p.trim())
-    return { rgb: { r: Number(r), g: Number(g), b: Number(b) }, alpha: a === undefined ? 1 : alphaOf(a) }
+    return {
+      rgb: { r: Number(r), g: Number(g), b: Number(b) },
+      alpha: a === undefined ? 1 : alphaOf(a),
+    }
   }
 
   const lower = v.toLowerCase()
@@ -185,7 +191,10 @@ function buildSassVars() {
 
 /** Resolve a declaration value to a colour for one theme (null = unknown). */
 function resolveColor(raw, theme, sassVars) {
-  let v = String(raw).trim().replace(/!important$/, '').trim()
+  let v = String(raw)
+    .trim()
+    .replace(/!important$/, '')
+    .trim()
   for (let i = 0; i < 10 && v.startsWith('$'); i++) {
     const next = sassVars.get(v)
     if (!next) return null
@@ -326,7 +335,8 @@ function backgroundOf(block, theme, sassVars) {
 function surfaceBehind(block, theme, sassVars) {
   for (let b = block.parent; b; b = b.parent) {
     const bg = backgroundOf(b, theme, sassVars)
-    if (bg && !bg.gradient && bg.alpha >= 0.999) return { rgb: bg.rgb, note: b.selector || '(root)' }
+    if (bg && !bg.gradient && bg.alpha >= 0.999)
+      return { rgb: bg.rgb, note: b.selector || '(root)' }
   }
   const base = theme.get('bg-primary')
   return base ? { rgb: base.rgb, note: '--bg-primary' } : null
@@ -400,7 +410,8 @@ function main() {
         const under = bg.alpha < 0.999 ? surfaceBehind(block, themes[theme], sassVars) : null
         const surface = under ? blend(bg.rgb, bg.alpha, under.rgb) : bg.rgb
         ratios[theme] = contrast(fg.rgb, surface)
-        details[theme] = `#${hex(fg.rgb)} on #${hex(surface)}${under ? ` (over ${under.note})` : ''}`
+        details[theme] =
+          `#${hex(fg.rgb)} on #${hex(surface)}${under ? ` (over ${under.note})` : ''}`
       }
       const worst = Math.min(...Object.values(ratios))
       if (!Number.isFinite(worst)) continue
@@ -430,7 +441,7 @@ function main() {
   rows.sort((a, b) => a.worst - b.worst)
 
   console.log(`${declared} rules declare both a colour and a background (${unresolved} unparsed)`)
-  console.log(`${rows.length} below AA${showAll ? ` (--all: floor ${reportFloor}:1)` : ''}\n`)
+  console.log(`${rows.length} below AA${showAll ? ` (--all: floor ${AA_NORMAL}:1)` : ''}\n`)
 
   // Group identical declaration shapes — one root cause, N selectors.
   const groups = new Map()

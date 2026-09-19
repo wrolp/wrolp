@@ -103,7 +103,7 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
     return () => {
       ro.disconnect()
       unsubTheme()
-      playTimerRef.current && clearTimeout(playTimerRef.current)
+      if (playTimerRef.current) clearTimeout(playTimerRef.current)
       term.dispose()
       termRef.current = null
     }
