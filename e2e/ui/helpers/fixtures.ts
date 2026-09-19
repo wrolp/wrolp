@@ -8,6 +8,18 @@ import { addCoverageReport } from 'monocart-reporter'
 const COVERAGE_ENABLED = !!process.env.E2E_COVERAGE
 
 export const test = base.extend({
+  // The webgl renderer (BUGS.md B46 ④) replaces the DOM grid with a canvas, but
+  // every e2e assertion reads `.xterm-rows` spans/geometry — pin the DOM renderer
+  // for all tests. `Terminal.tsx` skips loading the addon when this flag is set.
+  e2eDomRenderer: [
+    async ({ page }, use) => {
+      await page.addInitScript(() => {
+        ;(window as unknown as { __WROLP_E2E__: boolean }).__WROLP_E2E__ = true
+      })
+      await use('e2eDomRenderer')
+    },
+    { scope: 'test', auto: true },
+  ],
   autoCoverage: [
     async ({ page }, use) => {
       if (COVERAGE_ENABLED) {

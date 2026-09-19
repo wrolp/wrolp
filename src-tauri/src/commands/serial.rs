@@ -256,6 +256,9 @@ pub async fn connect_serial(
     let state = app_handle.state::<AppState>();
     let mut port = port;
     let mut buf = [0u8; 1024];
+    // Carry an incomplete UTF-8 tail across reads: a multi-byte character split
+    // by a read boundary must not decode into U+FFFD (BUGS.md B46 ④).
+    let mut tail: Vec<u8> = Vec::new();
     loop {
       if shutdown_flag.load(AtomicOrdering::SeqCst) {
         break;
@@ -269,9 +272,15 @@ pub async fn connect_serial(
       match port.inner.read(&mut buf) {
         Ok(0) => continue, // read timeout with no data
         Ok(n) => {
-          let text = String::from_utf8_lossy(&buf[..n]);
+          tail.extend_from_slice(&buf[..n]);
+          let (valid, incomplete) = split_incomplete_utf8(&tail);
+          let text = String::from_utf8_lossy(valid).into_owned();
+          tail = incomplete.to_vec();
+          if text.is_empty() {
+            continue;
+          }
           if let Ok(mut buffers) = state.output_buffers.lock() {
-            buffers.entry(tid).or_default().push(text.to_string());
+            buffers.entry(tid).or_default().push(text);
           }
         }
         Err(e) => {

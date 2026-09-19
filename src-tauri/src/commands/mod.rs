@@ -173,6 +173,30 @@ pub(crate) fn image_mime_of(data: &[u8], path: &str) -> Option<String> {
   None
 }
 
+/// Split a trailing INCOMPLETE UTF-8 sequence off `data` so the caller can hold
+/// it back and decode it together with the next read. Decoding each read chunk
+/// on its own (`from_utf8_lossy`) turns a multi-byte character (CJK, box
+/// drawing, TUI icon glyphs) that straddles a read/packet boundary into U+FFFD
+/// replacement diamonds mid-frame (BUGS.md B46 ④).
+///
+/// Returns `(decodable, held_back)`; `held_back` is at most 3 bytes. Genuinely
+/// invalid bytes in the middle are NOT held — the caller's lossy decode
+/// replaces them as before.
+pub(crate) fn split_incomplete_utf8(data: &[u8]) -> (&[u8], &[u8]) {
+  for k in 0..=3.min(data.len()) {
+    let (head, tail) = data.split_at(data.len() - k);
+    if let Ok(_) = std::str::from_utf8(head) {
+      // Hold the tail only when it is itself an incomplete sequence; an empty or
+      // invalid tail must decode (lossy) now, never sit held forever.
+      if tail.is_empty() || matches!(std::str::from_utf8(tail), Err(e) if e.error_len().is_none())
+      {
+        return (head, tail);
+      }
+    }
+  }
+  (data, &[])
+}
+
 pub(crate) fn decode_file_content(
   data: &[u8],
   encoding_name: Option<&str>,

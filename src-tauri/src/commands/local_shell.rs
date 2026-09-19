@@ -460,11 +460,22 @@ pub async fn open_local_shell(
   std::thread::spawn(move || {
     use std::io::Read;
     let mut buf = [0u8; 4096];
+    // A multi-byte UTF-8 character can straddle two reads; decoding each read
+    // lossy on its own would emit U+FFFD diamonds mid-frame, so the incomplete
+    // tail is carried into the next read (BUGS.md B46 ④).
+    let mut tail: Vec<u8> = Vec::new();
     loop {
       match reader.read(&mut buf) {
         Ok(0) => break, // EOF: process exited
         Ok(n) => {
-          let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+          tail.extend_from_slice(&buf[..n]);
+          let (valid, incomplete) = split_incomplete_utf8(&tail);
+          let chunk = String::from_utf8_lossy(valid).into_owned();
+          let held = incomplete.to_vec();
+          tail = held;
+          if chunk.is_empty() {
+            continue
+          }
           // Tee a copy to the AI sink first (the chunk is moved into the
           // frontend queue below). Only active while an AI command runs.
           if let Ok(mut cap) = reader_ai_capture.lock() {
@@ -477,6 +488,12 @@ pub async fn open_local_shell(
           }
         }
         Err(_) => break,
+      }
+    }
+    if !tail.is_empty() {
+      let chunk = String::from_utf8_lossy(&tail).into_owned();
+      if let Ok(mut q) = reader_output.lock() {
+        q.push(chunk);
       }
     }
     // Process exited — drop the shell registration and notify the frontend.

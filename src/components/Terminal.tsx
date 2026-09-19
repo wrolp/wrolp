@@ -104,6 +104,7 @@ import {
   getPendingInputText,
   commitSubmittedCommands,
   isPagerPrompt,
+  isApplicationScreen,
 } from './terminal/promptLine'
 import { commandHighlighter } from './terminal/langHighlight'
 import type { TableCaptureState } from './terminal/tableCapture'
@@ -1224,7 +1225,23 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const afterWrite = () => {
       if (shellReadyRef.current) recolorLiveLine()
     }
-    if (hl && hlEnabledRef.current && !expectingEchoRef.current && chunk.length <= HL_MAX_CHUNK) {
+    // The highlighter holds a chunk's trailing word back when it may be the
+    // leading fragment of a longer token (an IPv6 address, a path, `0%` …) and
+    // releases it with the NEXT chunk. Safe for a shell's sequential stream,
+    // fatal for an application-owned screen: a TUI positions the cursor
+    // absolutely between every visible byte, so a delayed byte lands in the
+    // wrong cell AND advances the cursor, shifting all of the app's following
+    // relative cursor/erase math — ghost rows, stray box-drawing fragments and
+    // garbled overlaps (BUGS.md B46 ④). Category coloring means nothing on a
+    // TUI frame: pass it through untouched.
+    const appScreen = isApplicationScreen(term)
+    if (
+      !appScreen &&
+      hl &&
+      hlEnabledRef.current &&
+      !expectingEchoRef.current &&
+      chunk.length <= HL_MAX_CHUNK
+    ) {
       term.write(hl.push(chunk), afterWrite)
       scheduleHlFlush()
     } else {
@@ -1487,6 +1504,30 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const serializeAddon = new SerializeAddon()
     term.loadAddon(serializeAddon)
     term.open(containerRef.current)
+
+    // The DOM renderer ignores `customGlyphs`, so ░/▒/▓ and box-drawing characters
+    // come from the font face — coarse dot matrices that alias at terminal sizes
+    // (BUGS.md B46 ③). The webgl renderer draws those glyphs itself, crisply and
+    // independent of which font the machine has. Loaded behind a dynamic import so
+    // a webview without WebGL silently keeps the DOM renderer.
+    let webglAddon: { dispose(): void } | null = null
+    let webglDisposed = false
+    // e2e asserts against the DOM grid (`.xterm-rows`); the flag is set by the
+    // playwright fixture (e2e/ui/helpers/fixtures.ts).
+    const e2eDomRenderer = (window as { __WROLP_E2E__?: boolean }).__WROLP_E2E__ === true
+    if (!e2eDomRenderer) {
+      void import('@xterm/addon-webgl')
+        .then(({ WebglAddon }) => {
+          if (webglDisposed) return
+          const addon = new WebglAddon()
+          addon.onContextLoss(() => addon.dispose())
+          term.loadAddon(addon)
+          webglAddon = addon
+        })
+        .catch(() => {
+          /* no WebGL in this webview: stay on the DOM renderer */
+        })
+    }
 
     // Replay any scrollback cached from a previous mount (float pop-out / dock-back)
     // before fitting/connecting, so the user's prior output is restored. Done here
@@ -1812,9 +1853,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         tailRoomShiftRef.current = 0
         tailRoomOffsetRef.current = 0
       }
-      // The alternate buffer (vim / less / top …) has no scrollback to reveal below, and
-      // the room would push the full-screen app out of the pane — never apply it there.
-      if (!tailRoomRef.current || term.buffer.active.type === 'alternate') {
+      // A screen an interactive application owns — the alternate buffer (vim / less /
+      // top …) AND inline TUIs such as CodeBuddy CLI — must never get the room: those
+      // apps draw their own chrome below the input line, and shifting the grid under
+      // them makes their frames land at the wrong offset (ghosted rows, borders drawn a
+      // pixel off; BUGS.md B46).
+      if (!tailRoomRef.current || isApplicationScreen(term)) {
         clearRoom()
         return
       }
@@ -1868,10 +1912,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         }
       }
       const extra = rowHeight > 0 ? Math.max(0, Math.min(vp.scrollTop - bufferBottom, maxShift)) : 0
-      const transform = extra > 0.5 ? `translateY(${-extra}px)` : ''
+      // Snap to whole pixels. `rowHeight` is `clientHeight / rows`, almost always
+      // fractional, so `extra` is too — and a fractional `translateY` puts the whole
+      // grid on a half pixel, where the browser RESAMPLES every glyph: text turns
+      // blurred/hatched and the previous frame bleeds through instead of settling
+      // (exactly what the B46 screenshots show). `tailRoomShiftRef` must hold the
+      // rounded value — `computeLinkAnchor` subtracts it to place the link tooltip.
+      const shift = extra > 0.5 ? Math.round(extra) : 0
+      const transform = shift > 0 ? `translateY(${-shift}px)` : ''
       if (screen && screen.style.transform !== transform) screen.style.transform = transform
       if (lnRowsEl && lnRowsEl.style.transform !== transform) lnRowsEl.style.transform = transform
-      tailRoomShiftRef.current = extra > 0.5 ? extra : 0
+      tailRoomShiftRef.current = shift
     }
     tailRoomSyncRef.current = syncTailRoom
 
@@ -1892,13 +1943,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (root.classList.contains('has-line-numbers') !== on) {
         root.classList.toggle('has-line-numbers', on)
       }
-      // The alternate buffer (vim / less / top) gets no numbers — they would be
-      // meaningless and jitter every frame. The *column* stays in place while it is
-      // blank: collapsing it would narrow the terminal, and the SIGWINCH that follows
-      // would make the full-screen app re-lay-out on every open/close.
-      const alt = term.buffer.active.type === 'alternate'
-      if (root.classList.contains('is-alt') !== alt) root.classList.toggle('is-alt', alt)
-      if (!on || alt) return
+      // An interactive application gets no numbers: they would be meaningless, and an
+      // inline TUI repaints every frame so the labels would also jitter. The *column*
+      // stays in place while it is blank — collapsing it would narrow the terminal, and
+      // the SIGWINCH that follows would make the app re-lay-out on every toggle. Covers
+      // the alternate buffer (vim / less / top) and inline TUIs alike (BUGS.md B46).
+      const appScreen = isApplicationScreen(term)
+      if (root.classList.contains('is-alt') !== appScreen) {
+        root.classList.toggle('is-alt', appScreen)
+      }
+      if (!on || appScreen) return
       // Keep the row list in step with the terminal. Self-healing on purpose: this covers
       // the initial fit, every resize and every font change without another subscription.
       if (lnRowsRef.current !== term.rows) {
@@ -2039,14 +2093,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // we just highlighted above; stop awaiting it so stray output isn't
         // mistaken for a typed line.
         expectingEchoRef.current = false
-        if (shellReadyRef.current) {
+        // An interactive application (a TUI) owns the screen: what looks like a
+        // submitted command line is really the app's own input. Recording it as a
+        // command is wrong, and starting an `ls`/print capture on it is worse — the
+        // capture BUFFERS and re-emits the app's output, so its frames come back
+        // with the cursor/clear sequences stripped (stale rows, broken box borders,
+        // exactly BUGS.md B46). Skip every shell-oriented heuristic in that case.
+        const appScreen = isApplicationScreen(term)
+        if (shellReadyRef.current && !appScreen) {
           commitSubmittedCommands(term, data, currentTabId)
         }
         // A lone Enter submits a single command: detect print-style commands
         // (`cat`/`head`/`tail`) and `ls`-style listings for their respective
         // capture machines. The prompt is captured from the same buffer line so
         // capture can end precisely when the next prompt arrives.
-        if (/^[\r\n]+$/.test(data)) {
+        if (/^[\r\n]+$/.test(data) && !appScreen) {
           const { prompt, command } = splitPromptCommand(getCurrentCommandLine(term))
           // A pager prompt (`---- More ----`, `--More--`, `-- MORE --`, `---(more)---`)
           // is device OUTPUT awaiting a keypress, not a submitted command. Skip the
@@ -2606,6 +2667,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         scrollbackCache.set(currentTabId, serializeAddon.serialize())
       } catch {
         // failing to cache must never break teardown
+      }
+      webglDisposed = true
+      try {
+        webglAddon?.dispose()
+      } catch {
+        // failing to tear down the renderer must never break teardown
       }
       term.dispose()
       termRef.current = null

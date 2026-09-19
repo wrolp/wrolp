@@ -127,6 +127,30 @@ const PAGER_PROMPT_RE = /-{2,}\s*\(?\s*more\s*\)?\s*-{2,}/i
 
 export const isPagerPrompt = (line: string): boolean => PAGER_PROMPT_RE.test(line)
 
+/**
+ * True when the screen is owned by an interactive application (a TUI) rather than
+ * a shell reading a command line. Every shell-oriented screen heuristic must bail
+ * out here: the caret sits on the app's own input line, and rewriting that line —
+ * or worse, starting an output capture on it — corrupts the app's frame
+ * (residual/stale rows, misaligned box borders; BUGS.md B46).
+ *
+ * Only signals a SHELL never produces are used:
+ *   1. the alternate buffer (vi / nano / less / tmux, and any TUI that switches);
+ *   2. mouse tracking enabled — no shell turns this on, while agent TUIs
+ *      (CodeBuddy CLI, Claude Code, …) do, so it also catches the ones that render
+ *      *inline* without an alternate buffer.
+ *
+ * Deliberately NOT used: "the caret is not on the bottom-most content row". A
+ * Windows local shell (ConPTY) repaints its prompt with `ESC [ H` + `ESC [ 2 K`
+ * on nearly every keystroke, which leaves the caret at the TOP with the whole
+ * screen of content below it — indistinguishable from a TUI by that test, and it
+ * made real shells stop recording their commands (see `terminal-tail-room.spec`).
+ */
+export function isApplicationScreen(term: Terminal): boolean {
+  if (term.buffer.active.type === 'alternate') return true
+  return term.modes.mouseTrackingMode !== 'none'
+}
+
 // Remove ANSI escape sequences and strip a leading shell prompt so only the
 // command itself remains.
 export function stripPrompt(line: string): string {
@@ -158,10 +182,10 @@ export function highlightCurrentCommandLine(term: Terminal) {
   // Recoloring it would strip indentation and color unrelated text (e.g. network
   // device help listings like "  install     Perform ...").
   if (!prompt) return
-  // Never recolor full-screen TUI screens (vi/nano/less/tmux/etc.). Those use the
-  // alternate buffer and manage their own styling; rewriting a line here strips
-  // their colors and corrupts indentation.
-  if (term.buffer.active.type === 'alternate') return
+  // Never recolor a screen an interactive application owns (vi/nano/less/tmux, and
+  // inline TUIs such as CodeBuddy CLI). Those manage their own styling; rewriting a
+  // line here strips their colours and corrupts their frame — see isApplicationScreen.
+  if (isApplicationScreen(term)) return
   // A pager prompt (`---- More ----`) is device output, not a typed command.
   if (isPagerPrompt(plain)) return
   const buffer = term.buffer.active
@@ -220,9 +244,9 @@ export function getInputLineAtCursorEnd(
   // No prompt marker — not a live shell command line.
   if (!prompt) return null
   const buffer = term.buffer.active
-  // Full-screen programs (vi/nano/less/tmux/etc.) use the alternate buffer. Every
-  // line there is program output, not a shell command line, so never recolor it.
-  if (buffer.type === 'alternate') return null
+  // An interactive application owns the screen: the line under the caret is its
+  // own input, not a shell command line, so never treat it as one.
+  if (isApplicationScreen(term)) return null
   // A pager prompt (`---- More ----`) sits on an output line, not an input one.
   if (isPagerPrompt(plain)) return null
   const cols = term.cols
@@ -250,8 +274,8 @@ export function getPendingInputText(term: Terminal): string | null {
   const rawLine = getCurrentCommandLine(term)
   if (!rawLine) return null
   const plain = stripAnsi(rawLine)
-  // Full-screen programs (vi/nano/less/tmux/…) manage their own screen.
-  if (term.buffer.active.type === 'alternate') return null
+  // An interactive application manages its own screen (inline TUIs included).
+  if (isApplicationScreen(term)) return null
   // A pager prompt (`---- More ----`) is device output, not a typed command.
   if (isPagerPrompt(plain)) return null
   const { prompt, command } = splitPromptCommand(plain)

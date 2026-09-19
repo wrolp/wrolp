@@ -136,6 +136,8 @@ pub async fn open_session_sftp(
     is_sftp: true,
     shell_channel_id: None,
     sftp_close_notify: Some(sftp_close.clone()),
+    utf8_tail_out: Vec::new(),
+    utf8_tail_err: Vec::new(),
   };
   let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
     .await
@@ -190,6 +192,8 @@ pub async fn open_jump_sftp(
     is_sftp: true,
     shell_channel_id: None,
     sftp_close_notify: Some(sftp_close.clone()),
+    utf8_tail_out: Vec::new(),
+    utf8_tail_err: Vec::new(),
   };
   let mut handle = client::connect_stream(ssh_config, stream, handler)
     .await

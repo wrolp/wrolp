@@ -871,3 +871,39 @@ async fn deleting_sessions_reclaims_db_pages() {
   assert!(res.after_bytes <= res.before_bytes);
   assert_eq!(res.freed_bytes, res.before_bytes - res.after_bytes);
 }
+
+/// `split_incomplete_utf8` must only ever hold back a *genuinely partial* trailing
+/// sequence, so a multi-byte char split across read boundaries decodes correctly on
+/// the next chunk instead of becoming U+FFFD. Invalid bytes must never be held
+/// forever (which would stall the stream).
+#[test]
+fn split_incomplete_utf8_holds_only_a_trailing_partial_sequence() {
+  // Fully valid input: nothing held back.
+  let data = "a─".as_bytes();
+  let (valid, tail) = commands::split_incomplete_utf8(data);
+  assert_eq!(valid, data);
+  assert!(tail.is_empty());
+
+  // "─" is U+2500 = E2 94 80. Drop the last byte: hold the 2 partial bytes.
+  let truncated = &data[..data.len() - 1]; // "a" + E2 94
+  let (valid, tail) = commands::split_incomplete_utf8(truncated);
+  assert_eq!(valid, b"a");
+  assert_eq!(tail, &[0xE2, 0x94]);
+
+  // Drop two more bytes: only the first byte of the sequence remains.
+  let truncated = &data[..data.len() - 2]; // "a" + E2
+  let (valid, tail) = commands::split_incomplete_utf8(truncated);
+  assert_eq!(valid, b"a");
+  assert_eq!(tail, &[0xE2]);
+
+  // Invalid bytes near the end must NOT be held — decode (lossy) now.
+  let data = [0xff, 0xfe, b'x'];
+  let (valid, tail) = commands::split_incomplete_utf8(&data);
+  assert_eq!(valid, &data[..]);
+  assert!(tail.is_empty());
+
+  let data = [b'a', 0xff];
+  let (valid, tail) = commands::split_incomplete_utf8(&data);
+  assert_eq!(valid, &data[..]);
+  assert!(tail.is_empty());
+}

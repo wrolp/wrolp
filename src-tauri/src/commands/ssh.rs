@@ -48,9 +48,15 @@ impl Handler for SshHandler {
     _session: &mut russh::client::Session,
   ) -> Result<(), Self::Error> {
     if !self.is_sftp && self.is_shell_channel(channel) {
-      let text = String::from_utf8_lossy(data);
-      self.emit(&text);
-      self.record_event("output", &text);
+      let mut bytes = std::mem::take(&mut self.utf8_tail_out);
+      bytes.extend_from_slice(data);
+      let (valid, incomplete) = split_incomplete_utf8(&bytes);
+      let text = String::from_utf8_lossy(valid);
+      self.utf8_tail_out = incomplete.to_vec();
+      if !text.is_empty() {
+        self.emit(&text);
+        self.record_event("output", &text);
+      }
     }
     Ok(())
   }
@@ -64,10 +70,16 @@ impl Handler for SshHandler {
   ) -> Result<(), Self::Error> {
     if !self.is_sftp && self.is_shell_channel(channel) {
       // stderr → display in yellow
-      let text = String::from_utf8_lossy(data);
-      let formatted = format!("\u{1b}[33m{}\u{1b}[0m", text);
-      self.emit(&formatted);
-      self.record_event("output", &text);
+      let mut bytes = std::mem::take(&mut self.utf8_tail_err);
+      bytes.extend_from_slice(data);
+      let (valid, incomplete) = split_incomplete_utf8(&bytes);
+      let text = String::from_utf8_lossy(valid);
+      self.utf8_tail_err = incomplete.to_vec();
+      if !text.is_empty() {
+        let formatted = format!("\u{1b}[33m{}\u{1b}[0m", text);
+        self.emit(&formatted);
+        self.record_event("output", &text);
+      }
     }
     Ok(())
   }
@@ -389,6 +401,8 @@ pub async fn connect(
         is_sftp: false,
         shell_channel_id: None,
         sftp_close_notify: None,
+        utf8_tail_out: Vec::new(),
+        utf8_tail_err: Vec::new(),
       };
       // Two layers of keepalive:
       //  1. russh's built-in keepalive (configured just below). It runs inside

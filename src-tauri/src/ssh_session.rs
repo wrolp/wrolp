@@ -388,6 +388,11 @@ pub struct SshHandler {
   /// connection per SFTP session) end as soon as the session is dropped. Only
   /// set for SFTP-only connections (`is_sftp`).
   pub sftp_close_notify: Option<Arc<tokio::sync::Notify>>,
+  /// Trailing incomplete UTF-8 bytes of the previous shell-channel packet
+  /// (stdout / stderr separately). A multi-byte character split across packets
+  /// must not decode into U+FFFD diamonds mid-frame (BUGS.md B46 ④).
+  pub utf8_tail_out: Vec<u8>,
+  pub utf8_tail_err: Vec<u8>,
 }
 
 impl SshHandler {
