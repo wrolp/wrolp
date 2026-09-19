@@ -500,9 +500,12 @@ const UUID_RE =
 // Dotted version numbers (semver-ish): two or more numeric components, with the
 // common attached `v`/`go` prefixes and an optional `-prerelease`/`+build`
 // suffix. Runs before `number` so `2.4.1` colors as one unit, not as `2.4`.
-// Pure decimals (`3.14`) lack the second dot and stay a number.
+// Pure decimals (`3.14`) lack the second dot and stay a number. A trailing `%`
+// excludes the match too: `85.5%` (docker stats, CPU/mem readings) is a
+// percentage, so let `number` color the whole token rather than painting `85.5`
+// as a version and leaving `%` unstyled.
 const VERSION_RE =
-  /(?<![A-Za-z0-9])(?:[vV]|go)?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?![A-Za-z0-9])/g
+  /(?<![A-Za-z0-9])(?:[vV]|go)?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?![A-Za-z0-9%])/g
 const DATE_RE = new RegExp(
   // Numeric: `2026-09-08`, `2026/09/08`, `2026年9月8日`, and an ISO log timestamp
   // `2026-09-19 08:06:10.086370` — the trailing ` HH:MM:SS(.frac)` is absorbed so

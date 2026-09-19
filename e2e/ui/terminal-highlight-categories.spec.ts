@@ -42,3 +42,13 @@ test('an ISO date-time stamp is one date-colored token', () => {
   // and there is no standalone time token left over.
   expect(segs.some((s) => s.text === '08:06:10.086370')).toBe(false)
 })
+
+test('a decimal percentage is one number-colored token', () => {
+  // `92.03%` (docker stats CPU/mem) must be a single token, not a version-colored
+  // `92.03` plus a stray `%`.
+  const segs = colored('CPU 92.03% MEM 7.5%')
+  expect(segs.some((s) => s.text === '92.03%')).toBe(true)
+  expect(segs.some((s) => s.text === '7.5%')).toBe(true)
+  // no bare-version fragment left, and no unjoined `92.03` without the percent.
+  expect(segs.some((s) => s.text === '92.03')).toBe(false)
+})
