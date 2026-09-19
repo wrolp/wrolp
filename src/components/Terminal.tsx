@@ -585,7 +585,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       return
     }
     highlightCurrentCommandLine(term)
-    expectingEchoRef.current = false
+    // Stay armed: over a real link the echo of fast typing arrives in pieces, so
+    // this write may hold only part of the newest command. Clearing here would
+    // leave the later pieces uncolored until the NEXT keystroke re-arms the flag
+    // (the reported "tail only highlights when you type again"). Each further echo
+    // write re-runs the recolor idempotently and catches the line up. The flag is
+    // released by Enter (`\r`/`\n` in writeOutput) or when the caret leaves the
+    // input line (the `!at` branch above) — so command output is never recolored.
   }
 
   // Heuristics for Telnet/Serial login detection. We disable live input coloring

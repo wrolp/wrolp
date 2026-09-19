@@ -6,8 +6,6 @@ task
 .tauri
 package-lock.json
 
-CODEBUDDY.md
-.codebuddy
 dist-check
 
 # Local app data (credentials, recordings, window state)
