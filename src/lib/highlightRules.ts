@@ -504,8 +504,10 @@ const UUID_RE =
 const VERSION_RE =
   /(?<![A-Za-z0-9])(?:[vV]|go)?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?![A-Za-z0-9])/g
 const DATE_RE = new RegExp(
-  // Numeric: `2026-09-08`, `2026/09/08`, `2026年9月8日`.
-  String.raw`(?<!\d)(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{4}年\d{1,2}月\d{1,2}日)(?!\d)|` +
+  // Numeric: `2026-09-08`, `2026/09/08`, `2026年9月8日`, and an ISO log timestamp
+  // `2026-09-19 08:06:10.086370` — the trailing ` HH:MM:SS(.frac)` is absorbed so
+  // the whole stamp is ONE date-colored token, not date + a separate time color.
+  String.raw`(?<!\d)(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}(?: \d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,9})?)?|\d{4}年\d{1,2}月\d{1,2}日)(?!\d)|` +
     // C `date`/syslog style: `Wed Sep  9 10:46:20 2026` (%a %b %e %H:%M:%S %Y).
     // The day is space-padded to two columns for values < 10 (`Sep  9`), hence
     // the {1,2} space run before it. The whole token matches in ONE date-colored
@@ -513,9 +515,19 @@ const DATE_RE = new RegExp(
     String.raw`(?<![0-9A-Za-z])(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) {1,2}(?:[1-9]|[12][0-9]|3[01]) +(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9] +[12][0-9]{3}(?![0-9A-Za-z])`,
   'g',
 )
+// A time is `HH:MM` or `HH:MM:SS` with an optional fractional part. The fraction
+// runs to 9 digits so a log timestamp's microseconds (`02:50:57.826352`) are one
+// token, not `02:50:57` + a stray `.826352`.
 const TIME_RE =
-  /(?<!\d)(?:\d{1,2}):(?:\d{2})(?::(?:\d{2})(?:[.,]\d{1,3})?)?(?:\s?[APap]\.?[Mm]\.?)?(?![:\d])/g
-const PORT_RE = /(?<!\d)(?<!:):\d{1,5}(?!\d)/g
+  /(?<!\d)(?:\d{1,2}):(?:\d{2})(?::(?:\d{2})(?:[.,]\d{1,9})?)?(?:\s?[APap]\.?[Mm]\.?)?(?![:\d])/g
+// A port is `:NNNN`. Two guards keep it from false-positiving on log text:
+//  - `(?!\.\d)` — `image:1.26.2` / `foo:2.516` is a version after a colon, not a
+//    port; the first number group (`:1`) must not be painted as a port.
+//  - the source-extension lookbehind — `mod_signalwire.c:393` / `db.go:12` is a
+//    file:LINE reference, so `:393` is not a port. Only the listed source-file
+//    extensions are excluded, so real `host:port` / `example.com:8080` still match.
+const PORT_RE =
+  /(?<!\d)(?<!:)(?<!\.(?:c|cc|cpp|cxx|h|hpp|hxx|py|go|rs|rb|js|jsx|ts|tsx|java|kt|kts|swift|m|mm|php|pl|lua|sh|cs|scala|dart)):\d{1,5}(?!\d)(?!\.\d)/g
 // One character that may appear inside a path segment: anything but whitespace,
 // quotes, backtick and the shell metacharacters that delimit a token.
 const PATH_CHARS = String.raw`[^\s"'<>|&;():=\u0060]`
