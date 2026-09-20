@@ -113,9 +113,38 @@ export function contrastRatio(a: string, b: string): number {
 const ON_LIGHT = '#ffffff'
 const ON_DARK = '#171717'
 
+/**
+ * The darkest surface the light theme paints behind text (`bg-active` in
+ * `_theme.scss`). Accent-derived text is checked against this rather than
+ * against white, because it lands on hovered and active rows as often as on a
+ * plain card, and the hovered case is what decides whether the pair is readable.
+ * Exported so the appearance spec asserts against the surface the clamp targets.
+ */
+export const LIGHT_TEXT_BG = '#e4e6f1'
+const AA_NORMAL = 4.5
+
 /** White or near-black text on `accent`, whichever reads better on it. */
 export function textOnAccent(accent: string): string {
   return contrastRatio(accent, ON_LIGHT) >= contrastRatio(accent, ON_DARK) ? ON_LIGHT : ON_DARK
+}
+
+/**
+ * The accent as *text*: pushed toward white on dark, pulled toward black on
+ * light. The light branch cannot stop at the fixed `-22`, because that travel is
+ * measured in HSL lightness points and so only reaches AA by accident — a bright
+ * preset like #4d9dff lands on #0063dc, 4.42:1 on `LIGHT_TEXT_BG`, and four of
+ * the six sit under 4.5. The shipped default never comes through here at all (no
+ * accent means no override; `_theme.scss` hand-tunes its own `accent-soft-40`),
+ * so this branch has to hold for *any* hex the picker can produce: keep pulling
+ * until AA does. The step cap is a stop-loss for a pick that cannot improve —
+ * lightness bottoms out at black long before it is reached.
+ */
+function accentTextOnLight(accent: string): string {
+  let next = adjustLightness(accent, -22)
+  for (let i = 0; i < 40 && contrastRatio(next, LIGHT_TEXT_BG) < AA_NORMAL; i++) {
+    next = adjustLightness(next, -2)
+  }
+  return next
 }
 
 /** Theme-aware direction for hover: lift on dark, press down on light. */
@@ -129,7 +158,7 @@ export function accentOverrides(accent: string, dark: boolean): Record<string, s
     '--accent-l14': adjustLightness(accent, 14 * dir),
     // Used as *text* on an accent-tinted surface, so it needs a larger travel
     // than the fills to keep contrast against the background it sits on.
-    '--accent-soft-40': dark ? adjustLightness(accent, 40) : adjustLightness(accent, -22),
+    '--accent-soft-40': dark ? adjustLightness(accent, 40) : accentTextOnLight(accent),
     '--text-on-accent': textOnAccent(accent),
   }
 }

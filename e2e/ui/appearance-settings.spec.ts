@@ -1,5 +1,8 @@
 import { test, expect } from './helpers/fixtures'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
+import { ACCENT_PRESETS } from '../../src/lib/accentPresets'
+import { contrastRatio, LIGHT_TEXT_BG } from '../../src/lib/themeColors'
+import en from '../../src/i18n/en'
 
 // P4 of the redesign: the appearance card.
 //
@@ -170,6 +173,21 @@ test('a swatch sets the accent and “Reset” hands it back to the theme table'
   await page.locator('.swatches').getByRole('button', { name: 'Reset' }).click()
   expect(await inline(page, '--accent')).toBe('')
   expect(await page.evaluate(() => localStorage.getItem('wrolp-accent'))).toBe('default')
+})
+
+// The contrast gate parses SCSS, so it cannot see a runtime accent at all — this
+// is the only automated check on the shade the picker actually paints.
+test('every preset keeps its derived light-theme text shade above AA', async ({ page }) => {
+  await boot(page, { 'wrolp-theme': 'light' })
+  await openAppearance(page)
+  for (const preset of ACCENT_PRESETS) {
+    await page.getByRole('button', { name: en[preset.labelKey], exact: true }).click()
+    const shade = await inline(page, '--accent-soft-40')
+    expect(
+      contrastRatio(shade, LIGHT_TEXT_BG),
+      `${preset.hex} derives "${shade}" — too dark to read on the light theme's own surface`,
+    ).toBeGreaterThanOrEqual(4.5)
+  }
 })
 
 test('density is written to <html> and to storage from the segment', async ({ page }) => {

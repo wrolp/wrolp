@@ -6,8 +6,8 @@
 //
 // Values are the approved static draft's (`task/designs/ui-redesign-v1/index.html`
 // 屏 5). Each one is safe to use as a fill because `textOnAccent` picks the
-// foreground per pick, and safe as text because `accentOverrides` pushes/pulls the
-// `--accent-soft-40` shade by theme.
+// foreground per pick, and safe as text because `accentTextOnLight` keeps pulling
+// the light-theme `--accent-soft-40` down until it clears AA on that surface.
 
 import type { TranslationKey } from '../i18n/en'
 
