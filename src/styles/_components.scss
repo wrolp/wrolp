@@ -1,0 +1,349 @@
+// ===== Component primitives =====
+//
+// The classes the redesign builds its chrome from. Existing markup keeps its own
+// class names until it is rewritten (P2/P3), and each rewrite adopts these
+// instead of adding a 12th local button style — that is the whole point of the
+// file, so a variant added here must be used by whatever replaced the rule it
+// subsumes.
+//
+// Everything is expressed in tokens (`_theme.scss` for anything that changes per
+// theme, `_layout.scss` for everything that does not) so a density or accent
+// change reaches these without a second edit.
+
+@use 'variables' as *;
+
+// ---- Buttons: four variants, two sizes ----
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-height: 24px;
+  padding: 0 var(--sp-2);
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  background: $bg-input;
+  color: $text-primary;
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--d-1) var(--e-out),
+    border-color var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
+
+  // `--control-hover` is the only rung above `--bg-input` in the dark elevation
+  // ladder — every `bg-*` token sits below it, which is why five hand-written
+  // hovers in the old sheet used a raw #4c4c4c.
+  &:hover {
+    background: var(--control-hover);
+  }
+
+  // Pressed drops back *below* the resting fill: recess, not more of the same.
+  &:active {
+    background: $bg-active;
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  &.sm {
+    min-height: 20px;
+    padding: 0 var(--sp-1);
+    font-size: var(--fs-xs);
+  }
+
+  &.lg {
+    min-height: 30px;
+    padding: 0 var(--sp-3);
+    font-size: var(--fs-lg);
+  }
+
+  // Solid accent fill. `--text-on-accent` is what makes an arbitrary user accent
+  // safe here: themeStore flips it to near-black when the accent is light.
+  &.pri {
+    background: $accent;
+    border-color: transparent;
+    color: var(--text-on-accent);
+
+    &:hover {
+      background: $accent-hover;
+    }
+
+    &:active {
+      background: var(--accent-l8);
+    }
+  }
+
+  // No border at all until hovered — for toolbar and row-inline actions.
+  &.ghost {
+    background: transparent;
+    border-color: transparent;
+
+    &:hover {
+      background: rgba($text-primary, 0.08);
+      border-color: transparent;
+    }
+  }
+
+  // Destructive but *not* armed: outline danger, fills on hover.
+  &.dgr {
+    background: transparent;
+    border-color: $danger;
+    color: var(--danger-soft-40);
+
+    &:hover {
+      background: $danger;
+      color: #fff;
+    }
+  }
+
+  // Armed: the confirm side of a delete dialog.
+  &.dgr-solid {
+    background: $danger;
+    border-color: transparent;
+    color: #fff;
+
+    &:hover {
+      background: $danger-hover;
+    }
+  }
+}
+
+// ---- Icon-only action ----
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: $text-secondary;
+  cursor: pointer;
+  transition:
+    background var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  // A toggle button has to show its own state, not just the icon's meaning.
+  &[data-on='true'] {
+    background: rgba($accent, 0.16);
+    color: var(--accent-soft-40);
+  }
+
+  &.x:hover {
+    background: rgba($danger, 0.16);
+    color: var(--danger-soft-40);
+  }
+}
+
+// ---- Tags ----
+// The failure mode this replaces is a semantic colour used as *text* on its own
+// low-alpha tint (1.2–3.3:1). The text variant is always the `*-soft-40` token,
+// which _theme.scss moves in the opposite direction from the tint.
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 1px var(--sp-1);
+  border-radius: var(--r-1);
+  background: $bg-active;
+  color: $text-secondary;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+
+  &.ok {
+    background: rgba($success, 0.16);
+    color: var(--success-soft-40);
+  }
+
+  &.wn {
+    background: rgba($warning, 0.16);
+    color: var(--warning-soft-40);
+  }
+
+  &.er {
+    background: rgba($danger, 0.16);
+    color: var(--danger-soft-40);
+  }
+
+  &.info {
+    background: rgba($info, 0.16);
+    color: var(--info-soft-40);
+  }
+
+  &.ac {
+    background: rgba($accent, 0.1);
+    color: var(--accent-soft-40);
+  }
+}
+
+// ---- Panel head / toolbar ----
+// One head for every dockable region, so the sidebar sections, inspector tabs,
+// drawer and panes stop each growing their own 3px-different header.
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 26px;
+  padding: 0 var(--sp-2);
+  background: $bg-secondary;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+  user-select: none;
+
+  .panel-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: $text-secondary;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  // Section headers double as the collapse control, which is the affordance the
+  // chevron shows; dimming them to `--text-dim` made them read as disabled.
+  &.sec {
+    background: transparent;
+    border-bottom-color: transparent;
+    cursor: pointer;
+    color: $text-muted;
+
+    &:hover {
+      background: $bg-hover;
+      color: $text-secondary;
+    }
+
+    // The section voice is scoped to the title, *not* to the bar. A header also
+    // carries hostnames, counts and toggle labels, and `text-transform: uppercase`
+    // inherited by those mangles `myApp` into `MYAPP` and a `CamelCase` path into
+    // shouting. Tracking on CJK is the same trap in slow motion.
+    .panel-title {
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      color: inherit;
+      // A section header also carries a host chip and whatever controls fit, and
+      // in a 260px nav column those compete for the same row. Without this the
+      // title is the flex item that gives up first, and "FILES" disappears while
+      // "web-01 (10.0.1.11:22)" stays — the label goes and the metadata survives.
+      flex-shrink: 0;
+    }
+
+    // The whole bar is the click target, but a div cannot carry `aria-expanded`,
+    // and the chevron span that used to be the only control was mouse-only. So
+    // the label+chevron are a real button covering the accessible part of the
+    // hit area, and the bar's own `onClick` widens it for the mouse.
+    //
+    // Do not add `min-width: 0` back. A flex item's *automatic* minimum size is
+    // what keeps this button at least as wide as its title, and `min-width: 0`
+    // opts out of it: with the opt-out a long host label in `.cnt` squeezed the
+    // toggle until the section title disappeared — "DOCKER" came out as "DOC…".
+    // `0` shrink says the same thing the other way round.
+    .panel-head-toggle {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-1);
+      flex: 1 0 auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    // The count reads as metadata about the label, not as a second label, so it
+    // drops the tracking and the weight the section title carries. It is also the
+    // only thing in the row allowed to give up width — a host label is long and
+    // the title beside it is not.
+    .cnt {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: var(--fs-xs);
+      font-weight: 400;
+      letter-spacing: 0;
+      color: $text-dim;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+}
+
+// ---- State dots: shape carries the meaning, colour only repeats it ----
+// Colour-blind-safe by construction: `■` failed and `▲` degraded are distinct
+// silhouettes, so no state depends on telling red from green.
+.dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--r-circle);
+  background: $text-dim;
+
+  &.ok {
+    background: $success;
+  }
+
+  // Empty ring: known target, nothing running.
+  &.idle {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px $text-muted;
+  }
+
+  // Square: terminal failure.
+  &.err {
+    border-radius: 0;
+    background: $danger;
+  }
+
+  // Triangle: degraded / suspect.
+  &.warn {
+    border-radius: 0;
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    background: $warning;
+  }
+
+  // Sweeping arc: in progress.
+  &.busy {
+    background: conic-gradient($accent 0 25%, transparent 25% 100%);
+    animation: spin 0.9s linear infinite;
+  }
+
+  // Recording. Deliberately a breathing *circle* rather than the square `.err`
+  // uses: same red, different silhouette and motion, so "a session is being
+  // written to disk" cannot be misread as "a session failed" by anyone who is
+  // not relying on the colour.
+  &.rec {
+    background: $danger;
+    animation: pulse 1.6s var(--e-in-out) infinite;
+  }
+}

@@ -4,6 +4,7 @@ import { LANGUAGE_OPTIONS_SORTED, ENCODING_OPTIONS } from '../editor/languages'
 import type { TargetRef } from '../types'
 import HexViewer from './HexViewer'
 import MarkdownPreview from './MarkdownPreview'
+import { Icon } from './Icon'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 import { monacoThemeId } from '../lib/theme'
 import { getResolvedTheme, subscribeTheme } from '../lib/themeStore'
@@ -39,16 +40,14 @@ export interface EditorTab {
 interface FileEditorProps {
   tabs: EditorTab[]
   activeKey: string | null
-  onSelect: (key: string) => void
-  onClose: (key: string) => void
   onContentChange: (key: string, content: string) => void
   onSave: (key: string) => void
   onChangeLanguage: (key: string, lang: string) => void
   onChangeEncoding: (key: string, enc: string) => void
   onChangeLineEnding: (key: string, eol: 'LF' | 'CRLF') => void
-  /** When true, the editor's own tab bar is hidden (tabs live in the shell
-   *  pane header instead). */
-  hideTabs?: boolean
+  /** Pops this editor out into its own floating window. Omitted when the editor
+   *  *is* the floating window (there is nothing to pop out of). */
+  onFloat?: () => void
 }
 
 const EOF_SEQ: Record<string, monaco.editor.EndOfLineSequence> = {
@@ -59,14 +58,12 @@ const EOF_SEQ: Record<string, monaco.editor.EndOfLineSequence> = {
 export function FileEditor({
   tabs,
   activeKey,
-  onSelect,
-  onClose,
   onContentChange,
   onSave,
   onChangeLanguage,
   onChangeEncoding,
   onChangeLineEnding,
-  hideTabs = false,
+  onFloat,
 }: FileEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -256,33 +253,8 @@ export function FileEditor({
 
   return (
     <div className="file-editor">
-      {/* Tab bar (hidden when tabs live in the shell pane header) */}
-      {!hideTabs && (
-        <div className="editor-tabs">
-          {tabs.map((tab) => (
-            <div
-              key={tab.key}
-              className={`editor-tab ${tab.key === activeKey ? 'active' : ''} ${tab.isDirty ? 'dirty' : ''}`}
-              onClick={() => onSelect(tab.key)}
-              title={tab.path}
-            >
-              <span className="editor-tab-name">{tab.name}</span>
-              {tab.isDirty && <span className="editor-tab-dirty">●</span>}
-              <span
-                className="editor-tab-close"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onClose(tab.key)
-                }}
-              >
-                ×
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Editor body */}
+      {/* An open file has a tab bar entry of its own (App's `fileEditor` tabs),
+          so this surface carries no tab strip. */}
       <div className="editor-body">
         {!active && <div className="editor-empty">No file open</div>}
 
@@ -474,6 +446,15 @@ export function FileEditor({
                   title={t('editorPreviewTitle')}
                 >
                   👁 {t('editorPreview')} {t(showPreview ? 'on' : 'off')}
+                </button>
+              )}
+              {onFloat && (
+                <button
+                  className="editor-btn editor-float-btn"
+                  onClick={onFloat}
+                  title={t('floatEditor')}
+                >
+                  <Icon name="float" size={12} />
                 </button>
               )}
               <button

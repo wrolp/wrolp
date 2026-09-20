@@ -62,7 +62,7 @@ async function openFile(page: Page, name: string, path: string, content: string)
   await page.goto('/')
   await page.locator('.connection-item').click()
   await page.locator('.tree-row.file', { hasText: name }).click()
-  await expect(page.locator('.term-pane-file-tab', { hasText: name })).toHaveCount(1)
+  await expect(page.locator('.tab-item', { hasText: name })).toHaveCount(1)
   await expect(page.locator('.monaco-editor')).toBeVisible()
 }
 

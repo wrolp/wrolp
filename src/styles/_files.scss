@@ -1,0 +1,657 @@
+@use 'variables' as *;
+
+// ===== Sidebar Container =====
+.sidebar-container {
+  display: flex;
+  flex-direction: column;
+  background: $bg-sidebar;
+  border-right: 1px solid $border;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+// ===== File Panel =====
+.file-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  border-top: 1px solid $border;
+  transition:
+    box-shadow var(--d-2),
+    border-color var(--d-2);
+
+  &.drag-over {
+    box-shadow: inset 0 0 0 2px $accent-hover;
+    border-top-color: $accent-hover;
+  }
+
+  // The header itself is `.panel-head.sec` now, and its buttons are `.icon-btn`s,
+  // so only the two things the primitive has no word for live here: the row's own
+  // tighter rhythm, and the user chip.
+  .file-toolbar {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  // A chip, not a button: it reports who the SFTP session is really running as.
+  .file-sftp-user {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--fs-xs);
+    color: var(--accent-soft-40);
+    background: rgba($accent, 0.12);
+    border: 1px solid rgba($accent, 0.25);
+    border-radius: var(--r-1);
+    padding: 0 5px;
+    line-height: 1.4;
+  }
+
+  // Local toast anchored just below the header and the tools row (both positioned
+  // relative to `.file-panel`). Auto-dismisses after a few seconds.
+  .panel-toast {
+    position: absolute;
+    top: 60px;
+    left: 8px;
+    right: 8px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: var(--r-2);
+    font-size: 12px;
+    line-height: 1.3;
+    color: #fff;
+    background: rgba(30, 30, 34, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    animation: toast-in 0.2s ease-out;
+    cursor: pointer;
+
+    .panel-toast-icon {
+      flex-shrink: 0;
+      font-weight: 700;
+    }
+
+    &.panel-toast-success {
+      border-left: 3px solid #28c76f;
+    }
+
+    &.panel-toast-error {
+      border-left: 3px solid #f44747;
+    }
+
+    &.panel-toast-info {
+      border-left: 3px solid #6c8cff;
+    }
+  }
+
+  .file-switch-user {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: $bg-primary;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+
+    input {
+      height: 22px;
+      padding: 2px 6px;
+      font-size: 11px;
+      background: $bg-input;
+      border: 1px solid $border;
+      border-radius: var(--r-1);
+      color: $text-primary;
+      &:focus:not(:focus-visible) {
+        outline: none;
+      }
+      width: 100px;
+
+      &:focus {
+        border-color: $accent;
+      }
+    }
+
+    button {
+      height: 22px;
+      padding: 0 8px;
+      font-size: 11px;
+      background: rgba($accent, 0.15);
+      border: 1px solid rgba($accent, 0.3);
+      border-radius: var(--r-1);
+      color: var(--accent-soft-40);
+      cursor: pointer;
+      line-height: 1;
+
+      &:hover {
+        background: rgba($accent, 0.25);
+      }
+
+      &:last-child {
+        background: none;
+        border: none;
+        color: $text-muted;
+        padding: 0 4px;
+
+        &:hover {
+          color: $text-primary;
+        }
+      }
+    }
+  }
+
+  .file-path-bar {
+    display: flex;
+    align-items: center;
+    padding: 3px 8px;
+    gap: 4px;
+    background: $bg-primary;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+    font-size: 11px;
+    color: $text-secondary;
+    overflow: hidden;
+
+    .file-path-jump-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .file-path-jump {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      flex-shrink: 0;
+      background: $bg-input;
+      border: 1px solid $border;
+      border-radius: var(--r-1);
+      color: $text-primary;
+      cursor: pointer;
+      &:focus:not(:focus-visible) {
+        outline: none;
+      }
+
+      &:hover,
+      &.open {
+        border-color: $accent-hover;
+        background: $bg-hover;
+      }
+    }
+
+    .file-path-jump-menu {
+      position: fixed;
+      width: 180px;
+      background: $bg-secondary;
+      border: 1px solid $border;
+      border-radius: var(--r-2);
+      box-shadow: 0 4px 16px var(--shadow-1);
+      z-index: 2000;
+      padding: 4px 0;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+
+    .file-path-jump-group {
+      padding: 2px 0;
+    }
+
+    .file-path-jump-label {
+      padding: 4px 12px 2px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: $text-muted;
+    }
+
+    .file-path-jump-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      color: $text-primary;
+      white-space: nowrap;
+
+      &:hover {
+        background: var(--menu-hover);
+      }
+    }
+
+    .file-path-up,
+    .file-path-home,
+    .file-path-pin {
+      cursor: pointer;
+      padding: 1px 4px;
+      border-radius: var(--r-1);
+      font-size: 12px;
+      flex-shrink: 0;
+
+      &:hover {
+        background: $bg-hover;
+      }
+    }
+
+    // Parent button sits at the right edge of the path bar.
+    .file-path-up {
+      margin-left: auto;
+    }
+
+    .file-path-up.disabled {
+      cursor: default;
+      opacity: 0.35;
+
+      &:hover {
+        background: transparent;
+      }
+    }
+
+    .file-path-root {
+      flex-shrink: 0;
+      margin-left: 4px;
+      padding: 1px 6px;
+      border-radius: var(--r-1);
+      font-size: 10px;
+      color: var(--accent-soft-40);
+      background: rgba(0, 122, 204, 0.12);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 45%;
+    }
+
+    .file-path-text {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding-left: 2px;
+      cursor: text;
+
+      &:hover {
+        color: var(--text-primary);
+      }
+    }
+
+    .file-path-input {
+      flex: 1;
+      background: $bg-input;
+      border: 1px solid $accent-hover;
+      border-radius: var(--r-1);
+      color: $text-primary;
+      font-size: 11px;
+      padding: 2px 6px;
+      &:focus:not(:focus-visible) {
+        outline: none;
+      }
+      min-width: 0;
+
+      &::placeholder {
+        color: var(--text-dim);
+      }
+    }
+  }
+
+  .file-list-wrapper {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .file-list {
+    flex: 1;
+    overflow-y: scroll;
+    // Extra bottom padding so the list doesn't butt against the panel edge when
+    // it fills up — gives breathing room and a drop target for empty space.
+    padding: 2px 0 72px;
+
+    // Hide native scrollbar — custom overlay scrollbar takes over
+    &::-webkit-scrollbar {
+      display: none;
+    }
+    scrollbar-width: none;
+  }
+
+  .file-entry {
+    display: flex;
+    align-items: center;
+    padding: 2px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: $text-secondary;
+    gap: 6px;
+    transition: background var(--d-1);
+
+    &:hover {
+      background: $bg-hover;
+    }
+
+    &.is-dir {
+      color: var(--dir-fg);
+    }
+
+    .file-icon {
+      flex-shrink: 0;
+      width: 18px;
+      text-align: center;
+    }
+
+    .file-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-size {
+      flex-shrink: 0;
+      font-size: 10px;
+      color: $text-muted;
+    }
+  }
+
+  // Tree view rows
+  .tree-row {
+    display: flex;
+    align-items: center;
+    padding: 2px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: $text-secondary;
+    gap: 6px;
+    transition: background var(--d-1);
+    user-select: none;
+
+    &:hover {
+      background: $bg-hover;
+    }
+
+    &.selected {
+      background: $bg-active;
+    }
+
+    &.dir {
+      color: var(--dir-fg);
+    }
+
+    // A directory row currently under a dragged file/folder: show it as the
+    // upload target so the user knows where the items will land.
+    &.drop-target {
+      // 白字压 35% 强调色浅底在浅色主题只有 1.7:1：文字改用可读的强调色 token，
+      // 底色同时收窄到 18%（浅色下才压得住这个蓝）。
+      background: rgba($accent, 0.18);
+      outline: 1px solid $accent;
+      outline-offset: -1px;
+      box-shadow: inset 0 0 0 1px rgba($accent, 0.6);
+      color: var(--accent-soft-40);
+    }
+
+    // The node currently staged for a remote-internal paste (after "Copy").
+    &.copied {
+      background: rgba($accent, 0.18);
+      outline: 1px dashed rgba($accent, 0.7);
+      outline-offset: -1px;
+    }
+
+    .tree-icon {
+      flex-shrink: 0;
+      width: 18px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    .tree-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tree-size {
+      flex-shrink: 0;
+      font-size: 10px;
+      color: $text-muted;
+    }
+
+    .tree-spinner {
+      flex-shrink: 0;
+      font-size: 12px;
+      animation: spin 1s linear infinite;
+    }
+
+    .tree-copied-badge {
+      flex-shrink: 0;
+      margin-left: 4px;
+      padding: 0 5px;
+      font-size: 9px;
+      line-height: 14px;
+      border-radius: var(--r-pill);
+      background: $accent;
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+  }
+
+  .file-loading,
+  .file-error,
+  .file-empty {
+    padding: 16px;
+    text-align: center;
+    font-size: 12px;
+    color: $text-muted;
+  }
+
+  .file-error {
+    color: #f44747;
+  }
+
+  .file-progress-bar {
+    width: 100%;
+    height: 3px;
+    background: $bg-input;
+    border-radius: var(--r-pill);
+    overflow: hidden;
+    margin-bottom: 6px;
+  }
+
+  .file-progress-fill {
+    height: 100%;
+    width: 50%;
+    background: $accent;
+    border-radius: var(--r-pill);
+    animation: progress-indeterminate 1.2s ease-in-out infinite;
+  }
+
+  .file-progress-detail {
+    font-size: 10px;
+    color: $text-dim;
+    margin-top: 2px;
+  }
+
+  .file-pause-btn {
+    background: none;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    color: $text-muted;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0 6px;
+    height: 20px;
+    line-height: 1;
+    margin-left: 6px;
+
+    &:hover {
+      background: $bg-input;
+      color: $text-primary;
+    }
+  }
+
+  // Multi-file transfer progress list (bottom of the file panel).
+  .file-transfers {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    border-top: 1px solid $border;
+    background: $bg-secondary;
+    min-height: 48px;
+    overflow: hidden;
+  }
+
+  .file-transfers-drag {
+    flex-shrink: 0;
+    height: 5px;
+    cursor: row-resize;
+    background: transparent;
+
+    &:hover {
+      background: rgba(128, 128, 128, 0.25);
+    }
+  }
+
+  .file-transfers-head {
+    display: flex;
+    align-items: center;
+    padding: 2px 8px;
+    gap: 6px;
+    flex-shrink: 0;
+
+    .file-transfers-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: $text-dim;
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .file-transfers-body-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .file-transfers-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: scroll;
+    padding: 0 8px 4px;
+
+    // Hide native scrollbar — custom overlay scrollbar takes over.
+    &::-webkit-scrollbar {
+      display: none;
+    }
+    scrollbar-width: none;
+  }
+
+  .file-transfer-row {
+    padding: 3px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    .file-transfer-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .file-transfer-cancel {
+      flex: none;
+      width: 16px;
+      height: 16px;
+      line-height: 1;
+      padding: 0;
+      border: none;
+      border-radius: var(--r-1);
+      background: none;
+      color: $text-dim;
+      font-size: 11px;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(244, 71, 71, 0.15);
+        color: var(--danger-soft-40);
+      }
+    }
+
+    .file-transfer-name {
+      font-size: 11px;
+      color: $text-primary;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+
+    .file-transfer-bar {
+      height: 3px;
+      background: $bg-input;
+      border-radius: var(--r-pill);
+      overflow: hidden;
+      margin-bottom: 2px;
+    }
+
+    .file-transfer-fill {
+      height: 100%;
+      width: 50%;
+      background: $accent;
+      border-radius: var(--r-pill);
+      animation: progress-indeterminate 1.2s ease-in-out infinite;
+      transition: width var(--d-2) ease;
+    }
+
+    .file-transfer-meta {
+      font-size: 10px;
+      color: $text-dim;
+    }
+
+    .file-transfer-error {
+      color: #f44747;
+    }
+
+    .file-transfer-cancelled {
+      color: $text-dim;
+    }
+
+    &.error .file-transfer-name {
+      color: #f44747;
+    }
+
+    &.done .file-transfer-fill {
+      background: #4caf50;
+    }
+
+    &.cancelled {
+      opacity: 0.55;
+    }
+
+    &.cancelled .file-transfer-fill {
+      background: $text-dim;
+    }
+  }
+
+  @keyframes progress-indeterminate {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(200%);
+    }
+  }
+}

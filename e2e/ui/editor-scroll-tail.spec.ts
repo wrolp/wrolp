@@ -58,7 +58,7 @@ async function openFile(page: Page, name: string, fileContent: Record<string, un
   const file = page.locator('.tree-row.file', { hasText: name })
   await expect(file).toBeVisible()
   await file.click()
-  await expect(page.locator('.term-pane-file-tab', { hasText: name })).toHaveCount(1)
+  await expect(page.locator('.tab-item', { hasText: name })).toHaveCount(1)
 }
 
 /** Vertical scroll position of the Monaco view (px), read off its line container. */
@@ -155,9 +155,7 @@ test('the tail-room toggle is on by default and can turn the room off again', as
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
   await wheelToBottom(page)
-  await expect
-    .poll(() => offsetInLines(page, LAST_LINE), { timeout: 15_000 })
-    .toBeGreaterThan(5)
+  await expect.poll(() => offsetInLines(page, LAST_LINE), { timeout: 15_000 }).toBeGreaterThan(5)
 
   // On again → the tail room is back.
   await toggle.click()

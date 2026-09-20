@@ -1,0 +1,328 @@
+@use 'variables' as *;
+
+// ===== Subnet scan (inspector › Network) =====
+// This was a 720px modal. Everything below is sized for the inspector column
+// instead, which is the point of the move: a scan over a /24 outlives any
+// dialog, and the terminal has to stay usable while it runs.
+.netscan-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.netscan-form {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: var(--sp-2);
+  border-bottom: 1px solid $border;
+
+  // The shared `.form-group` rule spaces fields with `margin-bottom`; here the
+  // parent's `gap` owns the spacing, so that margin is released, not doubled.
+  .form-group {
+    margin-bottom: 0;
+    min-width: 0;
+    flex: 1 1 120px;
+  }
+
+  .form-group label {
+    font-size: var(--fs-xs);
+    margin-bottom: 2px;
+  }
+
+  // `.form-group input` is sized for a dialog; the column wants the same
+  // controls, smaller.
+  .form-group input,
+  .form-group select {
+    padding: 4px 6px;
+    font-size: var(--fs-sm);
+  }
+}
+
+// Two fields abreast while there is room, stacked when there is not — the
+// alternative is two inputs too narrow to read their own value.
+.netscan-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.scan-error {
+  flex: none;
+  margin: var(--sp-2) var(--sp-2) 0;
+  padding: 8px 10px;
+  background: rgba($danger, 0.12);
+  border: 1px solid rgba($danger, 0.4);
+  border-radius: var(--r-1);
+  font-size: var(--fs-sm);
+  color: var(--danger-soft-40);
+  word-break: break-all;
+}
+
+.scan-progress {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-2) 0;
+  font-size: var(--fs-sm);
+  color: $text-secondary;
+
+  .scan-progress-bar {
+    flex: 1;
+    min-width: 0;
+    height: 4px;
+    background: $bg-input;
+    border-radius: var(--r-pill);
+    overflow: hidden;
+
+    .scan-progress-fill {
+      height: 100%;
+      background: $accent;
+      transition: width var(--d-2) ease;
+    }
+  }
+}
+
+.scan-spinner {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 2px solid rgba($accent, 0.3);
+  border-top-color: $accent;
+  border-radius: var(--r-circle);
+  animation: spin 0.8s linear infinite;
+}
+
+.scan-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+
+  .btn-primary {
+    padding: 5px 14px;
+    // $success 在深色主题 (#1fa87e) 上白字只有 3.0:1 → 统一用 success-solid。
+    background: var(--success-solid);
+    color: #fff;
+    border: none;
+    border-radius: var(--r-1);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+
+    &:hover {
+      background: #0a5c0a;
+    }
+
+    &:disabled {
+      background: var(--success-solid);
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+
+  .btn-secondary {
+    padding: 5px 12px;
+    border-radius: var(--r-1);
+    border: 1px solid $border;
+    background: $bg-input;
+    color: $text-primary;
+    cursor: pointer;
+    font-size: var(--fs-sm);
+
+    &:hover {
+      background: var(--control-hover);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+}
+
+.scan-advanced-toggle {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: var(--fs-sm);
+  color: $text-secondary;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    color: $accent-hover;
+  }
+}
+
+.scan-hint {
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: $text-dim;
+}
+
+// The scrolling region — the form, the error and the progress bar hold their
+// rows above it, so a long result list cannot push the start button away.
+.scan-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2);
+
+  .scan-results-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    padding: var(--sp-1) 0;
+    background: $bg-secondary;
+    font-size: var(--fs-xs);
+    color: $text-secondary;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+
+    .scan-results-count {
+      background: $bg-input;
+      border-radius: var(--r-3);
+      padding: 0 7px;
+      font-size: var(--fs-xs);
+      color: $text-primary;
+    }
+  }
+
+  .scan-empty {
+    padding: var(--sp-4) var(--sp-2);
+    text-align: center;
+    font-size: var(--fs-sm);
+    color: $text-dim;
+    border: 1px dashed $border;
+    border-radius: var(--r-1);
+  }
+}
+
+.scan-list {
+  list-style: none;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.scan-item {
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  padding: 6px var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
+.scan-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.scan-item-addr {
+  font-family: $font-mono;
+  font-size: var(--fs-sm);
+  color: $text-primary;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-item-rtt {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: $text-muted;
+}
+
+.scan-item-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.scan-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: var(--r-circle);
+  background: $success;
+  box-shadow: 0 0 4px rgba($success, 0.6);
+}
+
+.scan-banner {
+  font-family: $font-mono;
+  font-size: var(--fs-xs);
+  color: $text-secondary;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-service {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: var(--r-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+
+  &.service-ssh {
+    background: rgba($accent, 0.18);
+    color: var(--accent-soft-40);
+  }
+
+  &.service-telnet {
+    background: rgba($warning, 0.16);
+    color: var(--warning-soft-40);
+  }
+
+  &.service-unknown {
+    background: $bg-input;
+    color: $text-secondary;
+  }
+}
+
+.scan-add-btn {
+  padding: 2px 10px;
+  border-radius: var(--r-1);
+  border: 1px solid $accent;
+  background: none;
+  color: $accent-hover;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+
+  &:hover {
+    background: rgba($accent, 0.15);
+  }
+}
+
+.scan-added {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  color: $success;
+}

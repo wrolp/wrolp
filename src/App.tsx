@@ -18,12 +18,17 @@ import {
 } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
+import { InspectorPanel, type InspectorFloatState } from './components/InspectorPanel'
+import { NetworkScanPanel } from './components/NetworkScanPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
 import { CommandListPanel } from './components/CommandListPanel'
+import { StatusBar } from './components/StatusBar'
 import NetToolsPanel from './components/nettools/NetToolsPanel'
 import { Icon } from './components/Icon'
+import type { IconName } from './components/Icon'
+import { shellIconName } from './lib/shellIcon'
 import FloatingWindow from './components/FloatingWindow'
 import type { FileTreeHandle } from './components/FilePanel'
 import type {
@@ -36,8 +41,9 @@ import type {
   LocalTerminalEntry,
   FloatingItem,
   FloatingKind,
+  DockSide,
 } from './types'
-import { defaultLayout, mergeLayout } from './types'
+import { defaultLayout, mergeLayout, DEFAULT_DRAWER_HEIGHT } from './types'
 import {
   SplitNode,
   SplitBranch,
@@ -984,6 +990,37 @@ function HighlightSettingsCard({
   )
 }
 
+// A tab bar entry that owns a workspace: a session with a pane tree of its own.
+// The other kinds — Settings, a docker log view, an open file — are entries in
+// the same bar but have no panes, so anything that splits, focuses or sends has
+// to skip them when it works out "the current workspace".
+function isWorkspaceTab(tab: TabInfo | undefined): tab is TabInfo {
+  return (
+    tab != null &&
+    !tab.embedded &&
+    (tab.tabType === 'terminal' ||
+      tab.tabType === 'localShell' ||
+      tab.tabType === 'serial' ||
+      tab.tabType === 'telnet')
+  )
+}
+
+// The bar entry that owns a session: a root tab owns itself, an embedded pane
+// belongs to whichever root's tree holds it. Anything that has to *select* a
+// session after leaving a file or a float behind needs this, because an embedded
+// pane id is not in the tab bar.
+function workspaceRootOf(
+  trees: Record<number, SplitNode>,
+  tabs: TabInfo[],
+  sessionTabId: number,
+): number | null {
+  if (isWorkspaceTab(tabs.find((t) => t.tabId === sessionTabId))) return sessionTabId
+  for (const [root, tree] of Object.entries(trees)) {
+    if (collectLeaves(tree).some((l) => l.tabId === sessionTabId)) return Number(root)
+  }
+  return null
+}
+
 export default function App() {
   const { t, lang, setLang } = useI18n()
   const [tabs, setTabs] = useState<TabInfo[]>([])
@@ -1025,6 +1062,11 @@ export default function App() {
     (updater: (prev: WorkspaceLayout) => WorkspaceLayout) => setLayout(updater),
     [],
   )
+  // The inspector column popped out into its own window (null = docked in the
+  // row). Not part of `layout`: a float shares the restart rule every other
+  // popped-out pane follows, and its `z` rides the same ladder the terminal
+  // floats use so the two stack by recency rather than by kind.
+  const [inspectorFloat, setInspectorFloat] = useState<InspectorFloatState | null>(null)
 
   // Derived values so the rest of the render can keep using the familiar names.
   const sidebarWidth = layout.sidebar.width
@@ -1035,11 +1077,20 @@ export default function App() {
   const connectionListHeight = layout.sidebar.sections.connections.height ?? 200
   const dockerHeight = layout.sidebar.sections.docker.height ?? 220
   const bottomPanelExpanded = layout.bottomPanel.visible
+  const inspectorOpen = layout.inspector.visible
   // Remote filesystem shown in the Files panel (null = the tab's main session).
   const [fileTarget, setFileTarget] = useState<TargetRef | null>(null)
   const [dockerAnalysisTarget, setDockerAnalysisTarget] = useState<string | null>(null)
   // Which filesystem mode the Files panel switcher is on (ssh / jump / docker).
   const [fileMode, setFileMode] = useState<FileTargetMode>('ssh')
+  // The nav column's single filter box. Deliberately not persisted and not
+  // shared with the command drawer's own search: a filter that survives a
+  // restart hides the list on next launch, and two boxes driving one list is
+  // worse than one box driving its own region.
+  const [navQuery, setNavQuery] = useState('')
+  // Trimmed but not case-folded: the lists lower-case it themselves to match,
+  // and the "no match" state echoes it back, so it has to stay as typed.
+  const navFilter = navQuery.trim()
 
   // Shell (terminal) pane height / collapse when a file editor is open
 
@@ -1117,15 +1168,30 @@ export default function App() {
   }
   const leafIdCounter = useRef(1)
   const newLeafId = useCallback(() => `leaf-${leafIdCounter.current++}`, [])
+  // The workspace the pane-level world belongs to. Usually that is simply the
+  // selected tab, but a file / Settings / docker-log entry sits in the same tab
+  // bar while owning no panes — selecting one must not move the terminal focus,
+  // the Files panel or the AI binding, so they keep following the workspace
+  // selected before it. (Writing the ref during render matches the `tabsRef`
+  // pattern below and stays correct on the render that adds the tab.)
+  const selectedTab = tabs.find((t) => t.tabId === activeTabId)
+  const workspaceAnchorRef = useRef<number | null>(null)
+  if (isWorkspaceTab(selectedTab)) workspaceAnchorRef.current = selectedTab.tabId
+  const workspaceAnchorId = isWorkspaceTab(selectedTab)
+    ? selectedTab.tabId
+    : workspaceAnchorRef.current
+  const workspaceAnchorIdRef = useRef<number | null>(workspaceAnchorId)
+  workspaceAnchorIdRef.current = workspaceAnchorId
   // Active workspace's tree (a stable single leaf if missing).
   const splitTree: SplitNode =
-    activeTabId != null
-      ? (splitTrees[activeTabId] ?? makeLeaf(newLeafId(), activeTabId))
+    workspaceAnchorId != null
+      ? (splitTrees[workspaceAnchorId] ?? makeLeaf(newLeafId(), workspaceAnchorId))
       : makeLeaf('leaf-0')
   const splitTreeRef = useRef<SplitNode>(splitTree)
   splitTreeRef.current = splitTree
   // Focused leaf within the active workspace.
-  const focusedLeafId = activeTabId != null ? (focusedLeafByRoot[activeTabId] ?? null) : null
+  const focusedLeafId =
+    workspaceAnchorId != null ? (focusedLeafByRoot[workspaceAnchorId] ?? null) : null
   const focusedLeafIdRef = useRef<string | null>(focusedLeafId)
   focusedLeafIdRef.current = focusedLeafId
   // The connection whose remote filesystem the Files panel should show: the
@@ -1133,8 +1199,8 @@ export default function App() {
   // workspace's own session). Clicking a different split pane switches the
   // Files panel to that pane's connection.
   const focusedLeafTabId: number | null =
-    activeTabId != null
-      ? ((focusedLeafId ? findLeaf(splitTree, focusedLeafId)?.tabId : null) ?? activeTabId)
+    workspaceAnchorId != null
+      ? ((focusedLeafId ? findLeaf(splitTree, focusedLeafId)?.tabId : null) ?? workspaceAnchorId)
       : null
   // connectionId of the pane the command list sends to (drives its
   // "this connection only" filter + default scope for new commands).
@@ -1153,7 +1219,7 @@ export default function App() {
   // Update the active workspace's tree.
   const updateActiveTree = useCallback(
     (updater: (t: SplitNode) => SplitNode) => {
-      const root = activeTabIdRef.current
+      const root = workspaceAnchorIdRef.current
       if (root == null) return
       setSplitTrees((prev) => ({
         ...prev,
@@ -1164,7 +1230,7 @@ export default function App() {
   )
   // Focus a pane within the active workspace.
   const setFocusedLeafId = useCallback((id: string | null) => {
-    const root = activeTabIdRef.current
+    const root = workspaceAnchorIdRef.current
     if (root == null) return
     setFocusedLeafByRoot((prev) => ({ ...prev, [root]: id ?? '' }))
   }, [])
@@ -1217,8 +1283,12 @@ export default function App() {
       direction: 'row' | 'column',
       dockerContainer?: string,
     ): number | null => {
-      const rootId = activeTabIdRef.current
+      const rootId = workspaceAnchorIdRef.current
       if (rootId == null) return null
+      // The new pane lives in the anchor workspace, so the bar follows it: a file
+      // or Settings tab can be selected while the split happens, and would
+      // otherwise keep covering the pane that just opened.
+      setActiveTabId(rootId)
       const tree = splitTreeRef.current
       const focus = focusedLeafIdRef.current
       const focusLeaf = focus ? findLeaf(tree, focus) : null
@@ -1259,7 +1329,7 @@ export default function App() {
   // relative to the drop target within the active workspace's split tree.
   const performPaneMove = useCallback(
     (sourceId: string, targetId: string, position: DropPosition) => {
-      const root = activeTabIdRef.current
+      const root = workspaceAnchorIdRef.current
       if (root == null) return
       setSplitTrees((prev) => {
         const tree = prev[root]
@@ -1334,11 +1404,11 @@ export default function App() {
   // Open (or toggle closed) a Docker container's filesystem in the Files panel.
   const handleOpenContainer = useCallback(
     (container: ContainerInfo) => {
-      if (activeTabId == null) return
+      if (focusedLeafTabId == null) return
       setFileTarget((prev) =>
         prev?.kind === 'docker' && prev.container === container.name
           ? null
-          : { kind: 'docker', jumpTabId: activeTabId, container: container.name },
+          : { kind: 'docker', jumpTabId: focusedLeafTabId, container: container.name },
       )
       setFileMode('docker')
       updateLayout((l) => ({
@@ -1352,7 +1422,7 @@ export default function App() {
         },
       }))
     },
-    [activeTabId],
+    [focusedLeafTabId],
   )
 
   // Open a new pane (split) inside the current workspace connected to the same
@@ -1360,8 +1430,8 @@ export default function App() {
   // `docker exec -it <container> /bin/bash || docker exec -it <container> /bin/sh`
   const handleEnterContainerShell = useCallback(
     (container: ContainerInfo) => {
-      if (activeTabId == null) return
-      const activeTab = tabs.find((t) => t.tabId === activeTabId)
+      if (focusedLeafTabId == null) return
+      const activeTab = tabs.find((t) => t.tabId === focusedLeafTabId)
       if (!activeTab?.connectionId) return
       const conn = connections.find((c) => c.id === activeTab.connectionId)
       if (!conn) return
@@ -1371,29 +1441,30 @@ export default function App() {
       // so it is sent on connect and re-sent on any reconnect (float/restore).
       if (newTabId == null) return
     },
-    [activeTabId, tabs, connections, openInSplit],
+    [focusedLeafTabId, tabs, connections, openInSplit],
   )
 
-  // Trigger Docker container analysis (opens report in bottom panel's "Docker" tab).
+  // Trigger Docker container analysis (opens the report in the inspector's
+  // "Docker" tab, which is the tab the target is focused on).
   const handleAnalyzeContainer = useCallback(
     (container: ContainerInfo) => {
       setDockerAnalysisTarget(container.name)
-      // Ensure bottom panel is visible
-      if (!layout.bottomPanel.visible) {
-        updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
-      }
+      updateLayout((l) => ({
+        ...l,
+        inspector: { ...l.inspector, visible: true, tab: 'docker' },
+      }))
     },
-    [layout.bottomPanel.visible],
+    [updateLayout],
   )
 
   // Open a Docker container log viewer in a new tab.
   // Restart a Docker container
   const handleRestartContainer = useCallback(
     async (container: ContainerInfo) => {
-      if (activeTabId == null) return
+      if (focusedLeafTabId == null) return
       setToast({ kind: 'progress', text: t('dockerRestarting', { name: container.name }) })
       try {
-        await restartDockerContainer(activeTabId, container.name)
+        await restartDockerContainer(focusedLeafTabId, container.name)
         setToast({ kind: 'success', text: t('dockerRestarted', { name: container.name }) })
         setDockerRefreshKey((k) => k + 1)
       } catch (e) {
@@ -1405,7 +1476,7 @@ export default function App() {
         })
       }
     },
-    [activeTabId, t],
+    [focusedLeafTabId, t],
   )
 
   // Bumped to force the DockerPanel list to reload after a stop/delete/start/restart.
@@ -1414,10 +1485,10 @@ export default function App() {
   // Stop a Docker container
   const handleStopContainer = useCallback(
     async (container: ContainerInfo) => {
-      if (activeTabId == null) return
+      if (focusedLeafTabId == null) return
       setToast({ kind: 'progress', text: t('dockerStopping', { name: container.name }) })
       try {
-        await stopDockerContainer(activeTabId, container.name)
+        await stopDockerContainer(focusedLeafTabId, container.name)
         setToast({ kind: 'success', text: t('dockerStopped', { name: container.name }) })
         setDockerRefreshKey((k) => k + 1)
       } catch (e) {
@@ -1429,16 +1500,16 @@ export default function App() {
         })
       }
     },
-    [activeTabId, t],
+    [focusedLeafTabId, t],
   )
 
   // Start a Docker container
   const handleStartContainer = useCallback(
     async (container: ContainerInfo) => {
-      if (activeTabId == null) return
+      if (focusedLeafTabId == null) return
       setToast({ kind: 'progress', text: t('dockerStarting', { name: container.name }) })
       try {
-        await startDockerContainer(activeTabId, container.name)
+        await startDockerContainer(focusedLeafTabId, container.name)
         setToast({ kind: 'success', text: t('dockerStarted', { name: container.name }) })
         setDockerRefreshKey((k) => k + 1)
       } catch (e) {
@@ -1450,16 +1521,16 @@ export default function App() {
         })
       }
     },
-    [activeTabId, t],
+    [focusedLeafTabId, t],
   )
 
   // Remove a Docker container
   const handleDeleteContainer = useCallback(
     async (container: ContainerInfo) => {
-      if (activeTabId == null) return
+      if (focusedLeafTabId == null) return
       setToast({ kind: 'progress', text: t('dockerDeleting', { name: container.name }) })
       try {
-        await removeDockerContainer(activeTabId, container.name)
+        await removeDockerContainer(focusedLeafTabId, container.name)
         setToast({ kind: 'success', text: t('dockerDeleted', { name: container.name }) })
         setDockerRefreshKey((k) => k + 1)
       } catch (e) {
@@ -1471,12 +1542,12 @@ export default function App() {
         })
       }
     },
-    [activeTabId, t],
+    [focusedLeafTabId, t],
   )
 
   const handleViewContainerLogs = useCallback(
     (container: ContainerInfo) => {
-      if (activeTabId == null) return
+      if (focusedLeafTabId == null) return
       const tabId = nextTabId++
       const newTab: TabInfo = {
         tabId,
@@ -1484,24 +1555,26 @@ export default function App() {
         host: `Docker`,
         status: 'connected',
         tabType: 'dockerLog',
-        jumpTabId: activeTabId,
+        jumpTabId: focusedLeafTabId,
         containerName: container.name,
         containerId: container.id,
         containerImage: container.image,
         embedded: true, // lives on the pane header, like an open file
       }
       setTabs((prev) => [...prev, newTab])
-      // Show the log view on the focused pane (like opening a file).
-      if (activeTabId != null) setShellViewFor(activeTabId, `dockerlog:${tabId}`)
+      // Show the log view on the focused pane (like opening a file), and select
+      // that pane's workspace so a file or Settings tab can't cover it.
+      setShellViewFor(focusedLeafTabId, `dockerlog:${tabId}`)
+      const rootId = workspaceAnchorIdRef.current
+      if (rootId != null) setActiveTabId(rootId)
     },
-    [activeTabId],
+    [focusedLeafTabId],
   )
 
   // Remote file editor state
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const editorTabsRef = useRef(editorTabs)
   editorTabsRef.current = editorTabs
-  const [activeEditorKey, setActiveEditorKey] = useState<Record<number, string>>({})
   // Editor tab whose close was intercepted because it has unsaved changes.
   // While set, a confirm dialog asks whether to save before closing.
   const [pendingCloseEditorKey, setPendingCloseEditorKey] = useState<string | null>(null)
@@ -1522,10 +1595,10 @@ export default function App() {
   const [tunnelFatalInfo, setTunnelFatalInfo] = useState<{ host: string; port: string } | null>(
     null,
   )
-  // Which view occupies the shell pane area, per SSH session (tabId):
-  // 'terminal' or the key of the active editor tab (editor replaces the
-  // terminal area). Isolated per session so files opened in one tab don't
-  // show up in another.
+  // Which view occupies the shell pane area, per session (tabId): 'terminal' or
+  // `dockerlog:<id>`. Files are not here — an open file owns a tab bar entry and
+  // its own surface. Isolated per session so a log view in one tab doesn't cover
+  // another's terminal.
   const [shellView, setShellView] = useState<Record<number, string>>({})
   const getShellView = (tabId: number) => shellView[tabId] ?? 'terminal'
   const setShellViewFor = useCallback((tabId: number, view: string) => {
@@ -1533,9 +1606,6 @@ export default function App() {
       if (prev[tabId] === view) return prev
       return { ...prev, [tabId]: view }
     })
-  }, [])
-  const setActiveEditorKeyFor = useCallback((tabId: number, key: string) => {
-    setActiveEditorKey((prev) => ({ ...prev, [tabId]: key }))
   }, [])
   const [syncEnabled, setSyncEnabled] = useState(() => {
     try {
@@ -2160,6 +2230,7 @@ export default function App() {
   //   Ctrl+Alt+B        move sidebar to the other side
   //   Ctrl+J            toggle the bottom/panel
   //   Ctrl+Alt+J        move the panel to bottom <-> right
+  //   Ctrl+Alt+I        toggle the inspector column
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const ctrl = e.ctrlKey || e.metaKey
@@ -2194,6 +2265,17 @@ export default function App() {
         updateLayout((l) => ({
           ...l,
           bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
+        }))
+        return
+      }
+      if (key === 'i' && e.altKey) {
+        e.preventDefault()
+        // Clearing the float is right on both branches: closing the column must
+        // end it, and opening one is only possible from a state with no float.
+        setInspectorFloat(null)
+        updateLayout((l) => ({
+          ...l,
+          inspector: { ...l.inspector, visible: !l.inspector.visible },
         }))
         return
       }
@@ -2550,8 +2632,11 @@ export default function App() {
       distro?: string,
       entryId?: string,
     ): number | null => {
-      const rootId = activeTabIdRef.current
+      const rootId = workspaceAnchorIdRef.current
       if (rootId == null) return null
+      // Same reason as `openInSplit`: the pane lands in the anchor workspace, so
+      // select it or a file tab keeps covering the new shell.
+      setActiveTabId(rootId)
       const tree = splitTreeRef.current
       const focus = focusedLeafIdRef.current
       const focusLeaf = focus ? findLeaf(tree, focus) : null
@@ -2608,119 +2693,127 @@ export default function App() {
     handleOpenSettings()
   }, [handleOpenSettings])
 
-  // Open AI chat. If `tabId` is given, attach to that shell tab (open its
-  // docked AI pane); otherwise open/activate the standalone AI Chat tab.
+  // Open AI chat. The conversation belongs to the focused pane (see
+  // `focusedLeafTabId`), and the panel that shows it lives in the inspector
+  // column, so the terminal stays visible while it runs — the reason this
+  // replaced both the full-screen AI tab and the "ask from anywhere lands in a
+  // separate tab" behaviour. `contextText` is handed to that one panel; the
+  // per-pane dock reads the same conversation but never consumes it, otherwise
+  // an open dock and the inspector would each inject the selection once.
   const handleOpenAiChat = useCallback(
-    (contextText?: string, tabId?: number) => {
+    (contextText?: string) => {
       if (contextText) setAiContextText(contextText)
-      if (tabId !== undefined) {
-        setShowAiByTab((prev) => ({ ...prev, [tabId]: true }))
-        setAiFloatingTabId(null)
-        setActiveTabId(tabId)
-        return
-      }
-      const existing = tabs.find((t) => t.tabType === 'aiChat')
-      if (existing) {
-        setActiveTabId(existing.tabId)
-        return
-      }
-      const newTabId = nextTabId++
-      const aiChatTab: TabInfo = {
-        tabId: newTabId,
-        connectionName: 'AI Chat',
-        host: '',
-        status: 'aiChat',
-        tabType: 'aiChat',
-      }
-      setTabs((prev) => [...prev, aiChatTab])
-      setActiveTabId(newTabId)
+      updateLayout((l) => ({
+        ...l,
+        inspector: { ...l.inspector, visible: true, tab: 'ai' },
+      }))
     },
-    [tabs],
+    [updateLayout],
   )
+
+  // Remove the editor buffers of the given sessions *and* their tab bar entries.
+  // A `fileEditor` tab owns a tabId of its own — it is not in `sessionIds` — so
+  // matching on the buffer key is what stops an orphan tab being left behind
+  // pointing at a file that no longer exists. Returns the dropped keys so the
+  // caller can tell whether it also has to move the selection.
+  const dropSessionFiles = useCallback((sessionIds: number[]) => {
+    const keys = new Set(
+      editorTabsRef.current.filter((et) => sessionIds.includes(et.sshTabId)).map((et) => et.key),
+    )
+    if (keys.size === 0) return keys
+    setEditorTabs((prev) => prev.filter((et) => !keys.has(et.key)))
+    setTabs((prev) =>
+      prev.filter((t) => !(t.tabType === 'fileEditor' && t.editorKey && keys.has(t.editorKey))),
+    )
+    return keys
+  }, [])
 
   // Close a top-level tab (workspace): disconnect and remove its own session
   // plus every embedded session created by splitting inside it, and drop its
   // tree.
-  const closeTab = useCallback(async (tabId: number, opts?: { force?: boolean }) => {
-    const root = tabsRef.current.find((t) => t.tabId === tabId)
-    if (!root) return
-    // Sessions belonging to this workspace: the root itself + any embedded ones
-    // referenced by its tree.
-    const tree = splitTreesRef.current[tabId]
-    const sessionIds = tree
-      ? collectLeaves(tree)
-          .map((l) => l.tabId)
-          .filter((x): x is number => x != null)
-      : [tabId]
-    // Ask-before-close guard: an accidental click must not silently discard the
-    // open (possibly unsaved) files owned by the sessions this close tears down.
-    // `force` is set by the confirm handler once the user has agreed.
-    if (!opts?.force && confirmCloseWithFilesRef.current) {
-      const files = editorTabsRef.current.filter((et) => sessionIds.includes(et.sshTabId))
-      if (files.length > 0) {
-        setPendingClose({
-          kind: 'tab',
-          rootId: tabId,
-          label: root.connectionName,
-          fileCount: files.length,
-          dirtyKeys: files.filter((f) => f.isDirty).map((f) => f.key),
-        })
-        return
-      }
-    }
-    for (const sid of sessionIds) {
-      const s = tabsRef.current.find((t) => t.tabId === sid)
-      if (s?.tabType === 'terminal') {
-        try {
-          await invoke('disconnect', { tabId: sid })
-        } catch (e) {
-          console.error('Disconnect error:', e)
-        }
-      } else if (s?.tabType === 'localShell') {
-        try {
-          await localClose(sid)
-        } catch (e) {
-          console.error('Local shell close error:', e)
+  const closeTab = useCallback(
+    async (tabId: number, opts?: { force?: boolean }) => {
+      const root = tabsRef.current.find((t) => t.tabId === tabId)
+      if (!root) return
+      // Sessions belonging to this workspace: the root itself + any embedded ones
+      // referenced by its tree.
+      const tree = splitTreesRef.current[tabId]
+      const sessionIds = tree
+        ? collectLeaves(tree)
+            .map((l) => l.tabId)
+            .filter((x): x is number => x != null)
+        : [tabId]
+      // Ask-before-close guard: an accidental click must not silently discard the
+      // open (possibly unsaved) files owned by the sessions this close tears down.
+      // `force` is set by the confirm handler once the user has agreed.
+      if (!opts?.force && confirmCloseWithFilesRef.current) {
+        const files = editorTabsRef.current.filter((et) => sessionIds.includes(et.sshTabId))
+        if (files.length > 0) {
+          setPendingClose({
+            kind: 'tab',
+            rootId: tabId,
+            label: root.connectionName,
+            fileCount: files.length,
+            dirtyKeys: files.filter((f) => f.isDirty).map((f) => f.key),
+          })
+          return
         }
       }
-    }
-    setTabs((prev) => prev.filter((t) => !sessionIds.includes(t.tabId)))
-    setSplitTrees((prev) => {
-      const n = { ...prev }
-      delete n[tabId]
-      return n
-    })
-    setFocusedLeafByRoot((prev) => {
-      const n = { ...prev }
-      delete n[tabId]
-      return n
-    })
-    // Clean up per-session view/editor state belonging to the closed sessions.
-    setShellView((prev) => {
-      const n = { ...prev }
-      for (const sid of sessionIds) delete n[sid]
-      return n
-    })
-    setActiveEditorKey((prev) => {
-      const n = { ...prev }
-      for (const sid of sessionIds) delete n[sid]
-      return n
-    })
-    setEditorTabs((prev) => prev.filter((et) => !sessionIds.includes(et.sshTabId)))
-    setActiveTabId((prev) => {
-      if (prev !== tabId) return prev
-      const remaining = tabsRef.current.filter(
-        (t) =>
-          (t.tabType === 'terminal' ||
-            t.tabType === 'localShell' ||
-            t.tabType === 'serial' ||
-            t.tabType === 'telnet') &&
-          !t.embedded &&
-          !sessionIds.includes(t.tabId),
-      )
-      return remaining.length ? remaining[0].tabId : null
-    })
-  }, [])
+      for (const sid of sessionIds) {
+        const s = tabsRef.current.find((t) => t.tabId === sid)
+        if (s?.tabType === 'terminal') {
+          try {
+            await invoke('disconnect', { tabId: sid })
+          } catch (e) {
+            console.error('Disconnect error:', e)
+          }
+        } else if (s?.tabType === 'localShell') {
+          try {
+            await localClose(sid)
+          } catch (e) {
+            console.error('Local shell close error:', e)
+          }
+        }
+      }
+      setSplitTrees((prev) => {
+        const n = { ...prev }
+        delete n[tabId]
+        return n
+      })
+      setFocusedLeafByRoot((prev) => {
+        const n = { ...prev }
+        delete n[tabId]
+        return n
+      })
+      // Clean up per-session view/editor state belonging to the closed sessions.
+      setShellView((prev) => {
+        const n = { ...prev }
+        for (const sid of sessionIds) delete n[sid]
+        return n
+      })
+      // The editor buffers die with their session, and so do their tab bar entries.
+      const dyingKeys = dropSessionFiles(sessionIds)
+      setTabs((prev) => prev.filter((t) => !sessionIds.includes(t.tabId)))
+      setActiveTabId((prev) => {
+        // `tabsRef.current` is still the pre-close list here, so "was the selected
+        // tab removed" has to be answered from the two sets above: the workspace
+        // itself, or one of its files that was the active tab.
+        const gone =
+          prev == null ||
+          prev === tabId ||
+          tabsRef.current.some(
+            (t) =>
+              t.tabId === prev && t.tabType === 'fileEditor' && dyingKeys.has(t.editorKey ?? ''),
+          )
+        if (!gone) return prev
+        const remaining = tabsRef.current.filter(
+          (t) => isWorkspaceTab(t) && !sessionIds.includes(t.tabId),
+        )
+        return remaining.length ? remaining[0].tabId : null
+      })
+    },
+    [dropSessionFiles],
+  )
 
   // Select connection — always open a new tab
   const handleSelectConnection = useCallback(
@@ -2730,11 +2823,11 @@ export default function App() {
     [openTab],
   )
 
-  // Open a remote file in the inline editor (loads content on demand).
+  // Open a remote file as a first-class editor tab (loads content on demand).
   // `target` identifies which remote filesystem the file lives on.
   const openInEditor = useCallback(async (target: TargetRef, path: string) => {
     const key = `${JSON.stringify(target)}:${path}`
-    const legacyTabId =
+    const ownerTabId =
       target.kind === 'session' ||
       target.kind === 'local' ||
       target.kind === 'wsl' ||
@@ -2747,7 +2840,7 @@ export default function App() {
         ...prev,
         {
           key,
-          sshTabId: legacyTabId,
+          sshTabId: ownerTabId,
           targetRef: target,
           path,
           name: path.split('/').pop() || path,
@@ -2765,8 +2858,33 @@ export default function App() {
         },
       ]
     })
-    setActiveEditorKeyFor(legacyTabId, key)
-    setShellViewFor(legacyTabId, key)
+    // The tab bar entry is created (or focused) here rather than derived from
+    // `editorTabs`, so the two lists stay in lockstep through the same close
+    // paths instead of one silently outliving the other.
+    const name = path.split('/').pop() || path
+    const existing = tabsRef.current.find((t) => t.tabType === 'fileEditor' && t.editorKey === key)
+    if (existing) {
+      setTabs((prev) =>
+        prev.map((t) => (t.tabId === existing.tabId ? { ...t, connectionName: name } : t)),
+      )
+      setActiveTabId(existing.tabId)
+    } else {
+      const tabId = nextTabId++
+      setTabs((prev) => [
+        ...prev,
+        {
+          tabId,
+          connectionName: name,
+          // `host` is what the tab bar tooltip and the window title read; for a
+          // file the full path is the useful one.
+          host: path,
+          status: 'connected',
+          tabType: 'fileEditor',
+          editorKey: key,
+        },
+      ])
+      setActiveTabId(tabId)
+    }
     try {
       const fc = await fsReadFileContent(target, path, {
         maxSize: (typeof maxFileOpenSizeMB === 'number' ? maxFileOpenSizeMB : 5) * 1024 * 1024,
@@ -2800,36 +2918,43 @@ export default function App() {
     }
   }, [])
 
+  // Close a file: the editor buffer and its tab bar entry go together, and the
+  // selection falls back to the next file of the same session, then to the
+  // session itself. Falling back to a *session* is what keeps the tab bar from
+  // landing on a workspace the user never opened.
   const closeEditorTab = useCallback((key: string) => {
     const prev = editorTabsRef.current
     const closing = prev.find((t) => t.key === key)
     if (!closing) return
     const sshTabId = closing.sshTabId
-    // Neighbour is picked *within the closing file's own session*: the pane's
-    // file tabs are per session, so a global index would jump to an unrelated
-    // file when another session has files open too.
     const sessionBefore = prev.filter((t) => t.sshTabId === sshTabId)
     const posInSession = sessionBefore.findIndex((t) => t.key === key)
     const sessionFiles = sessionBefore.filter((t) => t.key !== key)
     // The tab sliding into the freed slot (its right neighbour), else the last
-    // remaining one; '' once the session has no files left.
-    const nextKey = sessionFiles.length
-      ? sessionFiles[Math.min(posInSession, sessionFiles.length - 1)].key
-      : ''
+    // remaining one; null once the session has no files left.
+    const nextFile = sessionFiles.length
+      ? sessionFiles[Math.min(posInSession, sessionFiles.length - 1)]
+      : null
 
     setEditorTabs((tabs) => tabs.filter((t) => t.key !== key))
-    setActiveEditorKey((aek) => (aek[sshTabId] === key ? { ...aek, [sshTabId]: nextKey } : aek))
-    // The pane decides *whether* an overlay is shown from `shellView` but the
-    // editor reads `activeEditorKey`, so leaving shellView on the closed key
-    // hides the terminal (sv !== 'terminal') while rendering no editor (its tab
-    // is gone) — an empty pane. Follow the close: next file, else the terminal.
-    setShellView((view) => {
-      if (view[sshTabId] !== key) return view
-      const next = { ...view }
-      if (nextKey) next[sshTabId] = nextKey
-      else delete next[sshTabId]
-      return next
-    })
+    setTabs((prev) => prev.filter((t) => !(t.tabType === 'fileEditor' && t.editorKey === key)))
+    const closed = tabsRef.current.find((t) => t.tabType === 'fileEditor' && t.editorKey === key)
+    if (closed && closed.tabId === activeTabIdRef.current) {
+      // The list the updater above will produce, read from the ref rather than
+      // computed inside it: a state updater has to stay pure, and this decides
+      // which tab to select next.
+      const rest = tabsRef.current.filter((t) => t !== closed)
+      const nextFileTab = nextFile
+        ? rest.find((t) => t.tabType === 'fileEditor' && t.editorKey === nextFile.key)
+        : undefined
+      const rootId = workspaceRootOf(splitTreesRef.current, rest, sshTabId)
+      const fallback =
+        nextFileTab ?? rest.find((t) => t.tabId === rootId) ?? rest.find((t) => isWorkspaceTab(t))
+      setActiveTabId(fallback ? fallback.tabId : null)
+    }
+    // A floated copy of this file has to go with it — its body looks the buffer up
+    // by key and would otherwise render an empty window.
+    setFloatingItems((prev) => prev.filter((i) => !(i.kind === 'editor' && i.editorKey === key)))
   }, [])
 
   // Close an editor tab, first asking whether to save if it has unsaved changes.
@@ -3066,14 +3191,11 @@ export default function App() {
   // Compute tab display label (number tabs sharing the same connection)
   const getTabLabel = useCallback(
     (tab: TabInfo): string => {
-      if (tab.tabType === 'settings') return '⚙ ' + t('tabSettings')
-      if (tab.tabType === 'aiChat') return '🤖 ' + t('tabAiChat')
-      if (tab.tabType === 'dockerLog') return `📋 ${tab.containerName ?? 'Logs'}`
-      if (tab.tabType === 'localShell') {
-        const localLabel = tab.localShellName || tab.localShellCwd || t('localTerminal')
-        return `🖥 ${localLabel}`
-      }
-      if (tab.dockerContainer) return `🐳 ${tab.dockerContainer}`
+      if (tab.tabType === 'settings') return t('tabSettings')
+      if (tab.tabType === 'dockerLog') return tab.containerName ?? 'Logs'
+      if (tab.tabType === 'localShell')
+        return tab.localShellName || tab.localShellCwd || t('localTerminal')
+      if (tab.dockerContainer) return tab.dockerContainer
       if (!tab.connectionId) return tab.connectionName
       const siblings = tabs.filter(
         (t) => t.tabType === 'terminal' && !t.embedded && t.connectionId === tab.connectionId,
@@ -3084,6 +3206,19 @@ export default function App() {
     },
     [tabs],
   )
+
+  // What used to be an emoji prefix on the label. Text and icon are separate now so
+  // the same value can feed a window title (text only) and the tab strip (both),
+  // and so the glyphs stop rendering as colour pictures at a size where the shell
+  // flavours are indistinguishable.
+  const getTabIcon = useCallback((tab: TabInfo): IconName => {
+    if (tab.tabType === 'settings') return 'settings'
+    if (tab.tabType === 'fileEditor') return 'file'
+    if (tab.tabType === 'dockerLog') return 'clipboard'
+    if (tab.tabType === 'localShell') return shellIconName(tab.localShellType ?? '')
+    if (tab.dockerContainer) return 'container'
+    return 'terminal'
+  }, [])
 
   // Duplicate tab via right-click menu
   const duplicateTab = useCallback(
@@ -3246,6 +3381,22 @@ export default function App() {
           disconnectTab(closedTabId)
           setTabs((prev) => prev.filter((t) => t.tabId !== closedTabId))
         }
+        // The session took its open files — and their tab bar entries — with it,
+        // whether the workspace entry survived as disconnected or not.
+        const dropped = dropSessionFiles([closedTabId])
+        if (
+          dropped.size > 0 &&
+          tabsRef.current.some(
+            (t) =>
+              t.tabId === activeTabIdRef.current &&
+              t.tabType === 'fileEditor' &&
+              dropped.has(t.editorKey ?? ''),
+          )
+        ) {
+          // The selection was on a file that no longer exists; land on the
+          // workspace the pane came out of rather than a dangling tabId.
+          setActiveTabId(rootId)
+        }
       }
       // Update the tree (functional updater composes correctly with rapid calls).
       setSplitTrees((prev) => {
@@ -3264,7 +3415,7 @@ export default function App() {
         return next
       })
     },
-    [newLeafId, closeTab],
+    [newLeafId, closeTab, dropSessionFiles],
   )
 
   // ---- Ask-before-close confirm handlers ------------------------------------
@@ -3320,10 +3471,7 @@ export default function App() {
   const floatingZRef = useRef(1000)
 
   const floatPane = useCallback(
-    (
-      leafId: string,
-      force?: { kind?: FloatingKind; dockerLogTabId?: number; editorKey?: string },
-    ) => {
+    (leafId: string, force?: { kind?: 'dockerLog'; dockerLogTabId?: number }) => {
       // Locate the leaf + its workspace root.
       let rootId: number | null = null
       let leaf: SplitLeaf | null = null
@@ -3342,52 +3490,38 @@ export default function App() {
       const floatId = `float-${leafId}`
       if (floatingItemsRef.current.some((i) => i.floatId === floatId)) return
 
-      // Decide what the pane is currently showing. Note: the docker log / file
-      // editor views are overlays on top of a connection's terminal leaf, so the
-      // leaf's tabId is the *connection* tabId, not the dockerLog/editor tabId.
-      // An explicit `force` (from a docker-log / editor tab's own float button)
-      // takes precedence over the inferred view.
+      // Decide what the pane is currently showing. Note: the docker log view is
+      // an overlay on top of a connection's terminal leaf, so the leaf's tabId
+      // is the *connection* tabId, not the dockerLog tabId. An explicit `force`
+      // (from the log tab's own float button) takes precedence over the
+      // inferred view. Files are not here: an open file floats through
+      // `floatEditor`, which detaches a tab rather than a pane.
       const sv = getShellView(tabId)
       let kind: FloatingKind = force?.kind ?? 'terminal'
-      let editorKey: string | undefined = force?.editorKey
       let dockerLogTabId: number | undefined = force?.dockerLogTabId
       let title = getTabLabel(tab)
-      // Docker log / file editor overlays follow the pane's own per-session
-      // `shellView` (not focus), matching renderPane. A leaf whose sv points at
-      // a docker-log view or an editor tab is treated as that overlay.
       if (force?.kind) {
         if (force.kind === 'dockerLog' && force.dockerLogTabId != null) {
           const dl = dockerLogTabsRef.current.find((d) => d.tabId === force.dockerLogTabId)
           if (dl) title = `${t('dockerLogs')}: ${dl.containerName ?? force.dockerLogTabId}`
-        } else if (force.kind === 'editor' && force.editorKey) {
-          const et = editorTabsRef.current.find((e) => e.key === force.editorKey)
-          if (et) title = et.name
         }
-      } else {
-        if (sv.startsWith('dockerlog:')) {
-          const dlId = Number(sv.slice('dockerlog:'.length))
-          const dl = dockerLogTabsRef.current.find((d) => d.tabId === dlId)
-          // The log view is shown on the pane whose session owns it; `jumpTabId`
-          // points at the workspace root tab while the leaf may be an embedded
-          // split tab, so accept the match when sv says this leaf shows it.
-          if (dl && dl.jumpTabId === tabId) {
-            kind = 'dockerLog'
-            dockerLogTabId = dl.tabId
-            title = `${t('dockerLogs')}: ${dl.containerName ?? dlId}`
-          }
-        } else if (editorTabsRef.current.some((e) => e.key === sv && e.sshTabId === tabId)) {
-          kind = 'editor'
-          editorKey = sv
-          const et = editorTabsRef.current.find((e) => e.key === sv && e.sshTabId === tabId)
-          if (et) title = et.name
+      } else if (sv.startsWith('dockerlog:')) {
+        const dlId = Number(sv.slice('dockerlog:'.length))
+        const dl = dockerLogTabsRef.current.find((d) => d.tabId === dlId)
+        // The log view is shown on the pane whose session owns it; `jumpTabId`
+        // points at the workspace root tab while the leaf may be an embedded
+        // split tab, so accept the match when sv says this leaf shows it.
+        if (dl && dl.jumpTabId === tabId) {
+          kind = 'dockerLog'
+          dockerLogTabId = dl.tabId
+          title = `${t('dockerLogs')}: ${dl.containerName ?? dlId}`
         }
       }
 
       // Snapshot the tree so we can restore the pane exactly on close. When the
-      // floated pane was showing an overlay (docker log / file editor), the
-      // global shellView is reset to the terminal so the rest of the workspace
-      // (other panes) doesn't keep rendering that overlay — it is restored to
-      // the overlay when the floating window is closed.
+      // floated pane was showing the docker log, `shellView` is reset to the
+      // terminal so the workspace underneath doesn't keep rendering that overlay
+      // — it is restored to the log when the floating window closes.
       let restoreShellView: string | undefined
       if (kind === 'dockerLog') {
         // Prefer the docker log's own view key (works even when floated via the
@@ -3396,16 +3530,12 @@ export default function App() {
           sv.startsWith('dockerlog:') && sv === `dockerlog:${dockerLogTabId}`
             ? sv
             : `dockerlog:${dockerLogTabId}`
-      } else if (kind === 'editor') {
-        restoreShellView = editorKey
       }
 
-      // Overlay floats (file editor / docker log): the overlay lives ON TOP of
-      // a terminal leaf. Keep the leaf in the split tree so the shell below
-      // stays mounted and usable — only the overlay moves to the floating
-      // window. shellView is switched back to the terminal meanwhile and
-      // restored to the overlay when the float closes.
-      if (kind === 'dockerLog' || kind === 'editor') {
+      // A docker-log float lifts the overlay off a terminal leaf. Keep the leaf
+      // in the split tree so the shell below stays mounted and usable — only the
+      // overlay moves to the floating window.
+      if (kind === 'dockerLog') {
         floatRestoreRef.current[floatId] = { rootId, tree: null, shellView: restoreShellView }
         setShellViewFor(tabId, 'terminal')
       } else {
@@ -3440,7 +3570,6 @@ export default function App() {
           floatId,
           kind,
           tabId,
-          editorKey,
           dockerLogTabId,
           title,
           x: 120,
@@ -3454,7 +3583,43 @@ export default function App() {
     [newLeafId, getTabLabel],
   )
 
+  // Pop a file editor out of the main area. There is no pane to detach here —
+  // the editor is a tab, not a split leaf — so nothing is snapshotted: closing
+  // the window *is* docking it back, because the tab is still selected and its
+  // overlay reappears.
+  const floatEditor = useCallback((editorKey: string) => {
+    const et = editorTabsRef.current.find((e) => e.key === editorKey)
+    if (!et) return
+    const floatId = `float-editor-${editorKey}`
+    if (floatingItemsRef.current.some((i) => i.floatId === floatId)) return
+    const z = ++floatingZRef.current
+    setFloatingItems((prev) => [
+      ...prev,
+      {
+        floatId,
+        kind: 'editor',
+        tabId: et.sshTabId,
+        editorKey,
+        title: et.name,
+        x: 160,
+        y: 110,
+        w: 720,
+        h: 480,
+        z,
+      },
+    ])
+    // Hand the main area back to the session the file came from, so popping the
+    // editor out reveals a terminal rather than an empty frame. The owner can be
+    // an embedded pane, which the bar cannot select — that resolves to its root.
+    const cur = tabsRef.current.find((t) => t.tabId === activeTabIdRef.current)
+    if (cur?.tabType === 'fileEditor' && cur.editorKey === editorKey) {
+      const rootId = workspaceRootOf(splitTreesRef.current, tabsRef.current, et.sshTabId)
+      setActiveTabId(rootId)
+    }
+  }, [])
+
   const closeFloating = useCallback((floatId: string) => {
+    const item = floatingItemsRef.current.find((i) => i.floatId === floatId)
     const snap = floatRestoreRef.current[floatId]
     if (snap) {
       const { rootId, tree, shellView } = snap
@@ -3468,14 +3633,48 @@ export default function App() {
       }
       // Restore the overlay (docker log / file editor) that the floated pane
       // was showing before it was popped out.
-      if (shellView !== undefined) {
-        const item = floatingItemsRef.current.find((i) => i.floatId === floatId)
-        if (item && item.tabId != null) setShellViewFor(item.tabId, shellView)
+      if (shellView !== undefined && item && item.tabId != null) {
+        setShellViewFor(item.tabId, shellView)
       }
       delete floatRestoreRef.current[floatId]
     }
+    // Closing an editor float docks it back: its tab is selected again, so the
+    // main area takes the editor that the float was showing.
+    if (item?.kind === 'editor') {
+      const fileTab = tabsRef.current.find(
+        (t) => t.tabType === 'fileEditor' && t.editorKey === item.editorKey,
+      )
+      if (fileTab) setActiveTabId(fileTab.tabId)
+    }
     setFloatingItems((prev) => prev.filter((i) => i.floatId !== floatId))
   }, [])
+
+  // Drop a floating window whose subject is gone — its session closed, or its
+  // file buffer was removed. The pre-float snapshot is discarded rather than
+  // restored: the pane it pointed at is gone too.
+  useEffect(() => {
+    if (floatingItems.length === 0) return
+    const liveSessions = new Set(
+      tabs
+        .filter((t) => t.tabType !== 'fileEditor' && t.tabType !== 'dockerLog')
+        .map((t) => t.tabId),
+    )
+    const liveFiles = new Set(editorTabs.map((e) => e.key))
+    // Inlined rather than using `dockerLogTabs` (derived further down the file).
+    const liveLogs = new Set(
+      tabs.filter((t) => t.tabType === 'dockerLog' && t.embedded).map((t) => t.tabId),
+    )
+    const dead = floatingItems.filter((i) => {
+      if (i.tabId != null && !liveSessions.has(i.tabId)) return true
+      if (i.kind === 'editor') return !liveFiles.has(i.editorKey ?? '')
+      if (i.kind === 'dockerLog') return i.dockerLogTabId == null || !liveLogs.has(i.dockerLogTabId)
+      return false
+    })
+    if (dead.length === 0) return
+    for (const i of dead) delete floatRestoreRef.current[i.floatId]
+    const deadIds = new Set(dead.map((i) => i.floatId))
+    setFloatingItems((prev) => prev.filter((i) => !deadIds.has(i.floatId)))
+  }, [tabs, editorTabs, floatingItems])
 
   const bringFloatingToFront = useCallback((floatId: string) => {
     const z = ++floatingZRef.current
@@ -3490,12 +3689,64 @@ export default function App() {
     setFloatingItems((prev) => prev.map((i) => (i.floatId === floatId ? { ...i, w, h } : i)))
   }, [])
 
+  // ---- The inspector's float / dock pair (P3-5) ----
+  // Hiding the column ends its float too: reopening should land in the row the
+  // user left, not in a window at last session's coordinates.
+  const hideInspector = useCallback(() => {
+    setInspectorFloat(null)
+    updateLayout((l) => ({ ...l, inspector: { ...l.inspector, visible: false } }))
+  }, [updateLayout])
+
+  const toggleInspectorFloat = useCallback(() => {
+    if (inspectorFloat) {
+      setInspectorFloat(null)
+      return
+    }
+    // Open along the edge the column was hugging, so popping out reads as the same
+    // object moving rather than something new appearing. Half the window by
+    // default — the point of the float is the width the column cannot offer.
+    const w = Math.max(520, Math.min(760, Math.round(window.innerWidth * 0.5)))
+    const h = Math.max(360, window.innerHeight - 150)
+    const x = layout.inspector.side === 'left' ? 48 : Math.max(48, window.innerWidth - w - 48)
+    setInspectorFloat({ x, y: 88, w, h, z: ++floatingZRef.current })
+  }, [inspectorFloat, layout.inspector.side])
+
+  const dockInspectorSide = useCallback(
+    (side: DockSide) => {
+      // "Which edge" only means something to a docked column, so this also ends
+      // the float.
+      setInspectorFloat(null)
+      updateLayout((l) => ({ ...l, inspector: { ...l.inspector, side } }))
+    },
+    [updateLayout],
+  )
+
+  const focusInspectorFloat = useCallback(() => {
+    // Read outside the updater: a state updater must stay pure, and bumping a
+    // shared counter is a side effect.
+    const z = ++floatingZRef.current
+    setInspectorFloat((prev) => (prev ? { ...prev, z } : prev))
+  }, [])
+
+  const moveInspectorFloat = useCallback((x: number, y: number) => {
+    setInspectorFloat((prev) => (prev ? { ...prev, x, y } : prev))
+  }, [])
+
+  const resizeInspectorFloat = useCallback((w: number, h: number) => {
+    setInspectorFloat((prev) => (prev ? { ...prev, w, h } : prev))
+  }, [])
+
   // Tab-bar click: switch the active workspace. Because each workspace renders
   // inside its own always-mounted container, switching only toggles visibility —
   // no portal moves, so sessions are preserved (no reconnect). The focused pane
   // is reset to the workspace's first pane.
   const handleTabClick = useCallback((tabId: number) => {
     setActiveTabId(tabId)
+    // Only a workspace switch moves the focus. A file / Settings tab has no pane
+    // to focus, and clearing it would also drop the target that "send to
+    // terminal" and the AI binding read.
+    const tab = tabsRef.current.find((t) => t.tabId === tabId)
+    if (!isWorkspaceTab(tab)) return
     const tree = splitTreesRef.current[tabId]
     if (tree) {
       const leaves = collectLeaves(tree)
@@ -3605,7 +3856,7 @@ export default function App() {
   // Split the active session into a new side-by-side pane (Ctrl+\): open the
   // same connection again as an embedded pane within the current workspace.
   const handleSplitTerminal = useCallback(() => {
-    const rootId = activeTabIdRef.current
+    const rootId = workspaceAnchorIdRef.current
     if (rootId == null) return
     const focus = focusedLeafIdRef.current
     const tree = splitTreeRef.current
@@ -3647,7 +3898,7 @@ export default function App() {
   // the startup directory (SSH: no startup dir; WSL: `$HOME` by default).
   const handleSetStartupDir = useCallback(
     async (dir: string) => {
-      const ftabId = focusedLeafTabId ?? activeTabId ?? 0
+      const ftabId = focusedLeafTabId ?? 0
       const ftab = tabs.find((t) => t.tabId === ftabId)
       const isHome = dir === '.' || dir === ''
       const dirLabel = isHome ? '~ (home)' : dir
@@ -3687,7 +3938,7 @@ export default function App() {
         setToast({ kind: 'error', text: `Failed to set startup directory: ${err}` })
       }
     },
-    [focusedLeafTabId, activeTabId, tabs, connections, setToast, t, reloadLocalTerminals],
+    [focusedLeafTabId, tabs, connections, setToast, t, reloadLocalTerminals],
   )
 
   // Workspace handlers
@@ -3869,7 +4120,7 @@ export default function App() {
       const isDragging = panelDragRef
       isDragging.current = true
       const startY = e.clientY
-      const startSize = layout.bottomPanel.size ?? 240
+      const startSize = layout.bottomPanel.size ?? DEFAULT_DRAWER_HEIGHT
       const handleMouseMove = (ev: MouseEvent) => {
         if (!isDragging.current) return
         const delta = startY - ev.clientY
@@ -3930,8 +4181,61 @@ export default function App() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [])
 
-  // Editor <-> Shell vertical divider drag-to-resize (only when a file editor is open)
-  // Terminals block (reused standalone or inside the editor + shell split)
+  // Inspector column drag-to-resize. The grab zone is a child of the column, so
+  // its parent's rect is the thing being resized, and the column's *far* edge is
+  // the one that stays put. Measuring that from the element instead of from the
+  // window fixes two cases at once: a sidebar docked on the same side (the old
+  // `window.innerWidth` overshot by its width) and a column docked at the left,
+  // which has to grow the other way.
+  const handleInspectorResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const column = e.currentTarget.parentElement
+      if (!column) return
+      const rect = column.getBoundingClientRect()
+      const fixedEdge = layout.inspector.side === 'right' ? rect.right : rect.left
+      const win = getCurrentWindow()
+      win.setResizable(false).catch(() => {})
+      const handleMouseMove = (ev: MouseEvent) => {
+        const delta =
+          layout.inspector.side === 'right' ? fixedEdge - ev.clientX : ev.clientX - fixedEdge
+        updateLayout((l) => ({
+          ...l,
+          inspector: { ...l.inspector, width: Math.max(240, Math.min(640, delta)) },
+        }))
+      }
+      const handleMouseUp = () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.classList.remove('resize-h')
+        document.body.style.userSelect = ''
+        win.setResizable(true).catch(() => {})
+      }
+      document.body.classList.add('resize-h')
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+    },
+    [layout.inspector.side, updateLayout],
+  )
+
+  // ---- Editor host ----
+  // One `FileEditor` wiring, two hosts: the docked overlay that covers the main
+  // area, and the floating window. Both show the file `key` names; switching
+  // file means switching tab, since the tab bar is the only tab strip now.
+  const renderEditorHost = (key: string | null, onFloat?: () => void) => (
+    <FileEditor
+      tabs={editorTabs}
+      activeKey={key}
+      onContentChange={handleEditorContentChange}
+      onSave={handleSaveEditorTab}
+      onChangeLanguage={changeEditorTabLanguage}
+      onChangeEncoding={changeEditorTabEncoding}
+      onChangeLineEnding={changeEditorTabLineEnding}
+      onFloat={onFloat}
+    />
+  )
+
   // ---- Floating pane content ----
   // Renders the same content a floated pane would show, hosted inside the
   // FloatingWindow overlay. Reuses the exact component wiring used inside a
@@ -3942,25 +4246,8 @@ export default function App() {
     if (item.kind === 'editor' && item.editorKey) {
       const et = editorTabs.find((e) => e.key === item.editorKey)
       if (!et) return null
-      return (
-        <FileEditor
-          tabs={editorTabs}
-          activeKey={item.editorKey}
-          onSelect={(key) => {
-            if (item.tabId != null) {
-              setActiveEditorKeyFor(item.tabId, key)
-              setShellViewFor(item.tabId, key)
-            }
-          }}
-          onClose={requestCloseEditorTab}
-          onContentChange={handleEditorContentChange}
-          onSave={handleSaveEditorTab}
-          onChangeLanguage={changeEditorTabLanguage}
-          onChangeEncoding={changeEditorTabEncoding}
-          onChangeLineEnding={changeEditorTabLineEnding}
-          hideTabs
-        />
-      )
+      // No `onFloat`: this editor already *is* the floating window.
+      return renderEditorHost(item.editorKey)
     }
     if (item.kind === 'dockerLog') {
       const dl = dockerLogTabs.find((d) => d.tabId === item.dockerLogTabId)
@@ -4010,7 +4297,6 @@ export default function App() {
   tabToLeafRef.current = allTabToLeaf
   const activeTerminalTab = tabs.find((t) => t.tabId === activeTabId)
   const settingsActive = activeTerminalTab?.tabType === 'settings'
-  const aiChatActive = activeTerminalTab?.tabType === 'aiChat'
   const settingsOverlayRef = useRef<HTMLDivElement>(null)
 
   // Refresh the database figures whenever the Settings tab becomes active.
@@ -4103,6 +4389,69 @@ export default function App() {
     isSerial: type === 'serial',
     isTelnet: type === 'telnet',
   })
+
+  // The inspector's AI surface. It binds to the *focused pane* rather than the
+  // top-level tab, because that is the session the assistant reads and writes to
+  // and each split pane owns its own conversation.
+  //
+  // `key` on the tab id is what makes that safe: the conversation itself is App
+  // state, but the panel also holds per-run state locally — the agent run id,
+  // the images staged for the next message, the tool calls the user already
+  // acted on. Reusing one instance across two tabs would leak a live run from
+  // one conversation into the other.
+  const aiTargetTab =
+    focusedLeafTabId != null
+      ? tabs.find((t) => t.tabId === focusedLeafTabId && t.tabType !== 'settings')
+      : undefined
+  const aiPanelNode = !aiTargetTab ? (
+    <div className="inspector-empty">{t('aiNoTarget')}</div>
+  ) : aiTargetTab.tabId === aiFloatingTabId ? (
+    // Same convention as the per-pane dock, which also steps aside while its
+    // tab's chat lives in the floating window — two views of one conversation
+    // would mean two send boxes moving in lockstep.
+    <div className="inspector-empty">{t('aiPoppedOut')}</div>
+  ) : !activeProfile ? (
+    <div className="inspector-empty">{t('aiConfigRequired')}</div>
+  ) : (
+    <AiChatPanel
+      key={aiTargetTab.tabId}
+      tabId={aiTargetTab.tabId}
+      isLocal={connFlagsForType(aiTargetTab.tabType).isLocal}
+      isSerial={connFlagsForType(aiTargetTab.tabType).isSerial}
+      isTelnet={connFlagsForType(aiTargetTab.tabType).isTelnet}
+      config={activeProfile}
+      profiles={aiConfig?.profiles ?? []}
+      onSelectProfile={handleSelectAiProfile}
+      onSelectModel={handleSelectAiModel}
+      conv={getAiConv(aiTargetTab.tabId)}
+      setConv={(u) => setAiConv(aiTargetTab.tabId, u)}
+      floating={false}
+      onToggleFloat={() => setAiFloatingTabId(aiTargetTab.tabId)}
+      onClose={hideInspector}
+      onAddCommandSnippet={handleAddCommandSnippet}
+      initialContext={aiContextText}
+      onContextConsumed={() => setAiContextText(null)}
+      inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
+      onInputHeightChange={handleAiInputHeightChange}
+      onOpenSettings={handleOpenAiSettings}
+      defaultMode={aiConfig?.defaultMode ?? 'command'}
+      defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
+    />
+  )
+
+  // The scan is the one inspector tool that is not about the focused target, so
+  // unlike `aiPanelNode` it never has an empty state. It stays mounted across tab
+  // switches because its rows arrive as `scan-progress` events; the group list is
+  // derived from the same connections the nav column renders, and saving a hit
+  // has to refresh that column.
+  const networkPanelNode = (
+    <NetworkScanPanel
+      existingGroups={Array.from(
+        new Set(connections.map((c) => c.group?.trim()).filter((g): g is string => !!g)),
+      )}
+      onSaved={handleConnectionChange}
+    />
+  )
 
   const renderTerminalForTab = (tab: TabInfo, isFocused: boolean, leafId?: string) => {
     const connectConfig = tab.connectionId
@@ -4214,7 +4563,7 @@ export default function App() {
                 if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
               }}
               onAskAi={(selectedText) => {
-                handleOpenAiChat(selectedText, tab.tabId)
+                handleOpenAiChat(selectedText)
               }}
               onAddCommandSnippet={handleAddCommandSnippet}
               onOpenFile={openInEditor}
@@ -5362,7 +5711,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {tab.tabType !== 'settings' && tab.tabType !== 'aiChat' && tab.status === 'disconnected' ? (
+        {tab.tabType !== 'settings' && tab.status === 'disconnected' ? (
           <div
             className="terminal-placeholder"
             style={{
@@ -5462,20 +5811,18 @@ export default function App() {
     const isFocused = leaf.id === focusedLeafIdForRoot
     const isDragSource = paneDrag.source === leaf.id
     // Per-session view state: which overlay (if any) this session's pane shows.
+    // Files no longer live here — an open file is a tab bar entry with its own
+    // surface (see the editor overlay in `terminalContent`) — so `sv` only ever
+    // names the terminal or a docker log view.
     const sv = leaf.tabId != null ? getShellView(leaf.tabId) : 'terminal'
-    const sessionEditorTabs = editorTabs.filter((et) => et.sshTabId === leaf.tabId)
     const sessionDockerLogTabs = dockerLogTabs.filter((dt) => dt.jumpTabId === leaf.tabId)
-    const sessionActiveEditorKey = leaf.tabId != null ? (activeEditorKey[leaf.tabId] ?? null) : null
     const dropPos = paneDrag.target === leaf.id ? paneDrag.position : null
-    // A non-floated overlay (file editor / docker log) replaces the terminal
-    // surface of ITS OWN pane — the whole terminal column (including its status
-    // bar) is hidden so the overlay gets the full pane width. Whether a pane
-    // shows an overlay is decided by its per-session `shellView` (sv), not by
-    // focus, so switching to another split pane keeps the editor open here.
-    const overlayVisible =
-      sv !== 'terminal' &&
-      (sessionEditorTabs.length > 0 || sessionDockerLogTabs.length > 0) &&
-      !isOverlayFloated(sv)
+    // A non-floated docker log replaces the terminal surface of ITS OWN pane —
+    // the whole terminal column (including its status bar) is hidden so the log
+    // gets the full pane width. Whether a pane shows the overlay is decided by
+    // its per-session `shellView` (sv), not by focus, so switching to another
+    // split pane keeps the log open here.
+    const overlayVisible = sv.startsWith('dockerlog:') && !isOverlayFloated(sv)
     // Decide where a drop would land from the cursor position within the pane.
     const computePos = (e: React.DragEvent): DropPosition => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -5615,14 +5962,13 @@ export default function App() {
                 }}
                 title={t('aiToggleTitle')}
               >
-                🤖 {t('aiToggle')}
+                <Icon name="sparkles" size={12} /> {t('aiToggle')}
               </button>
             )}
-          {/* Open files and docker logs live on the same pane-header panel as
-              the AI button. Each pane shows only the files/logs that belong to
-              ITS OWN SSH session (leaf.tabId) — files opened in one workspace
-              tab never appear in another. The tabs follow the pane itself (not
-              focus) so switching splits keeps the editor's tab bar visible. */}
+          {/* Docker logs live on the same pane-header panel as the AI button;
+              the `Terminal` chip is what gets you back from one. Each pane shows
+              only the logs that belong to ITS OWN session (leaf.tabId). Files are
+              no longer here — an open file is a tab bar entry of its own. */}
           <PaneTabsStrip>
             <div
               className={`term-pane-file-tab${sv === 'terminal' ? ' active' : ''}`}
@@ -5657,46 +6003,6 @@ export default function App() {
             >
               ×
             </span>
-            {sessionEditorTabs
-              .filter((et) => !isOverlayFloated(et.key))
-              .map((et) => (
-                <div
-                  key={et.key}
-                  className={`term-pane-file-tab${sv === et.key ? ' active' : ''}${et.isDirty ? ' dirty' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (leaf.tabId != null) {
-                      setActiveEditorKeyFor(leaf.tabId, et.key)
-                      setShellViewFor(leaf.tabId, et.key)
-                    }
-                  }}
-                  title={et.path}
-                >
-                  <span className="term-pane-file-tab-name">{et.name}</span>
-                  {et.isDirty && <span className="term-pane-file-tab-dirty">●</span>}
-                  <span
-                    className="term-pane-file-tab-float"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      // Float the file editor overlay directly (explicit kind),
-                      // so it doesn't depend on the global shellView / focus.
-                      floatPane(leaf.id, { kind: 'editor', editorKey: et.key })
-                    }}
-                    title={t('floatPane')}
-                  >
-                    ⤢
-                  </span>
-                  <span
-                    className="term-pane-file-tab-close"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      requestCloseEditorTab(et.key)
-                    }}
-                  >
-                    ×
-                  </span>
-                </div>
-              ))}
             {sessionDockerLogTabs
               .filter((dt) => !isOverlayFloated(dt.tabId))
               .map((dt) => (
@@ -6030,8 +6336,6 @@ export default function App() {
                       onToggleFloat={() => setAiFloatingTabId(tid)}
                       onClose={() => setShowAiByTab((prev) => ({ ...prev, [tid]: false }))}
                       onAddCommandSnippet={handleAddCommandSnippet}
-                      initialContext={aiContextText}
-                      onContextConsumed={() => setAiContextText(null)}
                       inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
@@ -6047,54 +6351,9 @@ export default function App() {
                 </div>
               )
             })()}
-          {/* File editor replaces the terminal surface of the pane that owns the
-              open session (the pane header with the AI button and file tabs
-              stays). Only the current session's files are shown. Skipped when
-              the overlay is popped out to a floating window — it renders only
-              there. Rendering follows the pane's own shellView (not focus), so
-              switching to another split pane keeps this editor open. */}
-          {sv !== 'terminal' &&
-            sessionEditorTabs.length > 0 &&
-            sessionEditorTabs.some((et) => et.key === sv) &&
-            !isOverlayFloated(sv) && (
-              <div
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  minHeight: 0,
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column',
-                }}
-              >
-                <FileEditor
-                  key="file-editor"
-                  tabs={sessionEditorTabs}
-                  activeKey={
-                    sessionActiveEditorKey &&
-                    sessionEditorTabs.some((et) => et.key === sessionActiveEditorKey)
-                      ? sessionActiveEditorKey
-                      : sv
-                  }
-                  onSelect={(key) => {
-                    if (leaf.tabId != null) {
-                      setActiveEditorKeyFor(leaf.tabId, key)
-                      setShellViewFor(leaf.tabId, key)
-                    }
-                  }}
-                  onClose={requestCloseEditorTab}
-                  onContentChange={handleEditorContentChange}
-                  onSave={handleSaveEditorTab}
-                  onChangeLanguage={changeEditorTabLanguage}
-                  onChangeEncoding={changeEditorTabEncoding}
-                  onChangeLineEnding={changeEditorTabLineEnding}
-                  hideTabs
-                />
-              </div>
-            )}
-          {/* Docker log view replaces the terminal surface of its owning pane
-              (like an open file). Skipped when floated — renders only in the
-              floating window. Follows the pane's own shellView, not focus. */}
+          {/* Docker log view replaces the terminal surface of its owning pane.
+              Skipped when floated — renders only in the floating window.
+              Follows the pane's own shellView, not focus. */}
           {sessionDockerLogTabs.some((dt) => sv === `dockerlog:${dt.tabId}`) &&
             (() => {
               const dl = sessionDockerLogTabs.find((dt) => sv === `dockerlog:${dt.tabId}`)
@@ -6258,7 +6517,9 @@ export default function App() {
       const dest = leafId ? paneBodyRefs.current.get(leafId) : null
       if (!leafId || !dest) return null
       // A popped-out terminal is always the focused/active surface within its window.
-      const isFocused = floatLeaf != null || leafId === (activeTabId != null ? focusedLeafId : null)
+      // Scoped to the anchor workspace rather than `activeTabId`, because a file or
+      // Settings tab is selected while its session keeps its focus.
+      const isFocused = floatLeaf != null || (workspaceAnchorId != null && leafId === focusedLeafId)
       // Stable key: without it, removing one tab shifts the others' array
       // index, making React remount the surviving terminal — which re-runs
       // its connection (looks like the "other pane reconnected").
@@ -6286,12 +6547,32 @@ export default function App() {
       !t.embedded,
   )
 
+  // The file the tab bar currently selects, if any. Docked, it takes the whole
+  // main area (no workspace is shown); floated, it hands the area back to the
+  // session the file came from, so `shownRootId` is that session.
+  const activeFileTab = activeTerminalTab?.tabType === 'fileEditor' ? activeTerminalTab : null
+  const activeFile = activeFileTab
+    ? editorTabs.find((et) => et.key === activeFileTab.editorKey)
+    : undefined
+  const fileFloated = !!activeFile && isOverlayFloated(activeFile.key)
+  const editorActive = !!activeFile && !fileFloated
+  const ownerSessionTab = tabs.find((t) => t.tabId === activeFile?.sshTabId)
+  const shownRootId = activeFileTab
+    ? fileFloated
+      ? (ownerSessionTab?.tabId ?? null)
+      : null
+    : activeTabId
+  // The status bar reads out a *connection*. A file has no connection state of
+  // its own, so it borrows the session that owns it — otherwise selecting a file
+  // would make the bar claim "Connected /etc/nginx/nginx.conf".
+  const statusBarTab = activeFileTab ? ownerSessionTab : activeTerminalTab
+
   const terminalContent = (
     <div className="terminal-wrapper">
       <div className="terminal-split-root" style={{ position: 'relative' }}>
         {rootTabs.map((root) => {
           const tree = splitTrees[root.tabId] ?? makeLeaf(`leaf-${root.tabId}`, root.tabId)
-          const workspaceHidden = settingsActive || aiChatActive || root.tabId !== activeTabId
+          const workspaceHidden = settingsActive || root.tabId !== shownRootId
           return (
             <div
               key={root.tabId}
@@ -6358,9 +6639,17 @@ export default function App() {
             position: 'absolute',
             inset: 0,
             overflow: 'auto',
-            display: settingsActive || aiChatActive ? 'block' : 'none',
+            display: settingsActive ? 'block' : 'none',
           }}
         />
+        {/* The open file, at the full main-area surface. Always mounted and only
+            toggled, so Monaco keeps its models — and the scroll position inside
+            them — across a trip to the terminal and back. */}
+        <div className="editor-overlay" style={{ display: editorActive ? 'flex' : 'none' }}>
+          {renderEditorHost(activeFile?.key ?? null, () => {
+            if (activeFile) floatEditor(activeFile.key)
+          })}
+        </div>
         {terminalPortals}
       </div>
       <div ref={terminalPoolRefCb} className="terminal-pool" />
@@ -6388,15 +6677,6 @@ export default function App() {
                 : { flexShrink: 0 }
             }
           >
-            {/* Workspace selector */}
-            <WorkspaceSelector
-              workspaces={workspaces}
-              activeId={activeWorkspaceId}
-              onSwitch={handleWorkspaceSwitch}
-              onCreate={handleWorkspaceCreate}
-              onDelete={handleWorkspaceDelete}
-              onRename={handleWorkspaceRename}
-            />
             <ConnectionManager
               connections={connections}
               onConnect={(_config, _tabId) => {
@@ -6406,6 +6686,12 @@ export default function App() {
               activeTabId={activeTabId}
               onConnectionChange={handleConnectionChange}
               onSelectConnection={handleSelectConnection}
+              onScanNetwork={() =>
+                updateLayout((l) => ({
+                  ...l,
+                  inspector: { ...l.inspector, visible: true, tab: 'network' },
+                }))
+              }
               onSplitRight={(conn) => handleOpenSplit(conn, 'row')}
               onSplitDown={(conn) => handleOpenSplit(conn, 'column')}
               sidebarWidth={sidebarWidth}
@@ -6443,6 +6729,7 @@ export default function App() {
               }
               collapsedGroups={collapsedGroups}
               onCollapsedGroupsChange={handleCollapsedGroupsChange}
+              filter={navFilter}
               tunnels={tunnels}
               onStartTunnel={handleStartTunnel}
               onRemoveTunnel={handleRemoveTunnel}
@@ -6466,7 +6753,7 @@ export default function App() {
                 // Server label shown in the file panel header: the SSH
                 // connection of the focused tab (host:port), or a docker
                 // target's container.
-                const ftabId = focusedLeafTabId ?? activeTabId ?? 0
+                const ftabId = focusedLeafTabId ?? 0
                 const ftab = tabs.find((t) => t.tabId === ftabId)
                 const fconn = ftab?.connectionId
                   ? connections.find((c) => c.id === ftab.connectionId)
@@ -6568,59 +6855,59 @@ export default function App() {
 
             {/* Docker containers on the focused host — follows the focused
                 shell so splitting / switching panes swaps the container list. */}
-            {layout.sidebar.sections.docker.visible &&
-              (focusedLeafTabId ?? activeTabId) != null && (
-                <div
-                  className="collapsible-section"
-                  style={
-                    dockerExpanded
-                      ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' }
-                      : { flexShrink: 0 }
-                  }
-                >
-                  <DockerPanel
-                    jumpTabId={focusedLeafTabId ?? activeTabId ?? 0}
-                    refreshSignal={dockerRefreshKey}
-                    serverLabel={(() => {
-                      const dtId = focusedLeafTabId ?? activeTabId ?? 0
-                      const dt = tabs.find((t) => t.tabId === dtId)
-                      const dc = dt?.connectionId
-                        ? connections.find((c) => c.id === dt.connectionId)
-                        : undefined
-                      return dc
-                        ? dc.name === dc.host
-                          ? `${dc.host}:${dc.port}`
-                          : `${dc.name} (${dc.host}:${dc.port})`
-                        : dt?.connectionName
-                    })()}
-                    expanded={dockerExpanded}
-                    onToggleExpanded={() =>
-                      updateLayout((l) => ({
-                        ...l,
-                        sidebar: {
-                          ...l.sidebar,
-                          sections: {
-                            ...l.sidebar.sections,
-                            docker: {
-                              ...l.sidebar.sections.docker,
-                              collapsed: !l.sidebar.sections.docker.collapsed,
-                            },
+            {layout.sidebar.sections.docker.visible && focusedLeafTabId != null && (
+              <div
+                className="collapsible-section"
+                style={
+                  dockerExpanded
+                    ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' }
+                    : { flexShrink: 0 }
+                }
+              >
+                <DockerPanel
+                  jumpTabId={focusedLeafTabId ?? 0}
+                  refreshSignal={dockerRefreshKey}
+                  serverLabel={(() => {
+                    const dtId = focusedLeafTabId ?? 0
+                    const dt = tabs.find((t) => t.tabId === dtId)
+                    const dc = dt?.connectionId
+                      ? connections.find((c) => c.id === dt.connectionId)
+                      : undefined
+                    return dc
+                      ? dc.name === dc.host
+                        ? `${dc.host}:${dc.port}`
+                        : `${dc.name} (${dc.host}:${dc.port})`
+                      : dt?.connectionName
+                  })()}
+                  expanded={dockerExpanded}
+                  onToggleExpanded={() =>
+                    updateLayout((l) => ({
+                      ...l,
+                      sidebar: {
+                        ...l.sidebar,
+                        sections: {
+                          ...l.sidebar.sections,
+                          docker: {
+                            ...l.sidebar.sections.docker,
+                            collapsed: !l.sidebar.sections.docker.collapsed,
                           },
                         },
-                      }))
-                    }
-                    activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
-                    onOpenContainer={handleOpenContainer}
-                    onEnterShell={handleEnterContainerShell}
-                    onAnalyzeContainer={handleAnalyzeContainer}
-                    onViewLogs={handleViewContainerLogs}
-                    onRestartContainer={handleRestartContainer}
-                    onStopContainer={handleStopContainer}
-                    onStartContainer={handleStartContainer}
-                    onDeleteContainer={handleDeleteContainer}
-                  />
-                </div>
-              )}
+                      },
+                    }))
+                  }
+                  activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
+                  filter={navFilter}
+                  onOpenContainer={handleOpenContainer}
+                  onEnterShell={handleEnterContainerShell}
+                  onAnalyzeContainer={handleAnalyzeContainer}
+                  onViewLogs={handleViewContainerLogs}
+                  onRestartContainer={handleRestartContainer}
+                  onStopContainer={handleStopContainer}
+                  onStartContainer={handleStartContainer}
+                  onDeleteContainer={handleDeleteContainer}
+                />
+              </div>
+            )}
           </>
         )}
       </>
@@ -6643,6 +6930,28 @@ export default function App() {
       >
         ⠿
       </div>
+      <div className="nav-search">
+        <Icon name="search" size={12} />
+        <input
+          type="text"
+          value={navQuery}
+          onChange={(e) => setNavQuery(e.target.value)}
+          placeholder={t('navSearchPlaceholder')}
+          aria-label={t('search')}
+          spellCheck={false}
+        />
+        {navQuery && (
+          <button
+            type="button"
+            className="nav-search-clear"
+            onClick={() => setNavQuery('')}
+            aria-label={t('clearSearch')}
+            title={t('clearSearch')}
+          >
+            <Icon name="x" size={11} />
+          </button>
+        )}
+      </div>
       {sidebarBody}
     </div>
   ) : null
@@ -6659,9 +6968,25 @@ export default function App() {
         onAiChat={() => handleOpenAiChat()}
         onCommandList={() => setCommandListOpen((prev) => !prev)}
         onNetTools={() => setToolsOpen((prev) => !prev)}
+        workspace={
+          <WorkspaceSelector
+            workspaces={workspaces}
+            activeId={activeWorkspaceId}
+            onSwitch={handleWorkspaceSwitch}
+            onCreate={handleWorkspaceCreate}
+            onDelete={handleWorkspaceDelete}
+            onRename={handleWorkspaceRename}
+          />
+        }
       />
 
-      <div className="main-content">
+      {/* The three regions are ordered by which edge each column is docked to, not
+        by DOM order — see the `order` rules on `.main-content`. */}
+      <div
+        className={`main-content ${layout.sidebar.side === 'left' ? 'nav-left' : 'nav-right'} ${
+          layout.inspector.side === 'left' ? 'insp-left' : 'insp-right'
+        }`}
+      >
         {layout.sidebar.side === 'left' && sidebarEl}
         {layout.sidebar.side === 'left' && showSidebar && (
           <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
@@ -6673,101 +6998,95 @@ export default function App() {
             {/* Tab bar */}
             <div className="tab-bar">
               <button
-                className="sidebar-toggle"
+                type="button"
+                className="icon-btn"
                 onClick={() =>
                   updateLayout((l) => ({
                     ...l,
                     sidebar: { ...l.sidebar, visible: !l.sidebar.visible },
                   }))
                 }
-                title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
+                aria-label={showSidebar ? t('hideSidebar') : t('showSidebar')}
+                title={showSidebar ? t('hideSidebar') : t('showSidebar')}
               >
-                {showSidebar ? (
-                  <svg width="14" height="14" viewBox="0 0 16 16">
-                    <rect
-                      x="1"
-                      y="2"
-                      width="4"
-                      height="12"
-                      rx="1"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    />
-                    <rect
-                      x="6"
-                      y="2"
-                      width="9"
-                      height="12"
-                      rx="1"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    />
-                    <path d="M12 6l-2 2 2 2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                  </svg>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 16 16">
-                    <rect
-                      x="1"
-                      y="2"
-                      width="4"
-                      height="12"
-                      rx="1"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    />
-                    <rect
-                      x="6"
-                      y="2"
-                      width="9"
-                      height="12"
-                      rx="1"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    />
-                    <path d="M9 6l2 2-2 2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                  </svg>
-                )}
+                <Icon name={showSidebar ? 'panelLeft' : 'panelRight'} size={14} />
               </button>
               {tabs
                 .filter((tab) => !tab.embedded)
-                .map((tab, idx) => (
-                  <div
-                    key={tab.tabId}
-                    className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
-                    draggable
-                    onClick={() => handleTabClick(tab.tabId)}
-                    onDragStart={(e) => handleTabDragStart(e, idx)}
-                    onDragOver={(e) => handleTabDragOver(e, idx)}
-                    onDrop={(e) => handleTabDrop(e, idx)}
-                    onDragEnd={handleTabDragEnd}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
-                    }}
-                  >
-                    <span>{getTabLabel(tab)}</span>
-                    <span
-                      className="tab-close"
-                      onClick={(e) => {
+                .map((tab, idx) => {
+                  // A file tab's unsaved marker comes from the buffer it points
+                  // at; the TabInfo itself never knows about edits.
+                  const file =
+                    tab.tabType === 'fileEditor'
+                      ? editorTabs.find((e) => e.key === tab.editorKey)
+                      : undefined
+                  return (
+                    <div
+                      key={tab.tabId}
+                      className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
+                      draggable
+                      title={file?.path}
+                      onClick={() => handleTabClick(tab.tabId)}
+                      onDragStart={(e) => handleTabDragStart(e, idx)}
+                      onDragOver={(e) => handleTabDragOver(e, idx)}
+                      onDrop={(e) => handleTabDrop(e, idx)}
+                      onDragEnd={handleTabDragEnd}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
                         e.stopPropagation()
-                        closeTab(tab.tabId)
+                        setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
                       }}
                     >
-                      ×
-                    </span>
-                  </div>
-                ))}
+                      <Icon className="tab-icon" name={getTabIcon(tab)} size={13} />
+                      <span className="tab-label">{getTabLabel(tab)}</span>
+                      {file?.isDirty && <span className="tab-dirty" title={t('unsavedChanges')} />}
+                      <button
+                        type="button"
+                        className="tab-close"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          // An editor tab closes the file (with the unsaved-changes
+                          // prompt), not the session it came from.
+                          if (tab.tabType === 'fileEditor' && tab.editorKey)
+                            requestCloseEditorTab(tab.editorKey)
+                          else closeTab(tab.tabId)
+                        }}
+                        aria-label={t('closeTab')}
+                      >
+                        <Icon name="x" size={11} />
+                      </button>
+                    </div>
+                  )
+                })}
               <button
-                className="tab-split-btn"
+                type="button"
+                className="icon-btn"
                 onClick={handleSplitTerminal}
-                title="Split Terminal (Ctrl+\)"
+                aria-label={t('splitTerminal')}
+                title={`${t('splitTerminal')} (Ctrl+\\)`}
               >
-                ⊞
+                <Icon name="panelRight" size={14} />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => {
+                  // `hideInspector` rather than a bare visibility flip, so the
+                  // tab-bar control and the column's own ✕ leave the same state.
+                  if (inspectorOpen) {
+                    hideInspector()
+                    return
+                  }
+                  updateLayout((l) => ({
+                    ...l,
+                    inspector: { ...l.inspector, visible: true },
+                  }))
+                }}
+                aria-label={inspectorOpen ? t('closeInspector') : t('openInspector')}
+                title={`${inspectorOpen ? t('closeInspector') : t('openInspector')} (Ctrl+Alt+I)`}
+                data-on={inspectorOpen ? 'true' : undefined}
+              >
+                <Icon name="inspector" size={14} />
               </button>
             </div>
 
@@ -6811,7 +7130,7 @@ export default function App() {
               >
                 <div
                   style={{
-                    display: aiChatActive ? 'none' : 'flex',
+                    display: 'flex',
                     flex: 1,
                     minHeight: 0,
                     flexDirection: 'column',
@@ -6819,42 +7138,6 @@ export default function App() {
                 >
                   {terminalContent}
                 </div>
-                {/* Standalone AI Chat tab (full screen) */}
-                {activeProfile && aiChatActive && activeTerminalTab && (
-                  <div
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      minHeight: 0,
-                      display: 'flex',
-                      flexDirection: 'column',
-                    }}
-                  >
-                    <AiChatPanel
-                      tabId={activeTerminalTab.tabId}
-                      isLocal={connFlagsForType(activeTerminalTab.tabType).isLocal}
-                      isSerial={connFlagsForType(activeTerminalTab.tabType).isSerial}
-                      isTelnet={connFlagsForType(activeTerminalTab.tabType).isTelnet}
-                      config={activeProfile}
-                      profiles={aiConfig?.profiles ?? []}
-                      onSelectProfile={handleSelectAiProfile}
-                      onSelectModel={handleSelectAiModel}
-                      conv={getAiConv(activeTerminalTab.tabId)}
-                      setConv={(u) => setAiConv(activeTerminalTab.tabId, u)}
-                      floating={false}
-                      onToggleFloat={() => setAiFloatingTabId(activeTerminalTab.tabId)}
-                      onClose={() => closeTab(activeTerminalTab.tabId)}
-                      onAddCommandSnippet={handleAddCommandSnippet}
-                      initialContext={aiContextText}
-                      onContextConsumed={() => setAiContextText(null)}
-                      inputHeight={aiInputHeight > 0 ? aiInputHeight : undefined}
-                      onInputHeightChange={handleAiInputHeightChange}
-                      onOpenSettings={handleOpenAiSettings}
-                      defaultMode={aiConfig?.defaultMode ?? 'command'}
-                      defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
-                    />
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -6988,16 +7271,25 @@ export default function App() {
                       window.addEventListener('mouseup', onUp)
                     }}
                   >
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary, #aaa)' }}>
-                      AI Chat ·{' '}
-                      {tabs.find((t) => t.tabId === aiFloatingTabId)?.connectionName || 'Shell'}
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 12,
+                        color: 'var(--text-secondary, #aaa)',
+                      }}
+                    >
+                      <Icon name="sparkles" size={12} /> {t('aiChatTitle')} ·{' '}
+                      {tabs.find((t) => t.tabId === aiFloatingTabId)?.connectionName ||
+                        t('shellTerminal')}
                     </span>
                     <button
                       className="ai-float-header-btn"
                       onClick={() => setAiFloatingTabId(null)}
-                      title="Dock back"
+                      title={t('aiChatDockBack')}
                     >
-                      ⤡ Dock
+                      <Icon name="panelRight" size={12} /> {t('aiChatDock')}
                     </button>
                   </div>
                   <div
@@ -7035,8 +7327,6 @@ export default function App() {
                         setShowAiByTab((prev) => ({ ...prev, [aiFloatingTabId]: false }))
                         setAiFloatingTabId(null)
                       }}
-                      initialContext={aiContextText}
-                      onContextConsumed={() => setAiContextText(null)}
                       inputHeight={aiInputHeight}
                       onInputHeightChange={handleAiInputHeightChange}
                       onOpenSettings={handleOpenAiSettings}
@@ -7070,7 +7360,7 @@ export default function App() {
           )}
           <BottomPanel
             connections={connections}
-            activeTabId={activeTabId}
+            activeTabId={focusedLeafTabId}
             expanded={bottomPanelExpanded}
             pos={layout.bottomPanel.pos}
             size={layout.bottomPanel.size}
@@ -7082,10 +7372,38 @@ export default function App() {
                 bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
               }))
             }
-            dockerAnalysisTarget={dockerAnalysisTarget}
-            onDockerAnalyzed={() => setDockerAnalysisTarget(null)}
           />
         </div>
+
+        {/* Inspector — read-outs about the focused tab. Docked, it is placed
+          before the right-docked sidebar so the sidebar stays flush with the
+          window edge; floated, it leaves the row entirely (`position: fixed`), so
+          the resizer goes with it and the workspace takes back the column's
+          width. Same element in both states — see `InspectorPanel`. */}
+        {inspectorOpen && (
+          <InspectorPanel
+            connections={connections}
+            activeTabId={focusedLeafTabId}
+            width={layout.inspector.width}
+            tab={layout.inspector.tab}
+            side={layout.inspector.side}
+            float={inspectorFloat}
+            onTabChange={(tab) =>
+              updateLayout((l) => ({ ...l, inspector: { ...l.inspector, tab } }))
+            }
+            onClose={hideInspector}
+            onToggleFloat={toggleInspectorFloat}
+            onDockSide={dockInspectorSide}
+            onFloatMove={moveInspectorFloat}
+            onFloatResize={resizeInspectorFloat}
+            onFloatFocus={focusInspectorFloat}
+            onColumnResizeStart={handleInspectorResizeMouseDown}
+            dockerAnalysisTarget={dockerAnalysisTarget}
+            onDockerAnalyzed={() => setDockerAnalysisTarget(null)}
+            ai={aiPanelNode}
+            network={networkPanelNode}
+          />
+        )}
         {layout.sidebar.side === 'right' && showSidebar && (
           <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
         )}
@@ -7157,54 +7475,14 @@ export default function App() {
         )}
       </div>
 
-      {/* Status bar — temporarily disabled
-      <div className="status-bar">
-        <div className="status-bar-left">
-          {(() => {
-            const activeTab = tabs.find((t) => t.tabId === activeTabId)
-            if (!activeTab) {
-              return <span className="status-text">{t('noActiveConnection')}</span>
-            }
-            if (activeTab.tabType === 'settings') {
-              return <span className="status-text">⚙ {t('tabSettings')}</span>
-            }
-            if (activeTab.tabType === 'aiChat') {
-              return <span className="status-text">🤖 {t('tabAiChat')}</span>
-            }
-            return (
-              <>
-                <span
-                  className={`conn-status ${activeTab.status}`}
-                  style={{ width: 8, height: 8, borderRadius: '50%' }}
-                />
-                <span className="status-text">
-                  {activeTab.connectionName}
-                  {activeTab.host ? ` — ${activeTab.host}` : ''}
-                </span>
-                <span className={`status-tag ${activeTab.status}`}>
-                  {activeTab.status}
-                </span>
-              </>
-            )
-          })()}
-        </div>
-        <div className="status-bar-right">
-          // Update available banner
-          {updateInfo && showUpdateBanner && (
-            <div className="update-banner">
-              <span className="update-text">
-                v{updateInfo.version} {t('updateAvailable')}
-              </span>
-              <button className="update-btn" onClick={handleDownloadUpdate} disabled={updateState !== 'idle'}>
-                {updateState === 'downloading' ? t('downloading') : updateState === 'installing' ? t('installing') : t('update')}
-              </button>
-              <span className="update-close" onClick={() => setShowUpdateBanner(false)}>✕</span>
-            </div>
-          )}
-          <span className="status-text">Wrolp Terminal</span>
-        </div>
-      </div>
-      */}
+      <StatusBar
+        tab={statusBarTab}
+        termSize={focusedLeafId ? termSizes[focusedLeafId] : undefined}
+        recording={focusedLeafTabId != null ? recordingByTab[focusedLeafTabId] : undefined}
+        update={updateInfo && showUpdateBanner ? { ...updateInfo, state: updateState } : null}
+        onDownloadUpdate={() => void handleDownloadUpdate()}
+        onDismissUpdate={() => setShowUpdateBanner(false)}
+      />
 
       {toast && (
         <div

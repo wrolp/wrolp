@@ -47,9 +47,11 @@ test('creates a new connection through the modal', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.empty-state')).toBeVisible()
 
-  // The "+" button adds a connection; scope to the sidebar header so the
-  // "Scan Network" button (also under `.sidebar-header`) doesn't collide.
-  await page.locator('.sidebar-header').getByRole('button', { name: '+' }).click()
+  // The "+" button adds a connection. It used to be a literal "+" glyph on an
+  // unlabelled button; it is now an icon whose accessible name is the action, so
+  // the test reaches it by that name instead of by a header class that no longer
+  // exists (the nav sections share `.panel-head`).
+  await page.getByRole('button', { name: 'New Connection' }).click()
   const modal = page.locator('.modal')
   await expect(modal).toBeVisible()
   await expect(modal).toContainText('New Connection')

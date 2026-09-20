@@ -74,7 +74,7 @@ async function openFileWithExpandedDir(page: Page) {
   await expect(page.locator('.tree-row.file', { hasText: 'inner.txt' })).toBeVisible()
 
   await page.locator('.tree-row.file', { hasText: 'notes.txt' }).click()
-  await expect(page.locator('.term-pane-file-tab', { hasText: 'notes.txt' })).toHaveCount(1)
+  await expect(page.locator('.tab-item', { hasText: 'notes.txt' })).toHaveCount(1)
   await expect(page.locator('.monaco-editor')).toBeVisible()
 }
 
@@ -94,9 +94,7 @@ test('saving a file re-lists only its own directory (B36)', async ({ page }) => 
   expect(before).toBeGreaterThanOrEqual(2)
 
   await editAndSave(page)
-  await expect
-    .poll(async () => (await listFilesCalls(page)).length)
-    .toBeGreaterThan(before)
+  await expect.poll(async () => (await listFilesCalls(page)).length).toBeGreaterThan(before)
   // Give a full tree refresh the chance to fire its second (recursive) listing.
   await page.waitForTimeout(500)
 
@@ -112,9 +110,7 @@ test('an untouched expanded directory keeps its state after a save (B36)', async
 
   const before = (await listFilesCalls(page)).length
   await editAndSave(page)
-  await expect
-    .poll(async () => (await listFilesCalls(page)).length)
-    .toBeGreaterThan(before)
+  await expect.poll(async () => (await listFilesCalls(page)).length).toBeGreaterThan(before)
   await page.waitForTimeout(500)
 
   // The subdirectory is still expanded with its children in place — a partial

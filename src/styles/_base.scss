@@ -1,0 +1,30 @@
+@use 'variables' as *;
+
+@use 'variables' as *;
+@use 'sass:color';
+
+html,
+body {
+  -webkit-app-region: no-drag;
+}
+
+// Force cursor globally during divier drag
+body.resize-h,
+body.resize-h * {
+  cursor: ew-resize !important;
+}
+body.resize-v,
+body.resize-v * {
+  cursor: ns-resize !important;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background: $bg-primary;
+  color: $text-primary;
+  opacity: var(--win-opacity, 1);
+  overflow: hidden;
+}

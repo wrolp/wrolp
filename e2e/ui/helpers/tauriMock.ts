@@ -73,6 +73,19 @@ export interface TauriMockOptions {
    * to get `clear` instead of `cls`) must provide an entry here.
    */
   localTerminals?: unknown[]
+  /**
+   * Rows `scan_network` resolves with. The mock also streams them exactly the
+   * way the backend does — one `scan-start` carrying `{ total }`, then one
+   * `scan-progress` per row — so the panel's event path is what the test sees,
+   * not a convenience return value.
+   */
+  scanResults?: unknown[]
+  /**
+   * Keep `scan_network` pending until `resolvePendingScan()` is called. Without
+   * this the scan is over before the test can look, and nothing covers the UI
+   * while it runs (progress read-out, the panel surviving a tab switch).
+   */
+  scanHold?: boolean
 }
 
 /**
@@ -101,6 +114,16 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     // Every invoke is recorded here so tests can assert backend interactions
     // (e.g. "connect was called", "poll_output stopped after connection-closed").
     const invoked: Array<{ cmd: string; args: Record<string, unknown> }> = []
+    // Commands that can take arbitrarily long (the subnet scan) hold their
+    // resolution here so a test can look at the UI while they are still running.
+    let finishPendingCall: (() => void) | null = null
+
+    /** Deliver an event to every `plugin:event|listen` handler for `event`. */
+    const emit = (event: string, payload?: unknown) => {
+      for (const cb of listeners.get(event) ?? []) {
+        cb({ id: counter++, payload })
+      }
+    }
 
     const internals: Record<string, unknown> = {
       metadata: { currentWindow: { label: 'main' } },
@@ -161,6 +184,17 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             if (i >= 0) conns[i] = c
             else conns.push(c)
             return null
+          }
+          case 'scan_network': {
+            const rows = (opts.scanResults ?? []) as Array<Record<string, unknown>>
+            // Streamed before the promise settles, like the real scan: the panel
+            // builds its rows from these events, not from the return value.
+            emit('scan-start', { total: rows.length })
+            for (const row of rows) emit('scan-progress', row)
+            if (!opts.scanHold) return rows
+            return new Promise<Record<string, unknown>[]>((resolve) => {
+              finishPendingCall = () => resolve(rows)
+            })
           }
           case 'delete_connection': {
             const id = args.id as string
@@ -294,15 +328,33 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     })
     // Test hook: emit a backend event from the test via page.evaluate.
     Object.defineProperty(window, '__TAURI_EMIT__', {
-      value: (event: string, payload?: unknown) => {
-        for (const cb of listeners.get(event) ?? []) {
-          cb({ id: counter++, payload })
-        }
+      value: emit,
+      configurable: true,
+      writable: true,
+    })
+    // Test hook: let a `scanHold` command return, so the test can decide when the
+    // scan is over rather than racing it.
+    Object.defineProperty(window, '__TAURI_FINISH_CALL__', {
+      value: () => {
+        const finish = finishPendingCall
+        finishPendingCall = null
+        if (finish) finish()
       },
       configurable: true,
       writable: true,
     })
   }, options)
+}
+
+/** Release a command the mock is holding (see `scanHold`). */
+export async function resolvePendingScan(page: Page) {
+  await page.evaluate(() =>
+    (
+      window as unknown as {
+        __TAURI_FINISH_CALL__: () => void
+      }
+    ).__TAURI_FINISH_CALL__(),
+  )
 }
 
 /** Emit a Tauri event from a test (drives `listen` handlers in the app). */

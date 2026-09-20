@@ -48,8 +48,10 @@ test('split panes are separated by a real gap', async ({ page }) => {
   await page.locator('.connection-item').click()
   await expect(page.locator('.term-pane')).toHaveCount(1)
 
-  // Ctrl+\ splits the active session into a second pane (row).
-  await page.locator('.tab-split-btn').click()
+  // Ctrl+\ splits the active session into a second pane (row). The button lost
+  // its bespoke class when the tab bar moved onto the shared `.icon-btn`
+  // primitive, so this reaches it the way a user reads it: by its label.
+  await page.getByRole('button', { name: 'Split Terminal' }).click()
   await expect(page.locator('.term-pane')).toHaveCount(2)
   await expect(page.locator('.term-split-divider.divider-row')).toHaveCount(1)
 

@@ -1,0 +1,749 @@
+@use 'variables' as *;
+
+// ===== Modal =====
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+}
+
+.modal {
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: var(--r-3);
+  width: 440px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px var(--shadow-1);
+
+  &-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid $border;
+
+    h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+  }
+
+  &-body {
+    padding: 20px;
+  }
+
+  &-title {
+    padding: 16px 20px;
+    border-bottom: 1px solid $border;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .file-modal-input {
+    width: 100%;
+    padding: 8px 10px;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    color: $text-primary;
+    font-size: 13px;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+
+    &:focus {
+      border-color: $border-focus;
+    }
+  }
+
+  &-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px 20px;
+    border-top: 1px solid $border;
+
+    button {
+      padding: 7px 18px;
+      border-radius: var(--r-1);
+      border: 1px solid $border;
+      background: $bg-input;
+      color: $text-primary;
+      cursor: pointer;
+      font-size: 13px;
+
+      &:hover {
+        background: var(--control-hover);
+      }
+
+      &.primary {
+        background: $accent;
+        color: #fff;
+        border-color: $accent;
+
+        &:hover {
+          background: $accent-hover;
+        }
+      }
+
+      &.danger {
+        background: #b91c1c;
+        color: #fff;
+        border-color: #b91c1c;
+
+        &:hover {
+          background: #d11f1f;
+        }
+      }
+    }
+  }
+
+  &-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px 20px;
+    border-top: 1px solid $border;
+
+    button {
+      padding: 8px 20px;
+      border: none;
+      border-radius: var(--r-1);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background var(--d-2);
+
+      // Unavailable actions (e.g. "insert without executing" in a session with
+      // no line editor) must stay visibly inert instead of looking clickable.
+      &:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+    }
+
+    .btn-cancel {
+      background: $bg-input;
+      color: $text-primary;
+
+      &:hover {
+        background: var(--control-hover);
+      }
+    }
+
+    .btn-primary {
+      background: $accent;
+      color: white;
+
+      &:hover {
+        background: $accent-hover;
+      }
+    }
+
+    .btn-danger {
+      background: $danger;
+      color: #fff;
+
+      &:hover {
+        background: #c0392b;
+      }
+    }
+
+    .btn-danger {
+      background: $danger;
+      color: white;
+
+      &:hover {
+        background: $danger-hover;
+      }
+    }
+  }
+}
+
+// Multi-line paste confirmation (B20 / PasteConfirmDialog)
+.paste-confirm-dialog {
+  width: 520px;
+
+  .paste-preview {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    max-height: 140px;
+    overflow: auto;
+    background: $bg-primary;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    font-family: $font-mono;
+    font-size: 12px;
+    line-height: 1.45;
+    color: $text-secondary;
+    white-space: pre;
+  }
+
+  .paste-insert-unavailable {
+    margin: 10px 0 0;
+    font-size: 12px;
+    color: $warning;
+  }
+
+  .paste-continuation-note,
+  .paste-filtered-note {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: $text-muted;
+  }
+}
+
+.modal-field {
+  display: block;
+  margin-bottom: 16px;
+
+  > span {
+    display: block;
+    font-size: 13px;
+    color: $text-secondary;
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+
+  input,
+  select {
+    width: 100%;
+    padding: 8px 12px;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    color: $text-primary;
+    font-size: 13px;
+    box-sizing: border-box;
+
+    &:focus:not(:focus-visible) {
+      outline: none;
+      border-color: $accent;
+    }
+  }
+}
+
+.modal-error {
+  margin-top: 4px;
+  font-size: 12px;
+  color: $danger;
+}
+
+.form-group {
+  position: relative;
+  margin-bottom: 16px;
+
+  label {
+    display: block;
+    font-size: 13px;
+    color: $text-secondary;
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+
+  input,
+  select,
+  textarea {
+    width: 100%;
+    padding: 8px 12px;
+    background: $bg-input;
+    border: 1px solid var(--border-l12);
+    border-radius: var(--r-1);
+    color: $text-primary;
+    font-size: 14px;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+    transition: border-color var(--d-2);
+
+    &:focus {
+      border-color: $accent-hover;
+    }
+
+    &::placeholder {
+      color: var(--text-muted);
+    }
+  }
+
+  textarea {
+    font-family: $font-mono;
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 72px;
+  }
+
+  // Case-sensitive group suggestion dropdown (replaces native <datalist>,
+  // which would coerce the typed casing to match an existing option).
+  .group-suggestions {
+    position: absolute;
+    z-index: 20;
+    left: 0;
+    right: 0;
+    margin: 2px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: $bg-secondary;
+    border: 1px solid $accent-hover;
+    border-radius: var(--r-1);
+    box-shadow: 0 4px 12px var(--shadow-1);
+    max-height: 180px;
+    overflow-y: auto;
+
+    li {
+      padding: 6px 12px;
+      font-size: 13px;
+      color: $text-primary;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(0, 122, 204, 0.18);
+      }
+    }
+  }
+
+  // Serial port combobox suggestions (replaces native <datalist>, which does
+  // not render the option `label`/description reliably across Chromium builds).
+  .serial-port-combo {
+    position: relative;
+
+    .serial-port-input {
+      padding-right: 30px;
+    }
+  }
+
+  .serial-port-suggestions {
+    position: absolute;
+    z-index: 30;
+    left: 0;
+    right: 0;
+    margin: 2px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: $bg-secondary;
+    border: 1px solid $accent-hover;
+    border-radius: var(--r-1);
+    box-shadow: 0 4px 12px var(--shadow-1);
+    max-height: 200px;
+    overflow-y: auto;
+
+    li {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 6px 12px;
+      font-size: 13px;
+      color: $text-primary;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(0, 122, 204, 0.18);
+      }
+
+      .port-name {
+        font-weight: 600;
+      }
+
+      .port-desc {
+        font-size: 12px;
+        color: $text-secondary;
+      }
+    }
+  }
+
+  // Baud-rate combobox: same custom-dropdown pattern as the port picker, minus
+  // the description line. Sits inside `.dir-row` next to the Detect button.
+  .baud-rate-combo {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+
+    input {
+      padding-right: 30px;
+    }
+  }
+
+  .baud-rate-suggestions {
+    position: absolute;
+    z-index: 30;
+    // This field sits in the right-hand column of the form row, so the panel is
+    // anchored to the right edge and grows leftwards. `max-content` (instead of
+    // `left: 0; right: 0`, which pins it to the field's narrow width) keeps the
+    // notes — "most common", "ESP8266 boot" — from being squeezed or clipped.
+    right: 0;
+    left: auto;
+    min-width: 100%;
+    width: max-content;
+    margin: 2px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: $bg-secondary;
+    border: 1px solid $accent-hover;
+    border-radius: var(--r-1);
+    box-shadow: 0 4px 12px var(--shadow-1);
+    max-height: 260px;
+    overflow-y: auto;
+
+    li {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 5px 12px;
+      font-size: 13px;
+      color: $text-primary;
+      cursor: pointer;
+      white-space: nowrap;
+
+      &:hover {
+        background: rgba(0, 122, 204, 0.18);
+      }
+
+      .baud-value {
+        flex-shrink: 0;
+        font-family: $font-mono;
+      }
+
+      .baud-note {
+        flex-shrink: 0;
+        font-size: 11px;
+        color: $text-secondary;
+      }
+    }
+  }
+}
+
+// Shared directory-picker row: a flex row holding an input (flex: 1) and a
+// "Browse" button. Used by both the SSH connection editor (key path, inside
+// `.form-group`) and the local terminal editor (working dir, inside
+// `.modal-field`) so the Browse button looks identical in both places.
+.dir-row {
+  display: flex;
+  gap: 8px;
+
+  input {
+    flex: 1;
+  }
+
+  // A clearable field adds its own wrapper, so that wrapper — not the input —
+  // is the flex item that has to grow.
+  > .clearable-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  button {
+    flex-shrink: 0;
+    padding: 0 12px;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    color: $text-primary;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--control-hover);
+    }
+  }
+}
+
+// Serial baud-rate auto-detection: status line + scored candidate list shown
+// under the "Baud rate" field of the connection editor.
+.baud-detect-result {
+  margin: 0 0 10px;
+  font-size: 12px;
+
+  .baud-detect-hint {
+    color: $text-secondary;
+    line-height: 1.5;
+
+    strong {
+      color: $text-primary;
+    }
+  }
+
+  .baud-detect-error {
+    color: #e06c75;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+
+  .baud-candidate-list {
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+
+    li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 8px;
+      cursor: pointer;
+      color: $text-secondary;
+
+      &:hover {
+        background: rgba(0, 122, 204, 0.18);
+      }
+
+      &.active {
+        color: $text-primary;
+        background: rgba(0, 122, 204, 0.12);
+      }
+
+      .baud-value {
+        flex: 0 0 62px;
+        font-weight: 600;
+        color: $text-primary;
+      }
+
+      .baud-bar {
+        flex: 0 0 60px;
+        height: 4px;
+        background: $bg-input;
+        border-radius: var(--r-pill);
+        overflow: hidden;
+
+        span {
+          display: block;
+          height: 100%;
+          background: #4c9aff;
+        }
+      }
+
+      .baud-score {
+        flex: 0 0 36px;
+        text-align: right;
+      }
+
+      .baud-sample {
+        flex: 1;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font-family: monospace;
+        color: $text-dim;
+      }
+    }
+  }
+}
+
+// Hide the browser's native password reveal (eye) and clear buttons so only
+// our custom in-box icon (styled like the Edge default) is shown.
+input[type='password']::-ms-reveal,
+input[type='password']::-ms-clear {
+  display: none;
+}
+
+// Shell for a field with in-box buttons (`ClearableInput`): the ✕ clear button
+// and an optional trailing element (the password show/hide eye) are pinned to
+// the right edge.
+.clearable-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+
+  input {
+    width: 100%;
+    // Room for the clear ✕; `with-trailing` widens it for the eye as well.
+    padding-right: 30px;
+  }
+
+  .input-icon-btn {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    background: none;
+    border: none;
+    color: $text-dim;
+    cursor: pointer;
+
+    &:hover {
+      color: $text-primary;
+    }
+  }
+}
+
+// Clear (✕) button pinned inside a field. Hidden by default and revealed on
+// hover / focus so dense forms stay uncluttered; it is only rendered while the
+// field has content. Shared by `.clearable-input` (plain fields) and the two
+// serial comboboxes, which own their wrapper.
+.clearable-input .input-clear-btn,
+.serial-port-combo .input-clear-btn,
+.baud-rate-combo .input-clear-btn {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-circle);
+  background: transparent;
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--d-1) ease,
+    color var(--d-1) ease,
+    background var(--d-1) ease;
+
+  &:hover {
+    color: $text-primary;
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.clearable-input:hover .input-clear-btn,
+.clearable-input:focus-within .input-clear-btn,
+.serial-port-combo:hover .input-clear-btn,
+.serial-port-combo:focus-within .input-clear-btn,
+.baud-rate-combo:hover .input-clear-btn,
+.baud-rate-combo:focus-within .input-clear-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+// With a trailing element (the password eye) both buttons must fit, so the
+// clear ✕ shifts left of it.
+.clearable-input.with-trailing {
+  input {
+    padding-right: 56px;
+  }
+
+  .input-clear-btn {
+    right: 30px;
+  }
+}
+
+.form-row {
+  display: flex;
+  gap: 12px;
+
+  .form-group {
+    flex: 1;
+  }
+}
+
+.auth-type-toggle {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: $text-secondary;
+    cursor: pointer;
+  }
+}
+
+// Tab right-click context menu
+.tab-context-menu {
+  position: fixed;
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  box-shadow: 0 4px 16px var(--shadow-1);
+  z-index: 2000;
+  padding: 4px 0;
+  min-width: 140px;
+
+  .context-menu-item {
+    padding: 8px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    color: $text-primary;
+
+    &:hover {
+      background: var(--menu-hover);
+    }
+
+    // Unavailable action (e.g. "Clear input" with an empty input line).
+    &.disabled {
+      opacity: 0.45;
+      cursor: default;
+
+      &:hover {
+        background: none;
+      }
+    }
+
+    &.ctx-danger {
+      color: #f06b6b;
+
+      &:hover {
+        background: rgba(240, 107, 107, 0.15);
+      }
+    }
+  }
+}
+
+// Right-click context menu
+.context-menu {
+  position: fixed;
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  box-shadow: 0 4px 16px var(--shadow-1);
+  z-index: 2000;
+  padding: 4px 0;
+  min-width: 160px;
+
+  &-item {
+    padding: 8px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    color: $text-primary;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    &:hover {
+      background: var(--menu-hover);
+    }
+  }
+
+  &-divider {
+    height: 1px;
+    background: $border;
+    margin: 4px 0;
+  }
+
+  // Non-interactive section caption (e.g. "Move to group" in the command list).
+  &-label {
+    padding: 4px 16px 2px;
+    font-size: 11px;
+    color: $text-dim;
+  }
+
+  // The item reflecting the current state (e.g. the snippet's current group).
+  &-item.active {
+    color: var(--accent-soft-40);
+  }
+}

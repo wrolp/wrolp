@@ -2,11 +2,10 @@ import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
 
 // Closing a file tab must always leave a live view behind: pick the neighbouring
-// file tab when the session still has one, and fall back to the terminal when it
-// does not. The pane's overlay is chosen by `shellView` while the editor reads
-// `activeEditorKey`, so a close that only updates one of the two points the pane
-// at a key that no longer exists — the terminal is hidden (sv !== 'terminal')
-// and the editor is not rendered (its tab is gone): an empty pane.
+// file tab when the session still has one, and fall back to the workspace tab when
+// it does not. A file is a first-class tab bar entry that owns an editor buffer,
+// so the two have to be dropped together — a tab left behind points at a buffer
+// that no longer exists, and a buffer without its tab is unreachable.
 // See task/BUGS.md → B37.
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
@@ -32,6 +31,11 @@ function shownFile(page: Page) {
 /** The pane's own terminal surface — always mounted, hidden behind an overlay. */
 function terminalSurface(page: Page) {
   return page.locator('.term-pane-term')
+}
+
+/** A tab bar entry for an open file, by name. */
+function fileTab(page: Page, name: string) {
+  return page.locator('.tab-item', { hasText: name })
 }
 
 async function openConnection(page: Page) {
@@ -64,10 +68,7 @@ async function openFile(page: Page, name: string) {
 }
 
 function closeFileTab(page: Page, name: string) {
-  return page
-    .locator('.term-pane-file-tab', { hasText: name })
-    .locator('.term-pane-file-tab-close')
-    .click()
+  return fileTab(page, name).locator('.tab-close').click()
 }
 
 test('closing a file falls back to the neighbouring file, then to the terminal', async ({
@@ -76,21 +77,23 @@ test('closing a file falls back to the neighbouring file, then to the terminal',
   await openConnection(page)
   await openFile(page, ALPHA)
   await openFile(page, BETA)
-  // Two file tabs, the second one active; the terminal is hidden behind them.
-  await expect(page.locator('.term-pane-file-tab', { hasText: ALPHA })).toHaveCount(1)
+  // Opening a file adds a tab of its own, and it covers the terminal.
+  await expect(fileTab(page, ALPHA)).toHaveCount(1)
+  await expect(fileTab(page, BETA)).toHaveCount(1)
   await expect(terminalSurface(page)).not.toBeVisible()
 
-  // Close the active file → the pane must switch to the file that is left, not
-  // go blank (the terminal stays hidden; the editor shows alpha).
+  // Close the active file → switch to the file that is left, not go blank (the
+  // terminal stays hidden; the editor shows alpha).
   await closeFileTab(page, BETA)
-  await expect(page.locator('.term-pane-file-tab', { hasText: BETA })).toHaveCount(0)
+  await expect(fileTab(page, BETA)).toHaveCount(0)
   await expect(shownFile(page)).toContainText(ALPHA)
+  await expect(fileTab(page, ALPHA)).toHaveClass(/active/)
   await expect(terminalSurface(page)).not.toBeVisible()
 
-  // Close the last file → back to the terminal.
+  // Close the last file → the workspace tab is selected again and reveals itself.
   await closeFileTab(page, ALPHA)
   await expect(page.locator('.editor-toolbar')).toHaveCount(0)
-  await expect(page.locator('.term-pane-file-tab', { hasText: 'Terminal' })).toHaveClass(/active/)
+  await expect(page.locator('.tab-item', { hasText: 'Demo' })).toHaveClass(/active/)
   await expect(terminalSurface(page)).toBeVisible()
 })
 
@@ -101,7 +104,7 @@ test('closing an inactive file leaves the shown file alone', async ({ page }) =>
 
   // alpha closes in the background: beta (the active one) must stay on screen.
   await closeFileTab(page, ALPHA)
-  await expect(page.locator('.term-pane-file-tab', { hasText: ALPHA })).toHaveCount(0)
+  await expect(fileTab(page, ALPHA)).toHaveCount(0)
   await expect(shownFile(page)).toContainText(BETA)
   await expect(terminalSurface(page)).not.toBeVisible()
 })

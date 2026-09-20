@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import type { ConnectionConfig, SessionSummary, DockPos } from '../types'
+import { DEFAULT_DRAWER_HEIGHT } from '../types'
 import { SessionListPanel } from './SessionListPanel'
 import { CommandSetPanel } from './CommandSetPanel'
-import { HostAnalysisPanel } from './HostAnalysisPanel'
-import { DockerAnalysisPanel } from './DockerAnalysisPanel'
 import { SessionViewer } from './SessionViewer'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
@@ -17,37 +16,24 @@ interface BottomPanelProps {
   onToggleExpanded: () => void
   onDockDragStart?: () => void
   onDockDragEnd?: () => void
-  /** Container to analyse — set by DockerPanel context menu. */
-  dockerAnalysisTarget?: string | null
-  /** Called when Docker analysis completes. */
-  onDockerAnalyzed?: () => void
 }
 
-type PanelTab = 'sessions' | 'cmdsets' | 'analysis' | 'docker'
+type PanelTab = 'sessions' | 'cmdsets'
 
 export const BottomPanel: React.FC<BottomPanelProps> = ({
   connections,
   activeTabId,
   expanded,
   pos = 'bottom',
-  size = 240,
+  size = DEFAULT_DRAWER_HEIGHT,
   onToggleExpanded,
   onDockDragStart,
   onDockDragEnd,
-  dockerAnalysisTarget,
-  onDockerAnalyzed,
 }) => {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<PanelTab>('sessions')
   const [viewingSession, setViewingSession] = useState<SessionSummary | null>(null)
   const [prefillCommands, setPrefillCommands] = useState<string[] | null>(null)
-
-  // Auto-switch to Docker tab when a target is set
-  useEffect(() => {
-    if (dockerAnalysisTarget) {
-      setActiveTab('docker')
-    }
-  }, [dockerAnalysisTarget])
 
   const handleExtractCommands = (commands: string[]) => {
     setPrefillCommands(commands)
@@ -73,18 +59,12 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
   return (
     <div
       className={`bottom-panel${expanded ? ' expanded' : ''}${pos === 'right' ? ' right' : ''}`}
-      style={
-        expanded
-          ? pos === 'right'
-            ? { width: size }
-            : { height: size }
-          : undefined
-      }
+      style={expanded ? (pos === 'right' ? { width: size } : { height: size }) : undefined}
     >
       <div className="bottom-panel-tabs">
         <span
           className="panel-drag-handle"
-          title="Drag to re-dock panel (right / bottom)"
+          title={t('dragToRedock')}
           draggable
           onMouseDown={(e) => e.stopPropagation()}
           onDragStart={(e) => {
@@ -94,13 +74,18 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
           }}
           onDragEnd={() => onDockDragEnd?.()}
         >
-          ⠿
+          <Icon name="drag" size={12} />
         </span>
-        <span
-          className={`collapse-chevron${expanded ? ' expanded' : ''}`}
-          onClick={onToggleExpanded}
+        <button
+          type="button"
+          className="icon-btn drawer-toggle"
+          aria-expanded={expanded}
+          aria-label={expanded ? t('collapse') : t('expand')}
           title={expanded ? t('collapse') : t('expand')}
-        />
+          onClick={onToggleExpanded}
+        >
+          <Icon name="chevronDown" size={12} />
+        </button>
         <button
           className={`tab-btn${activeTab === 'sessions' ? ' active' : ''}`}
           onClick={() => setActiveTab('sessions')}
@@ -112,18 +97,6 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
           onClick={() => setActiveTab('cmdsets')}
         >
           <Icon name="clipboard" /> {t('commandSets')}
-        </button>
-        <button
-          className={`tab-btn${activeTab === 'analysis' ? ' active' : ''}`}
-          onClick={() => setActiveTab('analysis')}
-        >
-          <Icon name="search" /> {t('analysis')}
-        </button>
-        <button
-          className={`tab-btn${activeTab === 'docker' ? ' active' : ''}`}
-          onClick={() => setActiveTab('docker')}
-        >
-          <Icon name="container" /> {t('docker')}
         </button>
       </div>
       {expanded && (
@@ -141,19 +114,6 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
               activeTabId={activeTabId}
               prefillCommands={prefillCommands}
               onPrefillConsumed={() => setPrefillCommands(null)}
-            />
-          )}
-          {activeTab === 'analysis' && (
-            <HostAnalysisPanel
-              connections={connections}
-              activeTabId={activeTabId}
-            />
-          )}
-          {activeTab === 'docker' && (
-            <DockerAnalysisPanel
-              activeTabId={activeTabId}
-              targetContainer={dockerAnalysisTarget ?? null}
-              onAnalyzed={onDockerAnalyzed}
             />
           )}
         </div>

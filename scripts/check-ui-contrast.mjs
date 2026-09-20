@@ -1,6 +1,6 @@
 // Contrast audit for self-declared colour pairs in the stylesheets (B32 follow-up).
 //
-// Run with:  node scripts/check-ui-contrast.mjs [--all] [--min=3]
+// Run with:  node scripts/check-ui-contrast.mjs [--all] [--min=3] [--list] [--fail-on-violation]
 //
 // Why this shape: the B32 defect was a foreground and a background declared *in the
 // same rule* (`background: rgba($accent,.15); color: $accent` → blue on blue-grey,
@@ -24,19 +24,44 @@
 //   4. WCAG contrast is computed for the pair; anything below AA (4.5:1, or 3:1
 //      for large/bold text) is printed worst-first.
 //
-// Exit code is always 0 — it is an audit report, not a gate.
+// Exit code is 0 unless `--fail-on-violation` is passed and something is below AA.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import * as sass from 'sass'
 
 const STYLE_DIR = 'src/styles'
-const FILES = [`${STYLE_DIR}/App.scss`, `${STYLE_DIR}/index.scss`]
+
+// App.scss is now a 27-line index that `@use`s one partial per UI area; it used to
+// be a single 10.4k-line sheet. Reading only the two entries would therefore have
+// silently audited nothing at all, so the `@use` graph is expanded here in the
+// same order the browser sees the cascade.
+function auditFiles() {
+  const seen = new Set()
+  const queue = [`${STYLE_DIR}/App.scss`, `${STYLE_DIR}/index.scss`]
+  while (queue.length) {
+    const file = queue.shift()
+    if (seen.has(file)) continue
+    seen.add(file)
+    const src = readFileSync(file, 'utf8')
+    for (const used of src.matchAll(/^@use\s+'([^']+)'/gm)) {
+      const base = used[1]
+      if (base.includes(':')) continue // `sass:color` and other builtins have no file
+      const partial = `${STYLE_DIR}/${base}.scss`
+      const underscored = `${STYLE_DIR}/_${base}.scss`
+      queue.push(existsSync(underscored) && !existsSync(partial) ? underscored : partial)
+    }
+  }
+  return [...seen]
+}
+
+const FILES = auditFiles()
 const AA_NORMAL = 4.5
 const AA_LARGE = 3
 
 const args = process.argv.slice(2)
 const showAll = args.includes('--all')
 const showList = args.includes('--list')
+const failOnViolation = args.includes('--fail-on-violation')
 const minFlag = args.find((a) => a.startsWith('--min='))
 const explicitMin = minFlag ? Number(minFlag.slice(6)) : null
 
@@ -406,7 +431,10 @@ function main() {
       for (const theme of ['dark', 'light']) {
         const fg = fgs[theme]
         const bg = bgs[theme]
-        if (!fg || !bg || bg.alpha === 0) continue
+        // `color: transparent` is not a contrast claim. `background-clip: text`
+        // shimmers (the AI "running" label) paint the glyph from the background and
+        // declare transparent ink precisely so the blend shows through.
+        if (!fg || !bg || bg.alpha === 0 || fg.alpha === 0) continue
         const under = bg.alpha < 0.999 ? surfaceBehind(block, themes[theme], sassVars) : null
         const surface = under ? blend(bg.rgb, bg.alpha, under.rgb) : bg.rgb
         ratios[theme] = contrast(fg.rgb, surface)
@@ -472,6 +500,11 @@ function main() {
     }
   }
   if (!showList) console.log('\n(add --list to expand every selector)')
+
+  if (failOnViolation && rows.length) {
+    console.error(`\n${rows.length} contrast violation(s) below the AA floor`)
+    process.exitCode = 1
+  }
 }
 
 main()

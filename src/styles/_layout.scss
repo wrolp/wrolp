@@ -1,0 +1,158 @@
+// ===== Structural tokens =====
+//
+// Deliberately NOT in `_theme.scss`: every value here is identical in dark and
+// light, so putting them in the two theme tables would mean maintaining each
+// twice and inviting drift. They are emitted once on `:root` (src/styles/
+// index.scss). Only values that genuinely differ per theme belong over there.
+//
+// Scope rule — and it is a rule because of a real precedent: `_theme.scss`
+// once carried six `titlebar-bg` / `toast-*` / `scrim` / `menu-hover` tokens that
+// nothing referenced, so "add a token" is only half the job. Every key below is
+// consumed by the component layer built in the same work stream; a key that loses
+// its last reader goes with it.
+//
+// Layout dimensions join in below as the three-region layout that consumes each
+// band arrives, together with the `data-density` modes `themeStore` already writes.
+
+@use 'sass:meta';
+@use 'variables' as *;
+
+// ---- Spacing: 4px base scale ----
+// New and rewritten surfaces use these. Existing padding literals were chosen
+// per-widget over years and are not churn worth a redesign's sake.
+$spacings: (
+  1: 4px,
+  2: 8px,
+  3: 12px,
+  4: 16px,
+  5: 24px,
+  6: 32px,
+);
+
+// ---- Radius: three steps, pills, and full circle ----
+// `circle` is on the list rather than left as a literal because 16 rules used
+// `50%` on an intentionally round thing (avatar, status dot, slider knob), and
+// `grep "border-radius: [0-9]"` is how this repo finds off-token values.
+$radii: (
+  1: 3px,
+  2: 5px,
+  3: 8px,
+  pill: 999px,
+  circle: 50%,
+);
+
+// ---- Type scale ----
+// `--fs-ui` is the one the 界面字号 setting writes; the rest are derived so a
+// size change moves the whole UI together instead of only the parts that happen
+// to use the base size. 12.5px is the modal of what the app already uses.
+$font-sizes: (
+  ui: 12.5px,
+  xs: calc(var(--fs-ui) - 1.5px),
+  sm: calc(var(--fs-ui) - 0.5px),
+  md: var(--fs-ui),
+  lg: calc(var(--fs-ui) + 1px),
+  xl: calc(var(--fs-ui) + 3px),
+);
+
+// ---- Chrome bands ----
+// The full-width horizontal bands of the window, at the compact values the approved
+// static draft specifies (`task/designs/ui-redesign-v1/design.css`). Column widths
+// and the nav/inspector/drawer bands join this list when their region lands —
+// a dimension token with no reader is the same mistake as a colour token with none.
+$dims: (
+  h-titlebar: 28px,
+  h-tabbar: 28px,
+  h-statusbar: 22px,
+);
+
+// `themeStore` writes one of these to `<html data-density>`. `'default'` and
+// `'compact'` both get the table above, so only `'comfy'` needs an override block;
+// adding a mode here without a reader in `$dims` would silently do nothing.
+$densities: (
+  comfy: (
+    h-titlebar: 34px,
+    h-tabbar: 32px,
+    h-statusbar: 26px,
+  ),
+);
+
+// ---- Motion ----
+// Two easings only: `ease-out` for things entering (a UI never needs to signal
+// "I will leave"), `ease-in-out` for things looping or moving back and forth.
+$durations: (
+  1: 100ms,
+  2: 160ms,
+  3: 240ms,
+);
+$easings: (
+  out: cubic-bezier(0.2, 0.7, 0.3, 1),
+  in-out: cubic-bezier(0.4, 0, 0.2, 1),
+);
+
+// ---- Stacking ----
+// Only the rungs that compete *app-wide* belong here, which in practice means the
+// `position: fixed` roots: the modal scrim, the re-dock overlay, the floating
+// panels, the lightbox, the toast. Everything else — a tooltip inside a pane, a
+// resize handle inside the command list, a dropdown inside a menu — is in its own
+// stacking context and its number only orders it against its siblings, so giving
+// it a global token would be a lie that breaks the moment the real rung moves.
+// The values are what the app already used, so this renames, not reorders.
+//
+// `above-float` exists because the command list portals its dialogs and copy
+// notice to <body>; they must beat their own window, and did so with 2200/2400.
+$z-layers: (
+  modal: 1000,
+  dock: 1500,
+  float: 2000,
+  above-float: 2400,
+  lightbox: 3000,
+  toast: 9999,
+);
+
+@mixin emit-structural {
+  @each $key, $value in $spacings {
+    --sp-#{$key}: #{$value};
+  }
+  @each $key, $value in $radii {
+    --r-#{$key}: #{$value};
+  }
+  @each $key, $value in $font-sizes {
+    --fs-#{$key}: #{$value};
+  }
+  @each $key, $value in $dims {
+    --#{$key}: #{$value};
+  }
+  @each $key, $value in $durations {
+    --d-#{$key}: #{$value};
+  }
+  @each $key, $value in $easings {
+    --e-#{$key}: #{$value};
+  }
+  @each $key, $value in $z-layers {
+    --z-#{$key}: #{$value};
+  }
+  --font-ui: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  // Same stack the Sass `$font-mono` alias has always carried, now reachable from
+  // CSS: App.tsx reads `var(--font-mono, Consolas, monospace)` in two places and,
+  // with no such custom property ever defined, silently fell back to Consolas.
+  // `meta.inspect` is load-bearing — plain `#{$font-mono}` serialises a quoted
+  // family list *unquoted*, which is valid CSS but not what anyone reading it
+  // would expect. (The *terminal's* font is not here: it is a user setting that
+  // xterm reads from JS, see `DEFAULT_TERMINAL_FONT_FAMILY` in
+  // src/lib/appSettings.ts.)
+  --font-mono: #{meta.inspect($font-mono)};
+}
+
+/// Density overrides. Emitted outside `emit-structural` because they are a
+/// *selector*, not a value on `:root` — `html[data-density='…']` (0,1,1) outranks
+/// the `:root` (0,1,0) defaults above, so no `!important` and no load-order
+/// dependency on the area partials is needed.
+@mixin emit-density-modes {
+  @each $mode, $overrides in $densities {
+    html[data-density='#{$mode}'] {
+      @each $key, $value in $overrides {
+        --#{$key}: #{$value};
+      }
+    }
+  }
+}

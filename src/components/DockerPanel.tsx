@@ -38,6 +38,8 @@ interface DockerPanelProps {
   /** When this value changes, the container list is reloaded (e.g. after a
    *  stop/delete/start/restart triggered from the parent). */
   refreshSignal?: number
+  /** The nav column's single filter box, shared with the connection list. */
+  filter?: string
 }
 
 /**
@@ -60,13 +62,16 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onDeleteContainer,
   serverLabel,
   refreshSignal,
+  filter = '',
 }) => {
   const { t } = useI18n()
   const [containers, setContainers] = useState<ContainerInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showAll, setShowAll] = useState(false)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; container: ContainerInfo } | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; container: ContainerInfo } | null>(
+    null,
+  )
   const [confirmDelete, setConfirmDelete] = useState<ContainerInfo | null>(null)
   const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
@@ -194,24 +199,31 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     Promise.resolve(doRemove).finally(() => setConfirmDelete(null))
   }, [confirmDelete, jumpTabId, load, onDeleteContainer])
 
-  const visible = showAll ? containers : containers.filter((c) => c.state === 'running')
+  // The nav column's filter box narrows this list too. `image` is matched
+  // because on a host with thirty containers the image is what you remember and
+  // the name is what Docker generated.
+  const q = filter.toLowerCase()
+  const visible = (showAll ? containers : containers.filter((c) => c.state === 'running')).filter(
+    (c) => !q || c.name.toLowerCase().includes(q) || c.image.toLowerCase().includes(q),
+  )
 
   return (
     <div className="docker-panel">
-      <div className="docker-panel-header">
-        <span
-          className={`collapse-chevron${expanded ? ' expanded' : ''}`}
-          onClick={onToggleExpanded}
+      <div className="panel-head sec" onClick={onToggleExpanded}>
+        <button
+          type="button"
+          className="panel-head-toggle"
+          aria-expanded={expanded}
           title={expanded ? t('collapse') : t('expand')}
-        />
-        <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          {t('docker')}
-          {serverLabel && (
-            <span className="file-server-banner" style={{ margin: 0 }} title={serverLabel}>
-              <Icon name="terminal" size={11} />
-              <span className="file-server-label">{serverLabel}</span>
-            </span>
-          )}
+        >
+          <span className={`collapse-chevron${expanded ? ' expanded' : ''}`} />
+          <span className="panel-title">{t('docker')}</span>
+        </button>
+        {/* One metadata run, count first: the host label is the part that has to
+            give when the column is narrow, and a truncated count would read as a
+            truncated list. */}
+        <span className="cnt" title={serverLabel}>
+          {serverLabel ? `${visible.length} · ${serverLabel}` : visible.length}
         </span>
         {expanded && (
           <>
@@ -223,8 +235,18 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
               />
               <span className="docker-filter-toggle-text">{t('showAllContainers')}</span>
             </label>
-            <button className="docker-refresh" title="Refresh containers" onClick={load} disabled={loading}>
-              <Icon name="refresh" />
+            <button
+              type="button"
+              className="icon-btn"
+              title={t('refresh')}
+              aria-label={t('refresh')}
+              onClick={(e) => {
+                e.stopPropagation()
+                load()
+              }}
+              disabled={loading}
+            >
+              <Icon name="refresh" size={13} />
             </button>
           </>
         )}
@@ -252,7 +274,9 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
                   isRunning ? '\n\n' + t('rightClickShell') : '\n\n' + t('rightClickStart')
                 }${isRunning ? `\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}` : ''}`}
               >
-                <span className="docker-icon"><Icon name="container" /></span>
+                <span className="docker-icon">
+                  <Icon name="container" />
+                </span>
                 <div className="docker-info">
                   <div className="docker-name">{c.name}</div>
                   <div className="docker-image">{c.image}</div>

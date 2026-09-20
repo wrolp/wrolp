@@ -1,0 +1,1070 @@
+@use 'variables' as *;
+
+// ===== Custom Titlebar =====
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: var(--h-titlebar);
+  padding: 0 0 0 8px;
+  background: var(--titlebar-bg);
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-app-region: drag;
+
+  &-title {
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-right: auto;
+    padding-left: 4px;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    // The titlebar gained an occupant, so a narrow window now has something to
+    // collide with. Branding never wraps onto a second line; the workspace name
+    // inside the pill is the thing that gives.
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  &-icon {
+    width: 16px;
+    height: 16px;
+  }
+
+  &-actions {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    gap: 4px;
+    cursor: default;
+    -webkit-app-region: no-drag;
+    // Without this the row's automatic minimum is the sum of its children's
+    // min-content widths — the workspace name included, since nowrap text has no
+    // break opportunity — and on a narrow window the whole row, close button
+    // included, spills past the right edge. `min-width: 0` lets the row shrink
+    // and pushes the deficit onto the one child that can absorb it.
+    min-width: 0;
+  }
+
+  &-controls {
+    display: flex;
+    height: 100%;
+    cursor: default;
+    -webkit-app-region: no-drag;
+  }
+
+  &-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background var(--d-1);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+  }
+
+  &-close {
+    &:hover {
+      background: #e81123;
+      color: #fff;
+    }
+  }
+}
+
+.settings-btn,
+.ai-chat-btn,
+.pin-btn,
+.cmd-list-btn,
+.net-tools-btn {
+  width: 20px;
+  height: 20px;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: var(--r-1);
+  }
+}
+
+.cmd-list-btn {
+  color: #8ab4f8;
+
+  &:hover {
+    color: #b6d4ff;
+  }
+}
+
+.ai-chat-btn {
+  color: #7cc7ff;
+
+  &:hover {
+    color: #a5d8ff;
+  }
+}
+
+.net-tools-btn {
+  color: #4ec9b0;
+
+  &:hover {
+    color: #6fe0c4;
+  }
+}
+
+.pin-btn.active {
+  color: var(--warning-soft-40);
+
+  &:hover {
+    color: var(--warning-soft-40);
+    background: rgba(255, 215, 106, 0.12);
+  }
+}
+
+// ===== Collapse Chevron =====
+// CSS-drawn chevron: points right (›) when collapsed, rotates 90° around its
+// own midpoint to point down (⌄) when expanded.
+.collapse-chevron {
+  flex-shrink: 0;
+  display: inline-block;
+  box-sizing: border-box;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); // collapsed → points right
+  transform-origin: center center;
+  transition:
+    transform var(--d-2) ease,
+    color var(--d-2) ease;
+  cursor: pointer;
+  user-select: none;
+
+  &.expanded {
+    transform: rotate(45deg); // expanded → points down
+  }
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+// ===== Workspace Selector =====
+//
+// A pill in the titlebar's action row, not a full-width row on top of the
+// sidebar. It names the context of the whole window, and the sidebar is
+// hideable — as a sidebar row it used to disappear along with it.
+
+.workspace-selector {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  // Opt out of the automatic minimum so the pill can give width before the
+  // window controls get pushed off the right edge.
+  min-width: 0;
+}
+
+.workspace-selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  min-width: 0;
+  padding: 0 8px;
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: var(--r-pill);
+  color: $text-secondary;
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--d-1);
+
+  &:hover {
+    background: $bg-active;
+  }
+}
+
+.workspace-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: $text-dim;
+}
+
+// The word "Workspace" is the label; the name after it is the value. Only the
+// value gets the accent-adjacent treatment, so the pill stays readable when a
+// workspace is called "prod" or "build-agent-07-eu-west".
+.workspace-label {
+  flex-shrink: 0;
+  color: $text-muted;
+}
+
+.workspace-name {
+  // The reverse of the section-header rule: there the title must never lose to
+  // its metadata, and here the workspace name is the one thing in the pill that
+  // is allowed to give — the label, the icon and the chevron are `flex-shrink: 0`.
+  min-width: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: $text-primary;
+}
+
+.workspace-chevron {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: $text-dim;
+  transition: transform var(--d-2);
+
+  &.open {
+    transform: rotate(180deg);
+  }
+}
+
+// Anchored to the pill's right edge: the pill sits near the right of a wide
+// titlebar, so a left-anchored menu would hang off the window. `left: 0` and
+// `right: 0` were sized to the sidebar column that used to hold this control.
+.workspace-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: auto;
+  right: 0;
+  min-width: 240px;
+  // A titlebar menu has to clear floating windows, which live above the dock
+  // and are dragged underneath this bar on purpose.
+  z-index: var(--z-above-float);
+  background: $bg-tertiary;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  box-shadow: 0 4px 12px var(--shadow-1);
+  overflow: hidden;
+}
+
+.workspace-item {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  height: 32px;
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.active {
+    background: rgba($accent, 0.12);
+
+    .workspace-item-label {
+      color: $accent;
+      font-weight: 600;
+    }
+  }
+}
+
+.workspace-item-label {
+  flex: 1;
+  font-size: 13px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-item-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+
+  // Focus has to reveal them too: they are labelled buttons a Tab key reaches,
+  // and a hover-only reveal left that focus landing on invisible controls.
+  .workspace-item:hover &,
+  .workspace-item:focus-within & {
+    opacity: 1;
+  }
+}
+
+.workspace-divider {
+  height: 1px;
+  background: $border;
+  margin: 4px 0;
+}
+
+.workspace-create-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: $text-dim;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    color: $text-primary;
+    background: $bg-hover;
+  }
+}
+
+.workspace-create-row {
+  padding: 4px 8px;
+}
+
+.workspace-create-input,
+.workspace-rename-input {
+  width: 100%;
+  padding: 4px 8px;
+  background: $bg-input;
+  border: 1px solid $accent;
+  border-radius: var(--r-1);
+  color: $text-primary;
+  font-size: 13px;
+  font-family: inherit;
+  &:focus:not(:focus-visible) {
+    outline: none;
+  }
+}
+
+// ===== Collapsible Section =====
+.collapsible-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+// ===== Main Content Area =====
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+
+  // Which edge each column hugs decides the visual order, and it has to be
+  // `order` rather than a different JSX arrangement because the inspector must
+  // never be re-mounted when it moves: an unmount would strand the assistant's
+  // in-flight reply and drop the subnet scan's accumulated rows. `order` moves
+  // the box; moving the element would move its state with it.
+  //
+  // The nav column always stays flush with its edge and the inspector sits
+  // between it and the workspace, on whichever side the user chose — so the
+  // middle band is always 2, and each side pair is 0 or 4. Ties inside a pair
+  // (a column and its divider, which are siblings in the right DOM order for
+  // both sides) are settled by DOM order.
+  > .terminal-area {
+    order: 2;
+  }
+
+  &.nav-left > .sidebar-container,
+  &.nav-left > .panel-divider {
+    order: 0;
+  }
+
+  &.nav-right > .sidebar-container,
+  &.nav-right > .panel-divider {
+    order: 4;
+  }
+
+  &.insp-left > .inspector {
+    order: 1;
+  }
+
+  &.insp-right > .inspector {
+    order: 3;
+  }
+}
+
+// ===== Nav Column Filter =====
+//
+// One field for the whole navigation column, so it sits above the sections
+// rather than inside any of them. It is an inset surface because it is the only
+// editable thing in a column of read-outs — the recess says "type here" without
+// a label spending a row.
+.nav-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+  height: 24px;
+  margin: var(--sp-1);
+  padding: 0 7px;
+  background: $bg-input;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  // The container's own colour is what the placeholder inherits, so it has to
+  // clear the AA text floor; the glyph is dimmed separately below because an
+  // icon is held to 3:1, not 4.5:1.
+  color: $text-secondary;
+  transition: border-color var(--d-1) var(--e-out);
+
+  &:focus-within {
+    border-color: $border-focus;
+  }
+
+  > svg {
+    flex-shrink: 0;
+    color: $text-muted;
+  }
+
+  > input {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: $text-primary;
+    font: inherit;
+    font-size: var(--fs-sm);
+    // The container owns the focus ring now; an outline on the bare input draws
+    // a box inside a box.
+    outline: none;
+  }
+
+  // Only mounted while there is something to clear, so it never sits on the tab
+  // order taking a focus stop to do nothing.
+  &-clear {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-1);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+
+    &:hover {
+      color: $text-primary;
+      background: $bg-active;
+    }
+  }
+}
+
+// ===== Left Sidebar — Connection List =====
+.sidebar {
+  background: $bg-sidebar;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 1;
+  flex: 1;
+  min-height: 0;
+
+  &-list-wrapper {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &-list {
+    flex: 1;
+    overflow-y: scroll;
+    padding: 4px 0 12px 0;
+
+    // Hide native scrollbar — custom overlay scrollbar takes over
+    &::-webkit-scrollbar {
+      display: none;
+    }
+    scrollbar-width: none;
+  }
+}
+
+// Custom overlay scrollbar (shared by sidebar-list and file-list)
+.sidebar-scrollbar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  z-index: 2;
+  pointer-events: none;
+
+  &-thumb {
+    position: absolute;
+    right: 0;
+    width: 4px;
+    border-radius: 0;
+    background: transparent;
+    transition: background var(--d-2);
+    pointer-events: auto;
+  }
+
+  &.show &-thumb {
+    background: var(--scrollbar-thumb);
+  }
+}
+
+// Connection grouping
+.conn-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.conn-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 2px;
+
+  .collapse-chevron {
+    margin-right: 2px;
+  }
+
+  cursor: pointer;
+  user-select: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+
+  // ">" group icon: rotates to point down when the group is expanded
+  // (chevron geometry/rotation is defined on the base `.collapse-chevron`)
+
+  &:hover {
+    color: $text-secondary;
+  }
+
+  .conn-group-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conn-group-count {
+    font-size: 10px;
+    color: $text-dim;
+    font-weight: 400;
+  }
+
+  // "+" button shown on the group header to add a new connection directly
+  // into this group.
+  .conn-group-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-left: 2px;
+    padding: 0;
+    border: none;
+    border-radius: var(--r-1);
+    background: transparent;
+    color: $text-dim;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition:
+      opacity var(--d-1) ease,
+      color var(--d-1) ease,
+      background var(--d-1) ease;
+
+    &:hover {
+      color: #fff;
+      background: $accent;
+    }
+  }
+
+  &:hover .conn-group-add {
+    opacity: 1;
+  }
+
+  // Drag-and-drop highlight when a connection or group is dragged over
+  &.drag-over {
+    background: rgba(0, 122, 204, 0.15);
+    box-shadow: inset 0 -2px 0 var(--border-focus);
+  }
+}
+
+.connection-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background var(--d-1);
+  gap: 8px;
+
+  &.indented {
+    padding-left: 24px;
+  }
+
+  &:hover {
+    background: $bg-hover;
+
+    .conn-item-edit,
+    .conn-item-del {
+      opacity: 1;
+    }
+  }
+
+  &.active {
+    background: $bg-active;
+    border-left-color: $accent-hover;
+  }
+
+  .conn-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .conn-info {
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .conn-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conn-host {
+    font-size: 11px;
+    color: $text-muted;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conn-desc {
+    font-size: 11px;
+    color: $text-muted;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-style: italic;
+  }
+
+  .conn-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .conn-item-edit,
+  .conn-item-del {
+    flex-shrink: 0;
+    opacity: 0;
+    cursor: pointer;
+    color: $text-dim;
+    transition:
+      opacity var(--d-1),
+      color var(--d-1);
+
+    &:hover {
+      color: $text-primary;
+    }
+  }
+
+  .conn-item-del {
+    font-size: 15px;
+    line-height: 1;
+  }
+
+  // Drag-and-drop visual feedback
+  &.drag-over-before {
+    border-top: 2px solid var(--border-focus);
+    padding-top: 2px;
+  }
+
+  &.drag-over-after {
+    border-bottom: 2px solid var(--border-focus);
+    padding-bottom: 2px;
+  }
+}
+
+// SSH tunnels rendered as children of a connection
+.conn-tunnels {
+  display: flex;
+  flex-direction: column;
+}
+
+.conn-tunnel {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 12px 2px 36px;
+  font-size: 11px;
+  color: $text-muted;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .conn-tunnel-icon {
+    flex-shrink: 0;
+    color: $accent-hover;
+    opacity: 0.8;
+  }
+
+  .conn-tunnel-name {
+    flex-shrink: 0;
+    max-width: 90px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: $text-dim;
+    font-style: italic;
+  }
+
+  &.active {
+    color: $text-secondary;
+
+    .conn-tunnel-icon {
+      color: #4ec9b0;
+      opacity: 1;
+    }
+
+    .conn-tunnel-local,
+    .conn-tunnel-remote {
+      color: $text-primary;
+    }
+  }
+
+  .conn-tunnel-local {
+    font-family: $font-mono;
+    color: $text-secondary;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conn-tunnel-arrow {
+    flex-shrink: 0;
+    color: $text-dim;
+  }
+
+  .conn-tunnel-remote {
+    flex: 1;
+    min-width: 0;
+    font-family: $font-mono;
+    color: $text-secondary;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conn-tunnel-toggle {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-1);
+    color: $text-dim;
+    cursor: pointer;
+    opacity: 1;
+
+    &:hover {
+      background: rgba(78, 201, 176, 0.2);
+      color: var(--success-soft-40);
+    }
+
+    &.active {
+      color: var(--success-soft-40);
+
+      &:hover {
+        background: rgba(210, 70, 70, 0.3);
+        color: var(--danger-soft-40);
+      }
+    }
+  }
+
+  .conn-tunnel-edit {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-1);
+    color: $text-dim;
+    cursor: pointer;
+    opacity: 0;
+
+    &:hover {
+      background: rgba(86, 156, 214, 0.3);
+      // 同色文字压同色浅底 = 2.2:1（两套主题都不够）：改用可读的强调色文字 token。
+      color: var(--accent-soft-40);
+    }
+  }
+
+  .conn-tunnel-del {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-1);
+    color: $text-dim;
+    cursor: pointer;
+    opacity: 0;
+
+    &:hover {
+      background: rgba(210, 70, 70, 0.3);
+      color: var(--danger-soft-40);
+    }
+  }
+
+  &:hover .conn-tunnel-edit,
+  &:hover .conn-tunnel-del {
+    opacity: 1;
+  }
+}
+
+// Local terminal entry (in the "Local" sidebar group)
+.conn-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px 4px 24px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background var(--d-1);
+  gap: 8px;
+
+  &:hover {
+    background: $bg-hover;
+
+    .conn-item-edit,
+    .conn-item-del,
+    .conn-item-btn {
+      opacity: 1;
+    }
+  }
+
+  .conn-item-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+    color: $text-dim;
+  }
+
+  // Local-terminal entries tint the icon by shell flavour, so cmd / PowerShell
+  // / bash / WSL / Git Bash stay apart at a glance even at 14px.
+  .shell-icon-shellCmd {
+    color: #9cdcfe;
+  }
+
+  .shell-icon-shellPowershell {
+    color: #4c9aff;
+  }
+
+  .shell-icon-shellBash {
+    color: #89d185;
+  }
+
+  .shell-icon-shellWsl {
+    color: #f5c26b;
+  }
+
+  .shell-icon-shellGitBash {
+    color: #f0883e;
+  }
+
+  .conn-item-label {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .conn-item-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conn-item-sub {
+    font-size: 11px;
+    color: $text-muted;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conn-item-edit,
+  .conn-item-del {
+    flex-shrink: 0;
+    opacity: 0;
+    cursor: pointer;
+    color: $text-dim;
+    transition:
+      opacity var(--d-1),
+      color var(--d-1);
+
+    &:hover {
+      color: $text-primary;
+    }
+  }
+
+  .conn-item-del {
+    font-size: 15px;
+    line-height: 1;
+  }
+
+  .conn-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+}
+
+.local-empty {
+  padding: 8px 12px 8px 24px;
+  font-size: 12px;
+  color: $text-muted;
+}
+
+// ===== Status Bar =====
+//
+// Restored by the three-region redesign: the band existed but was commented out
+// whole, taking the only update indicator in the app with it. It is a strip of
+// read-outs and buttons, not a label — a neutral surface on purpose, because an
+// accent-filled bar would let a user's accent pick decide the contrast of the
+// entire bottom of their window.
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-1);
+  min-height: var(--h-statusbar);
+  padding: 0 var(--sp-1) 0 var(--sp-2);
+  background: $bg-secondary;
+  border-top: 1px solid $border;
+  color: $text-secondary;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-app-region: no-drag;
+
+  // The left group carries the read-outs and is the one that overflows, so the
+  // right group (update indicator) never gets squeezed off screen.
+  &-left {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  &-right {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    flex-shrink: 0;
+  }
+}
+
+// Base is a plain chip because most items are read-outs; the clickable ones are
+// `<button>`s and get their own hover, so nothing in the bar can look actionable
+// without being so.
+.status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  padding: 2px var(--sp-1);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+
+  > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // A geometry read-out is numbers, and numbers that reflow as the terminal
+  // resizes belong in the monospace face.
+  &.mono {
+    font-family: var(--font-mono);
+  }
+
+  &.dim {
+    color: $text-dim;
+  }
+
+  // `@at-root` because `#{&}` inside a nested rule expands to the whole parent
+  // selector, which would have compiled to `.status-item button.status-item`.
+  @at-root button#{&} {
+    cursor: pointer;
+
+    &:hover {
+      background: $bg-active;
+      color: $text-primary;
+    }
+
+    // A disabled update chip is mid-flight, not unavailable, so it fades only
+    // enough to stop looking clickable.
+    &:disabled {
+      opacity: 0.75;
+      cursor: default;
+    }
+  }
+
+  // The bar's one loud element: an available update, accent-filled so it reads as
+  // the only thing down here you can act on. `--text-on-accent` is what keeps an
+  // arbitrary user accent legible on it.
+  &.upd {
+    background: $accent;
+    color: var(--text-on-accent);
+    font-weight: 600;
+
+    &:hover {
+      background: $accent-hover;
+    }
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.empty-state {
+  padding: 24px 16px;
+  text-align: center;
+  color: $text-muted;
+  font-size: 13px;
+  line-height: 1.6;
+}

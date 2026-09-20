@@ -1,0 +1,538 @@
+@use 'variables' as *;
+
+// ===== Settings (shared card styles) =====
+
+.settings-card {
+  margin-top: 18px;
+  border: 1px solid $border;
+  border-radius: var(--r-3);
+  background: $bg-secondary;
+  padding: 20px;
+
+  &:first-child {
+    margin-top: 0;
+  }
+}
+
+.settings-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.settings-card-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, $accent, var(--accent-l12));
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba($accent, 0.25);
+}
+
+.settings-card-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: $text-primary;
+}
+
+.settings-card-sub {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: $text-muted;
+}
+
+.settings-card-desc {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: $text-dim;
+  margin: 0 0 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid $border;
+}
+
+.settings-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 600px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+// A checkbox row (`className="settings-field checkbox-field"`): the box belongs *before*
+// its label, on one line. The base above is a column, which left these boxes sitting on a
+// line of their own — and centred, since the column also centres what it cannot stretch.
+.settings-field.checkbox-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+
+  // A trailing hint belongs under the row, not squeezed in beside the box.
+  > .settings-help {
+    flex: 1 1 100%;
+  }
+}
+
+.settings-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: $text-secondary;
+
+  svg {
+    color: $accent;
+  }
+}
+
+.settings-input {
+  width: 100%;
+  background: $bg-input;
+  border: 1px solid $border;
+  color: $text-primary;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 11px;
+  border-radius: var(--r-3);
+  &:focus:not(:focus-visible) {
+    outline: none;
+  }
+  transition:
+    border-color var(--d-2),
+    box-shadow var(--d-2);
+
+  &:focus {
+    border-color: rgba($accent, 0.5);
+    box-shadow: 0 0 0 2px rgba($accent, 0.12);
+  }
+
+  &::placeholder {
+    color: $text-dim;
+  }
+
+  // Hide the native up/down spinner buttons so number fields look like plain
+  // text inputs.
+  &[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+  }
+}
+
+// The "Max rounds per AI run" input in the AI settings card has no
+// `.settings-input` class, so we replicate the same visual treatment here.
+.settings-number-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  input[type='number'] {
+    width: 90px;
+    background: $bg-input;
+    border: 1px solid $border;
+    color: $text-primary;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 11px;
+    border-radius: var(--r-3);
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+    transition:
+      border-color var(--d-2),
+      box-shadow var(--d-2);
+
+    &:focus {
+      border-color: rgba($accent, 0.5);
+      box-shadow: 0 0 0 2px rgba($accent, 0.12);
+    }
+
+    // Hide native spinner buttons.
+    -moz-appearance: textfield;
+    appearance: textfield;
+
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+  }
+
+  span {
+    color: $text-dim;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+}
+
+.settings-textarea {
+  resize: vertical;
+  min-height: 70px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.settings-input-with-btn {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+
+  .settings-input {
+    flex: 1;
+  }
+}
+
+.settings-icon-btn {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: $bg-input;
+  border: 1px solid $border;
+  color: $text-secondary;
+  border-radius: var(--r-3);
+  cursor: pointer;
+  transition: all var(--d-2);
+
+  &:hover {
+    color: $text-primary;
+    background: $bg-hover;
+  }
+}
+
+.settings-help {
+  font-size: 11px;
+  color: $text-dim;
+  line-height: 1.5;
+
+  code {
+    font-family: $font-mono;
+    font-size: 10.5px;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 0 4px;
+    border-radius: var(--r-1);
+    color: $text-secondary;
+  }
+}
+
+.settings-actions {
+  margin-top: 22px;
+}
+
+.settings-save-btn {
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  background: $accent;
+  color: #fff;
+  border: none;
+  border-radius: var(--r-3);
+  cursor: pointer;
+  transition: all var(--d-2);
+
+  &:hover {
+    background: var(--accent-l8);
+  }
+}
+
+// Small secondary button for the settings cards (the AI-appearance history rows:
+// "Undo" / "Clear history", and the highlight card's "Add rule"). Same language as the
+// editor toolbar's `.editor-btn`, on the card's input background — before this those
+// buttons carried `className="settings-help"` (a *text* style), no class at all (browser
+// default chrome), or a hand-rolled inline copy of this very look — the "Add rule" button,
+// whose hardcoded `rgba(255,255,255,0.25)` border was invisible on the light theme. Reach
+// for the class rather than re-writing those inline styles.
+//
+// NOTE: it is NOT called `.settings-btn` — that name is already taken by the 20×20
+// **titlebar** icon button (see §titlebar), and reusing it sized these buttons to 20px and
+// wrapped their labels one character per line. Grep the whole stylesheet before naming a
+// new class.
+.settings-inline-btn {
+  // Never let a flex row squeeze the label of a long history entry into it.
+  flex: 0 0 auto;
+  background: $bg-input;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  color: $text-secondary;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 10px;
+  // Two-word labels ("Clear history" / "Add rule") must not wrap one word per line.
+  white-space: nowrap;
+  transition:
+    color var(--d-1),
+    border-color var(--d-1);
+
+  &:hover:not(:disabled) {
+    color: $text-primary;
+    border-color: $accent;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  // Destructive (throwing the undo history away). `--danger-soft-40` is the variant meant
+  // for *text* (B33); the hover repeats the colour because the rule above is more
+  // specific for `color`.
+  &.danger {
+    color: var(--danger-soft-40);
+
+    &:hover:not(:disabled) {
+      color: var(--danger-soft-40);
+      border-color: var(--danger-soft-40);
+    }
+  }
+}
+
+.ai-settings-card {
+  .settings-card-icon {
+    background: linear-gradient(135deg, $accent, var(--accent-l14));
+  }
+}
+
+.ai-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-acc-item {
+  border: 1px solid $border;
+  border-radius: var(--r-3);
+  background: $bg-primary;
+  overflow: hidden;
+  transition:
+    border-color var(--d-2),
+    background var(--d-2);
+
+  &.active {
+    border-color: $accent;
+  }
+
+  &.open {
+    background: rgba($accent, 0.04);
+  }
+}
+
+.ai-acc-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: rgba($accent, 0.06);
+  }
+}
+
+.ai-acc-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: $text-muted;
+  transition: transform var(--d-2) ease;
+  transform: rotate(-90deg);
+
+  &.open {
+    transform: rotate(0deg);
+  }
+}
+
+.ai-acc-badge {
+  flex-shrink: 0;
+  margin-left: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--accent-soft-40);
+  background: rgba($accent, 0.14);
+  border: 1px solid rgba($accent, 0.35);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+}
+
+.ai-acc-setactive {
+  flex-shrink: 0;
+  margin-left: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: $text-muted;
+  background: transparent;
+  border: 1px solid $border;
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    color var(--d-2),
+    border-color var(--d-2),
+    background var(--d-2);
+
+  &:hover {
+    color: var(--accent-soft-40);
+    border-color: rgba($accent, 0.5);
+    background: rgba($accent, 0.08);
+  }
+}
+
+.ai-acc-body {
+  padding: 4px 14px 14px;
+  border-top: 1px solid $border;
+}
+
+.ai-profile-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ai-profile-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: $text-primary;
+}
+
+.ai-profile-endpoint {
+  font-size: 11px;
+  color: $text-dim;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 360px;
+}
+
+.ai-profile-del {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+  transition:
+    background var(--d-2),
+    color var(--d-2);
+
+  &:hover:not(:disabled) {
+    background: rgba($danger, 0.16);
+    color: var(--danger-soft-40);
+  }
+
+  &:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+}
+
+.ai-profile-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 7px 12px;
+  border: 1px dashed rgba($accent, 0.5);
+  border-radius: var(--r-3);
+  background: transparent;
+  color: $accent;
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--d-2);
+
+  &:hover {
+    background: rgba($accent, 0.1);
+  }
+
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+.settings-model-fetch {
+  margin-top: 8px;
+  align-self: flex-start;
+  padding: 6px 12px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: $bg-primary;
+  color: $text-secondary;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--d-2),
+    color var(--d-2);
+
+  &:hover:not(:disabled) {
+    border-color: $accent;
+    color: $text-primary;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+.settings-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: $text-secondary;
+  cursor: pointer;
+  user-select: none;
+
+  input {
+    cursor: pointer;
+  }
+}
+
+.settings-select {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: $bg-secondary;
+  color: $text-primary;
+  font-size: 13px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: $accent;
+  }
+}

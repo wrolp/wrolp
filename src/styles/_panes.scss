@@ -1,0 +1,1756 @@
+@use 'variables' as *;
+
+// ===== Draggable Panel Divider =====
+.panel-divider {
+  width: 3px;
+  cursor: ew-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background var(--d-2);
+  z-index: 10;
+
+  &:hover {
+    background: $accent-hover;
+  }
+}
+
+.panel-divider-h {
+  height: 3px;
+  cursor: ns-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background var(--d-2);
+  z-index: 10;
+
+  &:hover {
+    background: $accent-hover;
+  }
+}
+
+// ===== Terminal Area (Right) =====
+.terminal-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: $bg-primary;
+
+  // Panel docked to the right -> terminal area becomes a row.
+  &.panel-right {
+    flex-direction: row;
+  }
+}
+
+// Column holding the tab bar + editor/shell, so the bottom panel can sit beside it.
+.terminal-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+// Vertical divider used to resize a right-docked panel.
+.panel-divider-v {
+  flex-shrink: 0;
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+
+  &:hover {
+    background: $accent;
+  }
+}
+
+// Tab bar
+.tab-bar {
+  display: flex;
+  align-items: center;
+  min-height: var(--h-tabbar);
+  background: $bg-secondary;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+
+  &::-webkit-scrollbar {
+    height: 3px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 0;
+  }
+
+  // The two buttons bracketing the strip are bar chrome rather than tabs, so they
+  // keep the shared `.icon-btn` size — but the strip scrolls horizontally, and a
+  // flex item with no `flex-shrink` would be squeezed to its content box once the
+  // tabs overflow.
+  > .icon-btn {
+    flex-shrink: 0;
+    margin: 0 var(--sp-1);
+  }
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px 4px 10px;
+  background: $bg-secondary;
+  border-right: 1px solid $border;
+  cursor: pointer;
+  font-size: 12px;
+  color: $text-secondary;
+  white-space: nowrap;
+  transition: background var(--d-1);
+  gap: 6px;
+  min-width: 0;
+
+  // The icon says what *kind* of thing the tab is, so it stays quieter than the
+  // label: reading names is the job, recognising kinds is the glance.
+  .tab-icon {
+    color: $text-muted;
+    flex-shrink: 0;
+  }
+
+  .tab-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // Unsaved edits in a file tab. A shape rather than the `●` character it
+  // replaces, so it can't stretch the 28px tab bar.
+  .tab-dirty {
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: var(--r-circle);
+    background: $accent;
+  }
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.active {
+    background: $bg-primary;
+    color: $text-primary;
+    border-bottom: 2px solid $accent-hover;
+
+    .tab-icon {
+      color: inherit;
+    }
+  }
+
+  &.drag-over {
+    background: rgba($accent, 0.15);
+    border-bottom: 2px solid $accent;
+  }
+
+  // A button, not the `×` character it replaces: the glyph is 11px but the target
+  // is 18px, which is the part of "统一 18px 命中区" the character could never do.
+  .tab-close {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-1);
+    background: transparent;
+    color: $text-dim;
+    cursor: pointer;
+
+    &:hover {
+      background: $bg-active;
+      color: $text-primary;
+    }
+  }
+}
+
+// Terminal wrapper
+.terminal-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  overflow: hidden;
+}
+
+.terminal-tabs {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+
+// Per-shell status bar pinned to the bottom of each shell (terminal) window
+.term-pane-statusbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  padding: 0 10px;
+  background: $bg-secondary;
+  border-top: 1px solid $border;
+  border-right: 1px solid $border;
+  border-radius: var(--r-1);
+  user-select: none;
+  gap: 12px;
+
+  .tsb-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    flex: 1;
+  }
+
+  .tsb-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .tsb-label {
+    font-size: 12px;
+    color: $text-primary;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tsb-size {
+    font-size: 12px;
+    color: #6ec3f0;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .tsb-status {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: var(--r-1);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #fff;
+
+    &.connected {
+      background: #2e7d32;
+    }
+    &.connecting {
+      background: #b58900;
+    }
+    &.error {
+      background: #c5392f;
+    }
+    &.disconnected {
+      background: #555;
+    }
+  }
+
+  // Tail-room switch: the terminal's own blank space below the last line. Lives in the
+  // status bar so it is reachable without digging into a hidden context menu.
+  .tsb-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border: 1px solid transparent;
+    border-radius: var(--r-1);
+    background: transparent;
+    color: $text-secondary;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: nowrap;
+    cursor: pointer;
+
+    &:hover {
+      border-color: $border;
+      color: $text-primary;
+    }
+
+    &.active {
+      border-color: rgba($accent, 0.45);
+      background: rgba($accent, 0.18);
+      color: $text-primary;
+    }
+  }
+
+  .tsb-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--r-circle);
+    flex-shrink: 0;
+
+    &.connected {
+      background: #4ec9b0;
+    }
+    &.connecting {
+      background: #e2c08d;
+    }
+    &.error {
+      background: #f44747;
+    }
+    &.disconnected {
+      background: #888;
+    }
+    &.suspect {
+      background: #e5c07b;
+    }
+  }
+}
+
+// ===== Shell pane (terminal + file-editor view tabs) =====
+.shell-pane {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: $bg-primary;
+}
+
+.shell-pane-header {
+  flex-shrink: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 10px;
+  background: $bg-secondary;
+  border-bottom: 1px solid $border;
+  user-select: none;
+
+  .shell-pane-title {
+    font-size: 12px;
+    color: $text-dim;
+    letter-spacing: 0.5px;
+  }
+
+  .shell-pane-toggle {
+    background: transparent;
+    border: none;
+    color: $text-dim;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--r-1);
+
+    &:hover {
+      // 白字压白 8% 底在浅色主题下完全看不见（1.0:1）——改用可随主题翻转的
+      // text-primary + 同色低透明度底。
+      color: $text-primary;
+      background: rgba($text-primary, 0.08);
+    }
+  }
+}
+
+.shell-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+
+  .terminal-wrapper {
+    flex: 1;
+  }
+}
+
+// ===== Remote file editor =====
+.file-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 120px;
+  overflow: hidden;
+  border-bottom: none;
+  background: $bg-primary;
+
+  .editor-body {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .editor-host {
+    flex: 1;
+    min-height: 0;
+  }
+
+  // Source view (Monaco) vs rendered Markdown. Both stay in the DOM; the inactive one
+  // is hidden with `visibility` (not `display: none`) so Monaco keeps its layout and
+  // its instance stays attached to `containerRef` — unmounting the host would leave the
+  // editor without a home and the source view would come back blank.
+  .editor-views {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+
+    > * {
+      position: absolute;
+      inset: 0;
+    }
+
+    &.is-preview .editor-host {
+      visibility: hidden;
+    }
+  }
+
+  .editor-preview {
+    display: flex;
+    background: var(--editor-blank);
+    overflow: hidden;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+  }
+
+  .md-preview {
+    flex: 1;
+    min-height: 0;
+    overflow-y: scroll;
+    padding: 16px 22px 48px;
+    color: $text-primary;
+    font-size: 13.5px;
+    line-height: 1.7;
+    overflow-wrap: break-word;
+    // The shared overlay scrollbar (`.sidebar-scrollbar`) takes over.
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+      margin: 1.5em 0 0.6em;
+      line-height: 1.3;
+      font-weight: 600;
+      color: $text-primary;
+
+      &:first-child {
+        margin-top: 0;
+      }
+    }
+
+    h1 {
+      font-size: 1.8em;
+      padding-bottom: 0.3em;
+      border-bottom: 1px solid $border;
+    }
+
+    h2 {
+      font-size: 1.45em;
+      padding-bottom: 0.25em;
+      border-bottom: 1px solid $border;
+    }
+
+    h3 {
+      font-size: 1.2em;
+    }
+
+    h4,
+    h5,
+    h6 {
+      font-size: 1.05em;
+    }
+
+    p {
+      margin: 0.7em 0;
+    }
+
+    a {
+      color: var(--link);
+      text-decoration: none;
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+
+    ul,
+    ol {
+      margin: 0.7em 0;
+      padding-left: 1.7em;
+    }
+
+    li {
+      margin: 0.25em 0;
+
+      // GFM task list — react-markdown renders the checkbox disabled.
+      input[type='checkbox'] {
+        margin-right: 0.45em;
+        vertical-align: middle;
+      }
+    }
+
+    blockquote {
+      margin: 0.9em 0;
+      padding: 0.5em 1em;
+      border-left: 3px solid $border;
+      background: $bg-secondary;
+      color: $text-secondary;
+
+      p {
+        margin: 0.2em 0;
+      }
+    }
+
+    hr {
+      margin: 1.6em 0;
+      border: none;
+      border-top: 1px solid $border;
+    }
+
+    table {
+      display: block;
+      width: max-content;
+      max-width: 100%;
+      margin: 1em 0;
+      overflow-x: auto;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 5px 11px;
+      border: 1px solid $border;
+      text-align: left;
+    }
+
+    th {
+      background: $bg-secondary;
+      color: $text-secondary;
+      font-weight: 600;
+    }
+
+    .md-preview-inline {
+      padding: 0.12em 0.36em;
+      border: 1px solid $border;
+      border-radius: var(--r-1);
+      background: $bg-secondary;
+      font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+      font-size: 0.92em;
+    }
+
+    .md-preview-img {
+      max-width: 100%;
+    }
+
+    .md-preview-img-local {
+      display: inline-block;
+      max-width: 100%;
+      padding: 5px 10px;
+      border: 1px dashed $border;
+      border-radius: var(--r-2);
+      background: $bg-secondary;
+      color: $text-secondary;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .md-preview-code {
+      margin: 1em 0;
+      border: 1px solid $border;
+      border-radius: var(--r-2);
+      background: $bg-secondary;
+      overflow: hidden;
+
+      pre {
+        margin: 0;
+        padding: 10px 12px;
+        overflow-x: auto;
+      }
+
+      code {
+        border: none;
+        background: transparent;
+        color: $text-primary;
+        font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+        font-size: 12.5px;
+      }
+    }
+
+    .md-preview-code-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 3px 8px;
+      border-bottom: 1px solid $border;
+      color: $text-secondary;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .md-preview-code-copy {
+      padding: 0 4px;
+      border: none;
+      background: transparent;
+      color: $text-secondary;
+      font-size: 12px;
+      cursor: pointer;
+
+      &:hover {
+        color: $text-primary;
+      }
+    }
+
+    .md-preview-raw {
+      margin: 0;
+      color: $text-secondary;
+      font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+      font-size: 12.5px;
+      white-space: pre-wrap;
+    }
+  }
+
+  .editor-textarea {
+    width: 100%;
+    height: 100%;
+    border: none;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+    resize: none;
+    padding: 12px;
+    background: $bg-primary;
+    color: $text-primary;
+    font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    tab-size: 2;
+    box-sizing: border-box;
+  }
+
+  .editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    // Wrap instead of spilling: a narrow pane must never hide the Save button
+    // (the display toggles alone take ~450px).
+    flex-wrap: wrap;
+    padding: 4px 10px;
+    background: $bg-secondary;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+  }
+
+  .editor-toolbar-spacer {
+    flex: 1;
+  }
+
+  .editor-filename {
+    font-size: 13px;
+    color: $text-primary;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dirty-dot {
+    color: $accent;
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .enc-warn {
+    font-size: 10px;
+    background: rgba(#d4a72c, 0.2);
+    color: var(--warning-soft-40);
+    padding: 1px 5px;
+    border-radius: var(--r-1);
+    border: 1px solid rgba(#d4a72c, 0.3);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .editor-select {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    color: $text-muted;
+
+    select {
+      background: $bg-input;
+      border: 1px solid $border;
+      border-radius: var(--r-1);
+      color: $text-primary;
+      font-size: 11px;
+      padding: 1px 4px;
+      &:focus:not(:focus-visible) {
+        outline: none;
+      }
+      cursor: pointer;
+
+      &:focus {
+        border-color: $accent;
+      }
+    }
+  }
+
+  .editor-select.tab-size {
+    width: 48px;
+  }
+
+  .editor-btn {
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    // `$text-muted` on `$bg-input` is only 2.8:1 in the dark theme (its label was
+    // as hard to read as the blue states below); secondary is 4.8:1 / 6.9:1.
+    color: $text-secondary;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 3px 10px;
+    line-height: 1;
+
+    &:hover:not(:disabled) {
+      color: $text-primary;
+      border-color: $accent;
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    // "On" state of a toolbar toggle + the primary action (Save): a solid accent
+    // fill with on-accent text (6.4:1 dark / 5.9:1 light). The previous
+    // `rgba($accent, .15)` fill with `color: $accent` text was blue-on-blue-grey —
+    // 2.0:1 in the dark theme, 4.3:1 in the light one — so both states were
+    // unreadable. The `color` has to be repeated on hover: the `:hover` rule above
+    // is more specific and would otherwise win.
+    &.active,
+    &.primary {
+      background: $accent;
+      border-color: $accent;
+      color: var(--text-on-accent);
+
+      &:hover:not(:disabled) {
+        background: $accent-hover;
+        border-color: $accent-hover;
+        color: var(--text-on-accent);
+      }
+    }
+  }
+
+  .editor-empty,
+  .editor-loading,
+  .editor-error,
+  .editor-readonly {
+    padding: 16px;
+    font-size: 13px;
+    color: $text-dim;
+  }
+
+  .image-viewer {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--editor-blank);
+
+    .image-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 10px;
+      background: $bg-secondary;
+      border-bottom: 1px solid $border;
+      flex-shrink: 0;
+
+      .image-filename {
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .image-meta {
+        color: $text-dim;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+    }
+
+    .image-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+
+      img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        border-radius: var(--r-1);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      }
+    }
+  }
+
+  .hex-viewer {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: $bg-primary;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: $text-primary;
+
+    .hex-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 10px;
+      background: $bg-secondary;
+      border-bottom: 1px solid $border;
+      flex-shrink: 0;
+
+      .hex-filename {
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hex-meta {
+        color: $text-dim;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .hex-spacer {
+        flex: 1;
+      }
+      .hex-hint {
+        color: $text-dim;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+    }
+
+    .hex-head,
+    .hex-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 10px;
+      white-space: nowrap;
+    }
+
+    .hex-head {
+      color: $text-dim;
+      border-bottom: 1px solid $border;
+      padding-top: 4px;
+      padding-bottom: 4px;
+      flex-shrink: 0;
+    }
+
+    .hex-offset {
+      color: #7daeec;
+      min-width: 64px;
+      user-select: none;
+    }
+
+    .hex-bytes {
+      color: $text-primary;
+    }
+
+    .hex-ascii {
+      color: $text-dim;
+    }
+
+    .hex-body {
+      flex: 1;
+      overflow: auto;
+      padding: 4px 0;
+    }
+
+    // Tail room so the last row can be scrolled up to the top of the viewport —
+    // the hex viewer's counterpart to Monaco's `scrollBeyondLastLine`. The target
+    // is "one viewport, minus the row already showing", measured in client
+    // coordinates; `100%` resolves to the content box, so this container's 4px
+    // padding — `padding: 4px 0` above — has to be added back, and `1lh` is the
+    // height of one `.hex-row` (a single line box).
+    .hex-tail {
+      height: calc(100% - 1lh + 4px);
+    }
+
+    .hex-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .hex-empty {
+      padding: 16px;
+      color: $text-dim;
+    }
+
+    .hex-more {
+      padding: 8px 10px;
+      border-top: 1px solid $border;
+      flex-shrink: 0;
+    }
+  }
+
+  .editor-error {
+    color: #ff6b6b;
+  }
+
+  .editor-readonly {
+    .editor-readonly-msg {
+      color: $text-primary;
+      margin-bottom: 6px;
+    }
+    .editor-readonly-hint {
+      font-size: 12px;
+    }
+  }
+
+  .editor-saving {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font-size: 12px;
+    color: var(--accent-soft-40);
+    background: $bg-secondary;
+    padding: 2px 8px;
+    border-radius: var(--r-1);
+  }
+}
+
+.terminal-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: $text-dim;
+  font-size: 14px;
+  gap: 12px;
+
+  .icon {
+    font-size: 48px;
+  }
+}
+
+// ===== Terminal Split Panes (Phase 2) =====
+.terminal-split-root {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+// ===== Floating (pop-out) panes =====
+// `position: fixed` so the overlay can be dragged anywhere across the whole
+// application window (viewport), not just inside the terminal split area.
+.floating-window {
+  position: fixed;
+  min-width: 320px;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  background: $bg-secondary;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--r-3);
+  box-shadow: 0 12px 40px var(--shadow-2);
+  overflow: hidden;
+
+  .floating-window-header {
+    flex: 0 0 auto;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    cursor: move;
+    user-select: none;
+  }
+
+  .floating-window-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: $text-dim;
+  }
+
+  .floating-window-close {
+    // Sit above the resize grips so it stays clickable where the NE corner grip
+    // would otherwise overlap it.
+    position: relative;
+    z-index: 30;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-1);
+    cursor: pointer;
+    color: $text-dim;
+    font-size: 14px;
+    line-height: 1;
+
+    &:hover {
+      color: $text-primary;
+      background: rgba($text-primary, 0.12);
+    }
+  }
+
+  .floating-window-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+// Resize grips for anything that floats: the popped-out panes above and the
+// floated inspector column. Both clip with `overflow: hidden`, so every grip
+// lives INSIDE the box (no negative offsets) or its outward half would be cut
+// away — which is why only the bottom-right corner used to be grabbable.
+// `z-index` must beat the terminal's overlay scrollbar (`.term-scrollbar`,
+// z-index 10) whose 14px grab zone covers the window's right edge.
+.floating-window,
+.inspector.is-floating {
+  .floating-window-resize {
+    position: absolute;
+    z-index: 20;
+  }
+
+  .fw-rh-n {
+    top: 0;
+    left: 8px;
+    right: 8px;
+    height: 5px;
+    cursor: ns-resize;
+  }
+
+  .fw-rh-s {
+    bottom: 0;
+    left: 8px;
+    right: 8px;
+    height: 5px;
+    cursor: ns-resize;
+  }
+
+  .fw-rh-e {
+    right: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 5px;
+    cursor: ew-resize;
+  }
+
+  .fw-rh-w {
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 5px;
+    cursor: ew-resize;
+  }
+
+  .fw-rh-ne {
+    right: 0;
+    top: 0;
+    width: 12px;
+    height: 12px;
+    cursor: nesw-resize;
+  }
+
+  .fw-rh-nw {
+    left: 0;
+    top: 0;
+    width: 12px;
+    height: 12px;
+    cursor: nwse-resize;
+  }
+
+  .fw-rh-sw {
+    left: 0;
+    bottom: 0;
+    width: 12px;
+    height: 12px;
+    cursor: nesw-resize;
+  }
+
+  // The bottom-right grip is invisible like the others — the diagonal corner
+  // marker was removed (users found the little triangle distracting).
+  .fw-rh-se {
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+  }
+}
+
+.term-split {
+  min-width: 0;
+  min-height: 0;
+}
+
+.term-pane {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid $border;
+  background: $bg-tertiary;
+  overflow: hidden;
+
+  &.focused {
+    border-color: $accent;
+    box-shadow: inset 0 0 0 1px rgba($accent, 0.4);
+  }
+
+  .term-pane-header {
+    flex-shrink: 0;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 0 6px 0 8px;
+    background: $bg-secondary;
+    border-bottom: 1px solid $border;
+    user-select: none;
+    cursor: default;
+  }
+
+  .term-pane-title {
+    font-size: 12px;
+    line-height: 1;
+    color: $text-secondary;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .term-pane-close {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    // Extra gap from the file tabs that follow it: the pane-close ✕ and a file
+    // tab's ✕ used to sit ~2px apart, so "close this file" easily became "close
+    // the whole terminal". The guard dialog still backs this up (see closeGuard).
+    margin-right: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-1);
+    cursor: pointer;
+    color: $text-dim;
+    font-size: 14px;
+    line-height: 1;
+
+    &:hover {
+      color: $text-primary;
+      background: rgba($text-primary, 0.12);
+    }
+
+    &:active {
+      background: rgba($text-primary, 0.2);
+    }
+  }
+
+  .term-pane-float {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-1);
+    cursor: pointer;
+    color: $text-dim;
+    font-size: 13px;
+    line-height: 1;
+
+    &:hover {
+      color: $text-primary;
+      background: rgba($text-primary, 0.12);
+    }
+
+    &:active {
+      background: rgba($text-primary, 0.2);
+    }
+  }
+
+  .term-pane-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: row;
+    // Gap between the terminal surface and a docked AI pane. MUST equal
+    // DOCK_GAP in App.tsx — the dock's resize handle is exactly this size and
+    // fills the gap. No effect when the body has a single child (dock closed) —
+    // flex gap only applies between items.
+    gap: 4px;
+  }
+
+  .term-pane-ai-toggle {
+    // The label is an icon plus text, and a button's default `inline-block`
+    // would sit the 12px glyph on the text baseline.
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    color: $text-dim;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--r-1);
+    margin-left: 6px;
+    user-select: none;
+
+    &:hover {
+      color: $text-primary;
+      background: rgba($text-primary, 0.1);
+    }
+
+    &.active {
+      color: var(--success-soft-40);
+      background: rgba(76, 175, 80, 0.35);
+      border-color: rgba(76, 175, 80, 0.6);
+    }
+  }
+
+  .term-pane-reconnect {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    color: $text-dim;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: var(--r-1);
+    margin-left: 6px;
+    line-height: 1;
+    user-select: none;
+
+    &:hover {
+      color: $text-primary;
+      background: rgba($text-primary, 0.1);
+    }
+  }
+
+  .term-pane-record {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    color: $text-dim;
+    cursor: pointer;
+    padding: 2px 5px;
+    border-radius: var(--r-1);
+    margin-left: 4px;
+    line-height: 1;
+    user-select: none;
+
+    .term-pane-record-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: var(--r-circle);
+      background: $text-dim;
+      transition: background var(--d-2) ease;
+    }
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    &.active {
+      .term-pane-record-dot {
+        background: #4caf50;
+        box-shadow: 0 0 4px rgba(76, 175, 80, 0.7);
+        animation: term-record-blink 1.2s ease-in-out infinite;
+      }
+    }
+  }
+}
+
+@keyframes term-record-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+// Pane-header chips: the shell itself plus any docker log view opened on it. File
+// tabs moved to the global tab bar (P3-4), so the names still say "file tab"
+// while the set no longer contains one.
+.term-pane-file-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  // No native horizontal scrollbar — the strip is scrolled by the wheel
+  // (`PaneTabsStrip`, App.tsx) so overflowing tabs don't steal a row.
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.term-pane-file-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border-radius: var(--r-1);
+  font-size: 11px;
+  line-height: 1.2;
+  color: $text-dim;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  border: 1px solid transparent;
+
+  &:hover {
+    color: $text-primary;
+    background: rgba($text-primary, 0.08);
+  }
+
+  &.active {
+    color: $text-primary;
+    background: rgba($text-primary, 0.12);
+    border-color: $border;
+  }
+
+  .term-pane-file-tab-name {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .term-pane-file-tab-close {
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0.55;
+    margin-left: 2px;
+
+    &:hover {
+      opacity: 1;
+      color: #ff6b6b;
+    }
+  }
+
+  .term-pane-file-tab-float {
+    font-size: 12px;
+    line-height: 1;
+    opacity: 0.55;
+    margin-left: 2px;
+
+    &:hover {
+      opacity: 1;
+      color: #fff;
+    }
+  }
+}
+
+.term-split-divider {
+  flex-shrink: 0;
+  position: relative;
+  background: transparent;
+  z-index: 2;
+
+  // No visible bar at rest: the split is communicated purely by the gap between
+  // the panes. On hover/drag a crisp 1px accent line is drawn down the centre,
+  // with a soft blurred glow beside it (the glow is what makes the splitter read
+  // while interacting, without any resting weight). `pointer-events: none` so
+  // this purely-visual layer never affects the hit zone.
+  //
+  // The hit zone stays the bare track — deliberately NO negative offsets: an
+  // earlier version widened it into the neighbouring panes, which stole the
+  // overlay scrollbar's grab zone along that edge (those grab zones are
+  // pointer-events:none next to a divider — see `.term-scrollbar`).
+  &::after {
+    content: '';
+    position: absolute;
+    pointer-events: none;
+    opacity: 0;
+    background: $accent;
+    transition: opacity var(--d-1) ease;
+  }
+
+  &:hover::after,
+  &.dragging::after {
+    opacity: 1;
+  }
+}
+
+// Row splits: drag left/right. The track width IS the gap between the panes
+// (SPLIT_GAP in App.tsx — panes are inset by half this on each side of a seam,
+// so the overlay fills the gap exactly). Keep the two in sync.
+.term-split-divider.divider-row {
+  width: 4px;
+  cursor: ew-resize !important;
+
+  // 1px line down the middle; the box-shadow is the blurred halo beside it.
+  &::after {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+    box-shadow: 0 0 6px 1px rgba($accent, 0.7);
+  }
+}
+
+// Column splits: drag up/down. The track height IS the gap between the panes.
+.term-split-divider.divider-col {
+  height: 4px;
+  cursor: ns-resize !important;
+
+  // 1px line across the middle; the box-shadow is the blurred halo beside it.
+  &::after {
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    transform: translateY(-50%);
+    box-shadow: 0 0 6px 1px rgba($accent, 0.7);
+  }
+}
+
+.resizing-h,
+body.resizing-h {
+  cursor: ew-resize !important;
+}
+
+.resizing-v,
+body.resizing-v {
+  cursor: ns-resize !important;
+}
+
+// The splitter's hit zone no longer bleeds into the pane (it is the bare track),
+// so the overlay scrollbar keeps its default position and its full grab zone even
+// when it sits right next to a divider — see `.term-split-divider`.
+
+// While dragging a divider, the overlay scrollbar must not intercept the drag
+// (its grab zone / thumb can otherwise swallow a stray pointer move).
+body.resizing-h .term-scrollbar::before,
+body.resizing-v .term-scrollbar::before,
+body.resizing-h .term-scrollbar-thumb,
+body.resizing-v .term-scrollbar-thumb {
+  pointer-events: none;
+}
+
+// While an AI dock pane is being resized, swallow pointer events on the
+// terminal so xterm.js doesn't treat the drag as scrolling/selecting content.
+// Only the resize handle itself stays interactive.
+.term-workspace.dock-resizing .term-pane-term,
+.term-workspace.dock-resizing .ai-dock-pane {
+  pointer-events: none;
+}
+.term-workspace.dock-resizing .ai-dock-resize {
+  pointer-events: auto;
+}
+
+.terminal-pool {
+  position: absolute;
+  left: -100000px;
+  top: 0;
+  width: 800px;
+  height: 600px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+// ---- terminal custom scrollbar ----
+// Hide xterm's native scrollbar so the overlay custom thumb takes its place.
+.xterm .xterm-viewport {
+  &::-webkit-scrollbar {
+    display: none;
+    width: 0;
+  }
+  scrollbar-width: none;
+}
+
+// Clickable hover card shown over a clickable `ls`/`dir` entry in the terminal
+// (like VSCode's "Enter folder" / "Open file" terminal link tooltip). It is
+// clickable and triggers the same action as ctrl+clicking the link itself.
+.term-link-tooltip {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  // Semi-transparent so the terminal text underneath stays readable.
+  background: rgba($bg-secondary, 0.9);
+  border: 1px solid rgba($border, 0.8);
+  border-radius: var(--r-1);
+  box-shadow: 0 2px 8px var(--shadow-1);
+  color: $text-primary;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 2000;
+  cursor: pointer;
+  user-select: none;
+  // backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  // Anchored to the top-left of the entry name; rendered above the name.
+  transform: translateY(-100%);
+
+  &.below {
+    transform: translateY(0);
+  }
+
+  .term-link-tooltip-label {
+    color: #4da3ff;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .term-link-tooltip-hint {
+    color: $text-muted;
+  }
+}
+
+// Relative wrapper so the overlay scrollbar can be positioned absolutely
+// over the right edge of the xterm container.
+//
+// It is a flex row because the line-number gutter (`.term-ln-gutter`) is its first
+// child: the gutter *takes width away* from the terminal instead of covering its first
+// columns, so the existing ResizeObserver + `fit()` pick up the new `cols` on their own
+// — and with line numbers off the gutter is `display: none` and the terminal has the
+// full width again. The overlays below (scrollbar, AI badge, link tooltip, context
+// menu) are all absolutely positioned, so the flex container leaves them alone.
+.term-scrollbar-wrapper {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+// Line-number gutter (xterm has no gutter API — see `syncGutter` in Terminal.tsx).
+// `--ln-digits` (grow-only) and `--ln-row-h` (= xterm's real cell height) are written
+// by that sync; the font comes from the appearance registry, applied inline.
+.term-ln-gutter {
+  display: none;
+  flex: 0 0 auto;
+  width: calc(var(--ln-digits, 2) * 1ch + 12px);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border-l12);
+  // No background of its own, so `$text-dim` is the right token here (B33).
+  color: $text-dim;
+  // Purely decorative: never swallow a click meant for the terminal, never selectable,
+  // and out of the way of the copied text.
+  pointer-events: none;
+  user-select: none;
+
+  .term-ln-row {
+    height: var(--ln-row-h, 1.2em);
+    line-height: var(--ln-row-h, 1.2em);
+    padding-right: 6px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.term-scrollbar-wrapper.has-line-numbers .term-ln-gutter {
+  display: block;
+}
+
+// While a full-screen app (vim / less / top) owns the alternate buffer the labels are
+// blanked — but the column keeps its width: collapsing it would narrow the terminal, and
+// the SIGWINCH that follows would re-lay-out the app on every open/close.
+.term-scrollbar-wrapper.is-alt .term-ln-gutter {
+  border-right-color: transparent;
+
+  .term-ln-row {
+    visibility: hidden;
+  }
+}
+
+// The labels travel with the content when the tail room shifts it — `syncTailRoom`
+// writes the same transform here that it writes on `.xterm-screen`.
+.term-ln-rows {
+  will-change: transform;
+}
+
+// Overlay scrollbar track — sits on top of the xterm viewport's right edge.
+.term-scrollbar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  z-index: 10;
+  // The track must stay click-through so terminal links and text selection
+  // underneath keep working — but a 4px thumb is a painful drag target. An
+  // invisible strip reaching leftwards from the track supplies a much larger
+  // grab zone; hovering it (or dragging) widens the bar so it is easy to grab.
+  pointer-events: none;
+  transition: width var(--d-1) ease;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 14px; // grab zone — this is what actually receives :hover
+    pointer-events: auto;
+  }
+
+  // Pointer anywhere in the grab zone, or a drag in progress (the pointer
+  // regularly strays outside the zone mid-drag) → widen track and thumb.
+  &:hover,
+  &.is-dragging {
+    width: 10px;
+  }
+  &:hover .term-scrollbar-thumb,
+  &.is-dragging .term-scrollbar-thumb {
+    width: 10px;
+    background: var(--term-scrollbar-thumb-hover);
+  }
+}
+
+.term-scrollbar-thumb {
+  position: absolute;
+  left: 0;
+  pointer-events: auto;
+  background: var(--term-scrollbar-thumb);
+  border-radius: var(--r-pill);
+  width: 4px;
+  min-height: 20px;
+  cursor: pointer;
+  transition:
+    width var(--d-1) ease,
+    background var(--d-2);
+
+  &:hover,
+  &:active {
+    background: var(--term-scrollbar-thumb-hover);
+  }
+}
+
+// AI execution-status badge — DOM overlay pinned to the terminal's bottom
+// right. Pure frontend rendering (never written into the PTY stream, so ConPTY
+// absolute-cursor repaints can't wipe it). pointer-events:none so it never
+// blocks selection / scrolling.
+.term-ai-status {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 60%;
+  padding: 5px 10px;
+  border-radius: var(--r-2);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+
+  &.term-ai-status-running {
+    background: rgba($accent, 0.18);
+    border: 1px solid rgba($accent, 0.5);
+    color: $text-primary;
+  }
+
+  &.term-ai-status-done {
+    background: rgba(59, 145, 83, 0.2);
+    border: 1px solid rgba(93, 198, 108, 0.6);
+    color: var(--success-soft-40);
+  }
+
+  &.term-ai-status-error {
+    background: rgba(210, 70, 70, 0.22);
+    border: 1px solid rgba(244, 71, 71, 0.7);
+    color: var(--danger-soft-40);
+  }
+
+  .term-ai-status-meta {
+    opacity: 0.85;
+  }
+
+  .term-ai-status-spinner {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: var(--r-circle);
+    border: 2px solid rgba($accent, 0.25);
+    border-top-color: $accent-hover;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+}
+
+.settings-overlay {
+  background: $bg-tertiary;
+}
+
+// The open file, filling the main area above the workspaces. `display` is the one
+// property the app sets inline — it is the only thing that changes per tab. No
+// `z-index`: like `.settings-overlay` it only has to beat the (unpositioned)
+// workspaces, and leaving it automatic keeps floating windows on top of it.
+.editor-overlay {
+  position: absolute;
+  inset: 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: $bg-primary;
+}
+
+// Window-level AI entry button in the terminal tab bar.

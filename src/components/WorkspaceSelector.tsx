@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Icon } from './Icon'
+import { useI18n } from '../i18n'
 import type { WorkspaceInfo } from '../types'
 
 interface Props {
@@ -19,6 +20,7 @@ export const WorkspaceSelector: React.FC<Props> = ({
   onDelete,
   onRename,
 }) => {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -74,16 +76,21 @@ export const WorkspaceSelector: React.FC<Props> = ({
   return (
     <div className="workspace-selector" ref={menuRef}>
       <button
+        type="button"
         className="workspace-selector-trigger"
         onClick={() => setOpen(!open)}
-        title="Switch workspace"
+        aria-expanded={open}
+        title={t('switchWorkspace')}
       >
         <span className="workspace-icon">
-          <Icon name="folder" size={15} />
+          <Icon name="folder" size={12} />
         </span>
-        <span className="workspace-name">{activeName}</span>
+        <span className="workspace-label">{t('workspace')}</span>
+        <span className="workspace-name" title={activeName}>
+          {activeName}
+        </span>
         <span className={`workspace-chevron ${open ? 'open' : ''}`}>
-          <Icon name="chevronDown" size={14} />
+          <Icon name="chevronDown" size={12} />
         </span>
       </button>
       {open && (
@@ -117,33 +124,33 @@ export const WorkspaceSelector: React.FC<Props> = ({
                   </span>
                   <div className="workspace-item-actions">
                     <button
-                      className="workspace-action-btn"
-                      title="Rename"
+                      type="button"
+                      className="icon-btn"
+                      title={t('rename')}
+                      aria-label={t('rename')}
                       onClick={(e) => {
                         e.stopPropagation()
                         setRenamingId(ws.id)
                         setRenameValue(ws.name)
                       }}
                     >
-                      ✎
+                      <Icon name="edit" size={12} />
                     </button>
                     {ws.id !== 'default' && (
                       <button
-                        className="workspace-action-btn workspace-action-del"
-                        title="Delete"
+                        type="button"
+                        className="icon-btn x"
+                        title={t('delete')}
+                        aria-label={t('delete')}
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (
-                            confirm(
-                              `Delete workspace "${ws.name}" and all its connections? This cannot be undone.`,
-                            )
-                          ) {
+                          if (confirm(t('deleteWorkspaceConfirm', { name: ws.name }))) {
                             onDelete(ws.id)
                             if (ws.id === activeId) setOpen(false)
                           }
                         }}
                       >
-                        ✕
+                        <Icon name="x" size={12} />
                       </button>
                     )}
                   </div>
@@ -169,12 +176,17 @@ export const WorkspaceSelector: React.FC<Props> = ({
                 onBlur={() => {
                   submitCreate()
                 }}
-                placeholder="Workspace name"
+                placeholder={t('workspaceNamePlaceholder')}
               />
             </div>
           ) : (
-            <button className="workspace-create-btn" onClick={() => setCreating(true)}>
-              + New Workspace
+            <button
+              type="button"
+              className="workspace-create-btn"
+              onClick={() => setCreating(true)}
+            >
+              <Icon name="plus" size={12} />
+              {t('newWorkspace')}
             </button>
           )}
         </div>

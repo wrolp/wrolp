@@ -671,11 +671,11 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     [reloadDirectory],
   )
 
-  useImperativeHandle(
-    ref,
-    () => ({ refresh, refreshDirectory: reloadDirectory, refreshForFile }),
-    [refresh, reloadDirectory, refreshForFile],
-  )
+  useImperativeHandle(ref, () => ({ refresh, refreshDirectory: reloadDirectory, refreshForFile }), [
+    refresh,
+    reloadDirectory,
+    refreshForFile,
+  ])
 
   // Load the local drive list once for the location dropdown (Windows only;
   // returns empty on other platforms).
@@ -1978,49 +1978,79 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       onDrop={handleDrop}
     >
       {/* header */}
-      <div className="file-panel-header">
-        <span
-          className={`collapse-chevron${expanded ? ' expanded' : ''}`}
-          onClick={onToggleExpanded}
-          title={expanded ? 'Collapse' : 'Expand'}
-        />
-        <span style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          Files
-          {/* Mode switcher: browse the local SSH session, a ProxyJump remote, or a
-              Docker container's filesystem. */}
-          {fileMode !== 'local' && (
-            <span className="file-mode-switch" role="tablist">
-              <button
-                className={fileMode === 'ssh' ? 'active' : ''}
-                title={t('localSshSession')}
-                onClick={() => handleModeClick('ssh')}
-              >
-                {t('modeSsh')}
-              </button>
-              <button
-                className={fileMode === 'jump' ? 'active' : ''}
-                title={t('proxyJumpRemote')}
-                onClick={() => handleModeClick('jump')}
-              >
-                {t('modeJump')}
-              </button>
-              <button
-                className={fileMode === 'docker' ? 'active' : ''}
-                title={t('dockerContainer')}
-                onClick={() => handleModeClick('docker')}
-              >
-                {t('modeDocker')}
-              </button>
-            </span>
-          )}
+      <div className="panel-head sec" onClick={onToggleExpanded}>
+        <button
+          type="button"
+          className="panel-head-toggle"
+          aria-expanded={expanded}
+          title={expanded ? t('collapse') : t('expand')}
+        >
+          <span className={`collapse-chevron${expanded ? ' expanded' : ''}`} />
+          <span className="panel-title">{t('files')}</span>
+        </button>
+        {/* Which filesystem this is. The path bar below only says `~ (home)`, so
+            with two sessions open this is the one line that names the host. */}
+        <span className="cnt" title={serverLabel ?? targetLabel(target)}>
+          {serverLabel ?? targetLabel(target)}
         </span>
-        {expanded && (
+        {/* Mode switcher: browse the local SSH session, a ProxyJump remote, or a
+            Docker container's filesystem. Header material rather than a tool on the
+            row below, because the header has room for it and the tools row — six
+            verbs at the default 260px column — measures 22px short. */}
+        {fileMode !== 'local' && (
+          <span className="file-mode-switch" role="tablist">
+            <button
+              type="button"
+              className={fileMode === 'ssh' ? 'active' : ''}
+              title={t('localSshSession')}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleModeClick('ssh')
+              }}
+            >
+              {t('modeSsh')}
+            </button>
+            <button
+              type="button"
+              className={fileMode === 'jump' ? 'active' : ''}
+              title={t('proxyJumpRemote')}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleModeClick('jump')
+              }}
+            >
+              {t('modeJump')}
+            </button>
+            <button
+              type="button"
+              className={fileMode === 'docker' ? 'active' : ''}
+              title={t('dockerContainer')}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleModeClick('docker')
+              }}
+            >
+              {t('modeDocker')}
+            </button>
+          </span>
+        )}
+      </div>
+
+      {/* Everything you can *do* to the view sits on its own row under the header. */}
+      {expanded && (
+        <div className="toolbar">
           <div className="file-toolbar">
             {onToggleSync && sessionTabId != null && (
               <button
+                type="button"
+                className="icon-btn"
+                data-on={syncEnabled}
                 title={syncEnabled ? t('disableShellSync') : t('enableShellSync')}
-                onClick={onToggleSync}
-                className={syncEnabled ? 'sync-active' : ''}
+                aria-pressed={syncEnabled}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleSync()
+                }}
               >
                 <Icon name="link" />
               </button>
@@ -2032,26 +2062,63 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                     <Icon name="lock" />
                     {sftpUser}
                   </span>
-                  <button title={t('restoreOriginalUser')} onClick={handleRevertUser}>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title={t('restoreOriginalUser')}
+                    aria-label={t('restoreOriginalUser')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleRevertUser()
+                    }}
+                  >
                     <Icon name="undo" />
                   </button>
                 </>
               ) : (
                 <button
+                  type="button"
+                  className="icon-btn"
                   title={t('switchSftpUser')}
-                  onClick={() => setShowSwitchUser(!showSwitchUser)}
+                  aria-label={t('switchSftpUser')}
+                  aria-expanded={showSwitchUser}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowSwitchUser(!showSwitchUser)
+                  }}
                 >
                   <Icon name="user" />
                 </button>
               ))}
-            <button title={t('uploadFile')} onClick={handleUpload}>
+            <button
+              type="button"
+              className="icon-btn"
+              title={t('uploadFile')}
+              aria-label={t('uploadFile')}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleUpload()
+              }}
+            >
               <Icon name="upload" />
             </button>
-            <button title={t('uploadFolder')} onClick={handleUploadFolder}>
+            <button
+              type="button"
+              className="icon-btn"
+              title={t('uploadFolder')}
+              aria-label={t('uploadFolder')}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleUploadFolder()
+              }}
+            >
               <Icon name="folderUp" />
             </button>
             <button
+              type="button"
+              className="icon-btn"
               title={t('newItem')}
+              aria-label={t('newItem')}
               onClick={(e) => {
                 e.stopPropagation()
                 const r = e.currentTarget.getBoundingClientRect()
@@ -2060,12 +2127,22 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             >
               <Icon name="plus" />
             </button>
-            <button title={t('refresh')} onClick={refresh} disabled={loading}>
+            <button
+              type="button"
+              className="icon-btn"
+              title={t('refresh')}
+              aria-label={t('refresh')}
+              disabled={loading}
+              onClick={(e) => {
+                e.stopPropagation()
+                refresh()
+              }}
+            >
               <Icon name="refresh" />
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {fileToast && (
         <div
@@ -2081,13 +2158,6 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {expanded && showTree && (
         <>
-          {/* Connected server banner shown INSIDE the panel (above the path bar). */}
-          <div className="file-server-banner">
-            <Icon name="terminal" size={12} />
-            <span className="file-server-label" title={serverLabel ?? targetLabel(target)}>
-              {serverLabel ?? targetLabel(target)}
-            </span>
-          </div>
           <div className="file-path-bar">
             <div className="file-path-jump-wrap">
               <button

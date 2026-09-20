@@ -7,6 +7,7 @@ const en = {
   close: 'Close',
   resize: 'Resize',
   floatPane: 'Float window',
+  floatEditor: 'Float editor',
   cancel: 'Cancel',
   new: 'New',
   connection: 'Connection',
@@ -34,6 +35,11 @@ const en = {
   clearInputLine: 'Clear input',
   refresh: 'Refresh',
 
+  // Navigation column
+  navSearchPlaceholder: 'Search connections and terminals…',
+  clearSearch: 'Clear search',
+  navNoMatches: 'No match for “{query}”',
+
   // Titlebar
   titlebarSettings: 'Settings',
   titlebarAi: 'AI Chat',
@@ -46,15 +52,23 @@ const en = {
 
   // Tabs
   tabSettings: 'Settings',
-  tabAiChat: 'AI Chat',
   statusDisconnected: 'Disconnected',
   statusConnected: 'Connected',
   statusConnecting: 'Connecting…',
   statusError: 'Error',
+  statusSuspect: 'Unstable',
   connectionLost: 'Connection lost',
   pressEnterToRetry: 'Press Enter to retry',
   clickReconnectHint: 'click "Reconnect" at the top-right',
   connectionFailed: 'Connection failed',
+
+  // Workspaces
+  workspace: 'Workspace',
+  switchWorkspace: 'Switch workspace',
+  newWorkspace: 'New Workspace',
+  workspaceNamePlaceholder: 'Workspace name',
+  deleteWorkspaceConfirm:
+    'Delete workspace "{name}" and all its connections? This cannot be undone.',
 
   // Sidebar / connections
   connections: 'Connections',
@@ -156,10 +170,6 @@ const en = {
   scanProgress: '{done}/{total} probed',
   scanResults: 'Results',
   scanEmpty: 'No open services found. Try a different target or port.',
-  scanOpen: 'Open',
-  scanService: 'Service',
-  scanBanner: 'Banner',
-  scanLatency: 'Latency',
   scanAdd: 'Add',
   scanAdded: 'Added',
   serviceSsh: 'SSH',
@@ -209,7 +219,8 @@ const en = {
   deleteProgress: '{done} / {total} files',
   noContainers: 'No containers (or docker not available)',
 
-  // Bottom panel
+  // Bottom panel and inspector tabs. `analysis` / `docker` moved to the
+  // inspector in P2-4 but keep their keys — they name the same tool.
   sessions: 'Sessions',
   commandSets: 'Command Sets',
   analysis: 'Analysis',
@@ -217,6 +228,26 @@ const en = {
   selectAll: 'Select All',
   askAiSelectedText: 'Ask AI (selected text)',
   askAiAllLogs: 'Ask AI (all logs)',
+  dragToRedock: 'Drag to re-dock this panel',
+
+  // Inspector (right column)
+  inspector: 'Inspector',
+  openInspector: 'Open inspector',
+  closeInspector: 'Close inspector',
+  // The subnet-scan tab is named for what it lists, not for the action — the
+  // action keeps `scanNetwork`, which the nav column's button still says.
+  inspNetwork: 'Network',
+  // The column's two other states: float pops the whole column into its own
+  // window, the side button names the edge it will hug — and docks it back if it
+  // is currently out, because "which side" only means something docked.
+  inspFloat: 'Float as a separate window',
+  inspDockBack: 'Dock back into the column',
+  inspDockLeft: 'Dock to the left',
+  inspDockRight: 'Dock to the right',
+  // The inspector's AI tab is bound to the focused session, so with no session
+  // open there is nothing to answer — say so instead of showing an empty box.
+  aiNoTarget: 'Open a terminal to talk to the assistant.',
+  aiPoppedOut: 'This conversation is open in its own floating window.',
 
   // File panel
   files: 'Files',
@@ -418,6 +449,9 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   aiChatDockBottom: 'Dock bottom',
   aiChatClose: 'Close',
   aiChatDock: 'Dock',
+  // The floating window's own dock button: "Dock" alone would not say that
+  // clicking it puts the panel back where it came from.
+  aiChatDockBack: 'Dock back',
   aiChatNewConversation: 'New conversation',
   aiChatThinking: 'Thinking…',
   aiChatError: 'Error',
@@ -581,6 +615,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   reconnect: 'Reconnect',
   startRecording: 'Start recording',
   stopRecording: 'Stop recording',
+  statusRecording: 'Recording',
   autoRecordSessions: 'Auto-record sessions',
   autoRecordSessionsDesc:
     'Start recording automatically after an SSH connection. When off, use the per-pane record button to record manually.',
@@ -617,9 +652,14 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   paste: 'Paste',
   splitTerminal: 'Split Terminal',
   closeTerminal: 'Close Terminal',
+  closeTab: 'Close tab',
+  showSidebar: 'Show sidebar',
+  hideSidebar: 'Hide sidebar',
   shellTerminal: 'Terminal',
-  aiToggle: 'AI Chat',
-  aiToggleTitle: 'Toggle AI chat for this terminal',
+  // The per-pane button docks an AI pane beside *that* terminal, so the label
+  // says "dock" — "AI Chat" alone would read as the inspector's global tab.
+  aiToggle: 'Dock AI',
+  aiToggleTitle: 'Dock an AI pane beside this terminal',
   noActiveConnection: 'No active connection',
   updateAvailable: 'available',
 

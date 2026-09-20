@@ -48,7 +48,13 @@ export type IconName =
   | 'panelBottom'
   | 'panelLeft'
   | 'panelRight'
+  | 'float'
+  | 'dockBack'
+  | 'inspector'
+  | 'drag'
   | 'image'
+  | 'network'
+  | 'check'
   // Shell flavours for local-terminal entries. All five are a terminal window
   // carrying a distinguishing mark, so they stay recognisable as terminals while
   // still telling cmd / PowerShell / bash / WSL / Git Bash apart at 14px.
@@ -313,6 +319,23 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   minimize: <line x1="5" y1="12" x2="19" y2="12" />,
+  // Detach a panel into its own window: the front frame sits offset from the
+  // surface it leaves. Replaces the `⤢` text glyph, whose size and baseline
+  // varied with whatever font the WebView fell back to.
+  float: (
+    <>
+      <rect x="7" y="4" width="13" height="12" rx="1.5" />
+      <path d="M17 20H5.5A1.5 1.5 0 0 1 4 18.5V8" />
+    </>
+  ),
+  // Return a floated panel to its column. This is `float` turned 180°, on purpose:
+  // the two states of one toggle should read as a pair, not as two unrelated marks.
+  dockBack: (
+    <g transform="rotate(180 12 12)">
+      <rect x="7" y="4" width="13" height="12" rx="1.5" />
+      <path d="M17 20H5.5A1.5 1.5 0 0 1 4 18.5V8" />
+    </g>
+  ),
   // Panel docked at top: a thin bar at top of an outer rectangle.
   panelTop: (
     <>
@@ -341,6 +364,29 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="14" y="5" width="5" height="14" rx="1" fill="currentColor" stroke="none" />
     </>
   ),
+  // Inspector column. Drawn with rules instead of the filled bar panelRight
+  // uses, because it is toggled from beside the sidebar toggle and the two must
+  // not read as the same control.
+  inspector: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M14 3v18" />
+      <path d="M16.5 8.5h2.5" />
+      <path d="M16.5 12.5h2.5" />
+    </>
+  ),
+  // Drag handle: two columns of dots. Replaces the `⠿` text glyph, which is
+  // braille and renders differently on every font the WebView falls back to.
+  drag: (
+    <>
+      <circle cx="9" cy="6" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="18" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="6" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="18" r="1.5" fill="currentColor" stroke="none" />
+    </>
+  ),
   // Image / picture: a framed rectangle with a circle (sun) and a mountain.
   image: (
     <>
@@ -349,6 +395,20 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M21 15l-5-5L5 21" />
     </>
   ),
+  // Subnet / discovered hosts: one node above two, joined. Reads as "a network
+  // of machines", which is what the scan tab lists; `desktop` and `link` are
+  // already taken by single-machine and tunnel meanings.
+  network: (
+    <>
+      <circle cx="12" cy="5" r="2" />
+      <circle cx="5" cy="19" r="2" />
+      <circle cx="19" cy="19" r="2" />
+      <path d="M12 7v3" />
+      <path d="M12 10L5.8 17.2" />
+      <path d="M12 10l6.2 7.2" />
+    </>
+  ),
+  check: <polyline points="20 6 9 17 4 12" />,
 }
 
 export function Icon({

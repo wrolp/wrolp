@@ -258,9 +258,9 @@ export interface TabInfo {
   connectionId?: string
   connectionName: string
   host: string
-  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'suspect' | 'settings' | 'aiChat'
+  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'suspect' | 'settings'
   errorMessage?: string
-  tabType: 'terminal' | 'settings' | 'dockerLog' | 'aiChat' | 'localShell' | 'serial' | 'telnet'
+  tabType: 'terminal' | 'settings' | 'dockerLog' | 'localShell' | 'serial' | 'telnet' | 'fileEditor'
   // When true, this session was created by splitting a tab and is NOT shown as
   // its own entry in the top tab bar — it lives inside its parent workspace's
   // pane layout (see App.tsx `splitTrees`).
@@ -289,6 +289,10 @@ export interface TabInfo {
   // docker-shell pane so floating/restoring the pane — which triggers a fresh
   // SSH connect — re-enters the container instead of showing the host shell.
   postConnectCmd?: string
+  // fileEditor tab field. Key into App's `editorTabs` list, which holds the file
+  // itself (path, content, dirty state). The tab is the *entry in the tab bar*;
+  // the EditorTab is what it edits, and closing one closes the other.
+  editorKey?: string
 }
 
 export interface TerminalOutput {
@@ -753,11 +757,30 @@ export interface AiTermMark {
 export type DockSide = 'left' | 'right'
 export type DockPos = 'bottom' | 'right'
 
+/**
+ * Which tool the inspector column shows. `analysis` and `docker` read out the
+ * *focused* target and `ai` answers about it; `network` is the one column-wide
+ * tool that is not about any target — it moved here from a modal because the
+ * scan outlives the dialog and the terminal should stay usable underneath. The
+ * width is user-resizable state, so it deliberately lives here rather than in
+ * `$dims`, which only holds the fixed chrome bands.
+ */
+export type InspectorTab = 'analysis' | 'docker' | 'ai' | 'network'
+
 export interface SectionLayout {
   visible: boolean
   collapsed: boolean
   height?: number
 }
+
+/**
+ * The drawer's expanded height before the user drags it, matching the static
+ * draft's compact `--wl-drawer-h`. It is the *default* of user state, not a
+ * chrome band, so it is a constant here rather than a `$dims` entry — the two
+ * fixed bands next to it (`h-tabbar`, `h-statusbar`) never move because a mouse
+ * dragged them.
+ */
+export const DEFAULT_DRAWER_HEIGHT = 232
 
 export interface WorkspaceLayout {
   sidebar: {
@@ -775,6 +798,18 @@ export interface WorkspaceLayout {
     pos: DockPos
     size: number
   }
+  /**
+   * Which edge the docked column hugs. Whether it is *floating* is deliberately
+   * not here: float geometry is transient state like every other popped-out pane,
+   * and restoring "floating" without a remembered position would reopen the panel
+   * at a default spot rather than where the user left it.
+   */
+  inspector: {
+    visible: boolean
+    width: number
+    tab: InspectorTab
+    side: DockSide
+  }
 }
 
 export const defaultLayout: WorkspaceLayout = {
@@ -783,15 +818,31 @@ export const defaultLayout: WorkspaceLayout = {
     side: 'left',
     width: 260,
     sections: {
+      // Connections is the entry point, so it opens. Files opens too: its
+      // section is not rendered at all until a session is connected
+      // (`showFilePanel` in App.tsx), so it can never be the empty placeholder
+      // a first run would have to look at — collapsed, it just hides the panel
+      // the user connected for. Docker is the one that can legitimately be
+      // empty, because it renders for any focused tab, including local shells
+      // that have no daemon to query, so it starts closed.
       connections: { visible: true, collapsed: false, height: 200 },
       files: { visible: true, collapsed: false },
-      docker: { visible: true, collapsed: false, height: 220 },
+      docker: { visible: true, collapsed: true, height: 220 },
     },
   },
   bottomPanel: {
     visible: false,
     pos: 'bottom',
-    size: 240,
+    size: DEFAULT_DRAWER_HEIGHT,
+  },
+  // Closed by default: the inspector is a read-out about a target, and a fresh
+  // window has none. It opens on demand — from the tab bar, `Ctrl+Alt+I`, or by
+  // asking for a container analysis.
+  inspector: {
+    visible: false,
+    width: 308,
+    tab: 'analysis',
+    side: 'right',
   },
 }
 

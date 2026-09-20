@@ -1,0 +1,1234 @@
+@use 'variables' as *;
+
+// ==================== Toast Notification ====================
+
+.toast {
+  position: fixed;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: var(--r-2);
+  font-size: 13px;
+  color: var(--toast-fg);
+  background: var(--toast-bg);
+  border: 1px solid var(--toast-border);
+  box-shadow: 0 6px 20px var(--shadow-1);
+  z-index: var(--z-toast);
+  cursor: pointer;
+  animation: toast-in 0.2s ease-out;
+
+  &.toast-success {
+    border-left: 3px solid var(--toast-ok);
+  }
+
+  &.toast-error {
+    border-left: 3px solid var(--toast-error);
+  }
+
+  &.toast-progress {
+    border-left: 3px solid var(--toast-info);
+  }
+
+  &.toast-info {
+    border-left: 3px solid var(--toast-accent);
+  }
+
+  .toast-icon {
+    font-weight: bold;
+    flex-shrink: 0;
+  }
+
+  .toast-success & .toast-icon {
+    color: var(--toast-ok);
+  }
+
+  .toast-error & .toast-icon {
+    color: var(--toast-error);
+  }
+
+  .toast-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--overlay-3);
+    border-top-color: var(--toast-info);
+    border-radius: var(--r-circle);
+    flex-shrink: 0;
+    animation: spin 0.7s linear infinite;
+  }
+
+  .toast-text {
+    flex: 1;
+    line-height: 1.4;
+  }
+
+  .toast-close {
+    font-size: 12px;
+    color: color-mix(in srgb, var(--toast-fg) 60%, transparent);
+    cursor: pointer;
+    flex-shrink: 0;
+    &:hover {
+      color: var(--toast-fg);
+    }
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+// ==================== Bottom Panel ====================
+
+// One tab-button look, shared by the bottom drawer and the inspector. Both
+// carried their own copy before; a placeholder means the second one cannot
+// drift, and it compiles into the same selector list rather than a new rule.
+%panel-tab {
+  background: none;
+  border: none;
+  color: $text-muted;
+  cursor: pointer;
+  padding: 3px 10px;
+  font-size: var(--fs-sm);
+  border-radius: var(--r-1) var(--r-1) 0 0;
+  border-bottom: 2px solid transparent;
+
+  &:hover {
+    color: $text-primary;
+    background: $bg-hover;
+  }
+  &.active {
+    color: $text-primary;
+    border-bottom-color: $accent;
+  }
+}
+
+.bottom-panel {
+  flex-shrink: 0;
+  background: $bg-secondary;
+  display: flex;
+  flex-direction: column;
+  // Opening and closing the drawer is a size change, and which axis that is
+  // depends on where it is docked, so both are transitioned. Suppressed while a
+  // divider is being dragged (the body class the drag handlers set): there the
+  // pointer *is* the animation, and an ease would leave the panel trailing the
+  // mouse.
+  transition:
+    height var(--d-3) var(--e-out),
+    width var(--d-3) var(--e-out);
+
+  body.resize-h &,
+  body.resize-v & {
+    transition: none;
+  }
+
+  // Collapsed is the header strip on its own, so its height *is* the header's —
+  // the same band as the tab bar, which keeps the two in step under a density
+  // change.
+  &:not(.expanded) {
+    height: var(--h-tabbar);
+    border-top: 1px solid $border;
+  }
+
+  // No height here: the expanded size is user state (`bottomPanel.size`) and is
+  // applied inline by the component whenever the drawer is open.
+  &.expanded {
+    min-height: 120px;
+  }
+
+  &-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 4px;
+    height: var(--h-tabbar);
+    flex-shrink: 0;
+    border-bottom: 1px solid $border;
+    background: $bg-secondary;
+
+    // The handle is a text-glyph-sized span everywhere else; here it wraps an
+    // SVG, which would otherwise sit on the baseline.
+    .panel-drag-handle {
+      display: flex;
+      align-items: center;
+    }
+
+    // The disclosure arrow. `.icon-btn` sizes and colours it; the rotation is
+    // the only thing that says which way the drawer will move, so the arrow
+    // points the way the content goes: up while it is down, down while it is up.
+    .drawer-toggle svg {
+      transition: transform var(--d-2) var(--e-out);
+    }
+    .drawer-toggle[aria-expanded='false'] svg {
+      transform: rotate(180deg);
+    }
+  }
+
+  .tab-btn {
+    @extend %panel-tab;
+  }
+
+  &-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  // Docked to the right of the terminal area (instead of the bottom).
+  &.right {
+    flex-direction: row;
+    border-top: none;
+    border-left: 1px solid $border;
+
+    // Collapsed on this side is a narrow *column*. The height rule above would
+    // otherwise box it into a 28px square, since nothing else claims the axis.
+    &:not(.expanded) {
+      height: auto;
+      width: var(--h-tabbar);
+    }
+
+    .bottom-panel-tabs {
+      flex-direction: column;
+      width: var(--h-tabbar);
+      height: auto;
+      border-bottom: none;
+      border-right: 1px solid $border;
+      padding: 4px 0;
+
+      .drawer-toggle {
+        margin-right: 0;
+        margin-bottom: var(--sp-1);
+      }
+
+      .tab-btn {
+        writing-mode: vertical-rl;
+        border-radius: var(--r-1) 0 0 var(--r-1);
+        border-bottom: none;
+        border-left: 2px solid transparent;
+        border-bottom-color: transparent;
+        padding: 10px 3px;
+
+        &.active {
+          border-left-color: $accent;
+          border-bottom-color: transparent;
+        }
+      }
+    }
+
+    .bottom-panel-content {
+      flex: 1;
+    }
+  }
+}
+
+// ==================== Inspector ====================
+//
+// The third region: `nav | workspace | inspector`. It carries read-outs about
+// the *focused* target, which is what separates it from the bottom drawer's
+// cross-target lists. Width is user-resizable state (`layout.inspector.width`),
+// so it is set inline rather than from a dimension token.
+
+.inspector {
+  // `relative` so the resize grip below can sit on the column's own edge. That
+  // grip used to be a `.panel-divider-v` sibling, which put the column in the
+  // row twice over: moving it to the other edge then needed a DOM reorder, and a
+  // DOM reorder is an unmount for the panels mounted inside.
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: $bg-secondary;
+  border-left: 1px solid $border;
+
+  // Docked at the left edge, everything mirrors: the seam moves to the column's
+  // right side and so does the grab zone.
+  &.is-left {
+    border-left: 0;
+    border-right: 1px solid $border;
+
+    > .inspector-resize {
+      left: auto;
+      right: 0;
+    }
+  }
+
+  // The column popped out of the row. Geometry comes from App inline; this only
+  // supplies what a float always has: an edge on every side, a shadow, and the
+  // same minimum size the JS clamps to. The column's own grip is not rendered in
+  // this state — the eight grips below cover every edge instead.
+  &.is-floating {
+    // The one line that makes it a float: the column leaves the flex row, which
+    // is what gives the workspace its width back. The inline `left`/`top`/`width`
+    // /`height` App keeps are then resolved against the window, and the eight
+    // `fw-rh-*` grips (shared with `.floating-window`) find their positioned
+    // ancestor.
+    position: fixed;
+    min-width: 320px;
+    min-height: 200px;
+    border: 1px solid $border;
+    border-radius: var(--r-3);
+    box-shadow: 0 12px 40px var(--shadow-2);
+    // Only a base level: App hands every float a `z` from one shared counter, so
+    // the floated column and the popped-out panes stack by recency, not by kind.
+    z-index: var(--z-float);
+
+    // The head is the grab handle while floating, exactly as it is in
+    // `FloatingWindow`. Not while docked, where a drag on it would do nothing.
+    .inspector-head {
+      cursor: move;
+      user-select: none;
+    }
+  }
+
+  // The workspace-facing edge is the one you drag. 5px, over the column's own
+  // border, so the seam reads as one line that happens to be grabbable.
+  > .inspector-resize {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 5px;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 10;
+
+    &:hover {
+      background: $accent;
+    }
+  }
+
+  &-head {
+    // `.panel-head` already gives the bar and the title's ellipsis; the region
+    // label keeps the normal voice (a section header's uppercase tracking is for
+    // the nav column's groups, not for a region that owns the row).
+    background: $bg-secondary;
+  }
+
+  &-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 var(--sp-1);
+    flex-shrink: 0;
+    border-bottom: 1px solid $border;
+    // P3 adds three more tabs (editor / AI / network) to a 308px column, so the
+    // strip scrolls instead of squeezing every label to two characters.
+    overflow-x: auto;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  .tab-btn {
+    @extend %panel-tab;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
+    white-space: nowrap;
+  }
+
+  &-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  // Wrapper that lets a panel keep its mount while another inspector tab is
+  // showing — the AI panel because its agent run polls from a closure, the scan
+  // because its progress arrives as events. `min-width: 0` is the load-bearing
+  // part: without it this flex item's automatic minimum size is the widest
+  // unbreakable run inside (a transcript line, a banner), and the column would
+  // push the whole layout sideways.
+  &-pane {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    flex-direction: column;
+    overflow: hidden;
+
+    // `hidden` sets `display: none` in the UA stylesheet, which this rule's own
+    // `display: flex` would beat — so the attribute is restated, not trusted.
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  // A tab with nothing to read out. Centred in the body rather than pinned to the
+  // top, because the column is tall and a lone line at the top reads as a bug.
+  &-empty {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    padding: var(--sp-4);
+    text-align: center;
+    color: $text-muted;
+    font-size: var(--fs-sm);
+  }
+}
+
+// Shared panel styles
+.panel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+
+  .filter-select,
+  .speed-select {
+    background: $bg-primary;
+    border: 1px solid $border;
+    color: $text-primary;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: var(--r-1);
+  }
+
+  .refresh-btn,
+  .add-btn {
+    background: none;
+    border: 1px solid $border;
+    color: $text-muted;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: var(--r-1);
+    font-size: 12px;
+    &:hover {
+      color: $text-primary;
+      border-color: $accent;
+    }
+  }
+
+  .delete-all-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid $border;
+    color: $danger;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--r-1);
+    font-size: 12px;
+    &:hover {
+      color: #fff;
+      background: $danger;
+      border-color: $danger;
+    }
+  }
+
+  .add-btn {
+    margin-left: auto;
+    color: var(--accent-soft-40);
+    border-color: rgba($accent, 0.3);
+    background: rgba($accent, 0.1);
+    &:hover {
+      background: rgba($accent, 0.2);
+    }
+  }
+
+  .session-count,
+  .cmd-set-count {
+    font-size: 11px;
+    color: $text-dim;
+  }
+}
+
+.panel-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-dim;
+  font-size: 13px;
+  padding: 20px;
+  text-align: center;
+}
+
+// B5 fix: bound the scroll wrappers so their child `.session-table` /
+// `.cmd-set-table` (flex:1; overflow-y:auto) can actually scroll instead of
+// being clipped by the panel body's `overflow: hidden`.
+.session-list-panel,
+.cmd-set-panel,
+.host-analysis-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+// Session list
+.session-table,
+.cmd-set-table {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 0;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+  }
+}
+
+.session-row,
+.cmd-set-row {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  gap: 8px;
+  border-bottom: 1px solid rgba($border, 0.5);
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &-info {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+
+    button {
+      background: none;
+      border: none;
+      color: $text-muted;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: var(--r-1);
+      font-size: 13px;
+      &:hover {
+        background: $bg-hover;
+        color: $text-primary;
+      }
+      &:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+    }
+  }
+}
+
+.session-name,
+.cmd-set-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-meta,
+.cmd-set-meta {
+  font-size: 11px;
+  color: $text-muted;
+}
+
+.session-loc {
+  display: inline-block;
+  color: $accent;
+  margin-right: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+  vertical-align: middle;
+}
+
+.rename-input {
+  font-size: 13px;
+  padding: 1px 4px;
+  background: $bg-primary;
+  border: 1px solid $accent;
+  color: $text-primary;
+  border-radius: var(--r-1);
+  width: 100%;
+}
+
+// Session viewer (playback)
+.session-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+
+  &-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+    background: $bg-secondary;
+  }
+
+  &-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: $text-primary;
+  }
+
+  &-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+
+    button {
+      background: none;
+      border: 1px solid $border;
+      color: $text-muted;
+      cursor: pointer;
+      padding: 2px 8px;
+      border-radius: var(--r-1);
+      font-size: 14px;
+      &:hover {
+        color: $text-primary;
+        border-color: $accent;
+      }
+      &:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+    }
+
+    .speed-select {
+      background: $bg-primary;
+      border: 1px solid $border;
+      color: $text-primary;
+      font-size: 12px;
+      padding: 1px 4px;
+      border-radius: var(--r-1);
+    }
+
+    .time-display {
+      font-size: 11px;
+      color: $text-muted;
+      min-width: 70px;
+      text-align: right;
+    }
+
+    .close-btn {
+      border: none;
+      font-size: 16px;
+      padding: 0 4px;
+    }
+  }
+
+  &-timeline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    border-bottom: 1px solid $border;
+    flex-shrink: 0;
+
+    .timeline-slider {
+      flex: 1;
+      height: 4px;
+      accent-color: $accent;
+    }
+
+    .event-count {
+      font-size: 11px;
+      color: $text-dim;
+      min-width: 100px;
+      text-align: right;
+    }
+  }
+
+  &-terminal {
+    flex: 1;
+    overflow: hidden;
+    padding: 4px;
+  }
+}
+
+// Command set editor textarea
+.commands-textarea {
+  width: 100%;
+  min-height: 200px;
+  background: $bg-primary;
+  border: 1px solid $border;
+  color: $text-primary;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 13px;
+  padding: 8px;
+  border-radius: var(--r-1);
+  resize: vertical;
+
+  &:focus:not(:focus-visible) {
+    border-color: $accent;
+    outline: none;
+  }
+}
+
+// ==================== P6: Docker panel & target chip ====================
+
+.file-target-chip {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-soft-40);
+  // 28% 的强调色浅底在浅色主题下压不住 accent-soft-40（4.35:1），收窄到 20%。
+  background: rgba($accent, 0.2);
+  border: 1px solid rgba(#6ec3f0, 0.55);
+  border-radius: var(--r-1);
+  padding: 0 5px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+// Distinct, higher-contrast styling for Docker targets so the container name
+// is readable at a glance on the dark panel.
+.file-target-chip.docker {
+  color: var(--warning-soft-40);
+  background: rgba(#cca700, 0.22);
+  border-color: rgba(#ffd27f, 0.6);
+}
+
+.file-target-chip.docker-ssh {
+  color: var(--success-soft-40);
+  background: rgba(#4ec9b0, 0.2);
+  border-color: rgba(#b4f0c4, 0.55);
+}
+
+// Files-panel mode switcher (SSH / Jump / Docker).
+// Spinning icon (loading indicators).
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.file-mode-switch {
+  display: inline-flex;
+  margin-left: 2px;
+  // Three short words that must not be truncated to "SSH / Jump / Do".
+  flex-shrink: 0;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  overflow: hidden;
+
+  button {
+    border: none;
+    background: transparent;
+    color: $text-dim;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    cursor: pointer;
+    line-height: 1.4;
+
+    & + button {
+      border-left: 1px solid $border;
+    }
+
+    &:hover {
+      color: $text-primary;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    &.active {
+      // `--text-on-accent`, not `#fff`: the accent became user-selectable in P0 and
+      // a light pick buried the label.
+      color: var(--text-on-accent);
+      background: $accent;
+    }
+  }
+}
+
+// ProxyJump connection form.
+.file-jump-form {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  .file-jump-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: $text-primary;
+  }
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11px;
+    color: $text-dim;
+
+    input {
+      background: $bg-primary;
+      border: 1px solid $border;
+      border-radius: var(--r-1);
+      color: $text-primary;
+      padding: 4px 6px;
+      font-size: 12px;
+
+      &:focus:not(:focus-visible) {
+        outline: none;
+        border-color: $accent;
+      }
+    }
+  }
+
+  .file-auth-type {
+    display: flex;
+    gap: 4px;
+
+    button {
+      flex: 1;
+      border: 1px solid $border;
+      background: transparent;
+      color: $text-dim;
+      font-size: 11px;
+      padding: 3px 0;
+      border-radius: var(--r-1);
+      cursor: pointer;
+
+      &.active {
+        color: #fff;
+        background: $accent;
+        border-color: $accent;
+      }
+    }
+  }
+
+  .file-jump-connect {
+    border: none;
+    background: $accent;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 0;
+    border-radius: var(--r-1);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+  }
+
+  .file-hint {
+    font-size: 10px;
+    color: $text-dim;
+    line-height: 1.4;
+  }
+}
+
+// Docker container picker (in-panel, mirrors the sidebar Docker panel).
+.file-docker-picker {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+
+  .file-docker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: $text-dim;
+
+    button {
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 12px;
+    }
+  }
+}
+
+.docker-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid $border;
+  background: $bg-primary;
+}
+
+// The header itself is `.panel-head.sec` now; only this switch is docker's own.
+.docker-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: $text-muted;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+
+  input[type='checkbox'] {
+    appearance: none;
+    width: 26px;
+    height: 14px;
+    border-radius: var(--r-pill);
+    background: var(--bg-active);
+    border: none;
+    position: relative;
+    cursor: pointer;
+    transition: background var(--d-2);
+    flex-shrink: 0;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      border-radius: var(--r-circle);
+      background: var(--text-secondary);
+      transition:
+        transform var(--d-2),
+        background var(--d-2);
+    }
+
+    // `--text-on-accent` rather than the `#fff` this carried: the accent is
+    // user-selectable since P0, and a light one used to swallow the knob.
+    &:checked {
+      background: $accent;
+
+      &::after {
+        transform: translateX(12px);
+        background: var(--text-on-accent);
+      }
+    }
+  }
+
+  .docker-filter-toggle-text {
+    line-height: 1;
+  }
+
+  &:hover {
+    color: $text-primary;
+  }
+}
+
+.docker-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 2px 0;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+  }
+
+  .file-error,
+  .file-empty {
+    padding: 8px 10px;
+    font-size: 12px;
+    color: $text-dim;
+  }
+}
+
+.docker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba($border, 0.4);
+
+  &:hover {
+    background: $bg-hover;
+  }
+  &.active {
+    background: rgba($accent, 0.12);
+    box-shadow: inset 2px 0 0 $accent;
+  }
+  &.stopped {
+    opacity: 0.55;
+
+    &:hover {
+      opacity: 0.9;
+    }
+  }
+
+  .docker-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .docker-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .docker-name {
+    font-size: 12px;
+    color: $text-primary;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // Short (12-char) container ID. Sits as a direct child of `.docker-item`
+  // (next to the state badge) so the row's `align-items: center` centers it
+  // against the whole item — the same vertical position as the `running` badge —
+  // instead of nesting it in the name/image column.
+  .docker-id {
+    flex-shrink: 0;
+    font-family: $font-mono;
+    font-size: 10px;
+    line-height: 15px;
+    color: $text-secondary;
+    background: $bg-secondary;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    padding: 0 4px;
+    cursor: text;
+    // One click selects the whole ID so it can be copied into docker commands.
+    user-select: all;
+
+    &:hover {
+      color: $text-primary;
+      border-color: $accent;
+    }
+  }
+
+  .docker-image {
+    font-size: 10px;
+    color: $text-dim;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .docker-state {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: var(--r-1);
+    flex-shrink: 0;
+    text-transform: lowercase;
+    background: $bg-secondary;
+    border: 1px solid $border;
+    color: $text-secondary;
+
+    &.running {
+      color: var(--success-soft-40);
+      border-color: rgba(#4ec9b0, 0.35);
+      background: rgba(#4ec9b0, 0.1);
+    }
+    &.exited,
+    &.dead,
+    &.paused {
+      color: var(--danger-soft-40);
+      border-color: rgba(#f48771, 0.35);
+      background: rgba(#f48771, 0.08);
+    }
+  }
+}
+
+// ===== Phase 3: terminal pane drag reorder =====
+.term-pane-grip {
+  flex-shrink: 0;
+  cursor: grab;
+  color: $text-dim;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  user-select: none;
+
+  &:hover {
+    color: $text-primary;
+  }
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+// The pane being dragged is dimmed so the drop indicator is easy to read.
+.term-pane.drag-source {
+  opacity: 0.5;
+}
+
+// VS Code-style drop mask: a semi-transparent overlay that covers the region
+// the dragged pane will occupy. It is rendered while the mouse is still held
+// down (see renderPane) and removed on drop / drag end.
+.term-pane {
+  .drop-mask {
+    position: absolute;
+    z-index: 6;
+    pointer-events: none;
+    background: rgba($accent, 0.28);
+    border: 2px solid $accent;
+    border-radius: var(--r-1);
+    box-shadow: 0 0 0 1px rgba($accent, 0.5);
+  }
+
+  // Base mask: covers the WHOLE pane as soon as the cursor enters the region,
+  // so the pane reads as "droppable" everywhere — not only near its edges.
+  .drop-mask-base {
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 5;
+    background: rgba($accent, 0.12);
+    border: 2px dashed rgba($accent, 0.55);
+    box-shadow: none;
+  }
+
+  .drop-mask-left {
+    left: 0;
+    top: 0;
+    width: 50%;
+    height: 100%;
+  }
+
+  .drop-mask-right {
+    right: 0;
+    top: 0;
+    width: 50%;
+    height: 100%;
+  }
+
+  .drop-mask-top {
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 50%;
+  }
+
+  .drop-mask-bottom {
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 50%;
+  }
+
+  .drop-mask-center {
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+// ===== Phase 3: panel dock drag =====
+.panel-drag-handle {
+  flex-shrink: 0;
+  cursor: grab;
+  color: $text-dim;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 3px;
+  user-select: none;
+  border-radius: var(--r-1);
+
+  &:hover {
+    color: $text-primary;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+// Dock handle sits at the top of the sidebar container.
+.sidebar-container > .panel-drag-handle {
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: $bg-secondary;
+  border-bottom: 1px solid $border;
+}
+
+// Full-screen overlay shown while a panel is being re-docked; the three zones
+// capture the drop.
+.dock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dock);
+  pointer-events: auto;
+}
+
+.dock-zone {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: $text-primary;
+  background: rgba(0, 122, 204, 0.06);
+  border: 2px dashed rgba($accent, 0.35);
+  box-sizing: border-box;
+  transition:
+    background var(--d-1),
+    border-color var(--d-1);
+
+  &.active {
+    background: rgba(0, 122, 204, 0.22);
+    border-color: $accent;
+  }
+}
+
+.dock-left {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 33.33%;
+  border-right: none;
+}
+
+.dock-right {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 33.33%;
+  border-left: none;
+}
+
+.dock-bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 33.33%;
+  border-top: none;
+  border-bottom: none;
+}

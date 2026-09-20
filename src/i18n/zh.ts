@@ -9,6 +9,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   close: '关闭',
   resize: '调整大小',
   floatPane: '浮动窗口',
+  floatEditor: '浮动编辑器',
   cancel: '取消',
   new: '新建',
   connection: '连接',
@@ -36,6 +37,11 @@ const zh: Partial<Record<TranslationKey, string>> = {
   clearInputLine: '清空输入',
   refresh: '刷新',
 
+  // Navigation column
+  navSearchPlaceholder: '搜索连接与终端…',
+  clearSearch: '清空搜索',
+  navNoMatches: '没有匹配「{query}」的项',
+
   // Titlebar
   titlebarSettings: '设置',
   titlebarAi: 'AI 对话',
@@ -48,15 +54,22 @@ const zh: Partial<Record<TranslationKey, string>> = {
 
   // Tabs
   tabSettings: '设置',
-  tabAiChat: 'AI 对话',
   statusDisconnected: '已断开',
   statusConnected: '已连接',
   statusConnecting: '连接中…',
   statusError: '错误',
+  statusSuspect: '不稳定',
   connectionLost: '连接已断开',
   pressEnterToRetry: '按 Enter 重试',
   clickReconnectHint: '点击右上角"重新连接"按钮',
   connectionFailed: '连接失败',
+
+  // Workspaces
+  workspace: '工作区',
+  switchWorkspace: '切换工作区',
+  newWorkspace: '新建工作区',
+  workspaceNamePlaceholder: '工作区名称',
+  deleteWorkspaceConfirm: '删除工作区「{name}」及其全部连接？此操作不可撤销。',
 
   // Sidebar / connections
   connections: '连接',
@@ -157,10 +170,6 @@ const zh: Partial<Record<TranslationKey, string>> = {
   scanProgress: '已探测 {done}/{total}',
   scanResults: '扫描结果',
   scanEmpty: '未发现开放服务，请尝试其他目标或端口。',
-  scanOpen: '开放',
-  scanService: '服务',
-  scanBanner: '标识',
-  scanLatency: '延迟',
   scanAdd: '添加',
   scanAdded: '已添加',
   serviceSsh: 'SSH',
@@ -209,7 +218,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   deleteProgress: '已删除 {done} / {total} 个文件',
   noContainers: '无容器（或 docker 不可用）',
 
-  // Bottom panel
+  // 底部面板与检查器页签。P2-4 把 `analysis` / `docker` 搬进了检查器，
+  // 但键名保留 —— 它们指的是同一个工具。
   sessions: '会话',
   commandSets: '命令集',
   analysis: '分析',
@@ -217,6 +227,23 @@ const zh: Partial<Record<TranslationKey, string>> = {
   selectAll: '全选',
   askAiSelectedText: '询问 AI（选中文本）',
   askAiAllLogs: '询问 AI（全部日志）',
+  dragToRedock: '拖动以重新停靠此面板',
+
+  // 检查器（右栏）
+  inspector: '检查器',
+  openInspector: '打开检查器',
+  closeInspector: '关闭检查器',
+  inspNetwork: '网络',
+  // 检查器的另外两态：「浮动」把整列弹出成独立窗口，另一颗钮说明它将停靠到哪条
+  // 边——已经浮动时它也负责把列收回去，因为「哪一边」只有停靠时才有意义。
+  inspFloat: '浮动为独立窗口',
+  inspDockBack: '停靠回列内',
+  inspDockLeft: '停靠到左侧',
+  inspDockRight: '停靠到右侧',
+  // The inspector's AI tab is bound to the focused session, so with no session
+  // open there is nothing to answer — say so instead of showing an empty box.
+  aiNoTarget: '打开一个终端后即可与助手对话。',
+  aiPoppedOut: '该对话已在自己的浮动窗口中打开。',
 
   // File panel
   files: '文件',
@@ -404,6 +431,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatDockBottom: '停靠底部',
   aiChatClose: '关闭',
   aiChatDock: '停靠',
+  aiChatDockBack: '停靠回原位',
   aiChatNewConversation: '新建会话',
   aiChatThinking: '思考中…',
   aiChatError: '错误',
@@ -564,6 +592,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   reconnect: '重新连接',
   startRecording: '开始录制',
   stopRecording: '停止录制',
+  statusRecording: '录制中',
   autoRecordSessions: '自动录制会话',
   autoRecordSessionsDesc: '开启后，连接 SSH 会自动开始录制；关闭时可用每个面板的录制按钮手动录制。',
   keepaliveInterval: 'SSH 保活间隔（秒）',
@@ -596,9 +625,12 @@ const zh: Partial<Record<TranslationKey, string>> = {
   paste: '粘贴',
   splitTerminal: '拆分终端',
   closeTerminal: '关闭终端',
+  closeTab: '关闭页签',
+  showSidebar: '显示侧栏',
+  hideSidebar: '隐藏侧栏',
   shellTerminal: '终端',
-  aiToggle: 'AI 对话',
-  aiToggleTitle: '切换此终端的 AI 对话',
+  aiToggle: '停靠 AI',
+  aiToggleTitle: '在此终端旁停靠一个 AI 面板',
   noActiveConnection: '无活动连接',
   updateAvailable: '可用',
 

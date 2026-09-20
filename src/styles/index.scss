@@ -1,5 +1,6 @@
 @use 'variables' as *;
 @use 'theme' as theme;
+@use 'layout' as layout;
 
 // ===== Theme tokens =====
 //
@@ -11,11 +12,17 @@
 // with zero React re-render (see src/lib/themeStore.ts).
 :root {
   @include theme.emit-tokens(dark);
+  @include layout.emit-structural;
 }
 
 html[data-theme='light'] {
   @include theme.emit-tokens(light);
 }
+
+// Density only re-declares the `--h-*` band heights emitted by
+// `layout.emit-structural` above; see src/lib/themeStore.ts for who writes the
+// attribute.
+@include layout.emit-density-modes;
 
 // Bundled Nerd Font (MesloLGS NF) so terminal icon glyphs (powerline / nerdfont
 // symbols used by shells like powerlevel10k / oh-my-zsh) render correctly even
@@ -40,7 +47,8 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: transparent;
   color: $text-primary;
 }

@@ -45,6 +45,11 @@ $themes: (
     danger-hover: #e44b2c,
     success: #1fa87e,
     warning: #cca700,
+    // Fourth state colour, and deliberately *not* the accent: the accent is
+    // user-configurable (P4), so anything encoding "in progress" or "note" has to
+    // stay put when they pick a colour. Value is the blue the app already uses for
+    // toasts/links rather than a new one.
+    info: #4aa3ff,
 
     // ---- L2 派生色（原先是散落的 color.adjust 调用，这里由 Sass 精确复算）----
     accent-l8: color.adjust($dark-accent, $lightness: 8%),
@@ -53,11 +58,19 @@ $themes: (
     accent-soft-40: color.adjust($dark-accent, $lightness: 40%),
     border-l12: color.adjust(#3e3e3e, $lightness: 12%),
     success-l8: color.adjust(#1fa87e, $lightness: 8%),
+    // 控件悬停底。深色主题的层级是 bg-primary < … < bg-input(#3c3c3c)，
+    // `bg-input` 已经是最亮的一档，所以输入框/按钮的 hover **没有**更高一档可用
+    // ——原先 5 处直接写了 #4c4c4c。浅色主题层级相反（bg-input 纯白最亮），因此
+    // 这里必须往暗走。
+    control-hover: #4c4c4c,
     // 语义色的「当文字用」变体：语义色本身作前景压在**自己的浅底**上时对比度不足
     // （深色 1.9–3.3:1），与 accent-soft-40 同思路——深色主题提亮、浅色主题加深。
     danger-soft-40: color.adjust(#c42b1c, $lightness: 40%),
     success-soft-40: color.adjust(#1fa87e, $lightness: 40%),
     warning-soft-40: color.adjust(#cca700, $lightness: 40%),
+    // 同 *-soft-40 的用法（当文字压在自己的浅底上）。#4aa3ff 本身已经很亮，
+    // 只需轻提一档，不像 danger/success 那样要走 40%。
+    info-soft-40: color.adjust(#4aa3ff, $lightness: 12%),
     // 实心成功按钮的底色（配 --text-on-accent 白字，两套主题均 ≥5:1）。
     success-solid: #107c10,
 
@@ -68,7 +81,6 @@ $themes: (
     shadow-1: rgba(0, 0, 0, 0.4),
     shadow-2: rgba(0, 0, 0, 0.55),
     scrim: rgba(0, 0, 0, 0.5),
-
     // ---- L3 场景色（原先是散落的硬编码）----
     titlebar-bg: #202020,
     text-on-accent: #ffffff,
@@ -115,6 +127,8 @@ $themes: (
     danger-hover: #e81123,
     success: #107c10,
     warning: #9a6700,
+    // 见深色表同名的注释：状态色不跟随可调强调色。
+    info: #0a69da,
 
     // ---- L2 派生色：浅色下 hover 要往**更深**走，而不是更深色主题里的更亮 ----
     accent-l8: #005aa3,
@@ -123,10 +137,13 @@ $themes: (
     accent-soft-40: #0a5f9e,
     border-l12: #b9b9b9,
     success-l8: #0a5c0a,
+    // 见深色表同名注释：浅色的 bg-input 是纯白（层级顶端），悬停只能往暗走。
+    control-hover: #ebebeb,
     // 见深色表同名的注释：浅色主题必须显著加深才压得住自己的浅底。
     danger-soft-40: #8f1d17,
     success-soft-40: #0e5c39,
     warning-soft-40: #7a5200,
+    info-soft-40: #0857b4,
     // 与浅色 success 同值：白字压它约 5.4:1。
     success-solid: #107c10,
 
@@ -138,7 +155,6 @@ $themes: (
     shadow-1: rgba(0, 0, 0, 0.12),
     shadow-2: rgba(0, 0, 0, 0.18),
     scrim: rgba(0, 0, 0, 0.35),
-
     // ---- L3 ----
     titlebar-bg: #f3f3f3,
     // 强调底色上的文字两个主题都保持白色（accent 足够深）

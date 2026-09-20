@@ -9,6 +9,13 @@ interface TitlebarProps {
   onCommandList?: () => void
   /** Open the built-in FTP/HTTP/TFTP tools window. */
   onNetTools?: () => void
+  /**
+   * The workspace pill. It lives here rather than at the top of the sidebar
+   * because it describes the whole window, not the connection list — and the
+   * sidebar can be hidden, which used to hide the workspace switcher with it.
+   * The caller renders the element so this file stays free of app state.
+   */
+  workspace?: React.ReactNode
 }
 
 export const Titlebar: React.FC<TitlebarProps> = ({
@@ -16,6 +23,7 @@ export const Titlebar: React.FC<TitlebarProps> = ({
   onAiChat,
   onCommandList,
   onNetTools,
+  workspace,
 }) => {
   const { t } = useI18n()
   const [isMaximized, setIsMaximized] = useState(false)
@@ -81,6 +89,7 @@ export const Titlebar: React.FC<TitlebarProps> = ({
       </span>
 
       <div className="titlebar-actions" ref={controlsRef}>
+        {workspace}
         {onCommandList && (
           <button
             className="titlebar-btn cmd-list-btn"

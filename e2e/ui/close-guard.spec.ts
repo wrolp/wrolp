@@ -34,22 +34,31 @@ const MOCK = {
   },
 }
 
-/** Open the demo connection and open the mock file in the pane's editor. */
+/** Open the demo connection and open the mock file in the editor. */
 async function openFileInEditor(page: Page) {
   await installTauriMock(page, MOCK)
   await page.goto('/')
+  await expect(page.locator('.connection-item')).toBeVisible()
   await page.locator('.connection-item').click()
   await expect(page.locator('.term-pane')).toHaveCount(1)
 
-  // The file panel lists the mock file; a plain click opens it in the editor.
+  // The file panel lists the mock file; a plain click opens it as its own tab.
   const file = page.locator('.tree-row.file', { hasText: 'notes.txt' })
   await expect(file).toBeVisible()
   await file.click()
-  await expect(page.locator('.term-pane-file-tab', { hasText: 'notes.txt' })).toHaveCount(1)
+  await expect(page.locator('.tab-item', { hasText: 'notes.txt' })).toHaveCount(1)
+}
+
+/** Reveal the pane behind the editor: a file is a *tab*, so the workspace is
+ *  only hidden while it is selected. */
+async function showTerminal(page: Page) {
+  await page.locator('.tab-item', { hasText: 'Demo' }).click()
+  await expect(page.locator('.term-pane-close')).toBeVisible()
 }
 
 test('closing a pane with an open file asks first; cancel keeps it', async ({ page }) => {
   await openFileInEditor(page)
+  await showTerminal(page)
 
   await page.locator('.term-pane-close').click()
   const dialog = page.locator('.confirm-dialog')
@@ -60,7 +69,7 @@ test('closing a pane with an open file asks first; cancel keeps it', async ({ pa
   await dialog.locator('.btn-cancel').click()
   await expect(dialog).toHaveCount(0)
   await expect(page.locator('.term-pane')).toHaveCount(1)
-  await expect(page.locator('.term-pane-file-tab', { hasText: 'notes.txt' })).toHaveCount(1)
+  await expect(page.locator('.tab-item', { hasText: 'notes.txt' })).toHaveCount(1)
 
   // Confirm: the (last) pane and its workspace close.
   await page.locator('.term-pane-close').click()
@@ -71,12 +80,22 @@ test('closing a pane with an open file asks first; cancel keeps it', async ({ pa
 test('closing the workspace tab with an open file asks first', async ({ page }) => {
   await openFileInEditor(page)
 
-  await page.locator('.tab-close').click()
+  await page.locator('.tab-item', { hasText: 'Demo' }).locator('.tab-close').click()
   const dialog = page.locator('.confirm-dialog')
   await expect(dialog).toBeVisible()
   await expect(dialog).toContainText('open file')
   await dialog.locator('.btn-danger').click()
+  // The workspace and the file tab it owned are both gone.
   await expect(page.locator('.tab-item')).toHaveCount(0)
+})
+
+test('closing a file tab discards only that file, not its session', async ({ page }) => {
+  await openFileInEditor(page)
+
+  await page.locator('.tab-item', { hasText: 'notes.txt' }).locator('.tab-close').click()
+  await expect(page.locator('.tab-item', { hasText: 'notes.txt' })).toHaveCount(0)
+  await expect(page.locator('.tab-item', { hasText: 'Demo' })).toHaveCount(1)
+  await expect(page.locator('.term-pane')).toBeVisible()
 })
 
 test('with the guard disabled, closing the pane does not ask', async ({ page }) => {
@@ -90,6 +109,7 @@ test('with the guard disabled, closing the pane does not ask', async ({ page }) 
     }
   })
   await openFileInEditor(page)
+  await showTerminal(page)
 
   await page.locator('.term-pane-close').click()
   await expect(page.locator('.confirm-dialog')).toHaveCount(0)

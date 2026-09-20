@@ -1,0 +1,35 @@
+// ===== Accessibility baseline =====
+//
+// Loaded LAST by App.scss, so these rules win over a per-component `outline:
+// none` on equal specificity. Most of those suppressions were already rewritten
+// to `:focus:not(:focus-visible)` (they only remove the mouse-focus ring, which
+// this file then re-adds for keyboard users); this global rule is what catches
+// every control nobody styled at all — and there are many, because the app is
+// built from plain `<button>`/`<input>` in flex divs rather than a component kit.
+//
+// `outline-offset: -2px` draws the ring inside the element's own box. A positive
+// offset would be clipped by the `overflow: hidden` panels these controls live
+// in, and an inset ring is the only option that survives that. The radius is
+// deliberately not restated here: it would override the element's own.
+
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+// Motion is decorative everywhere here — toasts, spinners, panel transitions.
+// The app runs in a WebView2 window that inherits the OS setting, so honouring
+// it costs nothing and is the difference between usable and nauseating for
+// vestibular users. `!important` is load-bearing: the universal selector is the
+// weakest thing in the cascade, and every component's `transition` shorthand
+// out-specifies it.
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

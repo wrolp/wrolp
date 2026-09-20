@@ -28,11 +28,10 @@ import {
 } from '../commands'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { Icon } from './Icon'
-import type { IconName } from './Icon'
+import { shellIconName } from '../lib/shellIcon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { ClearableInput } from './ClearableInput'
-import { NetworkScanDialog } from './NetworkScanDialog'
 
 interface ConnectionManagerProps {
   connections: ConnectionConfig[]
@@ -41,6 +40,9 @@ interface ConnectionManagerProps {
   activeTabId: number | null
   onConnectionChange: () => void
   onSelectConnection: (config: ConnectionConfig) => void
+  /** Open the inspector's subnet-scan tab. The scan used to be a modal mounted
+   * here; it is a column now, so this component only asks for it. */
+  onScanNetwork: () => void
   onSplitRight: (config: ConnectionConfig) => void
   onSplitDown: (config: ConnectionConfig) => void
   sidebarWidth: number
@@ -54,6 +56,13 @@ interface ConnectionManagerProps {
   onLocalTerminalsChanged?: () => void
   collapsedGroups?: string[]
   onCollapsedGroupsChange?: (value: string[]) => void
+  /**
+   * The nav column's single filter box. It narrows both the connection list and
+   * the local-terminal entries; there was no text search on either before, which
+   * is why the nav redesign puts one above the whole column instead of one per
+   * panel. Raw text — matching is case-insensitive, display is not.
+   */
+  filter?: string
   /** Active SSH tunnels, used to mark saved definitions as running. */
   tunnels?: TunnelInfo[]
   /** Start a saved tunnel definition (opens/auto-connects a tab if needed). */
@@ -73,39 +82,21 @@ const SHELL_PRESETS: { value: string; labelKey: TranslationKey }[] = [
   { value: 'gitbash', labelKey: 'shellGitBash' },
 ]
 
-/** Pick the icon representing a local-terminal `shell` value.
- *
- *  Presets map directly. Anything else is an absolute path typed by the user
- *  (e.g. `C:\Program Files\Git\bin\bash.exe`), so match on path fragments —
- *  most specific first — and fall back to the generic terminal icon.
- */
-function shellIconName(shell: string): IconName {
-  const s = shell.trim().toLowerCase()
-  if (!s) return 'terminal'
-  switch (s) {
-    case 'cmd':
-      return 'shellCmd'
-    case 'pwsh':
-    case 'powershell':
-      return 'shellPowershell'
-    case 'bash':
-      return 'shellBash'
-    case 'wsl':
-      return 'shellWsl'
-    case 'gitbash':
-      return 'shellGitBash'
-  }
-  if (s.includes('git-bash') || s.includes('git\\bin\\bash') || s.includes('git/usr/bin/bash')) {
-    return 'shellGitBash'
-  }
-  if (s.includes('wsl')) return 'shellWsl'
-  if (s.includes('pwsh') || s.includes('powershell')) return 'shellPowershell'
-  if (s.includes('cmd.exe') || s.endsWith('cmd')) return 'shellCmd'
-  if (s.includes('bash') || s.includes('zsh') || s.endsWith('sh.exe')) return 'shellBash'
-  return 'terminal'
-}
-
 const UNGROUPED = '__ungrouped__'
+
+/**
+ * The nav column's filter predicate. `q` is lower-cased by the caller so the
+ * work is not redone per row.
+ * `username` and `host` are in here because "root@build-04" is what a machine
+ * actually is to someone with thirty of them, and `group` is matched so typing
+ * a group name narrows to that group rather than hiding it — a group header is
+ * only ever rendered from whatever survived.
+ */
+function matchesFilter(conn: ConnectionConfig, q: string): boolean {
+  return [conn.name, conn.host, conn.username, conn.group].some((field) =>
+    field?.toLowerCase().includes(q),
+  )
+}
 
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   connections,
@@ -114,6 +105,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   activeTabId,
   onConnectionChange,
   onSelectConnection,
+  onScanNetwork,
   onSplitRight,
   onSplitDown,
   sidebarWidth,
@@ -126,6 +118,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onLocalTerminalsChanged,
   collapsedGroups = [],
   onCollapsedGroupsChange,
+  filter = '',
   tunnels = [],
   onStartTunnel,
   onRemoveTunnel,
@@ -133,11 +126,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 }) => {
   const { t } = useI18n()
   const [showModal, setShowModal] = useState(false)
-  const [scanOpen, setScanOpen] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
-  const [localModalOpen, setLocalModalOpen] = useState(false)
-  const [localEditing, setLocalEditing] = useState<LocalTerminalEntry | null>(null)
-  const [localCollapsed, setLocalCollapsed] = useState(false)
   const [defaultGroup, setDefaultGroup] = useState<string>('')
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -287,14 +276,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   // Group connections by `group` field, preserving insertion order
   const grouped = useMemo(() => {
+    const q = filter.toLowerCase()
     const map = new Map<string, ConnectionConfig[]>()
     for (const conn of connections) {
+      if (q && !matchesFilter(conn, q)) continue
       const key = conn.group?.trim() || UNGROUPED
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(conn)
     }
     return Array.from(map.entries())
-  }, [connections])
+  }, [connections, filter])
+
+  // While filtering, group collapse state is ignored: a hidden match is worse
+  // than an unexpectedly open group, and the user's own collapse choices are
+  // untouched the moment the box clears. Same rule the command drawer uses.
+  const searching = filter.length > 0
+  // The header count is what is actually in the list below it, so a filter that
+  // halves the list halves the number instead of leaving "12" over three rows.
+  const shownCount = grouped.reduce((n, [, conns]) => n + conns.length, 0)
 
   const toggleGroup = (key: string) => {
     const next = collapsedGroups.includes(key)
@@ -521,46 +520,45 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   return (
     <>
       <div className="sidebar">
-        <div className="sidebar-header">
-          <span
-            className={`collapse-chevron${expanded ? ' expanded' : ''}`}
-            onClick={onToggleExpanded}
+        <div className="panel-head sec" onClick={onToggleExpanded}>
+          <button
+            type="button"
+            className="panel-head-toggle"
+            aria-expanded={expanded}
             title={expanded ? t('collapse') : t('expand')}
-          />
-          <span style={{ flex: 1 }}>{t('connections')}</span>
+          >
+            <span className={`collapse-chevron${expanded ? ' expanded' : ''}`} />
+            <span className="panel-title">{t('connections')}</span>
+          </button>
+          <span className="cnt">{shownCount}</span>
           {expanded && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <>
               <button
-                onClick={() => setScanOpen(true)}
+                type="button"
+                className="icon-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onScanNetwork()
+                }}
                 title={t('scanNetwork')}
                 aria-label={t('scanNetwork')}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#007acc',
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  padding: 2,
-                }}
               >
-                <Icon name="search" size={14} />
+                <Icon name="search" size={13} />
               </button>
               <button
-                onClick={() => {
+                type="button"
+                className="icon-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
                   setEditing(null)
                   setShowModal(true)
                 }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#007acc',
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                }}
+                title={t('newConnection')}
+                aria-label={t('newConnection')}
               >
-                +
+                <Icon name="plus" size={13} />
               </button>
-            </div>
+            </>
           )}
         </div>
         {expanded && (
@@ -572,12 +570,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <div className="sidebar-list" ref={listRef} onScroll={onScroll}>
               <LocalTerminalsSection
                 entries={localTerminals}
+                filter={filter}
                 onOpen={onOpenLocalTerminal}
                 onOpenSplit={onOpenLocalSplit}
                 onOpenInFileManager={onOpenLocalDir}
                 onChanged={onLocalTerminalsChanged}
               />
-              {connections.length === 0 ? (
+              {searching && grouped.length === 0 ? (
+                // Distinct from "no connections yet": the list is not empty, the
+                // query just found nothing in it, and the typed text is echoed
+                // back so a stray paste is obvious at a glance.
+                <div className="empty-state">
+                  <div>
+                    <Icon name="search" />
+                  </div>
+                  <div>{t('navNoMatches', { query: filter })}</div>
+                </div>
+              ) : connections.length === 0 ? (
                 <div className="empty-state">
                   <div>
                     <Icon name="desktop" />
@@ -630,7 +639,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 // Grouped rendering
                 grouped.map(([key, conns]) => {
                   const isUngrouped = key === UNGROUPED
-                  const collapsed = collapsedGroups.includes(key)
+                  const collapsed = !searching && collapsedGroups.includes(key)
                   const isGroupDragOver = dragOverTarget?.key === `group:${key}`
                   return (
                     <div key={key} className="conn-group">
@@ -794,17 +803,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         />
       )}
 
-      {scanOpen && (
-        <NetworkScanDialog
-          onClose={() => setScanOpen(false)}
-          onSaved={onConnectionChange}
-          defaultGroup={defaultGroup}
-          existingGroups={Array.from(
-            new Set(connections.map((c) => c.group?.trim()).filter((g): g is string => !!g)),
-          )}
-        />
-      )}
-
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -935,6 +933,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
 interface LocalTerminalsSectionProps {
   entries: LocalTerminalEntry[]
+  /** The nav column's filter box, shared with the connection list. */
+  filter?: string
   onOpen?: (entry: LocalTerminalEntry) => void
   onOpenSplit?: (entry: LocalTerminalEntry, direction: 'row' | 'column') => void
   onOpenInFileManager?: (entry: LocalTerminalEntry) => void
@@ -943,6 +943,7 @@ interface LocalTerminalsSectionProps {
 
 const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
   entries,
+  filter = '',
   onOpen,
   onOpenSplit,
   onOpenInFileManager,
@@ -1097,24 +1098,40 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
     return preset ? t(preset.labelKey) : s
   }
 
+  // `cwd` and `distro` are matchable because a saved entry is usually named
+  // after neither ("repos", "work-wsl") but is found by where it lands.
+  const q = filter.toLowerCase()
+  const visible = q
+    ? entries.filter((entry) =>
+        [entry.name, entry.shell, entry.cwd, entry.distro].some((field) =>
+          field?.toLowerCase().includes(q),
+        ),
+      )
+    : entries
+  // Same rule as the connection groups: searching forces the section open, and
+  // an entry-less section is hidden outright rather than showing a zero count.
+  if (q && visible.length === 0) return null
+  const isCollapsed = q ? false : collapsed
+
   return (
     <div className="conn-group local-terminals-group">
       <div className="conn-group-header" onClick={() => setCollapsed((c) => !c)}>
-        <span className={`collapse-chevron${collapsed ? '' : ' expanded'}`} />
+        <span className={`collapse-chevron${isCollapsed ? '' : ' expanded'}`} />
         <span className="conn-group-name">{t('localTerminals')}</span>
-        <span className="conn-group-count">{entries.length}</span>
+        <span className="conn-group-count">{visible.length}</span>
         <button
           className="conn-group-add"
           title={t('addLocalTerminal')}
+          aria-label={t('addLocalTerminal')}
           onClick={(e) => {
             e.stopPropagation()
             openModal()
           }}
         >
-          +
+          <Icon name="plus" size={11} />
         </button>
       </div>
-      {!collapsed && (
+      {!isCollapsed && (
         <div className="conn-group-items">
           {/* Default entry: opens a local terminal in the default directory/shell. */}
           <div
@@ -1132,7 +1149,7 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
               <span className="conn-item-sub">{t('openLocalShellHint')}</span>
             </span>
           </div>
-          {entries.map((entry) => {
+          {visible.map((entry) => {
             const shellIcon = shellIconName(entry.shell)
             return (
               <div

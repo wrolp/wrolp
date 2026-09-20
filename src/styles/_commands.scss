@@ -1,0 +1,1272 @@
+@use 'variables' as *;
+
+// ===== Floating command list (command snippets) =====
+// No backdrop/mask — the panel floats freely and can be dragged by its header.
+.cmd-list-float {
+  position: fixed;
+  right: 24px;
+  top: 64px;
+  z-index: var(--z-float);
+}
+
+.cmd-list-panel {
+  position: relative;
+  width: 560px;
+  height: 480px;
+  max-width: 92vw;
+  max-height: 80vh;
+  min-width: 320px;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  border: 1px solid $border;
+  border-radius: var(--r-3);
+  box-shadow: 0 12px 48px var(--shadow-2);
+  overflow: hidden;
+  // Establish a stacking context so the opacity background layer (::before)
+  // stays contained and never bleeds behind the app.
+  isolation: isolate;
+  // Container query so the header toggle labels adapt to the *panel's* width
+  // (the panel is resizable), not the viewport.
+  container-type: inline-size;
+  container-name: cmdlist;
+}
+
+// Background-only opacity layer. The opacity slider adjusts --cmd-opacity, but
+// only this layer fades — the text and controls above stay fully opaque.
+.cmd-list-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: $bg-secondary;
+  opacity: var(--cmd-opacity, 1);
+  border-radius: inherit;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.cmd-list-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid $border;
+  cursor: move;
+  user-select: none;
+}
+
+.cmd-list-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: $text-primary;
+  // Was `flex-shrink: 0`, which forced the trailing close ✕ off-screen (and
+  // clipped by the panel's `overflow: hidden`) once the panel was dragged
+  // narrower than its content. Let the title yield space — ellipsizing its
+  // label — so the close button always stays pinned to the top-right.
+  flex-shrink: 1;
+  min-width: 0;
+
+  // Keep the leading icon at full size; only the label text ellipsizes.
+  > svg {
+    flex-shrink: 0;
+  }
+
+  .cmd-list-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+}
+
+.cmd-list-toggles {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cmd-list-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-shrink: 1;
+  font-size: 11px;
+  color: $text-dim;
+  cursor: pointer;
+  user-select: none;
+
+  input {
+    accent-color: $accent;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  svg {
+    color: $accent;
+    flex-shrink: 0;
+  }
+}
+
+// Toggle label text: ellipsize when the header gets tight, hide entirely when
+// there's no room (icon-only). Driven by the panel's container width.
+.cmd-list-toggle-text {
+  display: inline-block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container cmdlist (max-width: 460px) {
+  .cmd-list-toggle-text {
+    display: none;
+  }
+}
+
+.cmd-list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  // Never let the trailing buttons (incl. the close ✕) get squeezed off the
+  // edge and clipped by the panel's `overflow: hidden` when the header is busy.
+  flex-shrink: 0;
+}
+
+.cmd-list-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba($accent, 0.55);
+  border-radius: var(--r-2);
+  background: rgba($accent, 0.15);
+  color: var(--accent-soft-40);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: rgba($accent, 0.2);
+    color: var(--accent-soft-40);
+  }
+}
+
+.cmd-list-var-btn,
+.cmd-list-newgroup-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba($accent, 0.35);
+  border-radius: var(--r-2);
+  background: transparent;
+  color: $accent-hover;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: rgba($accent, 0.2);
+    color: var(--accent-soft-40);
+  }
+}
+
+// The "new group" button stays lit while its input row is open.
+.cmd-list-newgroup-btn[aria-expanded='true'] {
+  background: rgba($accent, 0.2);
+  color: var(--accent-soft-40);
+}
+
+.cmd-list-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: transparent;
+  // Kept clearly visible at rest (not the dim `$text-muted` it used to be) so
+  // the dismiss ✕ is always discoverable without hovering.
+  color: $text-secondary;
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+}
+
+.cmd-list-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid $border;
+  color: $text-muted;
+
+  svg {
+    flex-shrink: 0;
+  }
+
+  input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+    color: $text-primary;
+    font-family: inherit;
+    font-size: 13px;
+
+    &::placeholder {
+      color: $text-dim;
+    }
+  }
+}
+
+.cmd-list-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.cmd-list-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: $text-dim;
+}
+
+.cmd-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.favorite {
+    .cmd-list-item-text {
+      .cmd-list-command {
+        color: $text-primary;
+        font-weight: 600;
+      }
+    }
+  }
+
+  &.hidden {
+    opacity: 0.55;
+  }
+}
+
+.cmd-list-star {
+  flex-shrink: 0;
+  color: #e6c069;
+}
+
+.cmd-list-hidden-icon {
+  flex-shrink: 0;
+  color: $text-muted;
+}
+
+.cmd-list-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cmd-list-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--d-1);
+
+  .cmd-list-item:hover & {
+    opacity: 1;
+  }
+}
+
+.cmd-list-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba($text-primary, 0.12);
+    color: $text-primary;
+  }
+
+  &.active {
+    color: #e6c069;
+  }
+
+  &.danger:hover {
+    background: rgba(210, 70, 70, 0.35);
+    color: var(--danger-soft-40);
+  }
+}
+
+// A "hidden" snippet uses a dimmed eye-off icon that is still visible against
+// the row background (distinct from the gold favorite state).
+.cmd-list-action--hidden.active {
+  color: $text-secondary;
+  background: rgba($text-primary, 0.08);
+}
+
+// Quick-send shortcut (only rendered when every variable already has a value).
+// Unlike the hover-only row actions it stays visible, so the shortcut is
+// discoverable without hovering.
+.cmd-list-send {
+  color: $accent;
+  opacity: 0.7;
+
+  &:hover {
+    opacity: 1;
+    background: rgba($accent, 0.2);
+  }
+}
+
+.cmd-list-alias {
+  font-size: 11px;
+  color: $text-dim;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-list-command {
+  font-family: $font-mono;
+  font-size: 12.5px;
+  color: $text-secondary;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-list-footer {
+  padding: 8px 14px;
+  border-top: 1px solid $border;
+  text-align: center;
+}
+
+.cmd-list-hint {
+  font-size: 11px;
+  color: $text-dim;
+}
+
+.cmd-list-opacity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: $text-dim;
+  user-select: none;
+
+  input[type='range'] {
+    width: 64px;
+    height: 12px;
+    background: transparent;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+
+    &::-webkit-slider-runnable-track {
+      height: 3px;
+      border-radius: var(--r-pill);
+      background: rgba($accent, 0.35);
+    }
+
+    &::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 10px;
+      height: 10px;
+      margin-top: -3.5px;
+      border-radius: var(--r-circle);
+      background: $accent-hover;
+      border: none;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+    }
+
+    &::-moz-range-track {
+      height: 3px;
+      border-radius: var(--r-pill);
+      background: rgba($accent, 0.35);
+    }
+
+    &::-moz-range-thumb {
+      width: 10px;
+      height: 10px;
+      border-radius: var(--r-circle);
+      background: $accent-hover;
+      border: none;
+    }
+  }
+
+  span {
+    min-width: 34px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.cmd-list-resize {
+  position: absolute;
+  z-index: 2050;
+}
+
+// Edge handles: thin invisible strips that can grab a full side.
+.cmd-list-rh-n {
+  top: -3px;
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.cmd-list-rh-s {
+  bottom: -3px;
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.cmd-list-rh-e {
+  right: -3px;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.cmd-list-rh-w {
+  left: -3px;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+// Corner handles: slightly larger hit areas.
+.cmd-list-rh-ne {
+  right: -4px;
+  top: -4px;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.cmd-list-rh-nw {
+  left: -4px;
+  top: -4px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.cmd-list-rh-se {
+  right: -4px;
+  bottom: -4px;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.cmd-list-rh-sw {
+  left: -4px;
+  bottom: -4px;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.cmd-list-modal-drag {
+  user-select: none;
+
+  .modal-header {
+    cursor: move;
+
+    h3 {
+      cursor: move;
+    }
+  }
+}
+
+.cmd-list-menu {
+  z-index: 2100;
+}
+
+// The command-list dialogs are portaled to <body>, so they must stack above the
+// floating panel itself (z-index 2000) — otherwise the panel covers them.
+.cmd-list-modal-overlay {
+  z-index: var(--z-above-float);
+}
+
+.cmd-list-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-above-float);
+  padding: 8px 16px;
+  background: rgba($accent, 0.95);
+  color: #fff;
+  border-radius: var(--r-2);
+  font-size: 12.5px;
+  box-shadow: 0 4px 16px var(--shadow-1);
+}
+
+// ===== Command list: snippet variable editor + fill dialog =====
+.cmd-list-var-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 6px;
+  padding: 1px 5px;
+  background: rgba($accent, 0.22);
+  color: var(--accent-soft-40);
+  border-radius: var(--r-1);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  flex-shrink: 0;
+}
+
+.snip-vars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.snip-vars-empty {
+  font-size: 12px;
+  color: $text-dim;
+  padding: 2px 0 6px;
+}
+
+.snip-var-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1.6fr 1.6fr auto;
+  gap: 6px;
+  align-items: center;
+
+  input {
+    width: 100%;
+    padding: 5px 8px;
+    background: $bg-primary;
+    border: 1px solid $border;
+    color: $text-primary;
+    border-radius: var(--r-1);
+    font-size: 12.5px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+    min-width: 0;
+
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  .snip-var-name {
+    font-weight: 600;
+  }
+}
+
+.snip-var-remove {
+  background: none;
+  border: 1px solid transparent;
+  color: $text-muted;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--r-1);
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+}
+
+.snip-var-add {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed rgba($accent, 0.5);
+  color: $accent;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--r-1);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+
+  &:hover {
+    background: rgba($accent, 0.1);
+  }
+}
+
+.snip-fill-modal {
+  max-width: 460px;
+
+  // Cap the scroll area so the title and the footer stay visible inside the
+  // window when many params/options are declared.
+  .modal-body {
+    max-height: 66vh;
+    overflow-y: auto;
+  }
+}
+
+.cmd-var-modal {
+  max-width: 560px;
+
+  .modal-body {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+}
+
+.snip-fill-desc {
+  font-size: 12px;
+  color: $text-secondary;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.snip-fill-command-preview {
+  background: $bg-primary;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  padding: 6px 10px;
+  margin-bottom: 14px;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 12.5px;
+  color: $text-primary;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+// Snippet's own description, shown in the fill dialog right under the preview.
+// Multi-line plain text — `pre-wrap` keeps the author's line breaks.
+.snip-fill-snippet-desc {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: $text-secondary;
+  white-space: pre-wrap;
+}
+
+.snip-fill-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: $text-dim;
+}
+
+// ===== Command list: connection grouping =====
+.cmd-list-section {
+  margin-bottom: 4px;
+  border-radius: var(--r-2);
+
+  // Expanded groups are drawn as a box so the header reads as belonging to the
+  // commands underneath it; collapsed groups stay flat list rows.
+  &.expanded {
+    border: 1px solid $border;
+    padding: 2px 4px 4px;
+  }
+}
+
+.cmd-list-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  // Deliberately NOT `grab` on the draggable ones: the header's primary action
+  // is click-to-expand, and the trailing "Ungrouped" bucket cannot be dragged at
+  // all — a grab hand on some headers only read as an inconsistency. Same choice
+  // as the sidebar's reorderable `.conn-group-header`; the drag itself still
+  // shows the browser's own move affordance.
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--r-1);
+
+  &:hover {
+    background: rgba($accent, 0.12);
+  }
+}
+
+.cmd-list-section-chevron {
+  color: $text-muted;
+  flex-shrink: 0;
+  transition: transform var(--d-1) ease;
+
+  &.collapsed {
+    transform: rotate(-90deg);
+  }
+}
+
+.cmd-list-section-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: $text-secondary;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-list-section-count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 10px;
+  color: $text-secondary;
+  background: $bg-hover;
+  border-radius: var(--r-3);
+}
+
+// ===== Command list: bucketing switch + custom groups =====
+
+// Segmented control at the right of the search row (by connection / by group).
+.cmd-list-mode-switch {
+  display: flex;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+}
+
+.cmd-list-mode-btn {
+  padding: 2px 8px;
+  background: $bg-primary;
+  border: none;
+  color: $text-secondary;
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  & + & {
+    border-left: 1px solid $border;
+  }
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+
+  // Declared after `:hover` (equal specificity) so the selected side keeps its
+  // accent styling while hovered.
+  &.active {
+    background: rgba($accent, 0.18);
+    color: var(--accent-soft-40);
+  }
+}
+
+// Drag & drop feedback (custom view only). `inset` shadow rather than the
+// section's own border, so a COLLAPSED section lights up as well.
+.cmd-list-section.drag-over {
+  background: rgba($accent, 0.1);
+  border-radius: var(--r-2);
+  box-shadow: inset 0 0 0 1px rgba($accent, 0.6);
+}
+
+// Inline group rename (Enter/blur commits, Esc cancels).
+.cmd-list-group-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  background: $bg-primary;
+  border: 1px solid $accent;
+  border-radius: var(--r-1);
+  color: $text-primary;
+  font-size: 11.5px;
+  font-family: inherit;
+  &:focus:not(:focus-visible) {
+    outline: none;
+  }
+}
+
+// Placeholder row of a group that has no commands yet.
+.cmd-list-empty-group {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: $text-dim;
+}
+
+// "New group" input row at the end of the list.
+.cmd-list-new-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  color: $text-muted;
+
+  input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    background: $bg-primary;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    color: $text-primary;
+    font-size: 12px;
+    font-family: inherit;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  .cmd-list-new-group-ok,
+  .cmd-list-new-group-cancel {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    background: transparent;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    color: $text-secondary;
+    cursor: pointer;
+
+    &:hover {
+      border-color: rgba($accent, 0.5);
+      color: $text-primary;
+    }
+  }
+}
+
+.cmd-list-toggle.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+// ===== Command list: param / option editor rows =====
+.cmd-list-modal-drag {
+  width: 720px;
+  max-width: 94vw;
+
+  .modal-body {
+    max-height: 66vh;
+    overflow-y: auto;
+  }
+}
+
+// Add-command dialog: "general vs connection" scope picker. Radios sit inline
+// on one row (the shared `.form-group label` rule renders labels as blocks, so
+// this later rule overrides it for the radio labels).
+.snippet-scope-radios {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+
+  label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  input[type='radio'] {
+    margin: 0;
+  }
+}
+
+// Option row: "space-separated value" toggle (unchecked = `=`). Neither the
+// checkbox nor the text may grow/shrink (the row's `input { flex: 1 1 90px }`
+// would otherwise stretch the checkbox and squash the label to one letter).
+// `.snip-vars` prefix for the same reason as `.snip-link-chip` above: the shared
+// `.form-group label` rule would otherwise make this a block and the flex `gap`
+// would never apply.
+.snip-vars .snip-opt-sep {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+  margin: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  input {
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    accent-color: $accent;
+  }
+
+  .snip-opt-sep-text {
+    flex: 0 0 auto;
+  }
+}
+
+.snip-param-row,
+.snip-option-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  // Each param/option is its own bordered card so one entry's inputs don't
+  // visually run into the next.
+  padding: 8px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+
+  input,
+  select,
+  textarea {
+    flex: 1 1 90px;
+    min-width: 0;
+    padding: 5px 8px;
+    background: $bg-primary;
+    border: 1px solid $border;
+    color: $text-primary;
+    border-radius: var(--r-1);
+    font-size: 12.5px;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  select {
+    // Keep the type/value dropdowns at their natural width: the shared
+    // `.form-group select { width: 100% }` rule would otherwise stretch them to
+    // a whole row and squeeze every other field (and its placeholder hint).
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  // Allowed-values lists accept one value per line, so they're textareas.
+  textarea {
+    min-height: 44px;
+    resize: vertical;
+    line-height: 1.35;
+  }
+
+  .snip-var-name,
+  .snip-option-text {
+    flex: 1 1 110px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-weight: 600;
+  }
+
+  // Wide enough for their long placeholder hints (e.g. "Options (comma or
+  // newline separated)", "Exclusive group (optional)").
+  .snip-param-options,
+  .snip-option-options {
+    flex: 1 1 240px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+  }
+
+  .snip-param-desc,
+  .snip-option-label {
+    flex: 1 1 170px;
+  }
+
+  .snip-exclusive {
+    flex: 1 1 175px;
+  }
+
+  // Orphan (no matching `${name}` / fragment in the command): flag the whole
+  // card, not just its inputs.
+  &.orphan {
+    border-color: rgba(208, 138, 74, 0.8);
+  }
+
+  &.orphan input,
+  &.orphan select {
+    border-color: rgba(208, 138, 74, 0.8);
+  }
+}
+
+// Linkage (启用本项时自动勾选联动项): a compact button on the row plus an
+// inline, full-row candidate panel. Kept inline (no portal) because the editor
+// modal itself is dragged by a transform — see MEMORY on transformed containers
+// becoming the containing block for fixed descendants.
+.snip-link-btn {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 2px 6px;
+  background: $bg-primary;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  color: $text-secondary;
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: rgba($accent, 0.5);
+    color: $text-primary;
+  }
+
+  // Placed after `:hover` on purpose: same specificity, so an active button
+  // keeps its accent colour while hovered.
+  &.active {
+    border-color: $accent;
+    color: var(--accent-soft-40);
+  }
+}
+
+.snip-link-count {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+// The row is `flex-wrap: wrap`, so this takes a line of its own.
+.snip-link-panel {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  background: $bg-primary;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+}
+
+// NOTE the `.snip-vars` prefix on this selector (and on `.snip-opt-sep` below):
+// the modal's shared `.form-group label { display: block; margin-bottom: 6px }`
+// (0,1,1) outranks a bare class (0,1,0), so a chip written as `.snip-link-chip`
+// silently became a BLOCK — which disabled the flex layout and with it the
+// `gap`, gluing the checkbox to its label. The extra class both fixes that and
+// neutralises the label rule's bottom margin.
+.snip-vars .snip-link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  font-size: 12px;
+  line-height: 1.35;
+  color: $text-secondary;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    border-color var(--d-1),
+    background var(--d-1),
+    color var(--d-1);
+
+  &:hover {
+    border-color: var(--border-l12);
+    color: $text-primary;
+  }
+
+  // The row's `input { flex: 1 1 90px; padding: 5px 8px }` would stretch the
+  // checkbox and squash the label — same guard as `.snip-opt-sep`.
+  input {
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    accent-color: $accent;
+    cursor: pointer;
+  }
+
+  // Same accent-tag recipe as `.file-sftp-user` (placed after `:hover` on
+  // purpose: equal specificity, so a selected chip keeps its accent while
+  // hovered).
+  &.active {
+    border-color: rgba($accent, 0.45);
+    background: rgba($accent, 0.12);
+    color: var(--accent-soft-40);
+  }
+}
+
+.snip-link-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snip-link-empty {
+  font-size: 11px;
+  color: $text-dim;
+}
+
+// Fill dialog: explains why a checkbox turned itself on.
+.snip-fill-link {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--accent-soft-40);
+}
+
+.snip-param-enabled {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.snip-param-hint {
+  flex-basis: 100%;
+  margin-left: 2px;
+  font-size: 11px;
+  color: #d08a4a;
+}
+
+.snip-param-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+// ===== Command list: fill dialog groups =====
+.snip-fill-modal .btn-secondary {
+  background: $bg-input;
+  color: $text-primary;
+
+  &:hover {
+    background: var(--control-hover);
+  }
+}
+
+.snip-fill-group {
+  margin-bottom: 12px;
+}
+
+.snip-fill-group-title {
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: $text-secondary;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.snip-fill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+
+  input,
+  select {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px;
+    background: $bg-primary;
+    border: 1px solid $border;
+    color: $text-primary;
+    border-radius: var(--r-1);
+    font-size: 12.5px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    &:focus:not(:focus-visible) {
+      outline: none;
+    }
+
+    &:focus {
+      border-color: $accent;
+    }
+  }
+
+  select {
+    font-family: inherit;
+  }
+}
+
+.snip-fill-row--disabled {
+  opacity: 0.5;
+}
+
+.snip-fill-check {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.snip-fill-label {
+  display: flex;
+  flex: 0 0 34%;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.snip-fill-name {
+  font-size: 12.5px;
+  color: $text-primary;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snip-fill-slot {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: $text-dim;
+  font-family: 'Cascadia Code', Consolas, monospace;
+}
+
+.snip-fill-reset {
+  flex-shrink: 0;
+  padding: 4px 6px;
+  background: none;
+  border: 1px solid transparent;
+  color: $text-muted;
+  cursor: pointer;
+  border-radius: var(--r-1);
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+}
+
+.snip-fill-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #e06c6c;
+}
