@@ -12,9 +12,21 @@
 // in, and an inset ring is the only option that survives that. The radius is
 // deliberately not restated here: it would override the element's own.
 
+// The ring stays `--border-focus` rather than following `--accent`: the keyboard
+// affordance of the whole app should not move because someone picked a hue, and a
+// runtime colour is invisible to scripts/check-ui-contrast.mjs anyway.
 :focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
+}
+
+// The P4 escape valve `UI-REDESIGN-PROPOSAL.md` §8.6 held back until the switch
+// actually existed. `(0,2,1)` outranks the rule above at `(0,1,0)`, so no
+// `!important` is needed — and the per-component `outline: none` rewrites this file
+// exists to beat are all `:focus:not(:focus-visible)`, which cannot come back to
+// life here.
+html[data-focus-ring='off'] :focus-visible {
+  outline: none;
 }
 
 // Motion is decorative everywhere here — toasts, spinners, panel transitions.
@@ -23,7 +35,13 @@
 // vestibular users. `!important` is load-bearing: the universal selector is the
 // weakest thing in the cascade, and every component's `transition` shorthand
 // out-specifies it.
-@media (prefers-reduced-motion: reduce) {
+//
+// The setting is three-state (跟随系统 / 开 / 关), so the media query alone cannot
+// express it: an explicit 开 has to *win against* the OS asking for reduce, which is
+// what the `:not()` guard buys — without it there is no selector that could undo a
+// matched media query. 关 needs no query at all and applies the same declarations
+// unconditionally.
+@mixin kill-motion {
   *,
   *::before,
   *::after {
@@ -32,4 +50,14 @@
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion='on']) {
+    @include kill-motion;
+  }
+}
+
+html[data-motion='off'] {
+  @include kill-motion;
 }

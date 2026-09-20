@@ -347,3 +347,156 @@
     animation: pulse 1.6s var(--e-in-out) infinite;
   }
 }
+
+// 「提高状态可辨识度」关掉时的样子：正方形和三角收回成圆点，语义只剩颜色。
+// 默认值 'on' 让这段选择器匹配不到任何东西，所以上面的形状基线（提案 §9.2 立的
+// 色盲安全底线）在没碰过这个开关的用户那里一字未动。`.busy` / `.rec` 的动画不在
+// 收回之列 —— 那是运动形状，不是颜色。
+//
+// 目前 `.dot` 的调用者是状态栏（StatusBar.tsx）；分屏页签状态条的 `.tsb-dot`
+// 仍是旧的纯色圆点，等它采用这个原语时自动一起受控。
+html[data-status-shapes='off'] .dot {
+  &.err,
+  &.warn {
+    border-radius: var(--r-circle);
+    clip-path: none;
+  }
+}
+
+// ---- Segmented control ----
+// Two or three mutually exclusive choices short enough to read at a glance (密度、
+// 动效). The longer lists stay `<select class="settings-input">` — a row of eight
+// segments is worse than a dropdown.
+.segs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  align-self: flex-start;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: $bg-input;
+}
+
+.seg {
+  min-height: 22px;
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: $text-secondary;
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
+
+  &:hover {
+    color: $text-primary;
+  }
+
+  // Same treatment `.icon-btn[data-on]` uses, so "this one is active" looks like
+  // one thing across the settings page and the toolbars.
+  &[aria-pressed='true'] {
+    background: rgba($accent, 0.16);
+    color: var(--accent-soft-40);
+  }
+}
+
+// ---- Accent swatches ----
+// A colour sample has to stay a colour sample, so the picked one gains a ring
+// rather than a fill. The ring is doubled with a surface-coloured gap because the
+// swatch's own hue is arbitrary — a border in the accent's ink would vanish on the
+// swatch that *is* the accent.
+.swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-wrap: wrap;
+}
+
+.swatch {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: var(--sw);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--border-l12);
+  }
+
+  &[aria-pressed='true'] {
+    box-shadow:
+      inset 0 0 0 2px $bg-input,
+      0 0 0 2px var(--accent-soft-40);
+  }
+
+  // 「自定义…」: the whole wheel, because it promises a colour from outside the six.
+  &.custom {
+    background: conic-gradient(#e05c52, #e0a13c, #56c07b, #35c4d6, #4d9dff, #a97be0, #e05c52);
+
+    // The native picker is the swatch itself — a wrapping label activates the one
+    // control inside it, so the click target is the colour rather than the ~19px
+    // system widget `input[type=color]` draws. `width`/`height` are load-bearing:
+    // the UA gives that input a definite intrinsic width, and an over-constrained
+    // `inset: 0` would keep it, making the invisible input spill over whatever
+    // sits to the right of the swatch and swallow its clicks.
+    input[type='color'] {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      padding: 0;
+      border: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+  }
+}
+
+// ---- Switch ----
+// `.settings-field.checkbox-field` stays the right control for a setting that gates
+// other controls (its label is the thing you are switching). This is for the bare
+// on/off preferences, and it is a real `role="switch"` button rather than a hidden
+// checkbox, so the keyboard path is the same one everything else already has.
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 30px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid $border;
+  border-radius: var(--r-pill);
+  background: $bg-input;
+  cursor: pointer;
+  transition: background var(--d-1) var(--e-out);
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: var(--r-circle);
+    background: $text-muted;
+    transition: transform var(--d-1) var(--e-out);
+  }
+
+  &[aria-checked='true'] {
+    background: $accent;
+    border-color: transparent;
+
+    &::after {
+      // Track 28px inside, knob 10px, 2px of air on each side.
+      transform: translateX(14px);
+      background: var(--text-on-accent);
+    }
+  }
+}

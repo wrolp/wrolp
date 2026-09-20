@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { TranslationKey } from '../i18n/en'
+import { Icon } from './Icon'
 import { FLOAT_RESIZE_DIRS, useFloatResize } from '../hooks/useFloatResize'
 
 const MIN_W = 320
@@ -60,8 +61,10 @@ export default function FloatingWindow({
         }}
       >
         <span className="floating-window-title">{item.title}</span>
-        <span
-          className="floating-window-close"
+        <button
+          type="button"
+          className="icon-btn floating-window-close"
+          aria-label={t('close')}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation()
@@ -69,8 +72,8 @@ export default function FloatingWindow({
           }}
           title={t('close')}
         >
-          ×
-        </span>
+          <Icon name="x" size={11} />
+        </button>
       </div>
       <div className="floating-window-body">{children}</div>
       {FLOAT_RESIZE_DIRS.map((dir) => (

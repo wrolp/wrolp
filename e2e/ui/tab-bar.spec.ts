@@ -69,7 +69,7 @@ test('the strip brackets itself with two labelled icon buttons', async ({ page }
 
   // Both used to be bespoke classes with hand-drawn SVG / an U+229E glyph.
   await expect(page.getByRole('button', { name: 'Hide sidebar' })).toHaveCount(1)
-  await expect(page.getByRole('button', { name: 'Split Terminal' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Open inspector' })).toHaveCount(1)
   // The tab bar only appears once a tab exists, so assert the toggle survives
   // the transition from the boot state to a session state.
   await page.getByRole('button', { name: 'Hide sidebar' }).click()

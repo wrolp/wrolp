@@ -36,19 +36,19 @@
 
 .settings-card-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-xl);
   font-weight: 600;
   color: $text-primary;
 }
 
 .settings-card-sub {
   margin: 2px 0 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: $text-muted;
 }
 
 .settings-card-desc {
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   line-height: 1.6;
   color: $text-dim;
   margin: 0 0 18px;
@@ -69,10 +69,12 @@
   gap: 6px;
 }
 
-// A checkbox row (`className="settings-field checkbox-field"`): the box belongs *before*
-// its label, on one line. The base above is a column, which left these boxes sitting on a
-// line of their own — and centred, since the column also centres what it cannot stretch.
-.settings-field.checkbox-field {
+// A checkbox row (`className="settings-field checkbox-field"`) or a switch row
+// (`… switch-field`): the control belongs *before* its label, on one line. The base
+// above is a column, which left these boxes sitting on a line of their own — and
+// centred, since the column also centres what it cannot stretch.
+.settings-field.checkbox-field,
+.settings-field.switch-field {
   flex-direction: row;
   align-items: center;
   gap: 8px;
@@ -88,7 +90,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: $text-secondary;
 
@@ -103,7 +105,7 @@
   border: 1px solid $border;
   color: $text-primary;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   padding: 8px 11px;
   border-radius: var(--r-3);
   &:focus:not(:focus-visible) {
@@ -149,7 +151,7 @@
     border: 1px solid $border;
     color: $text-primary;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--fs-lg);
     padding: 8px 11px;
     border-radius: var(--r-3);
     &:focus:not(:focus-visible) {
@@ -177,7 +179,7 @@
 
   span {
     color: $text-dim;
-    font-size: 13px;
+    font-size: var(--fs-lg);
     white-space: nowrap;
   }
 }
@@ -220,7 +222,7 @@
 }
 
 .settings-help {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   line-height: 1.5;
 
@@ -240,7 +242,7 @@
 
 .settings-save-btn {
   padding: 9px 18px;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   font-weight: 600;
   background: $accent;
   color: #fff;
@@ -275,7 +277,7 @@
   color: $text-secondary;
   cursor: pointer;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1;
   padding: 4px 10px;
   // Two-word labels ("Clear history" / "Add rule") must not wrap one word per line.
@@ -416,13 +418,13 @@
 }
 
 .ai-profile-name {
-  font-size: 13px;
+  font-size: var(--fs-lg);
   font-weight: 600;
   color: $text-primary;
 }
 
 .ai-profile-endpoint {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   white-space: nowrap;
   overflow: hidden;
@@ -467,7 +469,7 @@
   border-radius: var(--r-3);
   background: transparent;
   color: $accent;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--d-2);
@@ -489,7 +491,7 @@
   border-radius: var(--r-2);
   background: $bg-primary;
   color: $text-secondary;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-family: inherit;
   cursor: pointer;
   transition:
@@ -512,7 +514,7 @@
   align-items: center;
   gap: 6px;
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: $text-secondary;
   cursor: pointer;
   user-select: none;
@@ -529,7 +531,7 @@
   border-radius: var(--r-2);
   background: $bg-secondary;
   color: $text-primary;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   cursor: pointer;
 
   &:hover {

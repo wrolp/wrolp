@@ -214,6 +214,57 @@ function buildSassVars() {
   return vars
 }
 
+/**
+ * The type scale from `_layout.scss` (`--fs-ui` and the sizes derived from it).
+ * Needed because `font-size: var(--fs-lg)` is a real size and the large-text
+ * exemption is a *size* test: parseFloat-ing the token would give NaN, which
+ * silently drops an 18.66px-bold rule from the 3:1 exemption to 4.5:1 — the gate
+ * would start inventing violations exactly when a rule adopts the scale.
+ */
+function compileFontScale() {
+  const css = sass.compileString(
+    `@use 'layout' as l;
+     :root { @include l.emit-structural; }`,
+    { loadPaths: [STYLE_DIR], style: 'expanded' },
+  ).css
+  const scale = new Map()
+  for (const m of css.matchAll(/(--fs-[\w-]+):\s*([^;]+);/g)) scale.set(m[1], m[2].trim())
+  return scale
+}
+
+/**
+ * `var(--fs-sm)` / `calc(var(--fs-ui) - 1.5px)` / `12.5px` → a px number.
+ * Evaluated at the scale's *build-time* `--fs-ui`; what the user sets the knob to at
+ * runtime is out of reach here, in the same way a runtime accent is.
+ */
+function resolveFontSize(raw, scale, sassVars) {
+  let v = String(raw)
+    .trim()
+    .replace(/!important$/, '')
+    .trim()
+  for (let i = 0; i < 10 && v.startsWith('$'); i++) {
+    const next = sassVars.get(v)
+    if (!next) return null
+    v = next
+  }
+  for (let i = 0; i < 10; i++) {
+    const call = /var\((--fs-[\w-]+)\)/.exec(v)
+    if (!call) break
+    const value = scale.get(call[1])
+    if (value === undefined) return null
+    v = v.replace(call[0], value)
+  }
+  const terms = v.match(/([+-]?\s*[\d.]+)px/g)
+  if (!terms) return Number.isFinite(Number.parseFloat(v)) ? Number.parseFloat(v) : null
+  let sum = 0
+  for (const term of terms) {
+    const n = Number.parseFloat(term.replace(/\s+/g, ''))
+    if (!Number.isFinite(n)) return null
+    sum += n
+  }
+  return sum
+}
+
 /** Resolve a declaration value to a colour for one theme (null = unknown). */
 function resolveColor(raw, theme, sassVars) {
   let v = String(raw)
@@ -374,6 +425,7 @@ function surfaceBehind(block, theme, sassVars) {
 function main() {
   const themes = compileTokens()
   const sassVars = buildSassVars()
+  const fontScale = compileFontScale()
 
   if (args.includes('--tokens')) {
     for (const [name, map] of Object.entries(themes)) {
@@ -412,7 +464,7 @@ function main() {
 
       declared++
       const sizeDecl = block.decls.find((d) => d.prop === 'font-size')
-      const size = sizeDecl ? Number.parseFloat(sizeDecl.value) : null
+      const size = sizeDecl ? resolveFontSize(sizeDecl.value, fontScale, sassVars) : null
       const weightDecl = block.decls.find((d) => d.prop === 'font-weight')
       const weight = weightDecl
         ? weightDecl.value.trim() === 'bold'

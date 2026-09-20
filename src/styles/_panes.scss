@@ -1000,27 +1000,12 @@
     color: $text-dim;
   }
 
+  // The button itself is the shared `.icon-btn` primitive with the `x` glyph — this
+  // only lifts it above the NE resize grip, which would otherwise swallow the click.
   .floating-window-close {
-    // Sit above the resize grips so it stays clickable where the NE corner grip
-    // would otherwise overlap it.
     position: relative;
     z-index: 30;
     flex: 0 0 auto;
-    width: 18px;
-    height: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--r-1);
-    cursor: pointer;
-    color: $text-dim;
-    font-size: 14px;
-    line-height: 1;
-
-    &:hover {
-      color: $text-primary;
-      background: rgba($text-primary, 0.12);
-    }
   }
 
   .floating-window-body {

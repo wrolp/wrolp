@@ -24,8 +24,10 @@ test('opens the Settings tab from the titlebar', async ({ page }) => {
 
   await expect(page.locator('.tab-item.active')).toContainText('Settings')
   await expect(page.locator('.settings-layout')).toBeVisible()
-  // Opacity slider is part of the General settings pane.
-  await expect(page.locator('.settings-range')).toBeVisible()
+  // Opacity slider is part of the General settings pane. (The appearance card
+  // added a second range — the interface text size — so this names the one it
+  // means rather than trusting there to be only one slider on the page.)
+  await expect(page.locator('.settings-range').first()).toBeVisible()
 })
 
 test('sidebar toggle hides and restores the sidebar', async ({ page }) => {

@@ -17,10 +17,27 @@
 
 import { getLang, setLang, type Lang } from '../i18n'
 import {
+  getAccent,
+  getDensity,
+  getFocusRing,
+  getMotion,
+  getSavedUiFontSize,
+  getStatusShapes,
   getTerminalPalette,
   getThemeMode,
+  setAccent,
+  setDensity,
+  setFocusRing,
+  setMotion,
+  setStatusShapes,
   setTerminalPalette,
   setThemeMode,
+  setUiFontSize,
+  UI_FONT_SIZE,
+  type AccentChoice,
+  type Density,
+  type Motion,
+  type SwitchState,
   type TerminalPalette,
   type ThemeMode,
 } from './themeStore'
@@ -168,6 +185,75 @@ const DEFS: SettingDef[] = [
     write: (v) => setTerminalPalette(v as TerminalPalette),
     describe:
       'Terminal colour palette, independent of the UI theme ("follow" tracks the UI theme).',
+  },
+  {
+    key: 'theme.accent',
+    kind: 'color',
+    values: ['default'],
+    group: 'theme',
+    default: 'default',
+    storage: { kind: 'localStorage', key: 'wrolp-accent' },
+    read: () => getAccent(),
+    write: (v) => setAccent(v as AccentChoice),
+    describe:
+      'Accent colour as #rrggbb, or "default" for the accent from the theme table. Derived shades and the text colour on accent are recomputed per theme automatically.',
+  },
+  {
+    key: 'theme.density',
+    kind: 'enum',
+    values: ['default', 'compact', 'comfy'],
+    group: 'theme',
+    default: 'default',
+    storage: { kind: 'localStorage', key: 'wrolp-density' },
+    read: () => getDensity(),
+    write: (v) => setDensity(v as Density),
+    describe:
+      'Row height scale. "compact"/"comfy" resize the toolbars and rows; "default" keeps the density from the stylesheet.',
+  },
+  {
+    key: 'theme.uiFontSize',
+    kind: 'number',
+    min: UI_FONT_SIZE.min,
+    max: UI_FONT_SIZE.max,
+    group: 'theme',
+    default: UI_FONT_SIZE.base,
+    storage: { kind: 'localStorage', key: 'wrolp-ui-font-size' },
+    read: () => getSavedUiFontSize(),
+    write: (v) => setUiFontSize(Number(v)),
+    describe: `Interface text size in px (${UI_FONT_SIZE.min}–${UI_FONT_SIZE.max}, half-pixel steps). Independent of density.`,
+  },
+  {
+    key: 'theme.motion',
+    kind: 'enum',
+    values: ['system', 'on', 'off'],
+    group: 'theme',
+    default: 'system',
+    storage: { kind: 'localStorage', key: 'wrolp-motion' },
+    read: () => getMotion(),
+    write: (v) => setMotion(v as Motion),
+    describe:
+      'Transitions and animations. "system" follows the OS reduced-motion setting; "on" keeps motion even when the OS asks for reduce; "off" removes it.',
+  },
+  {
+    key: 'theme.focusRing',
+    kind: 'boolean',
+    group: 'theme',
+    default: true,
+    storage: { kind: 'localStorage', key: 'wrolp-focus-ring' },
+    read: () => getFocusRing() === 'on',
+    write: (v) => setFocusRing(v as SwitchState | boolean),
+    describe: 'Outline on keyboard-focused controls.',
+  },
+  {
+    key: 'theme.statusShapes',
+    kind: 'boolean',
+    group: 'theme',
+    default: true,
+    storage: { kind: 'localStorage', key: 'wrolp-status-shapes' },
+    read: () => getStatusShapes() === 'on',
+    write: (v) => setStatusShapes(v as SwitchState | boolean),
+    describe:
+      'Give error/warning status dots a distinct shape as well as a distinct colour, so state survives colour-blindness and monochrome displays.',
   },
 
   // ---- terminal ----------------------------------------------------------
@@ -383,10 +469,24 @@ export function validateSettingValue(def: SettingDef, raw: unknown): Validated {
       return { ok: true, value: raw }
     }
     case 'color': {
-      if (typeof raw !== 'string' || !HEX_RE.test(raw)) {
+      if (typeof raw !== 'string') {
         return {
           ok: false,
           error: `"${def.key}": invalid colour "${String(raw)}" (use hex, e.g. #aabbcc)`,
+        }
+      }
+      // A `color` def may whitelist a non-hex keyword alongside the colours — the
+      // accent's `'default'` (restore the theme table). Checked here rather than
+      // in `write`, because `applySettingChanges` validates every key before
+      // writing any, and moving this into the writer would break that
+      // all-or-nothing guarantee.
+      if (def.values?.includes(raw)) return { ok: true, value: raw }
+      if (!HEX_RE.test(raw)) {
+        return {
+          ok: false,
+          error: `"${def.key}": invalid colour "${raw}" (use hex, e.g. #aabbcc${
+            def.values?.length ? `, or one of: ${def.values.join(', ')}` : ''
+          })`,
         }
       }
       return { ok: true, value: raw.toLowerCase() }

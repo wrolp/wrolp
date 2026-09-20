@@ -157,8 +157,15 @@ import {
   type HighlightCategoryConfig,
   type HighlightConfig,
 } from './lib/highlightRules'
-import { useTheme } from './lib/themeStore'
-import type { TerminalPalette, ThemeMode } from './lib/themeStore'
+import {
+  commitUiFontSize,
+  DENSITY_WIDTHS,
+  previewUiFontSize,
+  UI_FONT_SIZE,
+  useTheme,
+} from './lib/themeStore'
+import type { Motion, TerminalPalette, ThemeMode } from './lib/themeStore'
+import { ACCENT_PRESETS } from './lib/accentPresets'
 import './styles/App.scss'
 
 // Global connection cache
@@ -556,6 +563,211 @@ function TerminalContinuationSetting() {
       </div>
       <span className="settings-help">{t('termContinuationHelp')}</span>
     </>
+  )
+}
+
+/**
+ * Settings → General → 外观 (UI redesign P4). Everything on this card already worked —
+ * `themeStore` has applied an accent and a density since P0 — but nothing let a *user*
+ * reach them, so the only way to change an accent was to ask the AI.
+ *
+ * Writes go through the appearance registry rather than the store setters directly:
+ * that is what puts a click here into the same undo history the AI bridge reads, and
+ * what keeps the two entry points from drifting. Live values come from `useTheme()`,
+ * so an accent the AI changed elsewhere shows up here without a reload.
+ */
+function AppearanceSettingsCard({
+  updateLayout,
+}: {
+  updateLayout: (updater: (prev: WorkspaceLayout) => WorkspaceLayout) => void
+}) {
+  const { t } = useI18n()
+  const { accent, density, uiFontSize, motion, focusRing, statusShapes } = useTheme()
+  // While a drag is in flight the store still reports the last *committed* size —
+  // previewing writes the CSS property without notifying anybody, precisely so a
+  // slider does not repaint every open terminal once per pixel. The number by the
+  // thumb therefore keeps its own copy for the duration.
+  const [sizeDraft, setSizeDraft] = useState<number | null>(null)
+  const size = sizeDraft ?? uiFontSize
+
+  const write = (changes: Record<string, unknown>) => applySettingChanges(changes, 'user')
+
+  const commitSize = () => {
+    if (sizeDraft == null) return
+    const next = sizeDraft
+    setSizeDraft(null)
+    if (next !== uiFontSize) write({ 'theme.uiFontSize': next })
+    else commitUiFontSize()
+  }
+
+  const pickDensity = (next: 'compact' | 'comfy') => {
+    write({ 'theme.density': next })
+    // Density and font size are orthogonal (§9.3), but the columns are not: a taller
+    // row band wants a wider rail. Only a column the user never dragged is moved —
+    // and a width still sitting on the *other* density's default is, by
+    // construction, one they never touched.
+    const target = DENSITY_WIDTHS[next]
+    const origin = DENSITY_WIDTHS[next === 'comfy' ? 'compact' : 'comfy']
+    updateLayout((prev) => {
+      const sidebar =
+        prev.sidebar.width === origin.nav ? { ...prev.sidebar, width: target.nav } : prev.sidebar
+      const inspector =
+        prev.inspector.width === origin.inspector
+          ? { ...prev.inspector, width: target.inspector }
+          : prev.inspector
+      if (sidebar === prev.sidebar && inspector === prev.inspector) return prev
+      return { ...prev, sidebar, inspector }
+    })
+  }
+
+  return (
+    <div className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-icon">
+          <Icon name="eye" size={16} />
+        </div>
+        <div>
+          <h3 className="settings-card-title">{t('appearanceCardTitle')}</h3>
+          <p className="settings-card-sub">{t('appearanceCardSub')}</p>
+        </div>
+      </div>
+      <div className="settings-fields">
+        <div className="settings-field">
+          <span className="settings-label">{t('accentLabel')}</span>
+          <div className="swatches">
+            {ACCENT_PRESETS.map((preset) => (
+              <button
+                key={preset.hex}
+                type="button"
+                className="swatch"
+                style={{ '--sw': preset.hex } as React.CSSProperties}
+                aria-pressed={accent === preset.hex}
+                aria-label={t(preset.labelKey)}
+                title={t(preset.labelKey)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => write({ 'theme.accent': preset.hex })}
+              />
+            ))}
+            {/* The native colour picker is the only accessible way to reach an
+                arbitrary colour, and `App.tsx` already uses it for the highlight
+                colours — so the invisible input sits inside a labelled swatch and
+                the whole thing stays one click target. */}
+            <label className="swatch custom" title={t('accentCustom')}>
+              <input
+                type="color"
+                aria-label={t('accentCustom')}
+                value={/^#[0-9a-f]{6}$/.test(accent) ? accent : '#4d9dff'}
+                onChange={(e) => write({ 'theme.accent': e.target.value })}
+              />
+            </label>
+            {accent !== 'default' && (
+              <button
+                type="button"
+                className="settings-inline-btn"
+                onClick={() => write({ 'theme.accent': 'default' })}
+              >
+                {t('accentReset')}
+              </button>
+            )}
+          </div>
+          <span className="settings-help">{t('accentHelp')}</span>
+        </div>
+
+        <div className="settings-field">
+          <span className="settings-label">{t('densityLabel')}</span>
+          <div className="segs" role="group" aria-label={t('densityLabel')}>
+            {(['compact', 'comfy'] as const).map((bucket) => (
+              <button
+                key={bucket}
+                type="button"
+                className="seg"
+                aria-pressed={(density === 'comfy' ? 'comfy' : 'compact') === bucket}
+                onClick={() => pickDensity(bucket)}
+              >
+                {bucket === 'comfy' ? t('densityComfy') : t('densityCompact')}
+              </button>
+            ))}
+          </div>
+          <span className="settings-help">{t('densityHelp')}</span>
+        </div>
+
+        <div className="settings-field">
+          <label htmlFor="ui-font-size" className="settings-label">
+            {t('uiFontSizeLabel')}
+          </label>
+          <input
+            id="ui-font-size"
+            className="settings-range"
+            type="range"
+            min={UI_FONT_SIZE.min}
+            max={UI_FONT_SIZE.max}
+            step={UI_FONT_SIZE.step}
+            value={size}
+            onChange={(e) => {
+              const next = Number(e.target.value)
+              setSizeDraft(next)
+              previewUiFontSize(next)
+            }}
+            onPointerUp={commitSize}
+            onKeyUp={commitSize}
+            onBlur={commitSize}
+          />
+          <span className="settings-help">
+            {t('uiFontSizeNow', { val: size })} · {t('uiFontSizeHelp')}
+          </span>
+        </div>
+
+        <div className="settings-field">
+          <span className="settings-label">{t('motionLabel')}</span>
+          <div className="segs" role="group" aria-label={t('motionLabel')}>
+            {(['system', 'on', 'off'] as const).map((bucket) => (
+              <button
+                key={bucket}
+                type="button"
+                className="seg"
+                aria-pressed={motion === bucket}
+                onClick={() => write({ 'theme.motion': bucket })}
+              >
+                {bucket === 'system'
+                  ? t('motionSystem')
+                  : bucket === 'on'
+                    ? t('motionOn')
+                    : t('motionOff')}
+              </button>
+            ))}
+          </div>
+          <span className="settings-help">{t('motionHelp')}</span>
+        </div>
+
+        <div className="settings-field switch-field">
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={focusRing === 'on'}
+            aria-label={t('focusRingLabel')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => write({ 'theme.focusRing': focusRing !== 'on' })}
+          />
+          <span className="settings-label">{t('focusRingLabel')}</span>
+          <span className="settings-help">{t('focusRingHelp')}</span>
+        </div>
+
+        <div className="settings-field switch-field">
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={statusShapes === 'on'}
+            aria-label={t('statusShapesLabel')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => write({ 'theme.statusShapes': statusShapes !== 'on' })}
+          />
+          <span className="settings-label">{t('statusShapesLabel')}</span>
+          <span className="settings-help">{t('statusShapesHelp')}</span>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -4638,6 +4850,8 @@ export default function App() {
                     </div>
                   </div>
 
+                  <AppearanceSettingsCard updateLayout={updateLayout} />
+
                   <div className="settings-card">
                     <div className="settings-fields">
                       <div className="settings-field">
@@ -4688,7 +4902,7 @@ export default function App() {
                           {t('maxScrollbackLines')}
                         </label>
                         <input
-                          id="maxScro[plugin:vite:css] [sass] Error: Undefined variable.llback"
+                          id="maxScrollback"
                           type="number"
                           min="100"
                           max="100000"
@@ -7058,15 +7272,6 @@ export default function App() {
                     </div>
                   )
                 })}
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={handleSplitTerminal}
-                aria-label={t('splitTerminal')}
-                title={`${t('splitTerminal')} (Ctrl+\\)`}
-              >
-                <Icon name="panelRight" size={14} />
-              </button>
               <button
                 type="button"
                 className="icon-btn"

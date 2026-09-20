@@ -13,7 +13,7 @@
 
   &-title {
     font-weight: 500;
-    font-size: 13px;
+    font-size: var(--fs-lg);
     color: var(--text-muted);
     margin-right: auto;
     padding-left: 4px;
@@ -274,7 +274,7 @@
 
 .workspace-item-label {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -332,7 +332,7 @@
   border: 1px solid $accent;
   border-radius: var(--r-1);
   color: $text-primary;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   font-family: inherit;
   &:focus:not(:focus-visible) {
     outline: none;
@@ -528,7 +528,7 @@
 
   cursor: pointer;
   user-select: none;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: $text-muted;
   text-transform: uppercase;
@@ -632,7 +632,7 @@
   }
 
   .conn-name {
-    font-size: 13px;
+    font-size: var(--fs-lg);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -640,7 +640,7 @@
   }
 
   .conn-host {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: $text-muted;
     white-space: nowrap;
     overflow: hidden;
@@ -648,7 +648,7 @@
   }
 
   .conn-desc {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: $text-muted;
     white-space: nowrap;
     overflow: hidden;
@@ -707,7 +707,7 @@
   align-items: center;
   gap: 5px;
   padding: 2px 12px 2px 36px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-muted;
   cursor: pointer;
   user-select: none;
@@ -895,7 +895,7 @@
   }
 
   .conn-item-name {
-    font-size: 13px;
+    font-size: var(--fs-lg);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -903,7 +903,7 @@
   }
 
   .conn-item-sub {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: $text-muted;
     white-space: nowrap;
     overflow: hidden;
@@ -941,7 +941,7 @@
 
 .local-empty {
   padding: 8px 12px 8px 24px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: $text-muted;
 }
 
@@ -1065,6 +1065,6 @@
   padding: 24px 16px;
   text-align: center;
   color: $text-muted;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   line-height: 1.6;
 }
