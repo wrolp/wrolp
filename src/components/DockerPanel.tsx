@@ -227,7 +227,13 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
         </span>
         {expanded && (
           <>
-            <label className="docker-filter-toggle" title={t('showAllContainersHint')}>
+            <label
+              className="docker-filter-toggle"
+              title={t('showAllContainersHint')}
+              // The head is the collapse switch, so every control inside it has to hold
+              // its own click in — the refresh button beside this already does (B49).
+              onClick={(e) => e.stopPropagation()}
+            >
               <input
                 type="checkbox"
                 checked={showAll}

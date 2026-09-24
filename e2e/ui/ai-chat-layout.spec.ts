@@ -227,3 +227,26 @@ test('switching inspector tabs keeps the AI panel mounted', async ({ page }) => 
   await expect(panel).toHaveJSProperty('dataset.probe', 'mounted')
   await expect(panel.locator('textarea')).toHaveValue(draft)
 })
+
+test('the focused input shows one gray frame, not a ring inside it (B50)', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await openAiChat(page)
+  const wrap = page.locator('.ai-chat-input-wrap')
+  const input = wrap.locator('textarea')
+
+  // A hue is what the user rejected, so make one impossible to miss: the accent is set to
+  // orange and the border must stay a neutral gray (r === g === b) that merely steps up
+  // from the resting line.
+  const border = () => wrap.evaluate((el) => getComputedStyle(el).borderTopColor)
+  await page.evaluate(() => document.documentElement.style.setProperty('--accent', '#e0714f'))
+  const resting = await border()
+  await input.focus()
+  // `transition: border-color` means a single read can land mid-animation — poll it.
+  await expect.poll(border, { message: 'the wrap must step up when focused' }).not.toBe(resting)
+  const rgb = (await border()).match(/\d+/g)!.map(Number)
+  expect(rgb).toEqual([rgb[0], rgb[0], rgb[0]])
+
+  // Text inputs always match `:focus-visible`, so the global ring in `_a11y.scss` would
+  // draw a second box inside the wrap unless the component opts out.
+  await expect(input).toHaveCSS('outline-style', 'none')
+})

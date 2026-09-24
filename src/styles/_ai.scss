@@ -1516,7 +1516,12 @@
   min-height: 40px;
 
   &:focus-within {
-    border-color: rgba($accent, 0.5);
+    // Gray, one step up from the resting `$border` — the same `--border-l12` the hover
+    // states elsewhere use. The wrap *is* the focus indicator for this box (see
+    // `.ai-chat-input` below), so it has to change, but not to a hue: the accent is user
+    // choice now, and a blue frame competing with the textarea's own ring read as two
+    // boxes.
+    border-color: var(--border-l12);
   }
 }
 
@@ -1721,7 +1726,11 @@
   flex: 1;
   background: transparent;
   border: none;
-  &:focus:not(:focus-visible) {
+  // No ring of its own at all, keyboard focus included: `.ai-chat-input-wrap`'s border is
+  // the indicator, and `_a11y.scss` loads last at `(0,1,0)` — this `(0,2,0)` is what
+  // outranks its `:focus-visible` outline.
+  &:focus:not(:focus-visible),
+  &:focus-visible {
     outline: none;
   }
   color: $text-primary;
