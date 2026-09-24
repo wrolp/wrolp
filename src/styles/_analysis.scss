@@ -786,6 +786,9 @@
     flex-shrink: 0;
     gap: 12px;
     flex-wrap: wrap;
+    // Only the log text is selectable — dragging a selection out of the <pre>
+    // must not highlight the header (see `clampSelectionTo` in the component).
+    user-select: none;
   }
 
   .dlv-header-info {
@@ -835,6 +838,8 @@
     font-size: 12px;
     font-family: 'Cascadia Code', Consolas, monospace;
     text-align: center;
+    // Re-enable what `.dlv-header` turned off — the value still has to be editable.
+    user-select: text;
 
     &:focus:not(:focus-visible) {
       outline: none;

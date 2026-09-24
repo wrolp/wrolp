@@ -1,8 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import type {
-  DockerAnalysis,
-  ResourceUsage
-} from '../types'
+import type { DockerAnalysis, ResourceUsage } from '../types'
 import { analyzeDockerContainer, dockerContainerLogs } from '../commands'
 import { parseAnsiToHtml } from '../ansi'
 import { useI18n } from '../i18n'
@@ -92,6 +89,10 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
   // so they carry ANSI colour codes (and cursor / OSC sequences) that a plain
   // text node would print verbatim — see `ansi.ts::stripInvisible`.
   const logsHtml = useMemo(() => (logs ? parseAnsiToHtml(logs) : ''), [logs])
+  // Same trap as `DockerLogViewer`: an inline `{ __html }` literal is a new prop object on
+  // every render, which makes React re-apply the innerHTML — detaching the text nodes of
+  // anything the user is selecting. Keep the wrapper stable.
+  const logsHtmlPayload = useMemo(() => ({ __html: logsHtml }), [logsHtml])
 
   // Fetch logs when container changes. Deliberately NOT re-firing when
   // activeTabId / logsTail change — the refresh button and tail control
@@ -107,7 +108,9 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
     return (
       <div className="docker-analysis-panel">
         <div className="analysis-loading">
-          <p>{t('analyzingContainer')} <strong>{targetContainer}</strong>…</p>
+          <p>
+            {t('analyzingContainer')} <strong>{targetContainer}</strong>…
+          </p>
           <div className="spinner" />
         </div>
       </div>
@@ -163,7 +166,9 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
         {data.orchestration.inferredComposeFile && (
           <div className="orch-inferred-file">
             <span className="orch-inferred-icon">{'\u{1F4C4}'}</span>
-            <span className="orch-inferred-path" title="compose.yml or docker-compose.yml">{data.orchestration.inferredComposeFile}</span>
+            <span className="orch-inferred-path" title="compose.yml or docker-compose.yml">
+              {data.orchestration.inferredComposeFile}
+            </span>
             <span className="orch-inferred-tag">{t('composeFile')}</span>
           </div>
         )}
@@ -200,12 +205,20 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
           <div className="orch-direct">
             <div className="orch-row">
               <span className="orch-label">{t('orchImage')}</span>
-              <span className="orch-value">{data.image}:{data.imageTag}</span>
+              <span className="orch-value">
+                {data.image}:{data.imageTag}
+              </span>
             </div>
             {data.orchestration.startCommand ? (
               <div className="orch-row">
                 <span className="orch-label">{t('orchCommand')}</span>
-                <span className="orch-value" style={{ wordBreak: 'break-all', fontFamily: "'Cascadia Code', Consolas, monospace" }}>
+                <span
+                  className="orch-value"
+                  style={{
+                    wordBreak: 'break-all',
+                    fontFamily: "'Cascadia Code', Consolas, monospace",
+                  }}
+                >
                   {data.orchestration.startCommand}
                 </span>
               </div>
@@ -277,12 +290,10 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
           <pre
             className="danalysis-logs-output"
             ref={logsRef}
-            dangerouslySetInnerHTML={{ __html: logsHtml }}
+            dangerouslySetInnerHTML={logsHtmlPayload}
           />
         ) : (
-          <div className="logs-empty">
-            {logsLoading ? t('loading') : t('logsClickRefresh')}
-          </div>
+          <div className="logs-empty">{logsLoading ? t('loading') : t('logsClickRefresh')}</div>
         )}
       </div>
 
@@ -324,7 +335,9 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
             <tbody>
               {data.mounts.map((m, i) => (
                 <tr key={i}>
-                  <td title={m.source} className="cell-truncate">{m.source}</td>
+                  <td title={m.source} className="cell-truncate">
+                    {m.source}
+                  </td>
                   <td>{m.destination}</td>
                   <td>{m.mode}</td>
                 </tr>
@@ -340,7 +353,9 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
           <h4>{t('environment', { n: data.envKeys.length })}</h4>
           <div className="env-chips">
             {data.envKeys.map((e, i) => (
-              <span key={i} className="env-chip">{e.key}</span>
+              <span key={i} className="env-chip">
+                {e.key}
+              </span>
             ))}
           </div>
         </div>
@@ -367,7 +382,9 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
                   <td>{p.user}</td>
                   <td>{p.cpu}</td>
                   <td>{p.mem}</td>
-                  <td title={p.command} className="cell-truncate">{p.command}</td>
+                  <td title={p.command} className="cell-truncate">
+                    {p.command}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -381,7 +398,9 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
           <h4>{t('toolsDetected', { n: data.tools.length })}</h4>
           <div className="tool-chips">
             {data.tools.map((t, i) => (
-              <span key={i} className="tool-chip">{t.name}</span>
+              <span key={i} className="tool-chip">
+                {t.name}
+              </span>
             ))}
           </div>
         </div>
@@ -390,7 +409,10 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
       {/* ---- Packages ---- */}
       {data.packages.length > 0 && (
         <div className="analysis-section">
-          <h4>{t('installedPackages', { n: filteredPkgs.length })}{pkgSearch ? ` / ${data.packages.length}` : ''}</h4>
+          <h4>
+            {t('installedPackages', { n: filteredPkgs.length })}
+            {pkgSearch ? ` / ${data.packages.length}` : ''}
+          </h4>
           <input
             className="pkg-search"
             type="text"
@@ -427,7 +449,9 @@ function card(label: string, value: string) {
   return (
     <div className="analysis-card">
       <div className="card-label">{label}</div>
-      <div className="card-value" title={value}>{value}</div>
+      <div className="card-value" title={value}>
+        {value}
+      </div>
     </div>
   )
 }
@@ -449,7 +473,9 @@ function ResourceSection({ resource }: { resource: ResourceUsage }) {
         </div>
         <div className="resource-row">
           <span className="resource-label">{t('resMem')}</span>
-          <span className="resource-val">{resource.memUsage} / {resource.memLimit}</span>
+          <span className="resource-val">
+            {resource.memUsage} / {resource.memLimit}
+          </span>
         </div>
         <div className="resource-row">
           <span className="resource-label">{t('resNetIo')}</span>

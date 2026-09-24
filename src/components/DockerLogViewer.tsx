@@ -8,6 +8,8 @@ import {
 import { parseAnsiToHtml, highlightPlainLog, stripInvisible } from '../ansi'
 import { useI18n } from '../i18n'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
+import { copyText } from '../lib/clipboard'
+import { Icon } from './Icon'
 
 interface DockerLogViewerProps {
   tabId: number
@@ -77,22 +79,96 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   // scrollTop in a layout effect by the removed head's rendered height.
   const preUpdateRef = useRef<{ scrollTop: number; removedHead: string } | null>(null)
 
-  // ---- right-click context menu (Ask AI Assistant) ----
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  // ---- right-click context menu (copy / Ask AI Assistant) ----
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(
+    null,
+  )
   const ctxMenuRef = useRef<HTMLDivElement>(null)
-  // Capture the selection at right-click time so it isn't lost before the click.
+  // What the menu acts on, captured while the right press is still being dispatched. Two
+  // things can take the highlight away before the item is clicked: a press that lands
+  // outside the selection collapses it (native behaviour), and the stream replacing the
+  // <pre>'s text nodes takes a range with them. The text is kept even when the range can
+  // no longer be restored, so the copy still has something to copy.
   const selectedTextRef = useRef<string>('')
+  const savedRangeRef = useRef<Range | null>(null)
+  const selectionSnapshottedRef = useRef(false)
+  // > 0 while the menu is open: how many more times the highlight may be put back. The
+  // budget is what stops an `addRange` → engine clears → `addRange` standoff from spinning
+  // forever, and it closes the guard the moment the menu goes away.
+  const restoreBudgetRef = useRef(0)
+
+  // Refresh what the menu acts on from the live selection — but only when that selection
+  // is a non-blank one lying entirely inside the log (one left over in another pane would
+  // otherwise be copied or sent to the AI). Anything else leaves the memory alone: the
+  // engine may have *just* cleared the selection, and this memory is what puts it back.
+  const rememberLogSelection = useCallback((el: HTMLElement) => {
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
+    const range = sel.getRangeAt(0)
+    const text = sel.toString()
+    if (!text.trim()) return
+    if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return
+    selectedTextRef.current = text
+    savedRangeRef.current = range.cloneRange()
+  }, [])
+
+  const forgetLogSelection = useCallback(() => {
+    selectedTextRef.current = ''
+    savedRangeRef.current = null
+  }, [])
+
+  const restoreLogSelection = useCallback(() => {
+    const el = logsRef.current
+    const saved = savedRangeRef.current
+    const sel = window.getSelection()
+    if (!el || !saved || !sel || restoreBudgetRef.current <= 0) return
+    if (sel.rangeCount > 0 && !sel.isCollapsed) return // nothing was lost
+    if (!el.contains(saved.startContainer) || !el.contains(saved.endContainer)) return
+    restoreBudgetRef.current -= 1
+    sel.removeAllRanges()
+    sel.addRange(saved)
+  }, [])
+
+  const handleLogMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 2) return
+      // Read the selection before this press gets a chance to collapse it, then cancel
+      // the press's default action so a right-click that lands just outside the highlight
+      // does not eat it. Start from an empty memory: a press on nothing selected is none.
+      forgetLogSelection()
+      const el = logsRef.current
+      if (el) rememberLogSelection(el)
+      selectionSnapshottedRef.current = true
+      e.preventDefault()
+    },
+    [rememberLogSelection, forgetLogSelection],
+  )
 
   const handleLogContextMenu = useCallback(
     (e: React.MouseEvent) => {
-      if (!onAskAi) return
       e.preventDefault()
       e.stopPropagation()
-      const selection = window.getSelection()?.toString() ?? ''
-      selectedTextRef.current = selection.trim()
-      setCtxMenu({ x: e.clientX, y: e.clientY })
+      // A contextmenu with no preceding press of our own (the Menu key, a long press)
+      // still gets a fresh read.
+      if (!selectionSnapshottedRef.current) {
+        forgetLogSelection()
+        const el = logsRef.current
+        if (el) rememberLogSelection(el)
+      }
+      selectionSnapshottedRef.current = false
+      setCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        hasSelection: selectedTextRef.current !== '',
+      })
+      // Opening the menu re-renders, and the press may yet be answered by a clear, so put
+      // the highlight back now, after the frame settles, and on any later selectionchange
+      // while the menu is up.
+      restoreBudgetRef.current = 5
+      restoreLogSelection()
+      requestAnimationFrame(restoreLogSelection)
     },
-    [onAskAi],
+    [rememberLogSelection, forgetLogSelection, restoreLogSelection],
   )
 
   // Close the menu on outside click / Escape
@@ -111,8 +187,29 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     return () => {
       window.removeEventListener('mousedown', onDown)
       window.removeEventListener('keydown', onKey)
+      // The menu is gone: stop defending the highlight, whatever the engine does next.
+      restoreBudgetRef.current = 0
     }
   }, [ctxMenu])
+
+  // Keep the menu on screen when the click landed near an edge.
+  useLayoutEffect(() => {
+    if (!ctxMenu) return
+    const el = ctxMenuRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    el.style.top = `${Math.max(8, Math.min(ctxMenu.y, vh - rect.height - 8))}px`
+    el.style.left = `${Math.max(8, Math.min(ctxMenu.x, vw - rect.width - 8))}px`
+  }, [ctxMenu])
+
+  const handleCopyFromMenu = useCallback(async () => {
+    setCtxMenu(null)
+    const text = selectedTextRef.current || logs
+    if (!text) return
+    await copyText(text)
+  }, [logs])
 
   const handleAskAiFromMenu = useCallback(() => {
     setCtxMenu(null)
@@ -124,6 +221,54 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     const prefix = `The following are ${scope} from Docker container "${containerName}":\n\n`
     onAskAi(prefix + text)
   }, [onAskAi, logs, containerName])
+
+  // ---- keep a dragged selection inside the log, and remembered across a right-click ----
+  // Dragging out of the <pre> — over the header, the tab bar or a neighbouring pane —
+  // used to extend the highlight there too, so copy/Ask AI picked up chrome text.
+  // While the drag started inside the log we clamp the range back to its edges.
+  useEffect(() => {
+    let dragging = false
+    const onMouseDown = (e: MouseEvent) => {
+      const el = logsRef.current
+      dragging = !!el && e.button === 0 && el.contains(e.target as Node)
+      // Any left press that starts a new selection (or none at all) makes what was
+      // remembered stale — except on the menu itself, whose press must not wipe the text
+      // its own items are about to copy. The right press refreshes it on the <pre>.
+      if (e.button === 0 && !ctxMenuRef.current?.contains(e.target as Node)) {
+        forgetLogSelection()
+      }
+    }
+    const endDrag = (e: MouseEvent) => {
+      const el = logsRef.current
+      if (dragging && el) {
+        // Clamp once more on release: Chromium can leave the last mousemove's range
+        // outside the log even though every intermediate change was pulled back.
+        clampSelectionTo(el)
+        rememberLogSelection(el)
+      }
+      // Some Blink builds answer the right press with a clear on release rather than on
+      // press — the menu is already open by then, so put the highlight back.
+      if (e.button === 2) restoreLogSelection()
+      dragging = false
+    }
+    const onSelectionChange = () => {
+      const el = logsRef.current
+      if (!el) return
+      if (dragging) clampSelectionTo(el)
+      rememberLogSelection(el)
+      // While the menu is open the highlight is ours to keep: if the engine cleared it
+      // (before or after our own events), put it back so the user still sees the target.
+      if (restoreBudgetRef.current > 0) restoreLogSelection()
+    }
+    document.addEventListener('mousedown', onMouseDown, true)
+    document.addEventListener('mouseup', endDrag)
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown, true)
+      document.removeEventListener('mouseup', endDrag)
+      document.removeEventListener('selectionchange', onSelectionChange)
+    }
+  }, [rememberLogSelection, forgetLogSelection, restoreLogSelection])
 
   // Track active stream so we can stop it on unmount / toggle-off
   const streamIdRef = useRef<string | null>(null)
@@ -289,6 +434,12 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     return plain ?? ansi
   }, [logs, color])
 
+  // The wrapper object has to be stable across renders: React re-applies
+  // `dangerouslySetInnerHTML` — a wholesale replace of the <pre>'s children — whenever the
+  // prop *object* differs, so a fresh `{ __html }` literal per render detached every text
+  // node the user had just selected, which is what killed the highlight on right-click.
+  const logsHtmlPayload = useMemo(() => ({ __html: logsHtml }), [logsHtml])
+
   // Auto-scroll only when the user is at (or very near) the bottom. When the user
   // has scrolled up, we leave the page still — new logs won't yank the view.
   useEffect(() => {
@@ -367,7 +518,13 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
               {loading ? 'Loading\u2026' : 'Refresh'}
             </button>
           )}
-          <button className="dlv-clear-btn" onClick={() => { setLogs(''); setError('') }}>
+          <button
+            className="dlv-clear-btn"
+            onClick={() => {
+              setLogs('')
+              setError('')
+            }}
+          >
             Clear
           </button>
           <button
@@ -409,19 +566,27 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
             <pre
               className={'dlv-output' + (wordWrap ? ' dlv-output-wrap' : '')}
               ref={setLogsEl}
+              onMouseDown={handleLogMouseDown}
               onContextMenu={handleLogContextMenu}
-              dangerouslySetInnerHTML={{ __html: logsHtml }}
+              dangerouslySetInnerHTML={logsHtmlPayload}
             />
             {ctxMenu && (
               <div
                 ref={ctxMenuRef}
                 className="context-menu dlv-ctx-menu"
                 style={{ left: ctxMenu.x, top: ctxMenu.y }}
+                onMouseDown={(e) => e.preventDefault()}
                 onContextMenu={(e) => e.preventDefault()}
               >
-                <div className="context-menu-item" onClick={handleAskAiFromMenu}>
-                  {selectedTextRef.current ? t('askAiSelectedText') : t('askAiAllLogs')}
+                <div className="context-menu-item" onClick={handleCopyFromMenu}>
+                  <Icon name="copy" size={14} />
+                  {ctxMenu.hasSelection ? t('copySelectedText') : t('copyAllLogs')}
                 </div>
+                {onAskAi && (
+                  <div className="context-menu-item" onClick={handleAskAiFromMenu}>
+                    {ctxMenu.hasSelection ? t('askAiSelectedText') : t('askAiAllLogs')}
+                  </div>
+                )}
               </div>
             )}
             {showJumpToBottom && (
@@ -484,8 +649,34 @@ function trimToMaxLines(text: string, maxLines: number): string {
 /// Invisible bytes are still stripped: `docker logs` output carries ANSI escapes
 /// and control characters that must never reach the DOM as raw text.
 function escapeLogs(text: string): string {
-  return stripInvisible(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  return stripInvisible(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/// Shrink the DOM selection back to `el`'s text when a drag has run past its edges.
+/// Whichever end left the log is re-anchored to the nearest log boundary.
+function clampSelectionTo(el: HTMLElement): void {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
+  const range = sel.getRangeAt(0)
+  const startIn = el.contains(range.startContainer)
+  const endIn = el.contains(range.endContainer)
+  if (startIn && endIn) return
+  const next = document.createRange()
+  if (startIn) {
+    next.setStart(range.startContainer, range.startOffset)
+    next.setEnd(el, el.childNodes.length)
+  } else if (endIn) {
+    next.setStart(el, 0)
+    next.setEnd(range.endContainer, range.endOffset)
+  } else if (range.intersectsNode(el)) {
+    // Both ends ran past the log but it sits between them: keep the whole log.
+    next.selectNodeContents(el)
+  } else {
+    // Neither end touches the log — this is not a drag that ran out of it (a log
+    // refresh detached the anchor, most likely), so leave the selection alone
+    // rather than wiping out something the user made elsewhere.
+    return
+  }
+  sel.removeAllRanges()
+  sel.addRange(next)
 }

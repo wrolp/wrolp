@@ -228,6 +228,8 @@ const en = {
   selectAll: 'Select All',
   askAiSelectedText: 'Ask AI (selected text)',
   askAiAllLogs: 'Ask AI (all logs)',
+  copySelectedText: 'Copy selected text',
+  copyAllLogs: 'Copy all logs',
   dragToRedock: 'Drag to re-dock this panel',
 
   // Inspector (right column)
