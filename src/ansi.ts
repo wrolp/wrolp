@@ -95,10 +95,7 @@ function renderSpan(text: string, s: SgrState): string {
 }
 
 function escapeHtml(s: string): string {
-  return stripInvisible(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  return stripInvisible(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 /* ---- Invisible bytes ------------------------------------------------------
@@ -143,13 +140,37 @@ export function stripInvisible(text: string): string {
  * contain any SGR codes is returned as simple HTML-escaped plain text.
  */
 export function parseAnsiToHtml(text: string): string {
+  return parseAnsiToHtmlLines(text).join('\n')
+}
+
+/**
+ * `parseAnsiToHtml`, one entry per line, so a caller can wrap each line in its own
+ * element (the log viewer's line numbers) without cutting markup apart afterwards.
+ *
+ * A colour run may open on one line and reset two lines later, so the line break is
+ * *inside* that run: the flush below ends the current line's parts there and opens the
+ * next line's, while the SGR state carries across — the colours stay where they were.
+ */
+export function parseAnsiToHtmlLines(text: string): string[] {
   if (!text.includes('\x1b[')) {
-    return escapeHtml(text)
+    return escapeHtml(text).split('\n')
   }
 
   const state: SgrState = { fg: null, bg: null, bold: false, italic: false, underline: false }
   const parts: string[] = []
+  const lines: string[] = []
   let lastIdx = 0
+
+  // Emit a stretch of plain text, breaking the line wherever the text does.
+  const flushText = (chunk: string) => {
+    chunk.split('\n').forEach((piece, i) => {
+      if (i > 0) {
+        lines.push(parts.join(''))
+        parts.length = 0
+      }
+      if (piece) parts.push(renderSpan(piece, { ...state }))
+    })
+  }
 
   // Match ANSI CSI … m (SGR) sequences.  Other CSI sequences
   // (cursor movement, screen clear, etc.) are silently dropped.
@@ -158,7 +179,7 @@ export function parseAnsiToHtml(text: string): string {
 
   while ((match = re.exec(text)) !== null) {
     if (match.index > lastIdx) {
-      parts.push(renderSpan(text.slice(lastIdx, match.index), { ...state }))
+      flushText(text.slice(lastIdx, match.index))
     }
     lastIdx = re.lastIndex
 
@@ -252,10 +273,11 @@ export function parseAnsiToHtml(text: string): string {
   }
 
   if (lastIdx < text.length) {
-    parts.push(renderSpan(text.slice(lastIdx), { ...state }))
+    flushText(text.slice(lastIdx))
   }
 
-  return parts.join('')
+  lines.push(parts.join(''))
+  return lines
 }
 
 function reset(s: SgrState) {
@@ -294,8 +316,7 @@ function esc(s: string): string {
 const TS_RE =
   /^(?:\[)?(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)(?:\])? /
 
-const LEVEL_RE =
-  /\b(TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRIT(?:ICAL)?)\b/g
+const LEVEL_RE = /\b(TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRIT(?:ICAL)?)\b/g
 
 const LEVEL_FG: Record<string, string> = {
   TRACE: '#7daeec',
@@ -357,6 +378,12 @@ function highlightLine(line: string): string {
  * use `parseAnsiToHtml` instead) or is effectively empty.
  */
 export function highlightPlainLog(text: string): string | null {
+  const lines = highlightPlainLogLines(text)
+  return lines && lines.join('\n')
+}
+
+/** `highlightPlainLog`, one entry per line — see `parseAnsiToHtmlLines`. */
+export function highlightPlainLogLines(text: string): string[] | null {
   if (!text || hasAnsi(text)) return null
 
   const lines = text.split('\n')
@@ -369,5 +396,5 @@ export function highlightPlainLog(text: string): string | null {
   // If nothing matched our patterns, don't pretend we highlighted — return the
   // plain escaped text so the view is unchanged.
   if (!anyHighlight) return null
-  return out.join('\n')
+  return out
 }

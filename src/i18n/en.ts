@@ -230,6 +230,7 @@ const en = {
   askAiAllLogs: 'Ask AI (all logs)',
   copySelectedText: 'Copy selected text',
   copyAllLogs: 'Copy all logs',
+  dlvLineNumbers: 'Line numbers',
   dragToRedock: 'Drag to re-dock this panel',
 
   // Inspector (right column)

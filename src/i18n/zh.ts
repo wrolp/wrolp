@@ -229,6 +229,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   askAiAllLogs: '询问 AI（全部日志）',
   copySelectedText: '复制选中内容',
   copyAllLogs: '复制全部日志',
+  dlvLineNumbers: '行号',
   dragToRedock: '拖动以重新停靠此面板',
 
   // 检查器（右栏）

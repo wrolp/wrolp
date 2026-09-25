@@ -992,6 +992,56 @@
     word-break: break-all;
   }
 
+  // ---- line numbers ----
+  // One box per *logical* line, so a wrapped line keeps its number on the first row
+  // instead of drifting onto the continuation rows.
+  .dlv-line {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .dlv-ln {
+    flex: none;
+    // Sticky so the numbers survive a horizontal scroll with Wrap off. The background is
+    // what makes that work (the log text slides under it) and it is declared here on
+    // purpose: `check-ui-contrast.mjs` only grades a foreground against a background it
+    // can see in the same rule.
+    position: sticky;
+    left: 0;
+    background: var(--editor-blank);
+    text-align: right;
+    // One fixed column for every row, sized to the widest number in the buffer
+    // (`--dlv-ln-digits`, set on the <pre>). `min-width` alone let a 5-digit line push its
+    // own row wider than its neighbours, so the log text stopped lining up.
+    box-sizing: content-box;
+    width: calc(var(--dlv-ln-digits, 4) * 1ch);
+    padding: 0 10px 0 12px;
+    // Not `$text-dim`/`$text-muted`: this rule declares its own background (the sticky
+    // column has to hide the text sliding under it), so `check-ui-contrast.mjs` grades it —
+    // and the two dimmer tokens land at 3.95:1 on `--editor-blank`. The terminal gutter can
+    // afford `$text-dim` only because it declares no background of its own.
+    color: $text-secondary;
+    font-variant-numeric: tabular-nums;
+    // The numbers are chrome — selecting log text must not carry them into the clipboard.
+    user-select: none;
+  }
+
+  // The pre's own left padding moves into the gutter, so the sticky column can sit flush
+  // against the scroll edge without a seam of bare background.
+  .dlv-output-ln {
+    padding-left: 0;
+
+    .dlv-line-body {
+      flex: 0 0 auto;
+    }
+  }
+
+  // With Wrap on, the body takes what the gutter leaves and breaks inside it.
+  .dlv-output-ln.dlv-output-wrap .dlv-line-body {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
   // Heuristic-highlighted lines that contain JSON get subtle emphasis.
   .dlv-log-json {
     color: #c9d1d9;

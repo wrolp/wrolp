@@ -5,7 +5,7 @@ import {
   pollDockerLogs,
   stopDockerLogsStream,
 } from '../commands'
-import { parseAnsiToHtml, highlightPlainLog, stripInvisible } from '../ansi'
+import { parseAnsiToHtmlLines, highlightPlainLogLines, stripInvisible } from '../ansi'
 import { useI18n } from '../i18n'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 import { copyText } from '../lib/clipboard'
@@ -65,6 +65,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   const [autoScroll, setAutoScroll] = useState(true)
   const [wordWrap, setWordWrap] = useState(defaultWordWrap)
   const [color, setColor] = useState(true)
+  const [lineNumbers, setLineNumbers] = useState(false)
   const [follow, setFollow] = useState(defaultFollow)
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const logsRef = useRef<HTMLPreElement>(null)
@@ -422,23 +423,49 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     })
   }, [startStream, stopStream, fetchLogs])
 
-  // ---- ANSI → coloured HTML (memoized — parsing is O(n)) ----
+  // ---- ANSI → coloured HTML, per line (memoized — parsing is O(n)) ----
   // When Color is on we first try ANSI parsing. If the log contains no ANSI
   // escape codes, we fall back to heuristic plain-log highlighting (timestamps,
   // log levels, JSON) so uncoloured container output is still readable.
-  const logsHtml = useMemo(() => {
-    if (!logs) return ''
-    if (!color) return escapeLogs(logs)
-    const ansi = parseAnsiToHtml(logs)
-    const plain = highlightPlainLog(logs)
-    return plain ?? ansi
+  const logsLines = useMemo(() => {
+    if (!logs) return ['']
+    if (!color) return escapeLogs(logs).split('\n')
+    const plain = highlightPlainLogLines(logs)
+    return plain ?? parseAnsiToHtmlLines(logs)
   }, [logs, color])
+
+  // Line numbers need a box per *logical* line, so a wrapped line keeps its number beside
+  // the whole block instead of drifting onto the continuation rows. Without them the
+  // joined HTML is exactly what the <pre> rendered before.
+  const logsHtml = useMemo(() => {
+    if (!lineNumbers) return logsLines.join('\n')
+    const last = logsLines.length - 1
+    return logsLines
+      .map((html, i) => {
+        // The newline stays inside the line's own text rather than being left to the block
+        // boundary: a boundary between two blocks contributes one line break no matter how
+        // many empty lines sit there, so copying a selection would silently drop them.
+        const eol = i === last ? '' : '\n'
+        return `<div class="dlv-line"><span class="dlv-ln">${i + 1}</span><span class="dlv-line-body">${html}${eol}</span></div>`
+      })
+      .join('')
+  }, [logsLines, lineNumbers])
 
   // The wrapper object has to be stable across renders: React re-applies
   // `dangerouslySetInnerHTML` — a wholesale replace of the <pre>'s children — whenever the
   // prop *object* differs, so a fresh `{ __html }` literal per render detached every text
   // node the user had just selected, which is what killed the highlight on right-click.
   const logsHtmlPayload = useMemo(() => ({ __html: logsHtml }), [logsHtml])
+
+  // How wide the gutter has to be for the largest number on screen. One value for every
+  // row, so the log text starts at the same column whether the line is numbered 7 or 5000.
+  const lnStyle = useMemo(
+    () =>
+      lineNumbers
+        ? ({ '--dlv-ln-digits': String(logsLines.length).length } as React.CSSProperties)
+        : undefined,
+    [lineNumbers, logsLines.length],
+  )
 
   // Auto-scroll only when the user is at (or very near) the bottom. When the user
   // has scrolled up, we leave the page still — new logs won't yank the view.
@@ -555,6 +582,14 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
             <input type="checkbox" checked={color} onChange={(e) => setColor(e.target.checked)} />
             Color
           </label>
+          <label className="dlv-control-item dlv-checkbox">
+            <input
+              type="checkbox"
+              checked={lineNumbers}
+              onChange={(e) => setLineNumbers(e.target.checked)}
+            />
+            {t('dlvLineNumbers')}
+          </label>
         </div>
       </div>
 
@@ -564,8 +599,13 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
         ) : logs ? (
           <>
             <pre
-              className={'dlv-output' + (wordWrap ? ' dlv-output-wrap' : '')}
+              className={
+                'dlv-output' +
+                (wordWrap ? ' dlv-output-wrap' : '') +
+                (lineNumbers ? ' dlv-output-ln' : '')
+              }
               ref={setLogsEl}
+              style={lnStyle}
               onMouseDown={handleLogMouseDown}
               onContextMenu={handleLogContextMenu}
               dangerouslySetInnerHTML={logsHtmlPayload}
