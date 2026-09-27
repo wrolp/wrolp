@@ -148,6 +148,8 @@ test('reset_ui_settings restores defaults and the settings page can undo', async
 
   // The most recent snapshot resets to the default; undo it from the settings card.
   await page.locator('.settings-btn').click()
+  // The card lives in the AI pane now that General is split by theme.
+  await page.locator('.settings-nav-item', { hasText: 'AI Assistant' }).click()
   const card = page.locator('.settings-card', { hasText: 'AI appearance & settings' })
   await expect(card).toBeVisible()
 

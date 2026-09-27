@@ -304,9 +304,19 @@ const en = {
   closeGuardHint:
     'When off, closing a terminal or pane immediately discards its open files (unsaved edits included).',
 
-  // Settings: general
-  settingsGeneral: 'General',
-  settingsAi: 'AI',
+  // Settings panes. The sidebar button and the pane header read the same two keys, so a
+  // pane cannot end up named differently in the two places.
+  settingsPaneAppearance: 'Appearance',
+  settingsPaneAppearanceDesc:
+    'Theme, terminal palette, accent colour, window opacity and language.',
+  settingsPaneTerminal: 'Terminal',
+  settingsPaneTerminalDesc:
+    'Scrollback, recording, keepalive, and how output and pastes are handled.',
+  settingsPaneData: 'Data',
+  settingsPaneDataDesc: 'Where settings, recordings and the database live, and how to trim them.',
+  settingsPaneAboutDesc: 'The build this copy is, its repository, and checking for updates.',
+  settingsPaneAiDesc:
+    'OpenAI-compatible chat with built-in tools. Configure multiple endpoints and pick one to use.',
   settingsAppearance: 'Application appearance and update preferences.',
   themeLabel: 'Theme',
   themeSystem: 'Follow system',

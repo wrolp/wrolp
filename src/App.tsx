@@ -1216,6 +1216,39 @@ function HighlightSettingsCard({
   )
 }
 
+// The settings sidebar, top to bottom. `title` / `desc` are i18n keys read by BOTH the
+// nav button and the pane header, so the two can never name a pane differently.
+// What used to be one 「General」 scroll — where a 370-line card mixed window opacity
+// with the data root and the updater — is now one pane per theme.
+type SettingsPane = 'appearance' | 'terminal' | 'data' | 'docker' | 'ai' | 'about'
+const SETTINGS_PANES: {
+  key: SettingsPane
+  icon: IconName
+  title: TranslationKey
+  desc: TranslationKey
+}[] = [
+  {
+    key: 'appearance',
+    icon: 'desktop',
+    title: 'settingsPaneAppearance',
+    desc: 'settingsPaneAppearanceDesc',
+  },
+  {
+    key: 'terminal',
+    icon: 'terminal',
+    title: 'settingsPaneTerminal',
+    desc: 'settingsPaneTerminalDesc',
+  },
+  { key: 'data', icon: 'folder', title: 'settingsPaneData', desc: 'settingsPaneDataDesc' },
+  // The nav entry is the short region name; the card inside still leads with the longer
+  // `dockerLogs` title and its description.
+  { key: 'docker', icon: 'container', title: 'docker', desc: 'dockerLogsDesc' },
+  { key: 'ai', icon: 'sparkles', title: 'aiSettingsHeader', desc: 'settingsPaneAiDesc' },
+  // Last, and it holds the updater: "what version am I on" and "check for a new one" are
+  // one question, so they share a pane rather than two nav entries.
+  { key: 'about', icon: 'link', title: 'about', desc: 'settingsPaneAboutDesc' },
+]
+
 // A tab bar entry that owns a workspace: a session with a pane tree of its own.
 // The other kinds — Settings, a docker log view, an open file — are entries in
 // the same bar but have no panes, so anything that splits, focuses or sends has
@@ -2107,7 +2140,12 @@ export default function App() {
     })
   }, [])
   const [saveFlash, setSaveFlash] = useState<string | null>(null)
-  const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'ai'>('general')
+  // Which settings pane is showing. Deliberately not persisted: a settings tab opens on
+  // the first pane, the way it did when there was only one.
+  const [settingsActiveTab, setSettingsActiveTab] = useState<SettingsPane>('appearance')
+  // The active entry, for the pane header. `?? SETTINGS_PANES[0]` only satisfies the
+  // type — every `SettingsPane` is in the list.
+  const settingsPane = SETTINGS_PANES.find((p) => p.key === settingsActiveTab) ?? SETTINGS_PANES[0]
   useEffect(() => {
     if (saveFlash) {
       const t = setTimeout(() => setSaveFlash(null), 1800)
@@ -4828,522 +4866,551 @@ export default function App() {
         {tab.tabType === 'settings' && (
           <div className="settings-layout">
             <div className="settings-sidebar">
-              <button
-                className={'settings-nav-item' + (settingsActiveTab === 'general' ? ' active' : '')}
-                onClick={() => setSettingsActiveTab('general')}
-              >
-                <Icon name="settings" size={15} />
-                {t('settingsGeneral')}
-              </button>
-              <button
-                className={'settings-nav-item' + (settingsActiveTab === 'ai' ? ' active' : '')}
-                onClick={() => setSettingsActiveTab('ai')}
-              >
-                <Icon name="sparkles" size={15} />
-                {t('aiSettingsHeader')}
-              </button>
+              {SETTINGS_PANES.map((pane) => (
+                <button
+                  key={pane.key}
+                  className={
+                    'settings-nav-item' + (settingsActiveTab === pane.key ? ' active' : '')
+                  }
+                  onClick={() => setSettingsActiveTab(pane.key)}
+                >
+                  <Icon name={pane.icon} size={15} />
+                  {t(pane.title)}
+                </button>
+              ))}
             </div>
 
             <div className="settings-content">
-              {settingsActiveTab === 'general' && (
+              {settingsActiveTab !== 'ai' && (
                 <div className="settings-pane">
                   <div className="settings-pane-header">
-                    <h3>{t('settingsGeneral')}</h3>
-                    <p>{t('settingsAppearance')}</p>
+                    <h3>{t(settingsPane.title)}</h3>
+                    <p>{t(settingsPane.desc)}</p>
                   </div>
 
-                  <div className="settings-card">
-                    <div className="settings-fields">
-                      <div className="settings-field">
-                        <label htmlFor="ui-theme" className="settings-label">
-                          {t('themeLabel')}
-                        </label>
-                        <select
-                          id="ui-theme"
-                          className="settings-input"
-                          style={{ width: '200px' }}
-                          value={themeMode}
-                          onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
-                        >
-                          <option value="system">{t('themeSystem')}</option>
-                          <option value="dark">{t('themeDark')}</option>
-                          <option value="light">{t('themeLight')}</option>
-                        </select>
-                        <span className="settings-help">{t('themeHelp')}</span>
+                  {/* One pane per nav entry, so a card never appears under two headings.
+                      The old 「General」 scroll is these five, split at the same lines. */}
+                  {settingsActiveTab === 'appearance' && (
+                    <>
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <div className="settings-field">
+                            <label htmlFor="ui-theme" className="settings-label">
+                              {t('themeLabel')}
+                            </label>
+                            <select
+                              id="ui-theme"
+                              className="settings-input"
+                              style={{ width: '200px' }}
+                              value={themeMode}
+                              onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
+                            >
+                              <option value="system">{t('themeSystem')}</option>
+                              <option value="dark">{t('themeDark')}</option>
+                              <option value="light">{t('themeLight')}</option>
+                            </select>
+                            <span className="settings-help">{t('themeHelp')}</span>
+                          </div>
+
+                          <div className="settings-field">
+                            <label htmlFor="terminal-palette" className="settings-label">
+                              {t('terminalPaletteLabel')}
+                            </label>
+                            <select
+                              id="terminal-palette"
+                              className="settings-input"
+                              style={{ width: '200px' }}
+                              value={terminalPalette}
+                              onChange={(e) =>
+                                setTerminalPalette(e.target.value as TerminalPalette)
+                              }
+                            >
+                              <option value="follow">{t('terminalPaletteFollow')}</option>
+                              <option value="dark">{t('terminalPaletteDark')}</option>
+                              <option value="light">{t('terminalPaletteLight')}</option>
+                            </select>
+                            <span className="settings-help">{t('terminalPaletteHelp')}</span>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="settings-field">
-                        <label htmlFor="terminal-palette" className="settings-label">
-                          {t('terminalPaletteLabel')}
-                        </label>
-                        <select
-                          id="terminal-palette"
-                          className="settings-input"
-                          style={{ width: '200px' }}
-                          value={terminalPalette}
-                          onChange={(e) => setTerminalPalette(e.target.value as TerminalPalette)}
-                        >
-                          <option value="follow">{t('terminalPaletteFollow')}</option>
-                          <option value="dark">{t('terminalPaletteDark')}</option>
-                          <option value="light">{t('terminalPaletteLight')}</option>
-                        </select>
-                        <span className="settings-help">{t('terminalPaletteHelp')}</span>
-                      </div>
-                    </div>
-                  </div>
+                      <AppearanceSettingsCard updateLayout={updateLayout} />
 
-                  <AppearanceSettingsCard updateLayout={updateLayout} />
-
-                  <div className="settings-card">
-                    <div className="settings-fields">
-                      <div className="settings-field">
-                        <label className="settings-label">{t('windowOpacity')}</label>
-                        {/* The native window is `transparent: true`, so a translucent UI
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <div className="settings-field">
+                            <label className="settings-label">{t('windowOpacity')}</label>
+                            {/* The native window is `transparent: true`, so a translucent UI
                             lets the desktop show through — which reads as "dirty" over a
                             light background. The light theme therefore renders opaque and
                             the slider is disabled; the stored value is kept and comes back
                             when switching back to dark. */}
-                        <input
-                          type="range"
-                          min="20"
-                          max="100"
-                          value={Math.round(opacity * 100)}
-                          onChange={(e) => setOpacity(Number(e.target.value) / 100)}
-                          className="settings-range"
-                          disabled={isLightTheme}
-                        />
-                        <span className="settings-help">
-                          {isLightTheme
-                            ? t('windowOpacityLightDisabled')
-                            : t('currentPercent', { val: Math.round(opacity * 100) })}
-                        </span>
-                      </div>
-
-                      <div className="settings-field">
-                        <label htmlFor="ui-language" className="settings-label">
-                          {t('language')}
-                        </label>
-                        <select
-                          id="ui-language"
-                          className="settings-input"
-                          style={{ width: '200px' }}
-                          value={lang}
-                          onChange={(e) => setLang(e.target.value as 'en' | 'zh')}
-                        >
-                          {(['en', 'zh'] as const).map((l) => (
-                            <option key={l} value={l}>
-                              {LANG_LABELS[l]}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="settings-help">{t('settingsAppearance')}</span>
-                      </div>
-
-                      <div className="settings-field">
-                        <label htmlFor="maxScrollback" className="settings-label">
-                          {t('maxScrollbackLines')}
-                        </label>
-                        <input
-                          id="maxScrollback"
-                          type="number"
-                          min="100"
-                          max="100000"
-                          step="100"
-                          className="settings-input"
-                          style={{ width: '140px' }}
-                          value={maxScrollback}
-                          onChange={(e) => {
-                            const raw = e.target.value
-                            if (raw === '') {
-                              setMaxScrollback('')
-                              try {
-                                localStorage.removeItem('wrolp-maxScrollback')
-                              } catch {}
-                              return
-                            }
-                            const v = Math.max(100, Math.min(100000, Number(raw) || 5000))
-                            setMaxScrollback(v)
-                            try {
-                              localStorage.setItem('wrolp-maxScrollback', String(v))
-                            } catch {}
-                          }}
-                          onBlur={() => {
-                            if (maxScrollback === '') {
-                              setMaxScrollback(5000)
-                              try {
-                                localStorage.setItem('wrolp-maxScrollback', '5000')
-                              } catch {}
-                            }
-                          }}
-                        />
-                        <span className="settings-help">{t('appliesToNewTabs')}</span>
-                      </div>
-
-                      <TerminalToggleSetting
-                        settingKey="terminal.tailRoom"
-                        label={t('termTailRoom')}
-                        help={t('termTailRoomHelp')}
-                      />
-
-                      <TerminalToggleSetting
-                        settingKey="terminal.lineNumbers"
-                        label={t('termLineNumbers')}
-                        help={t('termLineNumbersHelp')}
-                      />
-
-                      <TerminalContinuationSetting />
-
-                      <div className="settings-field">
-                        <label className="settings-label" htmlFor="maxFileOpenSize">
-                          {t('maxFileOpenSize')}
-                        </label>
-                        <input
-                          id="maxFileOpenSize"
-                          type="number"
-                          min={1}
-                          max={500}
-                          step={1}
-                          className="settings-input"
-                          style={{ width: '100px' }}
-                          value={maxFileOpenSizeMB}
-                          onChange={(e) => {
-                            const raw = e.target.value
-                            if (raw === '') {
-                              setMaxFileOpenSizeMB('')
-                              try {
-                                localStorage.removeItem('wrolp-maxFileOpenSizeMB')
-                              } catch {}
-                              return
-                            }
-                            const v = Math.max(1, Math.min(500, Number(raw) || 5))
-                            setMaxFileOpenSizeMB(v)
-                            try {
-                              localStorage.setItem('wrolp-maxFileOpenSizeMB', String(v))
-                            } catch {}
-                          }}
-                          onBlur={() => {
-                            if (maxFileOpenSizeMB === '') {
-                              setMaxFileOpenSizeMB(5)
-                              try {
-                                localStorage.setItem('wrolp-maxFileOpenSizeMB', '5')
-                              } catch {}
-                            }
-                          }}
-                        />
-                        <span className="settings-help">{t('maxFileOpenSizeDesc')}</span>
-                      </div>
-
-                      <div className="settings-field checkbox-field">
-                        <input
-                          id="auto-record-sessions"
-                          type="checkbox"
-                          checked={autoRecord}
-                          onChange={(e) => handleAutoRecordChange(e.target.checked)}
-                        />
-                        <label htmlFor="auto-record-sessions" className="settings-label">
-                          {t('autoRecordSessions')}
-                        </label>
-                        <span className="settings-help">{t('autoRecordSessionsDesc')}</span>
-                      </div>
-
-                      <div className="settings-field">
-                        <label className="settings-label" htmlFor="keepaliveInterval">
-                          {t('keepaliveInterval')}
-                        </label>
-                        <input
-                          id="keepaliveInterval"
-                          type="number"
-                          min={10}
-                          step={1}
-                          className="settings-input"
-                          style={{ width: '100px' }}
-                          value={keepaliveInterval}
-                          onChange={(e) => {
-                            const raw = e.target.value
-                            if (raw === '') {
-                              setKeepaliveInterval('')
-                              return
-                            }
-                            handleKeepaliveChange(
-                              Number(raw),
-                              typeof keepaliveMax === 'number' ? keepaliveMax : 3,
-                            )
-                          }}
-                          onBlur={() => {
-                            if (keepaliveInterval === '') {
-                              handleKeepaliveChange(
-                                30,
-                                typeof keepaliveMax === 'number' ? keepaliveMax : 3,
-                              )
-                            }
-                          }}
-                        />
-                        <span className="settings-help">{t('keepaliveIntervalDesc')}</span>
-                      </div>
-
-                      <div className="settings-field">
-                        <label className="settings-label" htmlFor="keepaliveMax">
-                          {t('keepaliveMax')}
-                        </label>
-                        <input
-                          id="keepaliveMax"
-                          type="number"
-                          min={2}
-                          step={1}
-                          className="settings-input"
-                          style={{ width: '100px' }}
-                          value={keepaliveMax}
-                          onChange={(e) => {
-                            const raw = e.target.value
-                            if (raw === '') {
-                              setKeepaliveMax('')
-                              return
-                            }
-                            handleKeepaliveChange(
-                              typeof keepaliveInterval === 'number' ? keepaliveInterval : 30,
-                              Number(raw),
-                            )
-                          }}
-                          onBlur={() => {
-                            if (keepaliveMax === '') {
-                              handleKeepaliveChange(
-                                typeof keepaliveInterval === 'number' ? keepaliveInterval : 30,
-                                3,
-                              )
-                            }
-                          }}
-                        />
-                        <span className="settings-help">{t('keepaliveMaxDesc')}</span>
-                      </div>
-
-                      <div
-                        className="settings-field"
-                        style={{ flexDirection: 'column', alignItems: 'flex-start' }}
-                      >
-                        <label className="settings-label">{t('dataRoot')}</label>
-                        <div
-                          className="settings-data-root-row"
-                          style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '4px 0' }}
-                        >
-                          <button
-                            className="settings-save-btn"
-                            style={{ width: 'auto', padding: '4px 14px' }}
-                            onClick={handleDataRootBrowse}
-                          >
-                            {t('dataRootBrowse')}
-                          </button>
-                          {dataRoot && !dataRoot.isDefault && (
-                            <button
-                              className="settings-save-btn"
-                              style={{ width: 'auto', padding: '4px 14px' }}
-                              onClick={handleDataRootReset}
-                            >
-                              {t('dataRootReset')}
-                            </button>
-                          )}
-                          <span
-                            className="settings-help"
-                            style={{ margin: 0, wordBreak: 'break-all' }}
-                          >
-                            {dataRoot ? dataRoot.path : ''}
-                            {dataRoot?.isDefault ? ` ${t('dataRootDefault')}` : ''}
-                          </span>
-                        </div>
-                        <span className="settings-help">{t('dataRootDesc')}</span>
-                        <span className="settings-help">{t('dataRootRestartHint')}</span>
-                        <div
-                          className="settings-check-row"
-                          style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '4px 0' }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={!!dataRoot?.keyFollows}
-                            onChange={(e) => handleKeyFollowToggle(e.target.checked)}
-                          />
-                          <label className="settings-help" style={{ margin: 0 }}>
-                            {t('keyFollow')}
-                          </label>
-                        </div>
-                        <span className="settings-help">{t('keyFollowDesc')}</span>
-                        {dataRootMsg && (
-                          <span
-                            className="settings-help"
-                            style={{ margin: '2px 0 0', color: '#4caf50' }}
-                          >
-                            {dataRootMsg}
-                          </span>
-                        )}
-                      </div>
-
-                      <div
-                        className="settings-field"
-                        style={{ flexDirection: 'column', alignItems: 'flex-start' }}
-                      >
-                        <label className="settings-label">{t('dbMaintenance')}</label>
-                        <div
-                          style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '4px 0' }}
-                        >
-                          <span className="settings-help" style={{ margin: 0 }}>
-                            {dbStats
-                              ? t('dbSizeValue', {
-                                  size: formatBytes(dbStats.dbBytes + dbStats.walBytes),
-                                })
-                              : '—'}
-                          </span>
-                          {dbStats && dbStats.reclaimableBytes > 0 && (
-                            <span className="settings-help" style={{ margin: 0, color: '#ffb74d' }}>
-                              {t('dbReclaimable', { size: formatBytes(dbStats.reclaimableBytes) })}
+                            <input
+                              type="range"
+                              min="20"
+                              max="100"
+                              value={Math.round(opacity * 100)}
+                              onChange={(e) => setOpacity(Number(e.target.value) / 100)}
+                              className="settings-range"
+                              disabled={isLightTheme}
+                            />
+                            <span className="settings-help">
+                              {isLightTheme
+                                ? t('windowOpacityLightDisabled')
+                                : t('currentPercent', { val: Math.round(opacity * 100) })}
                             </span>
-                          )}
-                          <button
-                            className="settings-save-btn"
-                            style={{ width: 'auto', padding: '4px 14px' }}
-                            onClick={handleVacuumDb}
-                            disabled={dbBusy || !dbStats}
-                          >
-                            {dbBusy ? t('dbVacuuming') : t('dbVacuum')}
-                          </button>
-                        </div>
-                        <span className="settings-help">{t('dbMaintenanceDesc')}</span>
-                        {dbMsg && (
-                          <span
-                            className="settings-help"
-                            style={{ margin: '2px 0 0', color: dbMsg.ok ? '#4caf50' : '#ff8a80' }}
-                          >
-                            {dbMsg.text}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="settings-field">
-                        <label className="settings-label">{t('updates')}</label>
-                        <div className="settings-update-row">
-                          <button
-                            className="settings-save-btn"
-                            onClick={handleCheckUpdate}
-                            disabled={
-                              updateState === 'checking' ||
-                              updateState === 'downloading' ||
-                              updateState === 'installing'
-                            }
-                          >
-                            {updateState === 'checking' ? t('loading') : t('checkForUpdates')}
-                          </button>
-                          {updateInfo ? (
-                            <span className="settings-update-status">
-                              {t('newVersion', { ver: updateInfo.version })}
-                            </span>
-                          ) : updateInfo === null && updateState !== 'checking' ? (
-                            <span className="settings-update-status">{t('upToDate')}</span>
-                          ) : null}
-                        </div>
-                        {updateInfo && (
-                          <div className="settings-update-row" style={{ marginTop: 10 }}>
-                            <button
-                              className="settings-save-btn"
-                              onClick={handleDownloadUpdate}
-                              disabled={updateState !== 'idle'}
-                            >
-                              {updateState === 'downloading'
-                                ? t('downloading')
-                                : updateState === 'installing'
-                                  ? t('installing')
-                                  : t('downloadAndInstall')}
-                            </button>
                           </div>
-                        )}
+
+                          <div className="settings-field">
+                            <label htmlFor="ui-language" className="settings-label">
+                              {t('language')}
+                            </label>
+                            <select
+                              id="ui-language"
+                              className="settings-input"
+                              style={{ width: '200px' }}
+                              value={lang}
+                              onChange={(e) => setLang(e.target.value as 'en' | 'zh')}
+                            >
+                              {(['en', 'zh'] as const).map((l) => (
+                                <option key={l} value={l}>
+                                  {LANG_LABELS[l]}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="settings-help">{t('settingsAppearance')}</span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
+                    </>
+                  )}
 
-                  <HighlightSettingsCard cfg={hlCfg} onSave={saveHlCfg} />
+                  {settingsActiveTab === 'terminal' && (
+                    <>
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <div className="settings-field">
+                            <label htmlFor="maxScrollback" className="settings-label">
+                              {t('maxScrollbackLines')}
+                            </label>
+                            <input
+                              id="maxScrollback"
+                              type="number"
+                              min="100"
+                              max="100000"
+                              step="100"
+                              className="settings-input"
+                              style={{ width: '140px' }}
+                              value={maxScrollback}
+                              onChange={(e) => {
+                                const raw = e.target.value
+                                if (raw === '') {
+                                  setMaxScrollback('')
+                                  try {
+                                    localStorage.removeItem('wrolp-maxScrollback')
+                                  } catch {}
+                                  return
+                                }
+                                const v = Math.max(100, Math.min(100000, Number(raw) || 5000))
+                                setMaxScrollback(v)
+                                try {
+                                  localStorage.setItem('wrolp-maxScrollback', String(v))
+                                } catch {}
+                              }}
+                              onBlur={() => {
+                                if (maxScrollback === '') {
+                                  setMaxScrollback(5000)
+                                  try {
+                                    localStorage.setItem('wrolp-maxScrollback', '5000')
+                                  } catch {}
+                                }
+                              }}
+                            />
+                            <span className="settings-help">{t('appliesToNewTabs')}</span>
+                          </div>
 
-                  <PasteGuardSettingsCard cfg={pasteGuardCfg} onSave={savePasteGuardCfg} />
+                          <TerminalToggleSetting
+                            settingKey="terminal.tailRoom"
+                            label={t('termTailRoom')}
+                            help={t('termTailRoomHelp')}
+                          />
 
-                  <CloseGuardSettingsCard
-                    enabled={confirmCloseWithFiles}
-                    onToggle={saveConfirmCloseWithFiles}
-                  />
+                          <TerminalToggleSetting
+                            settingKey="terminal.lineNumbers"
+                            label={t('termLineNumbers')}
+                            help={t('termLineNumbersHelp')}
+                          />
 
-                  <AiAppearanceSettingsCard />
-
-                  <div className="settings-card">
-                    <div className="settings-card-header">
-                      <div className="settings-card-icon">🐳</div>
-                      <div>
-                        <h3 className="settings-card-title">{t('dockerLogs')}</h3>
-                        <p className="settings-card-sub">{t('dockerLogsDesc')}</p>
+                          <TerminalContinuationSetting />
+                        </div>
                       </div>
-                    </div>
-                    <div className="settings-fields">
-                      <div className="settings-field checkbox-field">
-                        <input
-                          id="docker-wordwrap"
-                          type="checkbox"
-                          checked={dockerWordWrap}
-                          onChange={(e) => {
-                            setDockerWordWrap(e.target.checked)
-                            try {
-                              localStorage.setItem(
-                                'wrolp-docker-wordwrap',
-                                e.target.checked ? '1' : '0',
-                              )
-                            } catch {}
-                          }}
-                        />
-                        <label htmlFor="docker-wordwrap" className="settings-label">
-                          {t('autoWrapLines')}
-                        </label>
-                      </div>
-                      <div className="settings-field checkbox-field">
-                        <input
-                          id="docker-follow"
-                          type="checkbox"
-                          checked={dockerFollow}
-                          onChange={(e) => {
-                            setDockerFollow(e.target.checked)
-                            try {
-                              localStorage.setItem(
-                                'wrolp-docker-follow',
-                                e.target.checked ? '1' : '0',
-                              )
-                            } catch {}
-                          }}
-                        />
-                        <label htmlFor="docker-follow" className="settings-label">
-                          {t('followNewest')}
-                        </label>
-                      </div>
-                      <div className="settings-field">
-                        <label htmlFor="docker-maxlines" className="settings-label">
-                          {t('maxRetainedLines')}
-                        </label>
-                        <input
-                          id="docker-maxlines"
-                          type="number"
-                          min="100"
-                          max="1000000"
-                          step="100"
-                          className="settings-input"
-                          style={{ width: '140px' }}
-                          value={dockerMaxLines}
-                          onChange={(e) => {
-                            const v = Math.max(
-                              100,
-                              Math.min(1000000, Number(e.target.value) || 5000),
-                            )
-                            setDockerMaxLines(v)
-                            try {
-                              localStorage.setItem('wrolp-docker-maxlines', String(v))
-                            } catch {}
-                          }}
-                        />
-                        <span className="settings-help">{t('olderLinesDropped')}</span>
-                      </div>
-                    </div>
-                  </div>
+                    </>
+                  )}
 
-                  {appVersion && (
+                  {settingsActiveTab === 'data' && (
+                    <>
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <div className="settings-field">
+                            <label className="settings-label" htmlFor="maxFileOpenSize">
+                              {t('maxFileOpenSize')}
+                            </label>
+                            <input
+                              id="maxFileOpenSize"
+                              type="number"
+                              min={1}
+                              max={500}
+                              step={1}
+                              className="settings-input"
+                              style={{ width: '100px' }}
+                              value={maxFileOpenSizeMB}
+                              onChange={(e) => {
+                                const raw = e.target.value
+                                if (raw === '') {
+                                  setMaxFileOpenSizeMB('')
+                                  try {
+                                    localStorage.removeItem('wrolp-maxFileOpenSizeMB')
+                                  } catch {}
+                                  return
+                                }
+                                const v = Math.max(1, Math.min(500, Number(raw) || 5))
+                                setMaxFileOpenSizeMB(v)
+                                try {
+                                  localStorage.setItem('wrolp-maxFileOpenSizeMB', String(v))
+                                } catch {}
+                              }}
+                              onBlur={() => {
+                                if (maxFileOpenSizeMB === '') {
+                                  setMaxFileOpenSizeMB(5)
+                                  try {
+                                    localStorage.setItem('wrolp-maxFileOpenSizeMB', '5')
+                                  } catch {}
+                                }
+                              }}
+                            />
+                            <span className="settings-help">{t('maxFileOpenSizeDesc')}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {settingsActiveTab === 'terminal' && (
+                    <>
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <div className="settings-field checkbox-field">
+                            <input
+                              id="auto-record-sessions"
+                              type="checkbox"
+                              checked={autoRecord}
+                              onChange={(e) => handleAutoRecordChange(e.target.checked)}
+                            />
+                            <label htmlFor="auto-record-sessions" className="settings-label">
+                              {t('autoRecordSessions')}
+                            </label>
+                            <span className="settings-help">{t('autoRecordSessionsDesc')}</span>
+                          </div>
+
+                          <div className="settings-field">
+                            <label className="settings-label" htmlFor="keepaliveInterval">
+                              {t('keepaliveInterval')}
+                            </label>
+                            <input
+                              id="keepaliveInterval"
+                              type="number"
+                              min={10}
+                              step={1}
+                              className="settings-input"
+                              style={{ width: '100px' }}
+                              value={keepaliveInterval}
+                              onChange={(e) => {
+                                const raw = e.target.value
+                                if (raw === '') {
+                                  setKeepaliveInterval('')
+                                  return
+                                }
+                                handleKeepaliveChange(
+                                  Number(raw),
+                                  typeof keepaliveMax === 'number' ? keepaliveMax : 3,
+                                )
+                              }}
+                              onBlur={() => {
+                                if (keepaliveInterval === '') {
+                                  handleKeepaliveChange(
+                                    30,
+                                    typeof keepaliveMax === 'number' ? keepaliveMax : 3,
+                                  )
+                                }
+                              }}
+                            />
+                            <span className="settings-help">{t('keepaliveIntervalDesc')}</span>
+                          </div>
+
+                          <div className="settings-field">
+                            <label className="settings-label" htmlFor="keepaliveMax">
+                              {t('keepaliveMax')}
+                            </label>
+                            <input
+                              id="keepaliveMax"
+                              type="number"
+                              min={2}
+                              step={1}
+                              className="settings-input"
+                              style={{ width: '100px' }}
+                              value={keepaliveMax}
+                              onChange={(e) => {
+                                const raw = e.target.value
+                                if (raw === '') {
+                                  setKeepaliveMax('')
+                                  return
+                                }
+                                handleKeepaliveChange(
+                                  typeof keepaliveInterval === 'number' ? keepaliveInterval : 30,
+                                  Number(raw),
+                                )
+                              }}
+                              onBlur={() => {
+                                if (keepaliveMax === '') {
+                                  handleKeepaliveChange(
+                                    typeof keepaliveInterval === 'number' ? keepaliveInterval : 30,
+                                    3,
+                                  )
+                                }
+                              }}
+                            />
+                            <span className="settings-help">{t('keepaliveMaxDesc')}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {settingsActiveTab === 'data' && (
+                    <>
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <div
+                            className="settings-field"
+                            style={{ flexDirection: 'column', alignItems: 'flex-start' }}
+                          >
+                            <label className="settings-label">{t('dataRoot')}</label>
+                            <div
+                              className="settings-data-root-row"
+                              style={{
+                                display: 'flex',
+                                gap: 8,
+                                alignItems: 'center',
+                                margin: '4px 0',
+                              }}
+                            >
+                              <button
+                                className="settings-save-btn"
+                                style={{ width: 'auto', padding: '4px 14px' }}
+                                onClick={handleDataRootBrowse}
+                              >
+                                {t('dataRootBrowse')}
+                              </button>
+                              {dataRoot && !dataRoot.isDefault && (
+                                <button
+                                  className="settings-save-btn"
+                                  style={{ width: 'auto', padding: '4px 14px' }}
+                                  onClick={handleDataRootReset}
+                                >
+                                  {t('dataRootReset')}
+                                </button>
+                              )}
+                              <span
+                                className="settings-help"
+                                style={{ margin: 0, wordBreak: 'break-all' }}
+                              >
+                                {dataRoot ? dataRoot.path : ''}
+                                {dataRoot?.isDefault ? ` ${t('dataRootDefault')}` : ''}
+                              </span>
+                            </div>
+                            <span className="settings-help">{t('dataRootDesc')}</span>
+                            <span className="settings-help">{t('dataRootRestartHint')}</span>
+                            <div
+                              className="settings-check-row"
+                              style={{
+                                display: 'flex',
+                                gap: 8,
+                                alignItems: 'center',
+                                margin: '4px 0',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!!dataRoot?.keyFollows}
+                                onChange={(e) => handleKeyFollowToggle(e.target.checked)}
+                              />
+                              <label className="settings-help" style={{ margin: 0 }}>
+                                {t('keyFollow')}
+                              </label>
+                            </div>
+                            <span className="settings-help">{t('keyFollowDesc')}</span>
+                            {dataRootMsg && (
+                              <span
+                                className="settings-help"
+                                style={{ margin: '2px 0 0', color: '#4caf50' }}
+                              >
+                                {dataRootMsg}
+                              </span>
+                            )}
+                          </div>
+
+                          <div
+                            className="settings-field"
+                            style={{ flexDirection: 'column', alignItems: 'flex-start' }}
+                          >
+                            <label className="settings-label">{t('dbMaintenance')}</label>
+                            <div
+                              style={{
+                                display: 'flex',
+                                gap: 8,
+                                alignItems: 'center',
+                                margin: '4px 0',
+                              }}
+                            >
+                              <span className="settings-help" style={{ margin: 0 }}>
+                                {dbStats
+                                  ? t('dbSizeValue', {
+                                      size: formatBytes(dbStats.dbBytes + dbStats.walBytes),
+                                    })
+                                  : '—'}
+                              </span>
+                              {dbStats && dbStats.reclaimableBytes > 0 && (
+                                <span
+                                  className="settings-help"
+                                  style={{ margin: 0, color: '#ffb74d' }}
+                                >
+                                  {t('dbReclaimable', {
+                                    size: formatBytes(dbStats.reclaimableBytes),
+                                  })}
+                                </span>
+                              )}
+                              <button
+                                className="settings-save-btn"
+                                style={{ width: 'auto', padding: '4px 14px' }}
+                                onClick={handleVacuumDb}
+                                disabled={dbBusy || !dbStats}
+                              >
+                                {dbBusy ? t('dbVacuuming') : t('dbVacuum')}
+                              </button>
+                            </div>
+                            <span className="settings-help">{t('dbMaintenanceDesc')}</span>
+                            {dbMsg && (
+                              <span
+                                className="settings-help"
+                                style={{
+                                  margin: '2px 0 0',
+                                  color: dbMsg.ok ? '#4caf50' : '#ff8a80',
+                                }}
+                              >
+                                {dbMsg.text}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Highlighting, the paste guard and the close guard are all about how a
+                      terminal behaves, so they belong to that pane even though each is its
+                      own card. AI's own appearance card moved to the AI pane. */}
+                  {settingsActiveTab === 'terminal' && (
+                    <>
+                      <HighlightSettingsCard cfg={hlCfg} onSave={saveHlCfg} />
+                      <PasteGuardSettingsCard cfg={pasteGuardCfg} onSave={savePasteGuardCfg} />
+                      <CloseGuardSettingsCard
+                        enabled={confirmCloseWithFiles}
+                        onToggle={saveConfirmCloseWithFiles}
+                      />
+                    </>
+                  )}
+
+                  {settingsActiveTab === 'docker' && (
+                    <>
+                      <div className="settings-card">
+                        <div className="settings-card-header">
+                          <div className="settings-card-icon">🐳</div>
+                          <div>
+                            <h3 className="settings-card-title">{t('dockerLogs')}</h3>
+                            <p className="settings-card-sub">{t('dockerLogsDesc')}</p>
+                          </div>
+                        </div>
+                        <div className="settings-fields">
+                          <div className="settings-field checkbox-field">
+                            <input
+                              id="docker-wordwrap"
+                              type="checkbox"
+                              checked={dockerWordWrap}
+                              onChange={(e) => {
+                                setDockerWordWrap(e.target.checked)
+                                try {
+                                  localStorage.setItem(
+                                    'wrolp-docker-wordwrap',
+                                    e.target.checked ? '1' : '0',
+                                  )
+                                } catch {}
+                              }}
+                            />
+                            <label htmlFor="docker-wordwrap" className="settings-label">
+                              {t('autoWrapLines')}
+                            </label>
+                          </div>
+                          <div className="settings-field checkbox-field">
+                            <input
+                              id="docker-follow"
+                              type="checkbox"
+                              checked={dockerFollow}
+                              onChange={(e) => {
+                                setDockerFollow(e.target.checked)
+                                try {
+                                  localStorage.setItem(
+                                    'wrolp-docker-follow',
+                                    e.target.checked ? '1' : '0',
+                                  )
+                                } catch {}
+                              }}
+                            />
+                            <label htmlFor="docker-follow" className="settings-label">
+                              {t('followNewest')}
+                            </label>
+                          </div>
+                          <div className="settings-field">
+                            <label htmlFor="docker-maxlines" className="settings-label">
+                              {t('maxRetainedLines')}
+                            </label>
+                            <input
+                              id="docker-maxlines"
+                              type="number"
+                              min="100"
+                              max="1000000"
+                              step="100"
+                              className="settings-input"
+                              style={{ width: '140px' }}
+                              value={dockerMaxLines}
+                              onChange={(e) => {
+                                const v = Math.max(
+                                  100,
+                                  Math.min(1000000, Number(e.target.value) || 5000),
+                                )
+                                setDockerMaxLines(v)
+                                try {
+                                  localStorage.setItem('wrolp-docker-maxlines', String(v))
+                                } catch {}
+                              }}
+                            />
+                            <span className="settings-help">{t('olderLinesDropped')}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {settingsActiveTab === 'about' && appVersion && (
                     <div className="settings-card">
                       <div className="settings-card-header">
                         <div className="settings-card-icon">
@@ -5422,18 +5489,67 @@ export default function App() {
                       </div>
                     </div>
                   )}
+
+                  {/* Update checking merged into this pane rather than standing on its
+                      own: "what version am I on" and "check for a new one" are one
+                      question, and a nav entry for the latter alone was noise. */}
+                  {settingsActiveTab === 'about' && (
+                    <div className="settings-card">
+                      <div className="settings-fields">
+                        <div className="settings-field">
+                          <label className="settings-label">{t('updates')}</label>
+                          <div className="settings-update-row">
+                            <button
+                              className="settings-save-btn"
+                              onClick={handleCheckUpdate}
+                              disabled={
+                                updateState === 'checking' ||
+                                updateState === 'downloading' ||
+                                updateState === 'installing'
+                              }
+                            >
+                              {updateState === 'checking' ? t('loading') : t('checkForUpdates')}
+                            </button>
+                            {updateInfo ? (
+                              <span className="settings-update-status">
+                                {t('newVersion', { ver: updateInfo.version })}
+                              </span>
+                            ) : updateInfo === null && updateState !== 'checking' ? (
+                              <span className="settings-update-status">{t('upToDate')}</span>
+                            ) : null}
+                          </div>
+                          {updateInfo && (
+                            <div className="settings-update-row" style={{ marginTop: 10 }}>
+                              <button
+                                className="settings-save-btn"
+                                onClick={handleDownloadUpdate}
+                                disabled={updateState !== 'idle'}
+                              >
+                                {updateState === 'downloading'
+                                  ? t('downloading')
+                                  : updateState === 'installing'
+                                    ? t('installing')
+                                    : t('downloadAndInstall')}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
               {settingsActiveTab === 'ai' && (
                 <div className="settings-pane">
                   <div className="settings-pane-header">
-                    <h3>AI Assistant</h3>
-                    <p>
-                      OpenAI-compatible chat with built-in tools. Configure multiple endpoints and
-                      pick one to use.
-                    </p>
+                    <h3>{t(settingsPane.title)}</h3>
+                    <p>{t(settingsPane.desc)}</p>
                   </div>
+
+                  {/* The assistant's own look (bubble style, streaming) sat under
+                      「General」 only because that was the pane that held everything. */}
+                  <AiAppearanceSettingsCard />
 
                   <div className="settings-card">
                     <div className="settings-card-header">

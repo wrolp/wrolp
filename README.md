@@ -149,7 +149,7 @@
 
 ### Data folder & database
 
-- **Relocatable data folder**: pick any directory in Settings → General and `wrolp.db`, `recordings/`, `connections.json` and the window config all move there. The choice is stored in a `data_root.json` anchor (kept in the default location) and applied on the next launch, which copies the data over when the target is empty and otherwise uses what is already there — nothing is overwritten.
+- **Relocatable data folder**: pick any directory in Settings → Data and `wrolp.db`, `recordings/`, `connections.json` and the window config all move there. The choice is stored in a `data_root.json` anchor (kept in the default location) and applied on the next launch, which copies the data over when the target is empty and otherwise uses what is already there — nothing is overwritten.
 - **Vault key option**: optionally carry `vault.key` along with the data folder on the next migration, making the folder portable as a whole. Off by default, so the key stays machine-anchored.
 - **Database maintenance**: Settings shows the current `wrolp.db` size and how much of it is reclaimable, with a **Shrink now** action (`VACUUM`). Deleting sessions or migrating legacy recordings also releases the freed pages automatically once the freed space is worth a rewrite, so the database no longer keeps its old size after data is removed.
 

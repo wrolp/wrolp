@@ -295,9 +295,15 @@ const zh: Partial<Record<TranslationKey, string>> = {
   closeGuardEnable: '关闭仍有打开文件的终端时弹确认',
   closeGuardHint: '关闭后，关闭终端或 pane 会立即丢弃其打开的文件（含未保存内容），不再提示。',
 
-  // Settings: general
-  settingsGeneral: '通用',
-  settingsAi: 'AI',
+  // 设置面板各页：侧栏按钮与页头读同两个键，两处不会叫出不同名字。
+  settingsPaneAppearance: '外观',
+  settingsPaneAppearanceDesc: '主题、终端调色板、强调色、窗口不透明度与语言。',
+  settingsPaneTerminal: '终端',
+  settingsPaneTerminalDesc: '回滚缓冲、录制、keepalive，以及输出高亮与粘贴处理方式。',
+  settingsPaneData: '数据',
+  settingsPaneDataDesc: '设置、录制与数据库在磁盘上的位置，以及空间回收。',
+  settingsPaneAboutDesc: '当前构建的版本与仓库信息，以及检查更新。',
+  settingsPaneAiDesc: '内置工具链的 OpenAI 兼容对话；可配置多个端点并选用其一。',
   settingsAppearance: '应用外观与更新偏好设置。',
   themeLabel: '主题',
   themeSystem: '跟随系统',
