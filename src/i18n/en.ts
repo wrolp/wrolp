@@ -225,6 +225,7 @@ const en = {
   commandSets: 'Command Sets',
   analysis: 'Analysis',
   docker: 'Docker',
+  dockerLocalUnavailable: 'Local Docker daemon not running — click to retry',
   selectAll: 'Select All',
   askAiSelectedText: 'Ask AI (selected text)',
   askAiAllLogs: 'Ask AI (all logs)',

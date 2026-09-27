@@ -17,6 +17,14 @@ body.resize-v,
 body.resize-v * {
   cursor: ns-resize !important;
 }
+// A column's edge is a horizontal resize too, but the two-headed arrow reads as
+// "move something sideways"; the double-bar glyph is the one that says "this
+// seam's width is what changes". Kept separate from `resize-h`, which the
+// sidebar's divider still uses.
+body.resize-col,
+body.resize-col * {
+  cursor: col-resize !important;
+}
 
 .app-container {
   display: flex;

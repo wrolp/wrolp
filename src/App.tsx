@@ -43,7 +43,13 @@ import type {
   FloatingKind,
   DockSide,
 } from './types'
-import { defaultLayout, mergeLayout, DEFAULT_DRAWER_HEIGHT } from './types'
+import {
+  defaultLayout,
+  mergeLayout,
+  DEFAULT_DRAWER_HEIGHT,
+  isDockerTarget,
+  dockerHostOf,
+} from './types'
 import {
   SplitNode,
   SplitBranch,
@@ -88,6 +94,7 @@ import {
   decryptApiKey,
   listAiModels,
   restartDockerContainer,
+  probeLocalDocker,
   removeDockerContainer,
   startDockerContainer,
   stopDockerContainer,
@@ -116,6 +123,9 @@ import type {
   DataRootInfo,
   DbStats,
   DbVacuumResult,
+  DockerHostRef,
+  DockerProbe,
+  DockerAnalysisTarget,
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
@@ -173,6 +183,10 @@ let cachedConnections: ConnectionConfig[] = []
 
 // Auto-incrementing tab id counter
 let nextTabId = 1
+
+// The 「本机 Docker」 group's host. A module constant so every consumer that receives it
+// sees the same object identity — `DockerLogViewer` and `DockerPanel` key work off it.
+const LOCAL_DOCKER_HOST: DockerHostRef = { kind: 'local' }
 
 // Pixel gap between adjacent terminal split panes. Panes are inset by half of
 // this on every edge shared with a sibling (see `renderPane`), and the invisible
@@ -1288,11 +1302,34 @@ export default function App() {
   const dockerExpanded = !layout.sidebar.sections.docker.collapsed
   const connectionListHeight = layout.sidebar.sections.connections.height ?? 200
   const dockerHeight = layout.sidebar.sections.docker.height ?? 220
+  // What this machine has, as last probed (null = the probe has not answered yet).
+  const [localDocker, setLocalDocker] = useState<DockerProbe | null>(null)
+  const [localDockerProbing, setLocalDockerProbing] = useState(false)
+  const probeLocalDockerNow = useCallback(async (refresh: boolean) => {
+    setLocalDockerProbing(true)
+    try {
+      setLocalDocker(await probeLocalDocker(refresh))
+    } catch {
+      // A failed probe is not a toast-worthy event: the group simply stays hidden and
+      // the row offers 重试 again.
+      setLocalDocker(null)
+    } finally {
+      setLocalDockerProbing(false)
+    }
+  }, [])
+  // The 「本机 Docker」 group can only exist if a daemon does, so ask once on boot — and
+  // again from the retry row, which is how a user who has just started Docker Desktop
+  // gets the list without restarting the app.
+  useEffect(() => {
+    probeLocalDockerNow(false)
+  }, [probeLocalDockerNow])
   const bottomPanelExpanded = layout.bottomPanel.visible
   const inspectorOpen = layout.inspector.visible
   // Remote filesystem shown in the Files panel (null = the tab's main session).
   const [fileTarget, setFileTarget] = useState<TargetRef | null>(null)
-  const [dockerAnalysisTarget, setDockerAnalysisTarget] = useState<string | null>(null)
+  const [dockerAnalysisTarget, setDockerAnalysisTarget] = useState<DockerAnalysisTarget | null>(
+    null,
+  )
   // Which filesystem mode the Files panel switcher is on (ssh / jump / docker).
   const [fileMode, setFileMode] = useState<FileTargetMode>('ssh')
   // The nav column's single filter box. Deliberately not persisted and not
@@ -1355,27 +1392,18 @@ export default function App() {
     target: null,
     position: null,
   })
-  // Phase 3 — panel dock drag (sidebar / bottom panel re-docking). `source` is
-  // which panel is being dragged; `over` is the dock zone currently hovered.
-  // DockZone covers every zone either panel can be dropped into.
-  type DockZone = 'left' | 'right' | 'bottom'
+  // Phase 3 — the drawer's dock drag. `source` says which panel is being dragged
+  // (only the bottom panel offers one now; the sidebar changes edge with
+  // Ctrl+Alt+B), and `over` is the zone currently under the pointer.
   const [dockDrag, setDockDrag] = useState<{
-    source: 'sidebar' | 'bottomPanel' | null
-    over: DockZone | null
+    source: 'bottomPanel' | null
+    over: 'right' | 'bottom' | null
   }>({
     source: null,
     over: null,
   })
-  const applyDock = (source: 'sidebar' | 'bottomPanel', pos: DockZone) => {
-    if (source === 'sidebar') {
-      if (pos === 'left' || pos === 'right') {
-        updateLayout((l) => ({ ...l, sidebar: { ...l.sidebar, side: pos } }))
-      }
-    } else {
-      if (pos === 'right' || pos === 'bottom') {
-        updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, pos } }))
-      }
-    }
+  const applyDock = (pos: 'right' | 'bottom') => {
+    updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, pos } }))
     setDockDrag({ source: null, over: null })
   }
   const leafIdCounter = useRef(1)
@@ -1414,6 +1442,20 @@ export default function App() {
     workspaceAnchorId != null
       ? ((focusedLeafId ? findLeaf(splitTree, focusedLeafId)?.tabId : null) ?? workspaceAnchorId)
       : null
+  // The host the one Docker group talks to: whichever daemon the terminal you are
+  // looking at can reach. A local shell — or no terminal at all, which is how this
+  // machine's containers first appear — means the local CLI; a connected SSH or
+  // Telnet session means that host. Serial has no shell to exec in, so nothing shows.
+  // Memoised on the tab rather than built at the call site, so `DockerLogViewer` and
+  // `DockerPanel` never see a fresh object identity per paint.
+  const dockerHost = useMemo<DockerHostRef | null>(() => {
+    const tab = focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
+    if (tab == null || tab.tabType === 'localShell') return LOCAL_DOCKER_HOST
+    if (tab.status !== 'connected') return null
+    return tab.tabType === 'terminal' || tab.tabType === 'telnet'
+      ? { kind: 'ssh', jumpTabId: tab.tabId }
+      : null
+  }, [focusedLeafTabId, tabs])
   // connectionId of the pane the command list sends to (drives its
   // "this connection only" filter + default scope for new commands).
   const activeSnippetConnectionId: string | null =
@@ -1614,28 +1656,30 @@ export default function App() {
   }, [tabs])
 
   // Open (or toggle closed) a Docker container's filesystem in the Files panel.
-  const handleOpenContainer = useCallback(
-    (container: ContainerInfo) => {
-      if (focusedLeafTabId == null) return
-      setFileTarget((prev) =>
-        prev?.kind === 'docker' && prev.container === container.name
-          ? null
-          : { kind: 'docker', jumpTabId: focusedLeafTabId, container: container.name },
-      )
-      setFileMode('docker')
-      updateLayout((l) => ({
-        ...l,
-        sidebar: {
-          ...l.sidebar,
-          sections: {
-            ...l.sidebar.sections,
-            files: { ...l.sidebar.sections.files, collapsed: false },
-          },
+  // `host` carries everything the target needs: a jump-host container names the
+  // session it execs through, a local one names nothing but the CLI — so the local
+  // group works with no session tab open.
+  const handleOpenContainer = useCallback((host: DockerHostRef, container: ContainerInfo) => {
+    const kind = host.kind === 'local' ? 'dockerLocal' : 'docker'
+    setFileTarget((prev) =>
+      isDockerTarget(prev) && prev.container === container.name && prev.kind === kind
+        ? null
+        : host.kind === 'local'
+          ? { kind: 'dockerLocal', container: container.name }
+          : { kind: 'docker', jumpTabId: host.jumpTabId, container: container.name },
+    )
+    setFileMode('docker')
+    updateLayout((l) => ({
+      ...l,
+      sidebar: {
+        ...l.sidebar,
+        sections: {
+          ...l.sidebar.sections,
+          files: { ...l.sidebar.sections.files, collapsed: false },
         },
-      }))
-    },
-    [focusedLeafTabId],
-  )
+      },
+    }))
+  }, [])
 
   // Open a new pane (split) inside the current workspace connected to the same
   // jump host and automatically run
@@ -1659,8 +1703,8 @@ export default function App() {
   // Trigger Docker container analysis (opens the report in the inspector's
   // "Docker" tab, which is the tab the target is focused on).
   const handleAnalyzeContainer = useCallback(
-    (container: ContainerInfo) => {
-      setDockerAnalysisTarget(container.name)
+    (host: DockerHostRef, container: ContainerInfo) => {
+      setDockerAnalysisTarget({ host, container: container.name })
       updateLayout((l) => ({
         ...l,
         inspector: { ...l.inspector, visible: true, tab: 'docker' },
@@ -1669,114 +1713,79 @@ export default function App() {
     [updateLayout],
   )
 
-  // Open a Docker container log viewer in a new tab.
-  // Restart a Docker container
-  const handleRestartContainer = useCallback(
-    async (container: ContainerInfo) => {
-      if (focusedLeafTabId == null) return
-      setToast({ kind: 'progress', text: t('dockerRestarting', { name: container.name }) })
-      try {
-        await restartDockerContainer(focusedLeafTabId, container.name)
-        setToast({ kind: 'success', text: t('dockerRestarted', { name: container.name }) })
-        setDockerRefreshKey((k) => k + 1)
-      } catch (e) {
-        const msg = String(e)
-        console.error(`Docker restart failed: ${msg}`)
-        setToast({
-          kind: 'error',
-          text: t('dockerRestartFailed', { name: container.name, err: msg }),
-        })
-      }
-    },
-    [focusedLeafTabId, t],
-  )
-
   // Bumped to force the DockerPanel list to reload after a stop/delete/start/restart.
   const [dockerRefreshKey, setDockerRefreshKey] = useState(0)
 
-  // Stop a Docker container
-  const handleStopContainer = useCallback(
-    async (container: ContainerInfo) => {
-      if (focusedLeafTabId == null) return
-      setToast({ kind: 'progress', text: t('dockerStopping', { name: container.name }) })
+  // The four lifecycle verbs share one shape — progress toast, call, success or error
+  // toast, list reload — and differ only in the word and the three keys. `host` comes from
+  // the panel that asked, so the same verb runs against the jump host or this machine.
+  const runDockerVerb = useCallback(
+    async (
+      host: DockerHostRef,
+      container: ContainerInfo,
+      verb: 'start' | 'stop' | 'restart' | 'rm',
+    ) => {
+      const spec = {
+        start: {
+          fn: startDockerContainer,
+          keys: ['dockerStarting', 'dockerStarted', 'dockerStartFailed'] as const,
+        },
+        stop: {
+          fn: stopDockerContainer,
+          keys: ['dockerStopping', 'dockerStopped', 'dockerStopFailed'] as const,
+        },
+        restart: {
+          fn: restartDockerContainer,
+          keys: ['dockerRestarting', 'dockerRestarted', 'dockerRestartFailed'] as const,
+        },
+        rm: {
+          fn: removeDockerContainer,
+          keys: ['dockerDeleting', 'dockerDeleted', 'dockerDeleteFailed'] as const,
+        },
+      }[verb]
+      setToast({ kind: 'progress', text: t(spec.keys[0], { name: container.name }) })
       try {
-        await stopDockerContainer(focusedLeafTabId, container.name)
-        setToast({ kind: 'success', text: t('dockerStopped', { name: container.name }) })
+        await spec.fn(host, container.name)
+        setToast({ kind: 'success', text: t(spec.keys[1], { name: container.name }) })
         setDockerRefreshKey((k) => k + 1)
       } catch (e) {
         const msg = String(e)
-        console.error(`Docker stop failed: ${msg}`)
-        setToast({
-          kind: 'error',
-          text: t('dockerStopFailed', { name: container.name, err: msg }),
-        })
+        console.error(`Docker ${verb} failed: ${msg}`)
+        setToast({ kind: 'error', text: t(spec.keys[2], { name: container.name, err: msg }) })
       }
     },
-    [focusedLeafTabId, t],
+    [t],
   )
 
-  // Start a Docker container
-  const handleStartContainer = useCallback(
-    async (container: ContainerInfo) => {
-      if (focusedLeafTabId == null) return
-      setToast({ kind: 'progress', text: t('dockerStarting', { name: container.name }) })
-      try {
-        await startDockerContainer(focusedLeafTabId, container.name)
-        setToast({ kind: 'success', text: t('dockerStarted', { name: container.name }) })
-        setDockerRefreshKey((k) => k + 1)
-      } catch (e) {
-        const msg = String(e)
-        console.error(`Docker start failed: ${msg}`)
-        setToast({
-          kind: 'error',
-          text: t('dockerStartFailed', { name: container.name, err: msg }),
-        })
-      }
-    },
-    [focusedLeafTabId, t],
-  )
-
-  // Remove a Docker container
-  const handleDeleteContainer = useCallback(
-    async (container: ContainerInfo) => {
-      if (focusedLeafTabId == null) return
-      setToast({ kind: 'progress', text: t('dockerDeleting', { name: container.name }) })
-      try {
-        await removeDockerContainer(focusedLeafTabId, container.name)
-        setToast({ kind: 'success', text: t('dockerDeleted', { name: container.name }) })
-        setDockerRefreshKey((k) => k + 1)
-      } catch (e) {
-        const msg = String(e)
-        console.error(`Docker remove failed: ${msg}`)
-        setToast({
-          kind: 'error',
-          text: t('dockerDeleteFailed', { name: container.name, err: msg }),
-        })
-      }
-    },
-    [focusedLeafTabId, t],
-  )
-
+  // Open a Docker container log viewer. With a pane on screen it rides the focused
+  // pane's `shellView` (an embedded tab, like an open file). With none — the local
+  // Docker group lists containers without needing a session — it becomes a plain
+  // tab-bar entry that takes the main area itself, the way a Settings tab does.
   const handleViewContainerLogs = useCallback(
-    (container: ContainerInfo) => {
-      if (focusedLeafTabId == null) return
+    (host: DockerHostRef, container: ContainerInfo) => {
+      const paneTabId = focusedLeafTabId
       const tabId = nextTabId++
       const newTab: TabInfo = {
         tabId,
         connectionName: `Logs: ${container.name}`,
-        host: `Docker`,
+        host: host.kind === 'local' ? 'Docker (local)' : `Docker`,
         status: 'connected',
         tabType: 'dockerLog',
-        jumpTabId: focusedLeafTabId,
+        jumpTabId: paneTabId ?? undefined,
+        dockerHost: host,
         containerName: container.name,
         containerId: container.id,
         containerImage: container.image,
-        embedded: true, // lives on the pane header, like an open file
+        embedded: paneTabId != null,
       }
       setTabs((prev) => [...prev, newTab])
+      if (paneTabId == null) {
+        setActiveTabId(tabId)
+        return
+      }
       // Show the log view on the focused pane (like opening a file), and select
       // that pane's workspace so a file or Settings tab can't cover it.
-      setShellViewFor(focusedLeafTabId, `dockerlog:${tabId}`)
+      setShellViewFor(paneTabId, `dockerlog:${tabId}`)
       const rootId = workspaceAnchorIdRef.current
       if (rootId != null) setActiveTabId(rootId)
     },
@@ -3045,7 +3054,12 @@ export default function App() {
       target.kind === 'wsl' ||
       target.kind === 'ftp'
         ? target.tabId
-        : target.jumpTabId
+        : target.kind === 'dockerLocal'
+          ? // A local container has no jump session to name, but the Files panel it was
+            // opened from lives in a pane of some session — that workspace owns the editor
+            // tab (close routing and the pane header both key off this).
+            (workspaceAnchorIdRef.current ?? 0)
+          : target.jumpTabId
     setEditorTabs((prev) => {
       if (prev.some((t) => t.key === key)) return prev
       return [
@@ -4275,21 +4289,22 @@ export default function App() {
     [connectionListHeight],
   )
 
-  // Files <-> Docker vertical divider drag-to-resize (only when the Docker panel is expanded)
-  const handleDockerDividerMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+  // Divider drag-to-resize for a sidebar section that sits BELOW its divider — the
+  // Docker group and the Files panel both share this, differing only in which section
+  // key receives the height.
+  const handleSectionDividerMouseDown = useCallback(
+    (section: 'docker', startHeight: number) => (e: React.MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
       isDraggingV.current = true
       const win = getCurrentWindow()
       const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
       const startY = e.clientY
-      const startHeight = dockerHeight
       win.setResizable(false).catch(() => {})
 
       const handleMouseMove = (ev: MouseEvent) => {
         if (!isDraggingV.current) return
-        // Docker panel sits BELOW this divider, so dragging the divider down
+        // The section sits below this divider, so dragging the divider down
         // (increasing clientY) must SHRINK it — mirror the shell divider's sign.
         const delta = startY - ev.clientY
         const containerHeight = sidebarEl?.clientHeight || 700
@@ -4300,7 +4315,7 @@ export default function App() {
             ...l.sidebar,
             sections: {
               ...l.sidebar.sections,
-              docker: { ...l.sidebar.sections.docker, height: newHeight },
+              [section]: { ...l.sidebar.sections[section], height: newHeight },
             },
           },
         }))
@@ -4320,7 +4335,7 @@ export default function App() {
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     },
-    [dockerHeight],
+    [],
   )
 
   // Bottom panel resize when docked to the bottom (horizontal divider -> height).
@@ -4383,11 +4398,11 @@ export default function App() {
       isDragging.current = false
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
-      document.body.classList.remove('resize-h')
+      document.body.classList.remove('resize-col')
       document.body.style.userSelect = ''
       win.setResizable(true).catch(() => {})
     }
-    document.body.classList.add('resize-h')
+    document.body.classList.add('resize-col')
     document.body.style.userSelect = 'none'
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
@@ -4419,11 +4434,11 @@ export default function App() {
       const handleMouseUp = () => {
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
-        document.body.classList.remove('resize-h')
+        document.body.classList.remove('resize-col')
         document.body.style.userSelect = ''
         win.setResizable(true).catch(() => {})
       }
-      document.body.classList.add('resize-h')
+      document.body.classList.add('resize-col')
       document.body.style.userSelect = 'none'
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
@@ -4448,6 +4463,25 @@ export default function App() {
     />
   )
 
+  // ---- Log viewer host ----
+  // One `DockerLogViewer` wiring, three hosts: a pane's surface, a floating window,
+  // and the main area when the log is a tab-bar entry (no pane existed). The
+  // `key` travels with the element, which is what keeps B35 fixed — see the pane
+  // site below for why switching `dockerlog:<A>` to `dockerlog:<B>` must remount.
+  const renderLogHost = (dl: TabInfo) => (
+    <DockerLogViewer
+      key={dl.tabId}
+      tabId={dl.tabId}
+      host={dl.dockerHost ?? { kind: 'ssh', jumpTabId: dl.jumpTabId! }}
+      containerName={dl.containerName!}
+      containerImage={dl.containerImage}
+      defaultWordWrap={dockerWordWrap}
+      defaultFollow={dockerFollow}
+      maxLines={dockerMaxLines}
+      onAskAi={(text) => handleOpenAiChat(text)}
+    />
+  )
+
   // ---- Floating pane content ----
   // Renders the same content a floated pane would show, hosted inside the
   // FloatingWindow overlay. Reuses the exact component wiring used inside a
@@ -4464,20 +4498,7 @@ export default function App() {
     if (item.kind === 'dockerLog') {
       const dl = dockerLogTabs.find((d) => d.tabId === item.dockerLogTabId)
       if (!dl) return null
-      return (
-        // `key`: see the pane-side render below — one instance per docker-log tab.
-        <DockerLogViewer
-          key={dl.tabId}
-          tabId={dl.tabId}
-          jumpTabId={dl.jumpTabId!}
-          containerName={dl.containerName!}
-          containerImage={dl.containerImage}
-          defaultWordWrap={dockerWordWrap}
-          defaultFollow={dockerFollow}
-          maxLines={dockerMaxLines}
-          onAskAi={(text) => handleOpenAiChat(text)}
-        />
-      )
+      return renderLogHost(dl)
     }
     // terminal / docker shell panes are handled by terminalPortals (the same
     // mounted TerminalComponent is re-routed into the floating window's body),
@@ -6583,25 +6604,15 @@ export default function App() {
                     flexDirection: 'column',
                   }}
                 >
-                  {/* `key` per docker-log tab: without it React reuses the
-                      same instance when the pane's shellView switches from
-                      `dockerlog:<A>` to `dockerlog:<B>` (same tree position,
-                      only props change) — and since DockerLogViewer's initial
-                      load lives in a mount-only effect (`[]`), the header would
-                      show B while the body still held A's logs and A's live
-                      stream (BUGS.md B35). Remounting also stops the old
-                      stream via its unmount cleanup. */}
-                  <DockerLogViewer
-                    key={dl.tabId}
-                    tabId={dl.tabId}
-                    jumpTabId={dl.jumpTabId!}
-                    containerName={dl.containerName!}
-                    containerImage={dl.containerImage}
-                    defaultWordWrap={dockerWordWrap}
-                    defaultFollow={dockerFollow}
-                    maxLines={dockerMaxLines}
-                    onAskAi={(text) => handleOpenAiChat(text)}
-                  />
+                  {/* `key` per docker-log tab (set in `renderLogHost`): without it
+                      React reuses the same instance when the pane's shellView
+                      switches from `dockerlog:<A>` to `dockerlog:<B>` (same tree
+                      position, only props change) — and since DockerLogViewer's
+                      initial load lives in a mount-only effect (`[]`), the header
+                      would show B while the body still held A's logs and A's live
+                      stream (BUGS.md B35). Remounting also stops the old stream
+                      via its unmount cleanup. */}
+                  {renderLogHost(dl)}
                 </div>
               )
             })()}
@@ -6780,6 +6791,13 @@ export default function App() {
   // its own, so it borrows the session that owns it — otherwise selecting a file
   // would make the bar claim "Connected /etc/nginx/nginx.conf".
   const statusBarTab = activeFileTab ? ownerSessionTab : activeTerminalTab
+  // A container log opened while no session tab existed has no pane to sit in, so
+  // it is a plain tab-bar entry that takes the main area. `shownRootId` is its own
+  // id, which already hides every workspace behind it.
+  const activeLogTab =
+    activeTerminalTab?.tabType === 'dockerLog' && !activeTerminalTab.embedded
+      ? activeTerminalTab
+      : null
 
   const terminalContent = (
     <div className="terminal-wrapper">
@@ -6864,6 +6882,9 @@ export default function App() {
             if (activeFile) floatEditor(activeFile.key)
           })}
         </div>
+        {/* A pane-free container log. Mounted only while selected: the viewer's
+            unmount cleanup stops its own follow stream. */}
+        {activeLogTab && <div className="dockerlog-overlay">{renderLogHost(activeLogTab)}</div>}
         {terminalPortals}
       </div>
       <div ref={terminalPoolRefCb} className="terminal-pool" />
@@ -6877,7 +6898,20 @@ export default function App() {
     // panel tracks whichever connection you clicked into.
     const filesTab =
       focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
-    const showFilePanel = filesTab?.status === 'connected'
+    const sessionConnected = filesTab?.status === 'connected'
+    // A local container's files are read by spawning the CLI, so the panel has a
+    // filesystem to show even with no session anywhere — the same reason the Docker
+    // group can point at this machine without one.
+    const showFilePanel = sessionConnected || fileTarget?.kind === 'dockerLocal'
+    // Whether the single Docker group renders: it needs a reachable host, and when
+    // that host is this machine the daemon has to be answering. (The retry line below
+    // covers the installed-but-idle local case, which is the one the user can fix.)
+    const panelDockerHost =
+      !layout.sidebar.sections.docker.visible ||
+      dockerHost == null ||
+      (dockerHost.kind === 'local' && !localDocker?.serverRunning)
+        ? null
+        : dockerHost
     return (
       <>
         {layout.sidebar.sections.connections.visible && (
@@ -6984,8 +7018,10 @@ export default function App() {
                 // show the distribution; other non-session targets (jump) use
                 // their own targetLabel.
                 const serverLabel = fileTarget
-                  ? fileTarget.kind === 'docker'
-                    ? hostLabel
+                  ? isDockerTarget(fileTarget)
+                    ? // Only a jump-host container is reached *through* that session — a
+                      // local container's files have no host to name.
+                      hostLabel && fileTarget.kind === 'docker'
                       ? `${hostLabel} → docker:${fileTarget.container}`
                       : `docker:${fileTarget.container}`
                     : fileTarget.kind === 'wsl'
@@ -7000,9 +7036,10 @@ export default function App() {
                     ref={fileTreeRef}
                     tabId={ftabId}
                     isConnected={true}
+                    hasSession={sessionConnected}
                     serverLabel={serverLabel}
                     defaultPath={
-                      fileTarget?.kind === 'docker'
+                      isDockerTarget(fileTarget)
                         ? '/'
                         : fileTarget?.kind === 'local' || fileTarget?.kind === 'wsl'
                           ? // Empty path resolves to the user's home directory
@@ -7062,14 +7099,26 @@ export default function App() {
                 )
               })()}
             </div>
+          </>
+        )}
 
-            {dockerExpanded && layout.sidebar.sections.docker.visible && (
-              <div className="panel-divider-h" onMouseDown={handleDockerDividerMouseDown} />
-            )}
-
-            {/* Docker containers on the focused host — follows the focused
-                shell so splitting / switching panes swaps the container list. */}
-            {layout.sidebar.sections.docker.visible && focusedLeafTabId != null && (
+        {/* One Docker group, whose host is whichever daemon the focused terminal can
+            reach — see `dockerHost`. Splitting or switching panes swaps the container
+            list along with the Files panel above it, and a machine with only a local
+            daemon gets the same group with nothing connected. The head's metadata run
+            is what names the host it is reading (`4 · docker 29.8.0` vs `0 · web:22`). */}
+        {(() => {
+          const host = panelDockerHost
+          if (!host) return null
+          const isLocal = host.kind === 'local'
+          return (
+            <>
+              {dockerExpanded && (
+                <div
+                  className="panel-divider-h"
+                  onMouseDown={handleSectionDividerMouseDown('docker', dockerHeight)}
+                />
+              )}
               <div
                 className="collapsible-section"
                 style={
@@ -7079,20 +7128,25 @@ export default function App() {
                 }
               >
                 <DockerPanel
-                  jumpTabId={focusedLeafTabId ?? 0}
+                  host={host}
                   refreshSignal={dockerRefreshKey}
-                  serverLabel={(() => {
-                    const dtId = focusedLeafTabId ?? 0
-                    const dt = tabs.find((t) => t.tabId === dtId)
-                    const dc = dt?.connectionId
-                      ? connections.find((c) => c.id === dt.connectionId)
-                      : undefined
-                    return dc
-                      ? dc.name === dc.host
-                        ? `${dc.host}:${dc.port}`
-                        : `${dc.name} (${dc.host}:${dc.port})`
-                      : dt?.connectionName
-                  })()}
+                  serverLabel={
+                    isLocal
+                      ? localDocker?.serverVersion
+                        ? `${localDocker.bin} ${localDocker.serverVersion}`
+                        : undefined
+                      : (() => {
+                          const dt = tabs.find((t) => t.tabId === host.jumpTabId)
+                          const dc = dt?.connectionId
+                            ? connections.find((c) => c.id === dt.connectionId)
+                            : undefined
+                          return dc
+                            ? dc.name === dc.host
+                              ? `${dc.host}:${dc.port}`
+                              : `${dc.name} (${dc.host}:${dc.port})`
+                            : dt?.connectionName
+                        })()
+                  }
                   expanded={dockerExpanded}
                   onToggleExpanded={() =>
                     updateLayout((l) => ({
@@ -7109,41 +7163,58 @@ export default function App() {
                       },
                     }))
                   }
-                  activeContainer={fileTarget?.kind === 'docker' ? fileTarget.container : null}
+                  activeContainer={
+                    isLocal
+                      ? fileTarget?.kind === 'dockerLocal'
+                        ? fileTarget.container
+                        : null
+                      : fileTarget?.kind === 'docker'
+                        ? fileTarget.container
+                        : null
+                  }
                   filter={navFilter}
-                  onOpenContainer={handleOpenContainer}
-                  onEnterShell={handleEnterContainerShell}
-                  onAnalyzeContainer={handleAnalyzeContainer}
-                  onViewLogs={handleViewContainerLogs}
-                  onRestartContainer={handleRestartContainer}
-                  onStopContainer={handleStopContainer}
-                  onStartContainer={handleStartContainer}
-                  onDeleteContainer={handleDeleteContainer}
+                  onOpenContainer={(c) => handleOpenContainer(host, c)}
+                  onEnterShell={
+                    // Entering a container's shell injects `docker exec -it` into a
+                    // terminal, which only a jump-host session has (P2b).
+                    isLocal ? undefined : handleEnterContainerShell
+                  }
+                  onAnalyzeContainer={(c) => handleAnalyzeContainer(host, c)}
+                  onViewLogs={(c) => handleViewContainerLogs(host, c)}
+                  onRestartContainer={(c) => runDockerVerb(host, c, 'restart')}
+                  onStopContainer={(c) => runDockerVerb(host, c, 'stop')}
+                  onStartContainer={(c) => runDockerVerb(host, c, 'start')}
+                  onDeleteContainer={(c) => runDockerVerb(host, c, 'rm')}
                 />
               </div>
-            )}
-          </>
-        )}
+            </>
+          )
+        })()}
+        {/* A CLI that is installed but has no daemon is the one case the user can fix
+            themselves (start Docker Desktop), so it gets a retry line — but only while the
+            group would actually be pointing here, not while an SSH session owns the head.
+            No CLI at all stays silent — that row would be permanent noise on every machine
+            without Docker. */}
+        {layout.sidebar.sections.docker.visible &&
+          dockerHost?.kind === 'local' &&
+          localDocker?.installed &&
+          !localDocker.serverRunning && (
+            <button
+              type="button"
+              className="docker-local-retry"
+              title={localDocker.message || undefined}
+              disabled={localDockerProbing}
+              onClick={() => probeLocalDockerNow(true)}
+            >
+              {t('dockerLocalUnavailable')}
+            </button>
+          )}
       </>
     )
   })()
 
   const sidebarEl = showSidebar ? (
     <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-      <div
-        className="panel-drag-handle"
-        title="Drag to re-dock sidebar (left / right)"
-        draggable
-        onMouseDown={(e) => e.stopPropagation()}
-        onDragStart={(e) => {
-          e.dataTransfer.effectAllowed = 'move'
-          e.dataTransfer.setData('text/plain', 'sidebar')
-          setDockDrag({ source: 'sidebar', over: null })
-        }}
-        onDragEnd={() => setDockDrag({ source: null, over: null })}
-      >
-        ⠿
-      </div>
       <div className="nav-search">
         <Icon name="search" size={12} />
         <input
@@ -7614,68 +7685,35 @@ export default function App() {
         )}
         {layout.sidebar.side === 'right' && sidebarEl}
 
-        {/* Phase 3 — dock drop zones, shown while dragging a panel */}
+        {/* Phase 3 — dock drop zones, shown while the drawer is being dragged */}
         {dockDrag.source && (
           <div className="dock-overlay">
-            {dockDrag.source === 'sidebar' ? (
-              <>
-                <div
-                  className={`dock-zone dock-left${dockDrag.over === 'left' ? ' active' : ''}`}
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    setDockDrag((d) => ({ ...d, over: 'left' }))
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    applyDock('sidebar', 'left')
-                  }}
-                >
-                  ◧&nbsp;Left
-                </div>
-                <div
-                  className={`dock-zone dock-right${dockDrag.over === 'right' ? ' active' : ''}`}
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    setDockDrag((d) => ({ ...d, over: 'right' }))
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    applyDock('sidebar', 'right')
-                  }}
-                >
-                  Right&nbsp;◨
-                </div>
-              </>
-            ) : (
-              <>
-                <div
-                  className={`dock-zone dock-right${dockDrag.over === 'right' ? ' active' : ''}`}
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    setDockDrag((d) => ({ ...d, over: 'right' }))
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    applyDock('bottomPanel', 'right')
-                  }}
-                >
-                  Right&nbsp;◨
-                </div>
-                <div
-                  className={`dock-zone dock-bottom${dockDrag.over === 'bottom' ? ' active' : ''}`}
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    setDockDrag((d) => ({ ...d, over: 'bottom' }))
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    applyDock('bottomPanel', 'bottom')
-                  }}
-                >
-                  ▁&nbsp;Bottom
-                </div>
-              </>
-            )}
+            <div
+              className={`dock-zone dock-right${dockDrag.over === 'right' ? ' active' : ''}`}
+              onDragOver={(e) => {
+                e.preventDefault()
+                setDockDrag((d) => ({ ...d, over: 'right' }))
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                applyDock('right')
+              }}
+            >
+              Right&nbsp;◨
+            </div>
+            <div
+              className={`dock-zone dock-bottom${dockDrag.over === 'bottom' ? ' active' : ''}`}
+              onDragOver={(e) => {
+                e.preventDefault()
+                setDockDrag((d) => ({ ...d, over: 'bottom' }))
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                applyDock('bottom')
+              }}
+            >
+              ▁&nbsp;Bottom
+            </div>
           </div>
         )}
       </div>

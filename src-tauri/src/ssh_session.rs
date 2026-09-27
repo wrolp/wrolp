@@ -597,6 +597,13 @@ pub enum TargetRef {
     container: String,
     user: Option<String>,
   },
+  /// A Docker container on **this machine**, accessed by spawning the local
+  /// `docker`/`podman` CLI (`LOCAL-DOCKER-PLAN.md` P2). No jump tab: the daemon is local.
+  #[serde(rename = "dockerLocal")]
+  DockerLocal {
+    container: String,
+    user: Option<String>,
+  },
   /// A container running sshd, reached via ProxyJump (host = container IP).
   #[serde(rename = "dockerSsh")]
   DockerSsh {
@@ -783,6 +790,10 @@ pub struct AppState {
   pub docker_log_streams: StdMutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
   /// Docker log stream ID counter
   pub next_docker_log_stream_id: AtomicU64,
+  /// What `probe_local_docker` last learned about this machine's Docker CLI (`None` =
+  /// never probed). Cached because the sidebar probes on boot and every local command
+  /// needs the CLI name; `refresh: true` re-runs it.
+  pub local_docker: StdMutex<Option<crate::docker_host::DockerProbe>>,
   /// AI chat streaming buffers: chat_id → state
   pub ai_chat_buffers: StdMutex<HashMap<String, AiChatState>>,
   /// Cached AI configuration (loaded at startup)
@@ -792,8 +803,7 @@ pub struct AppState {
   /// Frontend UI-tool bridge: request id → oneshot sender awaiting the WebView's
   /// JSON result (AI appearance/settings tools). Ids that nobody answers are
   /// dropped on timeout / by `ai_ui_tool_result` silently ignoring unknown ids.
-  pub ui_tool_pending:
-    StdMutex<HashMap<u64, tokio::sync::oneshot::Sender<String>>>,
+  pub ui_tool_pending: StdMutex<HashMap<u64, tokio::sync::oneshot::Sender<String>>>,
   /// Monotonic id source for `ui_tool_pending`.
   pub next_ui_tool_id: AtomicU64,
   /// Active local shell sessions: tab_id → LocalShell
@@ -943,6 +953,7 @@ impl AppState {
       docker_log_buffers: StdMutex::new(HashMap::new()),
       docker_log_streams: StdMutex::new(HashMap::new()),
       next_docker_log_stream_id: AtomicU64::new(1),
+      local_docker: StdMutex::new(None),
       ai_chat_buffers: StdMutex::new(HashMap::new()),
       ai_config: StdMutex::new(ai_config),
       ai_pending: StdMutex::new(None),

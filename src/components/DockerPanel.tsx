@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ContainerInfo } from '../types'
+import type { ContainerInfo, DockerHostRef } from '../types'
 import {
   listDockerContainers,
   removeDockerContainer,
@@ -12,14 +12,20 @@ import { ConfirmDialog } from './ConfirmDialog'
 import { useI18n } from '../i18n'
 
 interface DockerPanelProps {
-  /** Connected (jump host) tab used to run `docker ps` / `docker exec`. */
-  jumpTabId: number
+  /**
+   * Where `docker ps` / `docker exec` runs: a connected jump-host tab, or this machine.
+   * Read as a value, never as an identity — the panel keys its reload on the host's
+   * *shape*, so a caller may pass a fresh object literal each render.
+   */
+  host: DockerHostRef
   expanded?: boolean
   onToggleExpanded?: () => void
   /** Currently-opened container name (its filesystem is shown in the Files panel). */
   activeContainer?: string | null
-  onOpenContainer: (container: ContainerInfo) => void
-  /** Enter a shell inside the container (opens new terminal tab). */
+  /** Absent for a read-only list. */
+  onOpenContainer?: (container: ContainerInfo) => void
+  /** Enter a shell inside the container (opens new terminal tab). Jump-host containers
+   * only: the local group has no PTY command to run yet (P2b). */
   onEnterShell?: (container: ContainerInfo) => void
   /** Analyse a Docker container (opens report in BottomPanel). */
   onAnalyzeContainer?: (container: ContainerInfo) => void
@@ -43,12 +49,13 @@ interface DockerPanelProps {
 }
 
 /**
- * Lists Docker containers reachable from the connected host. Clicking a
- * container opens its filesystem in the Files panel via a `docker` TargetRef.
- * Right-clicking a running container shows a context menu to open a shell.
+ * Lists the containers of ONE Docker host — which one is the caller's `host`, and the
+ * sidebar keeps a single group whose host follows the focused terminal. Clicking a
+ * container opens its filesystem in the Files panel via a `docker` / `dockerLocal`
+ * TargetRef. Right-clicking a running container shows the lifecycle menu.
  */
 export const DockerPanel: React.FC<DockerPanelProps> = ({
-  jumpTabId,
+  host,
   expanded = true,
   onToggleExpanded,
   activeContainer,
@@ -76,22 +83,31 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
 
+  // Reload on the host's *shape*, not its object identity: callers pass a fresh literal
+  // per render, and depending on that would refetch `docker ps` on every paint.
+  const hostKey = host.kind === 'ssh' ? `ssh:${host.jumpTabId}` : 'local'
+  const hostRef = useRef(host)
+  hostRef.current = host
+
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      setContainers(await listDockerContainers(jumpTabId))
+      setContainers(await listDockerContainers(hostRef.current))
     } catch (e) {
       setError(String(e))
       setContainers([])
     } finally {
       setLoading(false)
     }
-  }, [jumpTabId])
+    // Reads `hostRef` only, so it stays stable; the reload is driven by `hostKey` below.
+  }, [])
 
+  // `hostKey`, not `host`: callers pass a fresh object literal per render, and depending
+  // on the identity would reload `docker ps` on every paint.
   useEffect(() => {
     load()
-  }, [load, refreshSignal])
+  }, [load, hostKey, refreshSignal])
 
   // Close context menu on click elsewhere
   useEffect(() => {
@@ -145,12 +161,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
       onRestartContainer(container)
     } else {
       // Fallback: restart directly and refresh the list
-      restartDockerContainer(jumpTabId, container.name)
+      restartDockerContainer(host, container.name)
         .then(() => load())
         .catch((e) => setError(String(e)))
     }
     setCtxMenu(null)
-  }, [ctxMenu, jumpTabId, load, onRestartContainer])
+  }, [ctxMenu, host, load, onRestartContainer])
 
   const handleStop = useCallback(() => {
     if (!ctxMenu) return
@@ -159,12 +175,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
       onStopContainer(container)
     } else {
       // Fallback: stop directly and refresh the list
-      stopDockerContainer(jumpTabId, container.name)
+      stopDockerContainer(host, container.name)
         .then(() => load())
         .catch((e) => setError(String(e)))
     }
     setCtxMenu(null)
-  }, [ctxMenu, jumpTabId, load, onStopContainer])
+  }, [ctxMenu, host, load, onStopContainer])
 
   const handleStart = useCallback(() => {
     if (!ctxMenu) return
@@ -173,12 +189,12 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
       onStartContainer(container)
     } else {
       // Fallback: start directly and refresh the list
-      startDockerContainer(jumpTabId, container.name)
+      startDockerContainer(host, container.name)
         .then(() => load())
         .catch((e) => setError(String(e)))
     }
     setCtxMenu(null)
-  }, [ctxMenu, jumpTabId, load, onStartContainer])
+  }, [ctxMenu, host, load, onStartContainer])
 
   const handleDelete = useCallback(() => {
     if (!ctxMenu) return
@@ -193,11 +209,11 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     const container = confirmDelete
     const doRemove = onDeleteContainer
       ? onDeleteContainer(container)
-      : removeDockerContainer(jumpTabId, container.name)
+      : removeDockerContainer(host, container.name)
           .then(() => load())
           .catch((e) => setError(String(e)))
     Promise.resolve(doRemove).finally(() => setConfirmDelete(null))
-  }, [confirmDelete, jumpTabId, load, onDeleteContainer])
+  }, [confirmDelete, host, load, onDeleteContainer])
 
   // The nav column's filter box narrows this list too. `image` is matched
   // because on a host with thirty containers the image is what you remember and
@@ -273,12 +289,16 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
                 key={c.id}
                 className={`docker-item${activeContainer === c.name ? ' active' : ''}${isRunning ? '' : ' stopped'}`}
                 onClick={() => {
-                  if (isRunning) onOpenContainer(c)
+                  if (isRunning) onOpenContainer?.(c)
                 }}
                 onContextMenu={(e) => handleContextMenu(e, c)}
                 title={`${c.name}\n${c.image}\n${c.status}${
                   isRunning ? '\n\n' + t('rightClickShell') : '\n\n' + t('rightClickStart')
-                }${isRunning ? `\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}` : ''}`}
+                }${
+                  isRunning && onOpenContainer
+                    ? `\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}`
+                    : ''
+                }`}
               >
                 <span className="docker-icon">
                   <Icon name="container" />
@@ -313,10 +333,15 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
         >
           {ctxMenu.container.state === 'running' ? (
             <>
-              <div className="context-menu-item" onClick={handleEnterShell}>
-                <Icon name="terminal" size={14} />
-                {t('enterShell')}
-              </div>
+              {/* Gated like its siblings: entering a container opens a *terminal tab on
+                  the jump host*, which the local group cannot do until the local PTY
+                  command lands in P2. */}
+              {onEnterShell && (
+                <div className="context-menu-item" onClick={handleEnterShell}>
+                  <Icon name="terminal" size={14} />
+                  {t('enterShell')}
+                </div>
+              )}
               {onAnalyzeContainer && (
                 <div className="context-menu-item" onClick={handleAnalyzeContainer}>
                   <Icon name="search" size={14} />

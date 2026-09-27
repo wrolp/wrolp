@@ -267,6 +267,11 @@ export interface TabInfo {
   embedded?: boolean
   // dockerLog tab fields
   jumpTabId?: number
+  /**
+   * Which Docker the log tab reads. Absent means the jump host of `jumpTabId` — the
+   * shape every log tab had before the local daemon arrived (P1).
+   */
+  dockerHost?: DockerHostRef
   containerName?: string
   containerId?: string
   containerImage?: string
@@ -395,6 +400,7 @@ export type TargetRef =
   | { kind: 'session'; tabId: number }
   | { kind: 'jumpRemote'; jumpTabId: number; host: string; port: number; auth: TargetAuth }
   | { kind: 'docker'; jumpTabId: number; container: string; user?: string }
+  | { kind: 'dockerLocal'; container: string; user?: string }
   | { kind: 'dockerSsh'; jumpTabId: number; host: string; port: number; auth: TargetAuth }
   | { kind: 'local'; tabId: number }
   | { kind: 'wsl'; tabId: number; distro?: string }
@@ -407,6 +413,29 @@ export interface ContainerInfo {
   image: string
   state: string
   status: string
+}
+
+/**
+ * Where a Docker command runs: a connected jump-host tab, or this machine.
+ * Mirrors `DockerHostRef` in `src-tauri/src/docker_host.rs`.
+ */
+export type DockerHostRef = { kind: 'ssh'; jumpTabId: number } | { kind: 'local' }
+
+/**
+ * What `probe_local_docker` learned about this machine. Mirrors `DockerProbe` on the
+ * Rust side. The UI labels come from the flags — `message` is the raw CLI diagnostic,
+ * shown as detail rather than as the sentence.
+ */
+export interface DockerProbe {
+  installed: boolean
+  serverRunning: boolean
+  /** Which CLI answered (`"docker"` / `"podman"`); null when neither is on PATH. */
+  bin: string | null
+  clientVersion: string | null
+  serverVersion: string | null
+  /** `DOCKER_HOST` as the environment sets it, shown so a custom endpoint is visible. */
+  dockerHost: string | null
+  message: string
 }
 
 /** A recorded local-shell working directory (for the "recent directories" list). */
@@ -601,6 +630,8 @@ export function targetLabel(target: TargetRef): string {
       return `${target.host}:${target.port}`
     case 'docker':
       return `docker:${target.container}`
+    case 'dockerLocal':
+      return `local docker:${target.container}`
     case 'dockerSsh':
       return `docker-ssh:${target.host}:${target.port}`
     case 'local':
@@ -610,6 +641,30 @@ export function targetLabel(target: TargetRef): string {
     case 'ftp':
       return 'FTP'
   }
+}
+
+/** Either Docker kind: a container's filesystem, wherever its daemon happens to live. */
+export function isDockerTarget(
+  target: TargetRef | null | undefined,
+): target is Extract<TargetRef, { kind: 'docker' }> | Extract<TargetRef, { kind: 'dockerLocal' }> {
+  return target?.kind === 'docker' || target?.kind === 'dockerLocal'
+}
+
+/**
+ * Which Docker a target's commands go to, or null when it is not a container target.
+ * Every call that reaches a container goes through this, so a container can be on the
+ * jump host or this machine without the callers branching on the shape.
+ */
+export function dockerHostOf(target: TargetRef): DockerHostRef | null {
+  if (target.kind === 'docker') return { kind: 'ssh', jumpTabId: target.jumpTabId }
+  if (target.kind === 'dockerLocal') return { kind: 'local' }
+  return null
+}
+
+/** The container the inspector's Docker tab is currently showing a report for. */
+export interface DockerAnalysisTarget {
+  host: DockerHostRef
+  container: string
 }
 
 // ===== Floating (pop-out) panes =====

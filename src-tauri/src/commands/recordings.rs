@@ -204,7 +204,8 @@ fn reveal_in_file_manager(path: &std::path::Path) {
       "'; $sh=New-Object -ComObject Shell.Application; \
         $sh.Open((Split-Path $f)) | Out-Null; \
         $fi=$sh.NameSpace((Split-Path $f)).ParseName((Split-Path $f -Leaf)); \
-        if($fi){ try { $fi.InvokeVerb('select') } catch {} }".to_string(),
+        if($fi){ try { $fi.InvokeVerb('select') } catch {} }"
+        .to_string(),
     ]
     .concat();
     let _ = std::process::Command::new("powershell")

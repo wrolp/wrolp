@@ -50,12 +50,19 @@ fn resolve_local_shell(
       .collect();
       if let Some(dir) = git_for_windows_install_dir() {
         candidates.push(std::path::PathBuf::from(&dir).join("bin").join("bash.exe"));
-        candidates
-          .push(std::path::PathBuf::from(dir).join("usr").join("bin").join("bash.exe"));
+        candidates.push(
+          std::path::PathBuf::from(dir)
+            .join("usr")
+            .join("bin")
+            .join("bash.exe"),
+        );
       }
       for c in &candidates {
         if c.exists() {
-          return Ok((c.to_string_lossy().into_owned(), vec!["--login".to_string()]));
+          return Ok((
+            c.to_string_lossy().into_owned(),
+            vec!["--login".to_string()],
+          ));
         }
       }
       Err(
@@ -180,9 +187,18 @@ mod tests {
 
   #[test]
   fn ignores_unrelated_reg_lines() {
-    assert_eq!(reg_install_path_from_line("HKEY_LOCAL_MACHINE\\SOFTWARE\\GitForWindows"), None);
-    assert_eq!(reg_install_path_from_line("ERROR: The system was unable to find"), None);
-    assert_eq!(reg_install_path_from_line("    SomethingElse    REG_SZ    x"), None);
+    assert_eq!(
+      reg_install_path_from_line("HKEY_LOCAL_MACHINE\\SOFTWARE\\GitForWindows"),
+      None
+    );
+    assert_eq!(
+      reg_install_path_from_line("ERROR: The system was unable to find"),
+      None
+    );
+    assert_eq!(
+      reg_install_path_from_line("    SomethingElse    REG_SZ    x"),
+      None
+    );
   }
 
   #[test]
@@ -474,7 +490,7 @@ pub async fn open_local_shell(
           let held = incomplete.to_vec();
           tail = held;
           if chunk.is_empty() {
-            continue
+            continue;
           }
           // Tee a copy to the AI sink first (the chunk is moved into the
           // frontend queue below). Only active while an AI command runs.

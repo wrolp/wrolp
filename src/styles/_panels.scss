@@ -128,7 +128,8 @@
     width var(--d-3) var(--e-out);
 
   body.resize-h &,
-  body.resize-v & {
+  body.resize-v &,
+  body.resize-col & {
     transition: none;
   }
 
@@ -881,6 +882,29 @@
   background: $bg-primary;
 }
 
+// A CLI is installed but its daemon is not answering — the one local-Docker state the
+// user can fix themselves (start Docker Desktop), so the row is the retry button.
+.docker-local-retry {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: $text-muted;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: $text-primary;
+    background: var(--menu-hover);
+  }
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+}
+
 // The header itself is `.panel-head.sec` now; only this switch is docker's own.
 .docker-filter-toggle {
   display: inline-flex;
@@ -1169,17 +1193,7 @@
   }
 }
 
-// Dock handle sits at the top of the sidebar container.
-.sidebar-container > .panel-drag-handle {
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: $bg-secondary;
-  border-bottom: 1px solid $border;
-}
-
-// Full-screen overlay shown while a panel is being re-docked; the three zones
+// Full-screen overlay shown while the drawer is being re-docked; its two zones
 // capture the drop.
 .dock-overlay {
   position: fixed;
@@ -1206,14 +1220,6 @@
     background: rgba(0, 122, 204, 0.22);
     border-color: $accent;
   }
-}
-
-.dock-left {
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 33.33%;
-  border-right: none;
 }
 
 .dock-right {

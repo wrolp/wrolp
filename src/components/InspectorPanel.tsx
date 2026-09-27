@@ -1,5 +1,5 @@
 import React, { type ReactNode } from 'react'
-import type { ConnectionConfig, DockSide, InspectorTab } from '../types'
+import type { ConnectionConfig, DockSide, DockerAnalysisTarget, InspectorTab } from '../types'
 import { HostAnalysisPanel } from './HostAnalysisPanel'
 import { DockerAnalysisPanel } from './DockerAnalysisPanel'
 import { Icon } from './Icon'
@@ -35,7 +35,7 @@ interface Props {
   /** Pointer-down on the column's workspace-facing edge, while docked. */
   onColumnResizeStart: (e: React.MouseEvent) => void
   /** Container to analyse — set by DockerPanel's context menu. */
-  dockerAnalysisTarget?: string | null
+  dockerAnalysisTarget?: DockerAnalysisTarget | null
   onDockerAnalyzed?: () => void
   /**
    * The AI surface, built by `App` because `AiChatPanel` takes its conversation,
@@ -194,8 +194,8 @@ export const InspectorPanel: React.FC<Props> = ({
         )}
         {tab === 'docker' && (
           <DockerAnalysisPanel
-            activeTabId={activeTabId}
-            targetContainer={dockerAnalysisTarget ?? null}
+            host={dockerAnalysisTarget?.host ?? null}
+            targetContainer={dockerAnalysisTarget?.container ?? null}
             onAnalyzed={onDockerAnalyzed}
           />
         )}

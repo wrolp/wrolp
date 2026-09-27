@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import type { DockerAnalysis, ResourceUsage } from '../types'
+import type { DockerAnalysis, DockerHostRef, ResourceUsage } from '../types'
 import { analyzeDockerContainer, dockerContainerLogs } from '../commands'
 import { parseAnsiToHtml } from '../ansi'
 import { useI18n } from '../i18n'
 
 interface Props {
-  activeTabId: number | null
+  /** Which Docker the analysed container lives on; null until one is picked. */
+  host: DockerHostRef | null
   /** Set by parent when user triggers "Analyze Container". */
   targetContainer: string | null
   /** Called after analysis result is received. */
@@ -13,11 +14,7 @@ interface Props {
 }
 
 /** One-click Docker container analysis report. */
-export const DockerAnalysisPanel: React.FC<Props> = ({
-  activeTabId,
-  targetContainer,
-  onAnalyzed,
-}) => {
+export const DockerAnalysisPanel: React.FC<Props> = ({ host, targetContainer, onAnalyzed }) => {
   const { t } = useI18n()
   const [data, setData] = useState<DockerAnalysis | null>(null)
   const [loading, setLoading] = useState(false)
@@ -34,12 +31,12 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
   const logsRef = React.useRef<HTMLPreElement>(null)
 
   const runAnalysis = useCallback(async () => {
-    if (activeTabId == null || !targetContainer) return
+    if (!host || !targetContainer) return
     setLoading(true)
     setError('')
     setData(null)
     try {
-      const result = await analyzeDockerContainer(activeTabId, targetContainer)
+      const result = await analyzeDockerContainer(host, targetContainer)
       setData(result)
       onAnalyzed?.()
     } catch (e) {
@@ -47,13 +44,13 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
     } finally {
       setLoading(false)
     }
-  }, [activeTabId, targetContainer, onAnalyzed])
+  }, [host, targetContainer, onAnalyzed])
 
   useEffect(() => {
     if (targetContainer) {
       runAnalysis()
     }
-    // Only auto-run when the target container changes — NOT when activeTabId /
+    // Only auto-run when the target container changes — NOT when `host` /
     // onAnalyzed change (which would otherwise re-run analysis on every tab
     // switch because runAnalysis's identity shifts with its deps).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -64,11 +61,13 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
 
   // Fetch container logs
   const fetchLogs = useCallback(async () => {
-    if (activeTabId == null || !targetContainer) return
+    if (!host || !targetContainer) return
     setLogsLoading(true)
     setLogsError('')
     try {
-      const output = await dockerContainerLogs(activeTabId, targetContainer, logsTail)
+      // The report's own log panel reads from the same Docker the report is about, so a
+      // local container's logs do not silently come from the jump host.
+      const output = await dockerContainerLogs(host, targetContainer, logsTail)
       setLogs(output)
     } catch (e) {
       setLogsError(String(e))
@@ -76,7 +75,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
     } finally {
       setLogsLoading(false)
     }
-  }, [activeTabId, targetContainer, logsTail])
+  }, [host, targetContainer, logsTail])
 
   // Auto-scroll logs when new content arrives
   useEffect(() => {
@@ -95,7 +94,7 @@ export const DockerAnalysisPanel: React.FC<Props> = ({
   const logsHtmlPayload = useMemo(() => ({ __html: logsHtml }), [logsHtml])
 
   // Fetch logs when container changes. Deliberately NOT re-firing when
-  // activeTabId / logsTail change — the refresh button and tail control
+  // `onAnalyzed` / logsTail change — the refresh button and tail control
   // call fetchLogs() directly for those.
   useEffect(() => {
     if (targetContainer) {

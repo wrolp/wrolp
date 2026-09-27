@@ -224,6 +224,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   commandSets: '命令集',
   analysis: '分析',
   docker: 'Docker',
+  dockerLocalUnavailable: '本机 Docker daemon 未启动 — 点击重试',
   selectAll: '全选',
   askAiSelectedText: '询问 AI（选中文本）',
   askAiAllLogs: '询问 AI（全部日志）',

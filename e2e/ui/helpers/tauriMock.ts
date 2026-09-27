@@ -55,6 +55,27 @@ export interface TauriMockOptions {
   fileContent?: Record<string, unknown>
   /** Value returned by `list_docker_containers` (the sidebar Docker section). */
   dockerContainers?: unknown[]
+  /**
+   * Shape returned by `probe_local_docker`. Omitted, the mock reports "no Docker on this
+   * machine at all", which keeps the 「本机 Docker」 group hidden — specs that do not care
+   * about it are unaffected.
+   */
+  localDockerProbe?: {
+    installed: boolean
+    serverRunning: boolean
+    bin?: string | null
+    clientVersion?: string | null
+    serverVersion?: string | null
+    dockerHost?: string | null
+    message?: string
+  }
+  /** Containers listed for the **local** host (falls back to `dockerContainers`). */
+  localDockerContainers?: unknown[]
+  /**
+   * Answer for a **refresh** probe (`{ refresh: true }`, i.e. the retry row). Lets a spec
+   * play "the user started Docker Desktop since the app booted".
+   */
+  localDockerProbeAfterRefresh?: TauriMockOptions['localDockerProbe']
   /** Value returned by `analyze_docker_container` (the Analyze Container report). */
   dockerAnalysis?: Record<string, unknown>
   /** Raw string returned by `docker_container_logs` (ANSI escapes included). */
@@ -236,8 +257,53 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_hidden_builtin_templates':
           case 'list_ai_models':
             return []
-          case 'list_docker_containers':
+          case 'probe_local_docker': {
+            // Default: nothing installed, so the 「本机 Docker」 group stays hidden in
+            // every spec that does not opt in. `refresh` (the retry row) can answer
+            // differently — that is how a spec plays "the daemon came up since we asked".
+            const p =
+              (args.refresh ? opts.localDockerProbeAfterRefresh : undefined) ??
+              opts.localDockerProbe
+            if (!p) {
+              return {
+                installed: false,
+                serverRunning: false,
+                bin: null,
+                clientVersion: null,
+                serverVersion: null,
+                dockerHost: null,
+                message: 'no docker or podman CLI found on PATH',
+              }
+            }
+            return {
+              installed: p.installed,
+              serverRunning: p.serverRunning,
+              bin: p.bin ?? 'docker',
+              clientVersion: p.clientVersion ?? null,
+              serverVersion: p.serverVersion ?? null,
+              dockerHost: p.dockerHost ?? null,
+              message: p.message ?? '',
+            }
+          }
+          case 'list_docker_containers': {
+            const host = args.host as { kind?: string } | undefined
+            if (host?.kind === 'local') {
+              return opts.localDockerContainers ?? opts.dockerContainers ?? []
+            }
             return opts.dockerContainers ?? []
+          }
+          // The lifecycle verbs answer "ok" — a spec asserts what was *sent* through
+          // `invokedCalls()`, which is the part that changed in P1 (a `DockerHostRef`
+          // instead of a jump tab id). Before this they fell through to `default: null`,
+          // which worked by accident and could not tell a typo'd command name from a real
+          // one.
+          case 'restart_docker_container':
+          case 'stop_docker_container':
+          case 'start_docker_container':
+          case 'remove_docker_container':
+            return null
+          case 'stop_docker_logs_stream':
+            return true
           case 'analyze_docker_container':
             return opts.dockerAnalysis ?? null
           case 'docker_container_logs': {
@@ -273,7 +339,11 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             if (i >= 0) snippets.splice(i, 1)
             return null
           }
+          // `target_*` is the dispatch path for every non-session target (jump remote,
+          // container on the jump host, container on this machine, …); it answers the same
+          // way as the tab-based `list_files`.
           case 'list_files':
+          case 'target_list_files':
             return opts.filesByDir?.[String(args.path)] ?? opts.fileEntries ?? []
           case 'read_file_content':
             return opts.fileContent ?? null

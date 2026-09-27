@@ -15,6 +15,8 @@ import type {
   BaudCandidate,
   TelnetConfig,
   ContainerInfo,
+  DockerHostRef,
+  DockerProbe,
   ToolCallEvent,
   AiEndpointProfile,
   LocalShellDir,
@@ -700,8 +702,16 @@ export async function restoreBuiltinTemplate(key: string): Promise<void> {
 
 // ===== P6: Target-based file operations (jump host / Docker) =====
 
-export async function listDockerContainers(jumpTabId: number): Promise<ContainerInfo[]> {
-  return await invoke<ContainerInfo[]>('list_docker_containers', { jumpTabId })
+export async function listDockerContainers(host: DockerHostRef): Promise<ContainerInfo[]> {
+  return await invoke<ContainerInfo[]>('list_docker_containers', { host })
+}
+
+/**
+ * Ask this machine whether it has a Docker CLI and a reachable daemon. `refresh` drops
+ * the backend cache — the sidebar's retry affordance after Docker Desktop was started.
+ */
+export async function probeLocalDocker(refresh = false): Promise<DockerProbe> {
+  return await invoke<DockerProbe>('probe_local_docker', { refresh })
 }
 
 function isSession(t: TargetRef): t is { kind: 'session'; tabId: number } {
@@ -886,49 +896,61 @@ export async function commandHelp(tabId: number, command: string): Promise<strin
 }
 
 export async function analyzeDockerContainer(
-  tabId: number,
+  host: DockerHostRef,
   containerName: string,
 ): Promise<import('./types').DockerAnalysis> {
   return await invoke<import('./types').DockerAnalysis>('analyze_docker_container', {
-    tabId,
+    host,
     containerName,
   })
 }
 
 export async function dockerContainerLogs(
-  tabId: number,
+  host: DockerHostRef,
   containerName: string,
   tailLines?: number,
 ): Promise<string> {
-  return await invoke<string>('docker_container_logs', { tabId, containerName, tailLines })
+  return await invoke<string>('docker_container_logs', { host, containerName, tailLines })
 }
 
-/** Restart a running Docker container on the jump host. */
-export async function restartDockerContainer(tabId: number, containerName: string): Promise<void> {
-  return await invoke('restart_docker_container', { tabId, containerName })
+/** Restart a Docker container, on the jump host or this machine. */
+export async function restartDockerContainer(
+  host: DockerHostRef,
+  containerName: string,
+): Promise<void> {
+  return await invoke('restart_docker_container', { host, containerName })
 }
 
-/** Stop a running Docker container on the jump host. */
-export async function stopDockerContainer(tabId: number, containerName: string): Promise<void> {
-  return await invoke('stop_docker_container', { tabId, containerName })
+/** Stop a running Docker container. */
+export async function stopDockerContainer(
+  host: DockerHostRef,
+  containerName: string,
+): Promise<void> {
+  return await invoke('stop_docker_container', { host, containerName })
 }
 
-/** Start a stopped Docker container on the jump host. */
-export async function startDockerContainer(tabId: number, containerName: string): Promise<void> {
-  return await invoke('start_docker_container', { tabId, containerName })
+/** Start a stopped Docker container. */
+export async function startDockerContainer(
+  host: DockerHostRef,
+  containerName: string,
+): Promise<void> {
+  return await invoke('start_docker_container', { host, containerName })
 }
 
-/** Remove a stopped Docker container on the jump host. */
-export async function removeDockerContainer(tabId: number, containerName: string): Promise<void> {
-  return await invoke('remove_docker_container', { tabId, containerName })
+/** Remove a stopped Docker container. */
+export async function removeDockerContainer(
+  host: DockerHostRef,
+  containerName: string,
+): Promise<void> {
+  return await invoke('remove_docker_container', { host, containerName })
 }
 
 export async function dockerLogsStreamStart(
-  tabId: number,
+  host: DockerHostRef,
   containerName: string,
   tailLines?: number,
 ): Promise<string> {
-  return await invoke<string>('docker_logs_stream_start', { tabId, containerName, tailLines })
+  return await invoke<string>('docker_logs_stream_start', { host, containerName, tailLines })
 }
 
 export async function pollDockerLogs(streamId: string): Promise<string[]> {

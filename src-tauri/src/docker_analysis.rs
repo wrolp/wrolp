@@ -1,20 +1,22 @@
 //! Docker container analysis – one-click overview of everything inside a
 //! container (OS, packages, tools, processes, ports, mounts, resources, env).
 //!
-//! Uses two layers of probing:
-//! 1. `docker inspect` on the jump host → metadata (image, ports, mounts, env)
+//! Uses three layers of probing:
+//! 1. `docker inspect` → metadata (image, ports, mounts, env)
 //! 2. `docker exec <container> sh -c '...'` → in-container probe (OS, pkgs,
 //!    tools, processes, listening ports)
 //! 3. `docker stats --no-stream` → resource usage (optional, may fail)
 //!
-//! All commands run through the existing SSH exec channel on the jump host,
-//! reusing `exec_on_jump` from `docker_fs`.
+//! Every command goes through [`crate::docker_host::exec_docker`], so the same three
+//! layers run against a jump host's daemon and this machine's (`LOCAL-DOCKER-PLAN.md`
+//! P3). Layers 1 and 3 are plain argv rather than a host-side `sh -c` script precisely so
+//! they do not need a POSIX shell on the host — Windows has none.
 
-use russh::client::Handle;
 use serde::Serialize;
 use std::collections::HashSet;
 
-use crate::ssh_session::SshHandler;
+use crate::docker_host::DockerHostRef;
+use crate::ssh_session::AppState;
 
 // ---------------------------------------------------------------------------
 // Data models (serialised to the frontend)
@@ -134,8 +136,11 @@ pub struct DockerAnalysis {
 // ---------------------------------------------------------------------------
 
 /// Run a command inside a Docker container via `docker exec`.
+/// The `sh -c` here is the *container's* shell, which exists on both hosts — unlike the
+/// host-side shell this module used to depend on.
 async fn exec_in_container(
-  jump: &Handle<SshHandler>,
+  state: &tauri::State<'_, AppState>,
+  host: &DockerHostRef,
   container: &str,
   command: &str,
 ) -> Result<(Vec<u8>, Vec<u8>, u32), String> {
@@ -147,7 +152,7 @@ async fn exec_in_container(
     "-c".into(),
     command.to_string(),
   ];
-  crate::docker_fs::exec_on_jump(jump, &argv, None).await
+  crate::docker_host::exec_docker(state, host, &argv, None).await
 }
 
 // ---------------------------------------------------------------------------
@@ -164,10 +169,14 @@ const INSPECT_DELIM_MOUNTS: &str = "__WROLP_DMOUNTS__";
 const INSPECT_DELIM_LABELS: &str = "__WROLP_DLABELS__";
 const INSPECT_DELIM_START_CMD: &str = "__WROLP_DSTARTCMD__";
 
-fn build_inspect_script(container: &str) -> String {
-  format!(
+/// `docker inspect --format <template>` as argv.
+///
+/// This used to be a host-side `sh -c` script, which is what made analysis jump-host
+/// only; the template itself needs no shell, so passing argv keeps the produced text
+/// byte-identical (the parser splits on the delimiter lines) and works on Windows too.
+fn build_inspect_argv(container: &str) -> Vec<String> {
+  let template = format!(
     r#"
-docker inspect {container} --format '
 {INSPECT_DELIM_ID}
 {{{{.Id}}}}
 {INSPECT_DELIM_CREATED}
@@ -189,9 +198,7 @@ docker inspect {container} --format '
 {{{{range $k, $v := .Config.Labels}}}}{{{{printf "%s=%s\n" $k $v}}}}{{{{end}}}}
 {INSPECT_DELIM_START_CMD}
 {{{{.Path}}}}{{{{range .Args}}}} {{{{.}}}}{{{{end}}}}
-' 2>/dev/null
 "#,
-    container = crate::docker_fs::shell_quote(container),
     INSPECT_DELIM_ID = INSPECT_DELIM_ID,
     INSPECT_DELIM_CREATED = INSPECT_DELIM_CREATED,
     INSPECT_DELIM_IMAGE = INSPECT_DELIM_IMAGE,
@@ -201,7 +208,14 @@ docker inspect {container} --format '
     INSPECT_DELIM_MOUNTS = INSPECT_DELIM_MOUNTS,
     INSPECT_DELIM_LABELS = INSPECT_DELIM_LABELS,
     INSPECT_DELIM_START_CMD = INSPECT_DELIM_START_CMD,
-  )
+  );
+  vec![
+    "docker".into(),
+    "inspect".into(),
+    container.to_string(),
+    "--format".into(),
+    template,
+  ]
 }
 
 fn parse_inspect_section<'a>(lines: &[&'a str], delim: &str) -> Vec<&'a str> {
@@ -275,7 +289,8 @@ fn infer_compose_file_from_labels(
 /// Named volumes (source does not start with '/') are skipped – they live
 /// inside /var/lib/docker/volumes and don't help locate the compose file.
 async fn probe_compose_file_from_mounts(
-  jump: &Handle<SshHandler>,
+  state: &tauri::State<'_, AppState>,
+  host: &DockerHostRef,
   mounts: &[MountInfo],
 ) -> Option<String> {
   // Only filter truly irrelevant system paths – data/log/config directories
@@ -346,6 +361,28 @@ async fn probe_compose_file_from_mounts(
   // Sort deepest-first → check the most specific directory first.
   dirs.sort_by(|a, b| b.len().cmp(&a.len()));
 
+  const NAMES: [&str; 4] = [
+    "docker-compose.yml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "compose.yaml",
+  ];
+
+  // A container on this machine: stat the candidates directly. The script below needs a
+  // POSIX host shell, which Windows (where a local daemon runs) does not have — and a
+  // file check is all that script was ever doing.
+  if host.is_local() {
+    for dir in &dirs {
+      for name in NAMES {
+        let path = format!("{}/{}", dir, name);
+        if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+          return Some(path);
+        }
+      }
+    }
+    return None;
+  }
+
   // Single SSH round‑trip: one shell script checks all candidate dirs.
   let dir_list = dirs
     .iter()
@@ -353,12 +390,15 @@ async fn probe_compose_file_from_mounts(
     .collect::<Vec<_>>()
     .join(" ");
   let script = format!(
-    "for d in {}; do for f in docker-compose.yml compose.yml docker-compose.yaml compose.yaml; do if [ -f \"$d/$f\" ]; then echo \"FOUND:$d/$f\"; exit 0; fi; done; done; exit 1",
-    dir_list
+    "for d in {}; do for f in {}; do if [ -f \"$d/$f\" ]; then echo \"FOUND:$d/$f\"; exit 0; fi; done; done; exit 1",
+    dir_list,
+    NAMES.join(" ")
   );
 
   let argv = vec!["sh".into(), "-c".into(), script];
-  match crate::docker_fs::exec_on_jump(jump, &argv, None).await {
+  // The jump host path only: `exec_docker` runs argv verbatim over SSH, and the local
+  // branch above never gets here (a local host has no POSIX shell to speak of).
+  match crate::docker_host::exec_docker(state, host, &argv, None).await {
     Ok((out, _, 0)) => String::from_utf8_lossy(&out)
       .lines()
       .find(|l| l.starts_with("FOUND:"))
@@ -808,16 +848,28 @@ fn parse_listening_ports(lines: &[&str]) -> HashSet<String> {
 // Layer 3 – docker stats
 // ---------------------------------------------------------------------------
 
-async fn get_docker_stats(jump: &Handle<SshHandler>, container: &str) -> Option<ResourceUsage> {
-  let cmd = format!(
-    "docker stats {} --no-stream --format '{{{{.CPUPerc}}}}|{{{{.MemUsage}}}}|{{{{.NetIO}}}}|{{{{.BlockIO}}}}|{{{{.PIDs}}}}' 2>/dev/null",
-    crate::docker_fs::shell_quote(container)
-  );
-  let argv = vec!["sh".into(), "-c".into(), cmd];
-  let result = crate::docker_fs::exec_on_jump(jump, &argv, None)
+async fn get_docker_stats(
+  state: &tauri::State<'_, AppState>,
+  host: &DockerHostRef,
+  container: &str,
+) -> Option<ResourceUsage> {
+  // argv rather than `sh -c "docker stats … 2>/dev/null"`: no host shell needed, and the
+  // `2>/dev/null` was only ever hiding an error the caller already treats as "no data".
+  let argv = vec![
+    "docker".into(),
+    "stats".into(),
+    container.to_string(),
+    "--no-stream".into(),
+    "--format".into(),
+    "{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}".into(),
+  ];
+  let (out, _, status) = crate::docker_host::exec_docker(state, host, &argv, None)
     .await
     .ok()?;
-  let output = String::from_utf8_lossy(&result.0).trim().to_string();
+  if status != 0 {
+    return None;
+  }
+  let output = String::from_utf8_lossy(&out).trim().to_string();
   if output.is_empty() {
     return None;
   }
@@ -847,19 +899,16 @@ async fn get_docker_stats(jump: &Handle<SshHandler>, container: &str) -> Option<
 // ---------------------------------------------------------------------------
 
 /// Full container analysis: docker inspect + in-container probe + docker stats.
+/// `host` decides which daemon those three layers ask.
 pub async fn analyze_docker_container(
-  jump: &Handle<SshHandler>,
+  state: &tauri::State<'_, AppState>,
+  host: &DockerHostRef,
   container_name: &str,
   tab_id: u32,
 ) -> Result<DockerAnalysis, String> {
-  if jump.is_closed() {
-    return Err("Jump host connection is closed".into());
-  }
-
   // Layer 1 – docker inspect
-  let inspect_script = build_inspect_script(container_name);
-  let inspect_argv = vec!["sh".into(), "-c".into(), inspect_script];
-  let (inspect_out, _, _) = crate::docker_fs::exec_on_jump(jump, &inspect_argv, None)
+  let inspect_argv = build_inspect_argv(container_name);
+  let (inspect_out, _, _) = crate::docker_host::exec_docker(state, host, &inspect_argv, None)
     .await
     .map_err(|e| format!("docker inspect failed: {}", e))?;
   let inspect_text = String::from_utf8_lossy(&inspect_out);
@@ -868,7 +917,7 @@ pub async fn analyze_docker_container(
   // If labels gave us a compose file, skip the filesystem probe.
   // Otherwise, probe the mount-source directories for compose.yml etc.
   if inspect.orchestration.inferred_compose_file.is_none() {
-    if let Some(path) = probe_compose_file_from_mounts(jump, &inspect.mounts).await {
+    if let Some(path) = probe_compose_file_from_mounts(state, host, &inspect.mounts).await {
       inspect.orchestration.inferred_compose_file = Some(path);
       inspect.orchestration.is_compose = true;
     }
@@ -877,7 +926,7 @@ pub async fn analyze_docker_container(
   // Layer 2 – in-container probe
   let probe_script = build_container_probe_script();
   let (probe_out, probe_err, probe_status) =
-    exec_in_container(jump, container_name, &probe_script).await?;
+    exec_in_container(state, host, container_name, &probe_script).await?;
   let probe_text = String::from_utf8_lossy(&probe_out);
   let _ = (probe_err, probe_status);
 
@@ -900,7 +949,7 @@ pub async fn analyze_docker_container(
   let ports: Vec<PortMapping> = inspect.ports.clone();
 
   // Layer 3 – docker stats (optional, non-blocking)
-  let resource = get_docker_stats(jump, container_name).await;
+  let resource = get_docker_stats(state, host, container_name).await;
 
   Ok(DockerAnalysis {
     tab_id,
@@ -928,4 +977,30 @@ pub async fn analyze_docker_container(
       .unwrap_or_default()
       .as_millis() as i64,
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// Layer 1 used to be a host-side `sh -c` script. As argv the container name is its own
+  /// argument (no shell quoting, no `2>/dev/null`), while the template the parser splits
+  /// on must come through exactly as it did before.
+  #[test]
+  fn inspect_argv_holds_the_template_and_no_shell() {
+    let argv = build_inspect_argv("nginx:1.26");
+    assert_eq!(argv[0], "docker");
+    assert_eq!(argv[1], "inspect");
+    assert_eq!(argv[2], "nginx:1.26");
+    assert_eq!(argv[3], "--format");
+    let template = &argv[4];
+    assert!(template.contains(INSPECT_DELIM_ID));
+    assert!(template.contains(INSPECT_DELIM_START_CMD));
+    assert!(template.contains("{{.State.Status}}"));
+    assert!(
+      !template.contains("docker inspect"),
+      "no shell left in the template"
+    );
+    assert!(!template.contains("2>/dev/null"));
+  }
 }

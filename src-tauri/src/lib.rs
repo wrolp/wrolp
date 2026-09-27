@@ -9,6 +9,7 @@ mod data_root;
 pub mod db;
 mod docker_analysis;
 mod docker_fs;
+mod docker_host;
 mod ftp_fs;
 mod host_analysis;
 mod local_fs;
@@ -286,6 +287,7 @@ pub fn run() {
       commands::target_copy_file,
       commands::target_path_exists,
       commands::list_docker_containers,
+      commands::probe_local_docker,
       commands::save_window_config,
       commands::load_window_config,
       commands::save_layout,

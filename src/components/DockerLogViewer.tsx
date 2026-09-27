@@ -6,6 +6,7 @@ import {
   stopDockerLogsStream,
 } from '../commands'
 import { parseAnsiToHtmlLines, highlightPlainLogLines, stripInvisible } from '../ansi'
+import type { DockerHostRef } from '../types'
 import { useI18n } from '../i18n'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 import { copyText } from '../lib/clipboard'
@@ -13,7 +14,8 @@ import { Icon } from './Icon'
 
 interface DockerLogViewerProps {
   tabId: number
-  jumpTabId: number
+  /** Where the container lives: a connected jump-host tab, or this machine. */
+  host: DockerHostRef
   containerName: string
   containerImage?: string
   initialTail?: number
@@ -48,7 +50,7 @@ function measureRemovedHeight(source: HTMLElement, text: string): number {
 
 export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   tabId,
-  jumpTabId,
+  host,
   containerName,
   containerImage,
   initialTail = 200,
@@ -324,7 +326,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     setLoading(true)
     setError('')
     try {
-      const output = await dockerContainerLogs(jumpTabId, containerName, tail)
+      const output = await dockerContainerLogs(host, containerName, tail)
       setLogs(trimToMaxLines(trimHead(output), maxLines))
       // Snap to the bottom once the initial content is in.
       requestAnimationFrame(scrollToBottom)
@@ -334,7 +336,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     } finally {
       setLoading(false)
     }
-  }, [jumpTabId, containerName, tail, scrollToBottom])
+  }, [host, containerName, tail, scrollToBottom])
 
   // ---- start / stop streaming ----
   const startStream = useCallback(async () => {
@@ -351,7 +353,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     setError('')
     setLoading(true)
     try {
-      const sid = await dockerLogsStreamStart(jumpTabId, containerName, tail)
+      const sid = await dockerLogsStreamStart(host, containerName, tail)
       streamIdRef.current = sid
 
       // Start polling — 500ms is fast enough for real-time feel. A recursive
@@ -394,7 +396,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     } finally {
       setLoading(false)
     }
-  }, [jumpTabId, containerName, tail, scrollToBottom])
+  }, [host, containerName, tail, scrollToBottom])
 
   const stopStream = useCallback(async () => {
     if (streamIdRef.current) {

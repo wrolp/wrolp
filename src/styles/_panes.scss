@@ -1738,4 +1738,18 @@ body.resizing-v .term-scrollbar-thumb {
   background: $bg-primary;
 }
 
+// The same surface for a container log that had no pane to sit in — see
+// `activeLogTab`. Mounted only while its tab is selected, so `display` is not
+// part of the inline style the way the editor's is.
+.dockerlog-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: $bg-primary;
+}
+
 // Window-level AI entry button in the terminal tab bar.

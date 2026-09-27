@@ -1031,20 +1031,16 @@ pub(crate) async fn call_frontend_ui_tool(
     return Err(format!("Failed to reach the UI bridge: {}", e));
   }
 
-  let outcome = match tokio::time::timeout(
-    std::time::Duration::from_secs(UI_TOOL_TIMEOUT_SECS),
-    rx,
-  )
-  .await
-  {
-    Ok(Ok(result)) => Ok(result),
-    Ok(Err(_)) => Err("The UI bridge dropped the request".into()),
-    Err(_) => Err(format!(
-      "The UI did not respond within {}s (AI appearance changes may be disabled, \
+  let outcome =
+    match tokio::time::timeout(std::time::Duration::from_secs(UI_TOOL_TIMEOUT_SECS), rx).await {
+      Ok(Ok(result)) => Ok(result),
+      Ok(Err(_)) => Err("The UI bridge dropped the request".into()),
+      Err(_) => Err(format!(
+        "The UI did not respond within {}s (AI appearance changes may be disabled, \
        or the app window is not responding).",
-      UI_TOOL_TIMEOUT_SECS
-    )),
-  };
+        UI_TOOL_TIMEOUT_SECS
+      )),
+    };
 
   if let Ok(mut map) = state.ui_tool_pending.lock() {
     map.remove(&id);
@@ -1419,27 +1415,37 @@ pub(crate) async fn execute_one_tool(
     "set_ui_settings" | "reset_ui_settings" => {
       let is_reset = tool == "reset_ui_settings";
       if read_only {
-        return Ok(serde_json::json!({
-            "error": "Blocked: the AI assistant is in read-only mode and cannot change \
-                      appearance or system settings."
-        })
-        .to_string());
+        return Ok(
+          serde_json::json!({
+              "error": "Blocked: the AI assistant is in read-only mode and cannot change \
+                        appearance or system settings."
+          })
+          .to_string(),
+        );
       }
-      let changes = args.get("changes").cloned().unwrap_or(serde_json::Value::Null);
+      let changes = args
+        .get("changes")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
       let keys = args.get("keys").cloned().unwrap_or(serde_json::Value::Null);
-      let reason = args.get("reason").cloned().unwrap_or(serde_json::Value::Null);
+      let reason = args
+        .get("reason")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
       let change_count = changes.as_object().map(|m| m.len()).unwrap_or(0);
       // Wide-blast-radius operations pause for confirmation unless already forced:
       // a whole-settings reset, or a change touching more than 10 keys.
       let reset_all = is_reset && keys.is_null();
       if !force && (reset_all || change_count > 10) {
-        return Ok(serde_json::json!({
-            "needsConfirmation": true,
-            "op": if is_reset { "reset" } else { "set" },
-            "changes": changes,
-            "keys": keys,
-        })
-        .to_string());
+        return Ok(
+          serde_json::json!({
+              "needsConfirmation": true,
+              "op": if is_reset { "reset" } else { "set" },
+              "changes": changes,
+              "keys": keys,
+          })
+          .to_string(),
+        );
       }
       // `force` lets the frontend honour the user's "ask before AI appearance
       // changes" setting: without it the bridge answers with needsConfirmation

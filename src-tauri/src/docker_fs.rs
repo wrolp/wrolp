@@ -12,7 +12,7 @@ use russh::ChannelMsg;
 use std::sync::Arc;
 
 use crate::cmd_fs::{CmdFs, Runner};
-use crate::ssh_session::{ContainerInfo, SshHandler};
+use crate::ssh_session::{AppState, ContainerInfo, SshHandler};
 
 /// Shell-quote a single argument for the remote (jump host) shell.
 pub(crate) fn shell_quote(s: &str) -> String {
@@ -102,9 +102,19 @@ pub(crate) async fn exec_streaming_on_jump(
   Ok(channel)
 }
 
-/// Runs commands inside a Docker container via `docker exec` on the jump host.
+/// How a `docker exec` reaches its daemon: over an SSH exec channel on the jump host, or
+/// by spawning the CLI on this machine (`LOCAL-DOCKER-PLAN.md` P2).
+pub(crate) enum DockerTransport {
+  Jump(Arc<Handle<SshHandler>>),
+  /// The CLI resolved by `probe_local_docker` — `docker` or `podman`.
+  Local {
+    bin: String,
+  },
+}
+
+/// Runs commands inside a Docker container via `docker exec`.
 pub(crate) struct DockerRunner {
-  jump: Arc<Handle<SshHandler>>,
+  transport: DockerTransport,
   container: String,
   user: Option<String>,
 }
@@ -136,7 +146,12 @@ impl Runner for DockerRunner {
     // `-i` is only added when we actually feed stdin: an interactive exec with
     // no EOF would otherwise block waiting for input.
     let argv = self.argv(stdin.is_some(), inner);
-    exec_on_jump(&self.jump, &argv, stdin).await
+    match &self.transport {
+      DockerTransport::Jump(jump) => exec_on_jump(jump, &argv, stdin).await,
+      // argv[0] is the placeholder CLI name the builder put there; the local runner was
+      // built with the *probed* one, so the caller's word is never trusted.
+      DockerTransport::Local { bin } => crate::docker_host::exec_bin(bin, &argv[1..], stdin).await,
+    }
   }
 }
 
@@ -148,7 +163,7 @@ pub(crate) fn new_docker_fs(
 ) -> CmdFs<DockerRunner> {
   CmdFs::new(
     DockerRunner {
-      jump,
+      transport: DockerTransport::Jump(jump),
       container,
       user,
     },
@@ -156,9 +171,27 @@ pub(crate) fn new_docker_fs(
   )
 }
 
-/// List Docker containers visible to the jump host user via `docker ps`.
+/// Build a Docker-container filesystem for a container on **this machine**: the probed CLI
+/// is spawned directly, so the argv never passes through a shell.
+pub(crate) fn new_local_docker_fs(
+  bin: String,
+  container: String,
+  user: Option<String>,
+) -> CmdFs<DockerRunner> {
+  CmdFs::new(
+    DockerRunner {
+      transport: DockerTransport::Local { bin },
+      container,
+      user,
+    },
+    false,
+  )
+}
+
+/// List Docker containers reachable from `host` via `docker ps`.
 pub async fn list_docker_containers(
-  jump: Arc<Handle<SshHandler>>,
+  state: &tauri::State<'_, AppState>,
+  host: &crate::docker_host::DockerHostRef,
 ) -> Result<Vec<ContainerInfo>, String> {
   // NOTE: docker's `--format` template only exposes `.Status` (e.g. "Up 3 hours",
   // "Exited (0) 2 days ago") on `containerContext`. There is no top-level `.State`
@@ -171,10 +204,14 @@ pub async fn list_docker_containers(
     "--format".to_string(),
     "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}".to_string(),
   ];
-  let (out, err, status) = exec_on_jump(&jump, &argv, None).await?;
+  let (out, err, status) = crate::docker_host::exec_docker(state, host, &argv, None).await?;
   if status != 0 {
+    let hint = match host {
+      crate::docker_host::DockerHostRef::Ssh { .. } => "does the jump user have docker permission?",
+      crate::docker_host::DockerHostRef::Local => "is the local daemon running?",
+    };
     return Err(format!(
-      "docker ps failed (does the jump user have docker permission?): {}",
+      "docker ps failed ({hint}): {}",
       String::from_utf8_lossy(&err).trim()
     ));
   }

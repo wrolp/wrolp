@@ -28,13 +28,13 @@ pub(crate) use encoding_rs::{Encoding, UTF_8};
 #[allow(unused_imports)]
 pub(crate) use russh::client::{self, Handler};
 #[allow(unused_imports)]
-pub(crate) use russh::ChannelId;
+pub(crate) use russh::keys::key::PrivateKeyWithHashAlg;
 #[allow(unused_imports)]
 pub(crate) use russh::keys::load_secret_key;
 #[allow(unused_imports)]
-pub(crate) use russh::keys::key::PrivateKeyWithHashAlg;
-#[allow(unused_imports)]
 pub(crate) use russh::keys::PublicKeyOrCertificate;
+#[allow(unused_imports)]
+pub(crate) use russh::ChannelId;
 
 pub use serial::*;
 #[allow(unused_imports)]
@@ -188,8 +188,7 @@ pub(crate) fn split_incomplete_utf8(data: &[u8]) -> (&[u8], &[u8]) {
     if let Ok(_) = std::str::from_utf8(head) {
       // Hold the tail only when it is itself an incomplete sequence; an empty or
       // invalid tail must decode (lossy) now, never sit held forever.
-      if tail.is_empty() || matches!(std::str::from_utf8(tail), Err(e) if e.error_len().is_none())
-      {
+      if tail.is_empty() || matches!(std::str::from_utf8(tail), Err(e) if e.error_len().is_none()) {
         return (head, tail);
       }
     }
@@ -285,6 +284,7 @@ pub(crate) mod ai_chat;
 pub(crate) mod ai_term;
 pub(crate) mod connections;
 pub(crate) mod db_maintenance;
+pub(crate) mod docker;
 pub(crate) mod ftp;
 pub(crate) mod ftp_server;
 pub(crate) mod http_server;
@@ -306,6 +306,7 @@ pub use ai_chat::*;
 pub use ai_term::*;
 pub use connections::*;
 pub use db_maintenance::*;
+pub use docker::*;
 pub use ftp::*;
 pub use ftp_server::*;
 pub use http_server::*;

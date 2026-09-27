@@ -347,7 +347,10 @@ async fn command_snippets_crud() {
   assert_eq!(list[0].params[0].param_type, "select");
   assert_eq!(list[0].params[0].options.len(), 2);
   assert_eq!(list[0].options.len(), 2);
-  assert_eq!(list[0].options[0].value.as_ref().unwrap().default_value, "prod");
+  assert_eq!(
+    list[0].options[0].value.as_ref().unwrap().default_value,
+    "prod"
+  );
   assert!(!list[0].options[1].default_enabled);
   // Linkage survives the JSON round-trip (keys are namespaced).
   assert_eq!(list[0].options[0].enables, vec!["param:image".to_string()]);
@@ -355,7 +358,10 @@ async fn command_snippets_crud() {
   assert!(list[0].params[0].enables.is_empty());
   // User-defined group label round-trips too — newlines in the description included.
   assert_eq!(list[0].group_name.as_deref(), Some("Ops"));
-  assert_eq!(list[0].description.as_deref(), Some("deploy the stack\nneeds root"));
+  assert_eq!(
+    list[0].description.as_deref(),
+    Some("deploy the stack\nneeds root")
+  );
 
   commands::delete_command_snippet(app.state(), "snip1".into())
     .await

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::commands::expand_tilde;
-use crate::docker_fs::new_docker_fs;
+use crate::docker_fs::{new_docker_fs, new_local_docker_fs};
 use crate::ssh_session::{AppState, FileEntry, FileMeta, SshHandler, TargetAuth, TargetRef};
 
 /// Unified remote filesystem interface implemented by every target type.
@@ -253,7 +253,7 @@ pub async fn build_sftp(
       let jump = get_jump_handle(state, *jump_tab_id)?;
       open_jump_sftp(app, &jump, host, *port, auth, *jump_tab_id).await
     }
-    TargetRef::Docker { .. } => {
+    TargetRef::Docker { .. } | TargetRef::DockerLocal { .. } => {
       Err("Target is a Docker exec target and does not support SFTP streaming upload".into())
     }
     TargetRef::Local { .. } => {
@@ -282,6 +282,16 @@ pub async fn build_fs(
       let jump = get_jump_handle(state, *jump_tab_id)?;
       Ok(Box::new(new_docker_fs(
         jump,
+        container.clone(),
+        user.clone(),
+      )))
+    }
+    TargetRef::DockerLocal { container, user } => {
+      // No jump handle to look up: the CLI is resolved from the local probe, which is
+      // also what turns "no daemon here" into a readable error instead of a hang.
+      let bin = crate::docker_host::resolve_cli(state).await?;
+      Ok(Box::new(new_local_docker_fs(
+        bin,
         container.clone(),
         user.clone(),
       )))

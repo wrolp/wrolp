@@ -347,6 +347,9 @@ pub async fn target_download_directory(
     TargetRef::JumpRemote { jump_tab_id, .. }
     | TargetRef::DockerSsh { jump_tab_id, .. }
     | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
+    // A container on this machine has no owning session tab, so its transfer progress is
+    // reported under tab 0 — the transfer list keys on the path, not the tab.
+    TargetRef::DockerLocal { .. } => 0,
   };
   let local_root_str = local_root.to_string_lossy().to_string();
   let summary = crate::remote_fs::download_dir_recursive(
@@ -801,6 +804,8 @@ pub async fn target_upload_local_dir(
     TargetRef::JumpRemote { jump_tab_id, .. }
     | TargetRef::DockerSsh { jump_tab_id, .. }
     | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
+    // See `download_dir`: a local container has no owning session tab.
+    TargetRef::DockerLocal { .. } => 0,
   };
   let dir_key = local_dir.replace('\\', "/");
   let start = std::time::Instant::now();
@@ -1076,15 +1081,8 @@ pub async fn target_copy_file(
   copy_recursive(fs.as_ref(), &src, &final_dest).await
 }
 
-/// List Docker containers reachable from a connected (jump host) tab.
-#[tauri::command]
-pub async fn list_docker_containers(
-  state: tauri::State<'_, AppState>,
-  jump_tab_id: u32,
-) -> Result<Vec<ContainerInfo>, String> {
-  let jump = crate::remote_fs::get_jump_handle(&state, jump_tab_id)?;
-  crate::docker_fs::list_docker_containers(jump).await
-}
+// `list_docker_containers` lives in `commands/docker.rs` now — it takes a
+// `DockerHostRef` (jump host or this machine) rather than a jump tab id.
 
 // ==================== SFTP User Switching ====================
 

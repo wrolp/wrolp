@@ -11,7 +11,7 @@ import React, {
 } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import type { FileEntry, TargetRef, FileTargetMode, ContainerInfo } from '../types'
-import { targetLabel } from '../types'
+import { targetLabel, isDockerTarget, dockerHostOf } from '../types'
 import {
   fsListFiles,
   fsUploadFile,
@@ -111,6 +111,13 @@ interface TreeNode {
 interface FilePanelProps {
   tabId: number
   isConnected: boolean
+  /**
+   * Whether a live session tab backs the panel. Without one the SSH chip would
+   * clear the target to a session that does not exist and the ProxyJump form would
+   * name a jump tab of 0, so only Docker remains offered — which is exactly the
+   * mode that needs no session for a local container.
+   */
+  hasSession?: boolean
   defaultPath?: string
   expanded?: boolean
   onToggleExpanded?: () => void
@@ -316,6 +323,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   {
     tabId,
     isConnected,
+    hasSession = true,
     defaultPath = '.',
     expanded = true,
     onToggleExpanded,
@@ -355,7 +363,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // sync), so re-entering docker/jump mode can restore the previously browsed
   // filesystem instead of dropping back to the picker/form.
   useEffect(() => {
-    if (target.kind === 'docker' || target.kind === 'jumpRemote' || target.kind === 'dockerSsh') {
+    if (isDockerTarget(target) || target.kind === 'jumpRemote' || target.kind === 'dockerSsh') {
       lastNonSessionTarget[tabId] = target
     }
   }, [target, tabId])
@@ -382,19 +390,22 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     setDockerLoading(true)
     setDockerError('')
     try {
-      setDockerContainers(await listDockerContainers(tabId))
+      // The picker lists containers on the same Docker the panel is already looking at,
+      // so switching containers within a mode never crosses jump/local boundaries.
+      const host = dockerHostOf(target) ?? { kind: 'ssh' as const, jumpTabId: tabId }
+      setDockerContainers(await listDockerContainers(host))
     } catch (e) {
       setDockerError(String(e))
       setDockerContainers([])
     } finally {
       setDockerLoading(false)
     }
-  }, [tabId])
+  }, [tabId, target])
 
   // Decide what the body should render given the active mode and current target.
   const showJumpForm =
     fileMode === 'jump' && target.kind !== 'jumpRemote' && target.kind !== 'dockerSsh'
-  const showDockerPicker = fileMode === 'docker' && target.kind !== 'docker'
+  const showDockerPicker = fileMode === 'docker' && !isDockerTarget(target)
   const showTree = !showJumpForm && !showDockerPicker
 
   const handleModeClick = (mode: FileTargetMode) => {
@@ -410,7 +421,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       loadDockerContainers()
       // Re-enter the previously browsed container filesystem (if any) instead of
       // dumping the user back on the container picker.
-      if (remembered && remembered.kind === 'docker') onSelectTarget?.(remembered)
+      if (remembered && isDockerTarget(remembered)) onSelectTarget?.(remembered)
     } else if (mode === 'jump') {
       // Same for the ProxyJump remote: restore the last jump target if there is one.
       if (remembered && (remembered.kind === 'jumpRemote' || remembered.kind === 'dockerSsh')) {
@@ -447,7 +458,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }
 
   const handlePickContainer = (c: ContainerInfo) => {
-    onSelectTarget?.({ kind: 'docker', jumpTabId: tabId, container: c.name })
+    // Stay on whichever Docker the panel is already pointed at — picking a container
+    // from the local list must not silently retarget the jump host (or vice versa).
+    const host = dockerHostOf(target)
+    onSelectTarget?.(
+      host?.kind === 'local'
+        ? { kind: 'dockerLocal', container: c.name }
+        : { kind: 'docker', jumpTabId: host?.jumpTabId ?? tabId, container: c.name },
+    )
   }
 
   const [currentPath, setCurrentPath] = useState(defaultPath)
@@ -714,18 +732,16 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       // shell-reported cwd (remoteCwd) describes the container shell's working
       // directory, and a cached browse path from an earlier visit is not
       // restored either; the container's file list always starts at "/".
-      const startPath =
-        target.kind === 'docker'
-          ? '/'
-          : targetChanged && cached
-            ? cached.currentPath
-            : (remoteCwd ?? defaultPath)
-      const startRoot =
-        target.kind === 'docker'
-          ? '/'
-          : targetChanged && cached
-            ? cached.rootPath
-            : (remoteCwd ?? defaultPath)
+      const startPath = isDockerTarget(target)
+        ? '/'
+        : targetChanged && cached
+          ? cached.currentPath
+          : (remoteCwd ?? defaultPath)
+      const startRoot = isDockerTarget(target)
+        ? '/'
+        : targetChanged && cached
+          ? cached.rootPath
+          : (remoteCwd ?? defaultPath)
       setCurrentPath(startPath)
       setRootPath(startRoot)
       // Non-session targets (jump/docker) can be addressed through a freshly
@@ -1999,28 +2015,34 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             verbs at the default 260px column — measures 22px short. */}
         {fileMode !== 'local' && (
           <span className="file-mode-switch" role="tablist">
-            <button
-              type="button"
-              className={fileMode === 'ssh' ? 'active' : ''}
-              title={t('localSshSession')}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleModeClick('ssh')
-              }}
-            >
-              {t('modeSsh')}
-            </button>
-            <button
-              type="button"
-              className={fileMode === 'jump' ? 'active' : ''}
-              title={t('proxyJumpRemote')}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleModeClick('jump')
-              }}
-            >
-              {t('modeJump')}
-            </button>
+            {/* Both of these point *at* a session, so they are off the table until
+                one exists — the Docker mode is the one that needs no session. */}
+            {hasSession && (
+              <>
+                <button
+                  type="button"
+                  className={fileMode === 'ssh' ? 'active' : ''}
+                  title={t('localSshSession')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleModeClick('ssh')
+                  }}
+                >
+                  {t('modeSsh')}
+                </button>
+                <button
+                  type="button"
+                  className={fileMode === 'jump' ? 'active' : ''}
+                  title={t('proxyJumpRemote')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleModeClick('jump')
+                  }}
+                >
+                  {t('modeJump')}
+                </button>
+              </>
+            )}
             <button
               type="button"
               className={fileMode === 'docker' ? 'active' : ''}
