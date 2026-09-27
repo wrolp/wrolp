@@ -256,3 +256,85 @@ pub async fn stop_docker_logs_stream(
     Ok(false)
   }
 }
+
+/// What a `command -v bash` probe answers: the path when the image has bash, otherwise
+/// `sh`. When even the lookup fails (a distroless image, or a container that just
+/// stopped) `sh` is still what gets spawned, so the daemon's own complaint is what lands
+/// in the terminal instead of a second error the user cannot act on.
+fn shell_from_probe(out: Option<&[u8]>) -> String {
+  match out.map(|b| String::from_utf8_lossy(b).trim().to_string()) {
+    Some(found) if !found.is_empty() => found,
+    _ => "/bin/sh".to_string(),
+  }
+}
+
+/// The shell to run inside a container: `bash` when the image has one — readline and
+/// history are worth the extra round trip — otherwise `sh`.
+async fn pick_container_shell(bin: &str, container: &str) -> String {
+  let argv = vec![
+    "exec".to_string(),
+    container.to_string(),
+    "sh".to_string(),
+    "-c".to_string(),
+    "command -v bash".to_string(),
+  ];
+  match crate::docker_host::exec_bin(bin, &argv, None).await {
+    Ok((out, _, 0)) => shell_from_probe(Some(&out)),
+    _ => shell_from_probe(None),
+  }
+}
+
+/// Open a terminal running `<cli> exec -it <container> <shell>` on this machine — a
+/// local container's shell as a real PTY, not `docker exec` typed into some other
+/// session's terminal (`LOCAL-DOCKER-PLAN.md` P2b, decision ⑤). It registers as an
+/// ordinary local shell, so input / resize / close / the exit notification all follow
+/// the existing local-terminal path.
+#[tauri::command]
+pub async fn open_local_docker_shell(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  container: String,
+  reuse_existing: bool,
+  cols: u32,
+  rows: u32,
+) -> Result<(), String> {
+  // Same remount rule as the local terminal: a floated tab that is re-attaching must
+  // not restart the shell it already has.
+  if reuse_existing && crate::commands::local_shell::live_local_shell(&state, tab_id)? {
+    eprintln!(
+      "[open_local_docker_shell] reusing live shell for tab={}",
+      tab_id
+    );
+    return Ok(());
+  }
+  let container = container.trim().to_string();
+  if container.is_empty() {
+    return Err("no container name given".to_string());
+  }
+  let bin = crate::docker_host::resolve_cli(&state).await?;
+  let shell = pick_container_shell(&bin, &container).await;
+  let args = vec!["exec".to_string(), "-it".to_string(), container, shell];
+  // No cwd: the container's own workdir is what the process starts in.
+  crate::commands::local_shell::spawn_local_pty(app, &state, tab_id, bin, args, None, cols, rows)
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn a_container_with_bash_gets_bash() {
+    assert_eq!(shell_from_probe(Some(b"/usr/bin/bash\n")), "/usr/bin/bash");
+  }
+
+  #[test]
+  fn an_empty_or_failed_probe_falls_back_to_sh() {
+    // `command -v bash` exits non-zero on a slim image, and some runtimes print an
+    // empty line rather than nothing.
+    assert_eq!(shell_from_probe(Some(b"")), "/bin/sh");
+    assert_eq!(shell_from_probe(Some(b"  \r\n")), "/bin/sh");
+    assert_eq!(shell_from_probe(None), "/bin/sh");
+  }
+}

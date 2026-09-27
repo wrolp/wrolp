@@ -340,6 +340,7 @@ pub fn run() {
       commands::docker_logs_stream_start,
       commands::poll_docker_logs,
       commands::stop_docker_logs_stream,
+      commands::open_local_docker_shell,
       commands::command_help,
       commands::get_app_version,
       commands::open_config_dir,

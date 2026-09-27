@@ -267,40 +267,142 @@ mod tests {
       .iter()
       .all(|d| !d.is_empty() && !d.contains('\u{feff}')));
   }
+
+  #[test]
+  fn anything_without_an_extension_gets_the_suffix() {
+    // The bare name is the case Docker Desktop traps; an extensionless full path is the
+    // same ambiguity stated the other way, and naming `.exe` fixes both.
+    assert!(wants_exe_suffix("docker"));
+    assert!(wants_exe_suffix("podman"));
+    assert!(wants_exe_suffix(
+      r"C:\Program Files\Docker\Docker\resources\bin\docker"
+    ));
+    assert!(!wants_exe_suffix("cmd.exe"));
+    assert!(!wants_exe_suffix(r"C:\tools\pwsh.exe"));
+    assert!(!wants_exe_suffix(""));
+  }
+
+  /// The ConPTY spawn path every local tab takes, run against the real CLI. Gated like the
+  /// other machine-specific probes: `cargo test -- --ignored`. This is what failed with os
+  /// error 193 while the bare `docker` resolved to the extensionless `sh` shim beside
+  /// `docker.exe`.
+  #[test]
+  #[ignore = "requires a local docker CLI"]
+  fn spawns_the_bare_cli_name_in_a_pty() {
+    let program = pty_program("docker");
+    let pair = portable_pty::native_pty_system()
+      .openpty(portable_pty::PtySize {
+        rows: 24,
+        cols: 80,
+        pixel_width: 0,
+        pixel_height: 0,
+      })
+      .expect("openpty");
+    let mut cmd = portable_pty::CommandBuilder::new(&program);
+    cmd.arg("--version");
+    let mut child = pair
+      .slave
+      .spawn_command(cmd)
+      .unwrap_or_else(|e| panic!("spawn '{program}' in a PTY failed: {e}"));
+    // Read on its own thread and drain with a deadline: a ConPTY reader does not
+    // necessarily report EOF when the child exits, so a `read_to_string` here would sit on
+    // the still-open writer forever.
+    let mut reader = pair.master.try_clone_reader().expect("reader");
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+      use std::io::Read;
+      let mut buf = [0u8; 4096];
+      while let Ok(n) = reader.read(&mut buf) {
+        if n == 0
+          || tx
+            .send(String::from_utf8_lossy(&buf[..n]).into_owned())
+            .is_err()
+        {
+          break;
+        }
+      }
+    });
+    let status = child.wait().expect("wait for the PTY child");
+    let mut text = String::new();
+    while let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
+      text.push_str(&chunk);
+    }
+    assert!(
+      status.success(),
+      "'{program} --version' exited {status:?}: {text:?}"
+    );
+    assert!(
+      text.to_lowercase().contains("version"),
+      "expected the CLI banner, got {text:?}"
+    );
+  }
 }
 
-/// Open a local shell (PTY-backed local process) for the given tab.
-#[tauri::command]
-pub async fn open_local_shell(
-  app: tauri::AppHandle,
-  state: tauri::State<'_, AppState>,
+/// True when a live local shell is already registered for `tab_id`. A floated terminal
+/// that is remounting must keep its process — reopening would restart the shell.
+pub(crate) fn live_local_shell(
+  state: &tauri::State<'_, AppState>,
   tab_id: u32,
-  shell: Option<String>,
-  distro: Option<String>,
+) -> Result<bool, String> {
+  let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+  Ok(
+    shells
+      .get_mut(&tab_id)
+      .map(|s| {
+        s.child
+          .try_wait()
+          .map(|exited| exited.is_none())
+          .unwrap_or(false)
+      })
+      .unwrap_or(false),
+  )
+}
+
+/// True when a program name carries no file extension, which is what makes it ambiguous
+/// to `CreateProcessW` (see `pty_program`).
+fn wants_exe_suffix(bin: &str) -> bool {
+  !bin.is_empty() && std::path::Path::new(bin).extension().is_none()
+}
+
+/// The program to hand a PTY, with `.exe` made explicit where Windows would otherwise
+/// guess. See the call in `spawn_local_pty`.
+fn pty_program(bin: &str) -> String {
+  if cfg!(windows) && wants_exe_suffix(bin) {
+    format!("{bin}.exe")
+  } else {
+    bin.to_string()
+  }
+}
+
+/// Start a PTY-backed local process for `tab_id` and register it as that tab's
+/// `LocalShell`. Shared by the local terminal (`open_local_shell`) and a local
+/// container shell (`open_local_docker_shell`): the only difference is which command
+/// lands in the PTY.
+///
+/// Nothing but the child's own bytes may reach the output queue. ConPTY repaints with
+/// *absolute* cursor positioning and assumes the terminal's top-left is its buffer
+/// origin, so a banner line written before the child speaks shifts xterm down while
+/// ConPTY keeps addressing row 0 — which is exactly why typed input used to land on the
+/// line above the prompt. Status goes to stderr instead.
+pub(crate) async fn spawn_local_pty(
+  app: tauri::AppHandle,
+  state: &tauri::State<'_, AppState>,
+  tab_id: u32,
+  program: String,
+  args: Vec<String>,
   cwd: Option<String>,
-  reuse_existing: bool,
   cols: u32,
   rows: u32,
 ) -> Result<(), String> {
-  // Reuse path: if a live local shell already exists for this tab (e.g. the
-  // terminal was floated and is now remounting), keep it — no process restart.
-  if reuse_existing {
-    let live = {
-      let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
-      if let Some(s) = shells.get_mut(&tab_id) {
-        s.child.try_wait().map_or(false, |exited| exited.is_none())
-      } else {
-        false
-      }
-    };
-    if live {
-      eprintln!(
-        "[open_local_shell] reusing live local shell for tab={}",
-        tab_id
-      );
-      return Ok(());
-    }
-  }
+  // `portable_pty` resolves the program itself and hands `CreateProcessW` the full path it
+  // found. A bare name therefore picks up whatever matches first, and Docker Desktop ships
+  // `resources\bin\docker` — a 1.3 KB `#!/usr/bin/env sh` wrapper for Git Bash — right next
+  // to `docker.exe`. CreateProcessW does not fall back to `.exe` when a file with the exact
+  // name exists, so the script is loaded as an image and fails with os error 193 ("%1 is
+  // not a valid Win32 application"). Naming the executable up front removes the ambiguity;
+  // `std::process::Command`, which every non-PTY call goes through, searches PATH with
+  // PATHEXT and never lands on the shim.
+  let program = pty_program(&program);
 
   // Clear any stale output for this tab
   {
@@ -315,23 +417,9 @@ pub async fn open_local_shell(
     shells.remove(&tab_id);
   }
 
-  // An empty spec means "use the default shell" (e.g. the default Local-Terminal entry).
-  let shell_spec = match shell {
-    Some(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
-    _ => None,
-  };
-  let shell_for_history = shell_spec.clone();
-
   // Per-tab output queue owned by this LocalShell. The reader thread holds an
   // `Arc` clone and writes here, so it never reaches back into the global
   // `AppState` (which behaves unreliably from a plain `std::thread`).
-  //
-  // IMPORTANT: do NOT push any banner/status text into this queue. ConPTY syncs
-  // the screen with *absolute* cursor positioning (CUP) and assumes the
-  // terminal's top-left corner is its own buffer origin. Any line we write
-  // before the shell's own output shifts xterm down by that many rows while
-  // ConPTY keeps addressing row 0 — which is exactly why typed input used to
-  // land on the line *above* the prompt. Status goes to stderr instead.
   let output = Arc::new(StdMutex::new(Vec::<String>::new()));
   // Sink for AI-issued commands; `None` while no AI command is in flight.
   // Owned here (not in `AppState`) for the same reason as `output`.
@@ -344,11 +432,10 @@ pub async fn open_local_shell(
   let initial_cols = if cols == 0 { 80u16 } else { cols as u16 };
   let initial_rows = if rows == 0 { 24u16 } else { rows as u16 };
 
-  // Offload everything that can block — shell resolution (the `gitbash` preset
-  // may run `reg` to locate a custom Git install) and the Win32 ConPTY calls
-  // (CreatePseudoConsole + CreateProcess) — to tokio's dedicated blocking
-  // thread pool so they never tie up an async worker and stall other commands.
-  let cwd_clone = cwd.clone();
+  // The Win32 ConPTY calls (CreatePseudoConsole + CreateProcess) block, so they run on
+  // tokio's dedicated blocking pool rather than an async worker that would otherwise
+  // stall every other command — `poll_output` included.
+  let shell_cwd = cwd.clone();
   let (master, child) = tokio::task::spawn_blocking(
     move || -> Result<
       (
@@ -357,19 +444,9 @@ pub async fn open_local_shell(
       ),
       String,
     > {
-      // Resolve the shell preset inside the blocking thread: for `gitbash` this
-      // may query the registry when the well-known install paths are missing,
-      // and an unresolved shell reports an error instead of silently launching
-      // whatever `bash` resolves to on PATH (typically WSL's launcher on
-      // Windows).
-      let is_wsl = shell_spec.as_deref().map(is_wsl_spec).unwrap_or(false);
-      let (shell_cmd, shell_args) = match shell_spec.as_deref() {
-        Some(spec) => resolve_local_shell(spec, distro.as_deref(), cwd_clone.as_deref())?,
-        None => default_local_shell(),
-      };
       eprintln!(
-        "[open_local_shell] starting '{}' (tab={})",
-        shell_cmd, tab_id
+        "[local_pty] starting '{}' (tab={})",
+        program, tab_id
       );
 
       let pty_system = portable_pty::native_pty_system();
@@ -382,24 +459,20 @@ pub async fn open_local_shell(
         })
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-      let mut cmd = portable_pty::CommandBuilder::new(&shell_cmd);
-      if !shell_args.is_empty() {
-        cmd.args(&shell_args);
+      let mut builder = portable_pty::CommandBuilder::new(&program);
+      if !args.is_empty() {
+        builder.args(&args);
       }
-      // An empty cwd means "use the default working directory". A WSL entry's
-      // cwd is a *Linux* path (forwarded via `--cd` above), so it must not be
-      // passed to CreateProcess as the Windows process cwd.
-      if !is_wsl {
-        if let Some(ref dir) = cwd_clone {
-          if !dir.trim().is_empty() {
-            cmd.cwd(dir);
-          }
+      // An empty cwd means "use the default working directory".
+      if let Some(ref dir) = cwd {
+        if !dir.trim().is_empty() {
+          builder.cwd(dir);
         }
       }
-      cmd.env("TERM", "xterm-256color");
+      builder.env("TERM", "xterm-256color");
 
-      let child = pair.slave.spawn_command(cmd).map_err(|e| {
-        format!("Failed to spawn shell '{}': {}", shell_cmd, e)
+      let child = pair.slave.spawn_command(builder).map_err(|e| {
+        format!("Failed to spawn '{}': {}", program, e)
       })?;
 
       // On some Windows builds ConPTY ignores the size passed to `openpty` and
@@ -409,8 +482,8 @@ pub async fn open_local_shell(
       // size now.
       let master = pair.master;
       eprintln!(
-        "[open_local_shell] opening PTY for {} at {}x{}",
-        shell_cmd, initial_cols, initial_rows
+        "[local_pty] opening PTY for {} at {}x{}",
+        program, initial_cols, initial_rows
       );
       let _ = master.resize(portable_pty::PtySize {
         rows: initial_rows,
@@ -419,8 +492,8 @@ pub async fn open_local_shell(
         pixel_height: 0,
       });
       eprintln!(
-        "[open_local_shell] spawned '{}' ok (tab={})",
-        shell_cmd, tab_id
+        "[local_pty] spawned '{}' ok (tab={})",
+        program, tab_id
       );
       Ok((master, child))
     },
@@ -449,20 +522,11 @@ pub async fn open_local_shell(
         writer: Box::new(writer),
         child,
         session_id,
-        cwd: cwd.clone(),
+        cwd: shell_cwd,
         output: output.clone(),
         ai_capture: ai_capture.clone(),
       },
     );
-  }
-
-  // Remember cwd in history (start of list, de-duplicated)
-  {
-    if let Some(ref dir) = cwd {
-      if !dir.trim().is_empty() {
-        record_local_shell_dir(&state, dir, shell_for_history.as_deref());
-      }
-    }
   }
 
   // Background reader thread: drain PTY output into this tab's own output queue.
@@ -524,6 +588,65 @@ pub async fn open_local_shell(
     );
   });
 
+  Ok(())
+}
+
+/// Open a local shell (PTY-backed local process) for the given tab.
+#[tauri::command]
+pub async fn open_local_shell(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  tab_id: u32,
+  shell: Option<String>,
+  distro: Option<String>,
+  cwd: Option<String>,
+  reuse_existing: bool,
+  cols: u32,
+  rows: u32,
+) -> Result<(), String> {
+  if reuse_existing && live_local_shell(&state, tab_id)? {
+    eprintln!(
+      "[open_local_shell] reusing live local shell for tab={}",
+      tab_id
+    );
+    return Ok(());
+  }
+
+  // An empty spec means "use the default shell" (e.g. the default Local-Terminal entry).
+  let shell_spec = match shell {
+    Some(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+    _ => None,
+  };
+  let shell_for_history = shell_spec.clone();
+  let cwd_for_resolve = cwd.clone();
+
+  // Resolving a preset can block: `gitbash` queries the registry when the well-known
+  // install paths are missing. An unresolved shell is an error rather than a silent
+  // launch of whatever `bash` means on PATH (typically WSL's launcher on Windows).
+  let (program, args, is_wsl) =
+    tokio::task::spawn_blocking(move || -> Result<(String, Vec<String>, bool), String> {
+      let is_wsl = shell_spec.as_deref().map(is_wsl_spec).unwrap_or(false);
+      let (program, args) = match shell_spec.as_deref() {
+        Some(spec) => resolve_local_shell(spec, distro.as_deref(), cwd_for_resolve.as_deref())?,
+        None => default_local_shell(),
+      };
+      Ok((program, args, is_wsl))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join error: {}", e))??;
+
+  // A WSL entry's cwd is a *Linux* path, already forwarded to `wsl.exe` as `--cd`;
+  // handing it to CreateProcess as the Windows process cwd would fail.
+  let pty_cwd = if is_wsl { None } else { cwd.clone() };
+
+  spawn_local_pty(app, &state, tab_id, program, args, pty_cwd, cols, rows).await?;
+
+  // Remember cwd in history (start of list, de-duplicated)
+  if let Some(ref dir) = cwd {
+    if !dir.trim().is_empty() {
+      record_local_shell_dir(&state, dir, shell_for_history.as_deref());
+    }
+  }
   Ok(())
 }
 

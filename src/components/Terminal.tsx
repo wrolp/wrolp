@@ -14,6 +14,7 @@ import {
   pollOutput,
   resizeTerminal,
   openLocalShell,
+  openLocalDockerShell,
   localSendInput,
   localResize,
   pollWorkingDir,
@@ -80,6 +81,27 @@ import { AnsiHighlighter, HL_MAX_CHUNK } from './terminal/highlightStream'
 // quiet. Must stay comfortably above the 100ms output-poll cadence below, or
 // the flush fires between two polls and colorizes a half-received token.
 const HL_FLUSH_DELAY_MS = 300
+
+/**
+ * Start the PTY behind a local tab: this machine's own shell, or a container's shell
+ * when the tab was opened from the local Docker group (`dockerContainer` set). Both
+ * register as a local shell, so input / resize / close / polling are identical after
+ * this point.
+ */
+function openLocalPty(
+  tabId: number,
+  container: string | null | undefined,
+  shellType: string | undefined,
+  cwd: string | undefined,
+  distro: string | undefined,
+  reuseExisting: boolean,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return container
+    ? openLocalDockerShell(tabId, container, reuseExisting, cols, rows)
+    : openLocalShell(tabId, shellType, cwd, reuseExisting, cols, rows, distro)
+}
 // An inline TUI that uses neither the alternate buffer nor mouse tracking (e.g.
 // Qoder CLI) is invisible to `isApplicationScreen`, so the highlighter would run
 // on it and corrupt its frames (BUGS.md B46 ④): its cross-chunk holdback delays
@@ -2465,14 +2487,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       lastRowsRef.current = rows
       onStatusChangeRef.current('connecting')
       if (isLocal) {
-        openLocalShell(
+        openLocalPty(
           currentTabId,
+          dockerContainerRef.current,
           localShellTypeRef.current,
           localCwd,
+          localDistroRef.current,
           true,
           cols,
           rows,
-          localDistroRef.current,
         )
           .then(() => {
             connectedRef.current = true
@@ -2813,14 +2836,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       onStatusChangeRef.current('connecting')
 
       if (isLocal) {
-        openLocalShell(
+        openLocalPty(
           currentTabId,
+          dockerContainerRef.current,
           localShellTypeRef.current,
           localCwd,
+          localDistroRef.current,
           false,
           term.cols,
           term.rows,
-          localDistroRef.current,
         )
           .then(() => {
             connectedRef.current = true

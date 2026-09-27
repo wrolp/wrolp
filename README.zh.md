@@ -126,7 +126,7 @@
 
 ### Docker 与主机分析
 - **两个 daemon，一套命令面。** 所有 Docker 能力都通过 `DockerHostRef` 决定去向：`{kind:'ssh', jumpTabId}` 是"已连接 SSH 会话那台跳板机上的容器"，经 exec 通道跑 `docker exec`；`{kind:'local'}` 是本机 daemon，直接 spawn CLI 进程（不经 shell，所以 `--format` 模板与容器名都不需要引号转义）。`probe_local_docker` 决定本机这半边存不存在：先试 `docker`、再试 `podman`，并区分"没安装"与"装了但 daemon 没起"；一旦设了 `DOCKER_HOST` 就只认 `docker`（podman 连的是它自己的 socket，报上来的不是用户配的那个端点）。侧栏只有一个 Docker 分组，它的宿主跟随当前聚焦的终端：本地 shell（或根本没有终端）读本机，已连接的 SSH / Telnet 会话读那台主机；串口没有可 exec 的 shell，因此不显示该分组。
-- 列表、启动 / 停止 / 重启 / 删除、一次性与流式日志、三层分析报告、容器文件浏览，两个宿主都已支持；进入容器 shell 仍只有跳板机路径（向该会话终端注入 `docker exec -it …`）。
+- 列表、启动 / 停止 / 重启 / 删除、一次性与流式日志、三层分析报告、容器文件浏览、进容器 shell，两个宿主都已支持；进 shell 的路径不同：跳板机容器是在该会话里新开一个面板并注入 `docker exec -it …`（存为 `postConnectCmd`，重连会重发），本机容器则直接以 PTY 跑 exec（`open_local_docker_shell`，镜像里有 bash 就用 bash，否则退回 sh）。
 - 日志视图通常覆盖在当前页签面板上，文件面板通常也属于某个会话，但当分组的宿主是本机时它并不依赖会话 —— 于是这两个入口都不再要求先打开终端：没有面板时，「查看日志」会作为一个独立页签占据主区域（与「设置」标签同一层级）；打开容器文件则会在空工作区上显示文件面板分区（那里只提供 Docker 模式，SSH 与跳板都要指向一个会话）。
 - `analyze_host`：对连接中的服务器做只读分析（操作系统、内核、架构、软件包、已安装工具）。
 - `analyze_docker_container` + `docker_container_logs`：检视容器并流式获取其日志（`docker_logs_stream_start` / `poll_docker_logs` / `stop_docker_logs_stream`）。

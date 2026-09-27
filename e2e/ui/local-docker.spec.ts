@@ -88,14 +88,34 @@ test('with no terminal open the one group reads this machine', async ({ page }) 
     ),
   ).toBe(true)
 
-  // Logs and the analysis report and the lifecycle verbs all work on the local daemon;
-  // only entering a container's shell still needs a jump host (P2b).
+  // Everything the jump-host group offers works here too, including the shell — P2b
+  // gave it a real PTY (`open_local_docker_shell`) instead of typing `docker exec`
+  // into someone else's terminal.
   await row(page, LOCAL.name).click({ button: 'right' })
   const items = await page.locator('.context-menu-item').allTextContents()
   expect(items).toContain('View Logs')
   expect(items).toContain('Stop')
   expect(items).toContain('Analyze Container')
-  expect(items).not.toContain('Enter Shell')
+  expect(items).toContain('Enter Shell')
+})
+
+test('entering a local container’s shell opens a PTY tab of its own', async ({ page }) => {
+  await boot(page, {
+    localDockerProbe: RUNNING,
+    localDockerContainers: [LOCAL],
+  })
+  await expandSection(page, 'Docker')
+  await row(page, LOCAL.name).click({ button: 'right' })
+  await page.locator('.context-menu-item', { hasText: 'Enter Shell' }).click()
+
+  // Its own tab, named for the container, whose PTY is the local CLI's `docker exec`
+  // — there is no session terminal to inject a command into.
+  await expect(page.locator('.tab-item.active .tab-label')).toHaveText(LOCAL.name)
+  await expect
+    .poll(
+      async () => (await invokedCalls(page)).find((c) => c.cmd === 'open_local_docker_shell')?.args,
+    )
+    .toMatchObject({ container: LOCAL.name })
 })
 
 test('the group follows the focused terminal, and only one is ever mounted', async ({ page }) => {

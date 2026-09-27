@@ -24,8 +24,8 @@ interface DockerPanelProps {
   activeContainer?: string | null
   /** Absent for a read-only list. */
   onOpenContainer?: (container: ContainerInfo) => void
-  /** Enter a shell inside the container (opens new terminal tab). Jump-host containers
-   * only: the local group has no PTY command to run yet (P2b). */
+  /** Enter a shell inside the container, in a terminal tab of its own. Absent for a
+   * read-only list. */
   onEnterShell?: (container: ContainerInfo) => void
   /** Analyse a Docker container (opens report in BottomPanel). */
   onAnalyzeContainer?: (container: ContainerInfo) => void
@@ -333,9 +333,9 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
         >
           {ctxMenu.container.state === 'running' ? (
             <>
-              {/* Gated like its siblings: entering a container opens a *terminal tab on
-                  the jump host*, which the local group cannot do until the local PTY
-                  command lands in P2. */}
+              {/* Gated like its siblings, on the caller having a way in: a jump-host
+                  container gets a pane of that session with `docker exec` typed into
+                  it, a local one a PTY of its own. */}
               {onEnterShell && (
                 <div className="context-menu-item" onClick={handleEnterShell}>
                   <Icon name="terminal" size={14} />

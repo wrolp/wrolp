@@ -305,6 +305,26 @@ export async function openLocalShell(
   })
 }
 
+/// Open a PTY running `docker exec -it <container>` on this machine, so a local
+/// container's shell is a real terminal rather than a command typed into another
+/// session. Registers as an ordinary local shell, so input / resize / close reuse the
+/// local-terminal commands.
+export async function openLocalDockerShell(
+  tabId: number,
+  container: string,
+  reuseExisting: boolean = true,
+  cols?: number,
+  rows?: number,
+): Promise<void> {
+  return await invoke('open_local_docker_shell', {
+    tabId,
+    container,
+    reuseExisting,
+    cols: cols ?? 0,
+    rows: rows ?? 0,
+  })
+}
+
 /// Get saved local terminal entries.
 export async function getLocalTerminals(): Promise<LocalTerminalEntry[]> {
   return await invoke<LocalTerminalEntry[]>('get_local_terminals')

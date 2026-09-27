@@ -1501,7 +1501,11 @@ export default function App() {
     if (!focusedTab) return
     const container = focusedTab.dockerContainer
     if (focusedTab.tabType === 'localShell') {
-      if (isWslShell(focusedTab.localShellType)) {
+      if (container) {
+        // A local container's shell → browse that container, not the Windows side.
+        setFileMode('docker')
+        setFileTarget({ kind: 'dockerLocal', container })
+      } else if (isWslShell(focusedTab.localShellType)) {
         // WSL shell → browse the distribution's filesystem, not Windows'.
         setFileMode('local')
         setFileTarget({
@@ -1680,25 +1684,6 @@ export default function App() {
       },
     }))
   }, [])
-
-  // Open a new pane (split) inside the current workspace connected to the same
-  // jump host and automatically run
-  // `docker exec -it <container> /bin/bash || docker exec -it <container> /bin/sh`
-  const handleEnterContainerShell = useCallback(
-    (container: ContainerInfo) => {
-      if (focusedLeafTabId == null) return
-      const activeTab = tabs.find((t) => t.tabId === focusedLeafTabId)
-      if (!activeTab?.connectionId) return
-      const conn = connections.find((c) => c.id === activeTab.connectionId)
-      if (!conn) return
-
-      const newTabId = openInSplit(conn, 'column', container.name)
-      // The docker exec command is persisted on the new tab (postConnectCmd),
-      // so it is sent on connect and re-sent on any reconnect (float/restore).
-      if (newTabId == null) return
-    },
-    [focusedLeafTabId, tabs, connections, openInSplit],
-  )
 
   // Trigger Docker container analysis (opens the report in the inspector's
   // "Docker" tab, which is the tab the target is focused on).
@@ -2800,22 +2785,36 @@ export default function App() {
     [newLeafId],
   )
 
-  // Open a local shell as a NEW top-level tab (workspace).
+  // Open a local shell as a NEW top-level tab (workspace). Passing `container` makes it
+  // a local container's shell instead: the same tab type, but the PTY runs
+  // `docker exec -it` (see `open_local_docker_shell`) and the tab names the container.
   const openLocalShellTab = useCallback(
-    (cwd?: string, shell?: string, name?: string, distro?: string, entryId?: string): number => {
+    (
+      cwd?: string,
+      shell?: string,
+      name?: string,
+      distro?: string,
+      entryId?: string,
+      container?: string,
+    ): number => {
       const tabId = nextTabId++
       const newTab: TabInfo = {
         tabId,
         connectionId: undefined,
-        connectionName: t('localTerminal'),
+        connectionName: container ?? t('localTerminal'),
         host: 'localhost',
         status: 'connected',
         tabType: 'localShell',
         localShellCwd: cwd,
-        localShellType: shell,
-        localShellName: name,
+        // A container's shell is a POSIX one — `docker exec` lands in bash or sh — and
+        // this is the field the terminal's line-editor heuristics read (clear vs cls,
+        // Ctrl-A/E raw sequences). Left undefined it would fall back to the Windows
+        // default and send `cls` inside a Linux container.
+        localShellType: container ? 'sh' : shell,
+        localShellName: container ?? name,
         localShellDistro: distro,
         localShellEntryId: entryId,
+        dockerContainer: container,
       }
       setTabs((prev) => [...prev, newTab])
       const leafId = newLeafId()
@@ -2833,6 +2832,26 @@ export default function App() {
       return openLocalShellTab(cwd, shell, name, distro, entryId)
     },
     [openLocalShellTab],
+  )
+
+  // "Enter Shell" from the Docker group. The two hosts get there differently: a jump
+  // host's container is a `docker exec -it …` typed into a new pane of that session
+  // (persisted as `postConnectCmd`, so a reconnect re-sends it), while a local one is
+  // its own PTY running the exec — there is no session terminal to type into.
+  const handleEnterContainerShell = useCallback(
+    (host: DockerHostRef, container: ContainerInfo) => {
+      if (host.kind === 'local') {
+        openLocalShellTab(undefined, undefined, undefined, undefined, undefined, container.name)
+        return
+      }
+      if (focusedLeafTabId == null) return
+      const activeTab = tabs.find((t) => t.tabId === focusedLeafTabId)
+      if (!activeTab?.connectionId) return
+      const conn = connections.find((c) => c.id === activeTab.connectionId)
+      if (!conn) return
+      openInSplit(conn, 'column', container.name)
+    },
+    [focusedLeafTabId, tabs, connections, openInSplit, openLocalShellTab],
   )
 
   // Right-click → split the current window; default (left-click) opens a new tab.
@@ -3441,8 +3460,10 @@ export default function App() {
     if (tab.tabType === 'settings') return 'settings'
     if (tab.tabType === 'fileEditor') return 'file'
     if (tab.tabType === 'dockerLog') return 'clipboard'
-    if (tab.tabType === 'localShell') return shellIconName(tab.localShellType ?? '')
+    // Checked before the shell flavour: a local container's shell is a `localShell` tab,
+    // and what distinguishes it from a plain one is the container it exec'd into.
     if (tab.dockerContainer) return 'container'
+    if (tab.tabType === 'localShell') return shellIconName(tab.localShellType ?? '')
     return 'terminal'
   }, [])
 
@@ -7174,11 +7195,7 @@ export default function App() {
                   }
                   filter={navFilter}
                   onOpenContainer={(c) => handleOpenContainer(host, c)}
-                  onEnterShell={
-                    // Entering a container's shell injects `docker exec -it` into a
-                    // terminal, which only a jump-host session has (P2b).
-                    isLocal ? undefined : handleEnterContainerShell
-                  }
+                  onEnterShell={(c) => handleEnterContainerShell(host, c)}
                   onAnalyzeContainer={(c) => handleAnalyzeContainer(host, c)}
                   onViewLogs={(c) => handleViewContainerLogs(host, c)}
                   onRestartContainer={(c) => runDockerVerb(host, c, 'restart')}
