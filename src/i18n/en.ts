@@ -279,6 +279,10 @@ const en = {
   discardAndClose: "Don't Save",
 
   // Editor toolbar (file editor pane)
+  // Which terminal an open file came from — the tab strip and the editor toolbar
+  // both say it, since the same path can be open from two hosts at once.
+  openedFrom: 'from {name}',
+  openedFromTitle: 'Opened from the terminal “{name}”',
   editorTailRoom: 'Tail room',
   editorTailRoomTitle:
     'Leave one screen of room after the last line, so the end of the file can be scrolled up to the top of the viewport. Also applies to the hex viewer.',

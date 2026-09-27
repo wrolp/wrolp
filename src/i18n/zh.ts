@@ -274,6 +274,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   discardAndClose: '不保存',
 
   // 编辑器工具栏（文件编辑器 pane）
+  // 打开的文件来自哪个终端 —— 页签条与编辑器工具条都要说，因为同一个路径可能同时
+  // 从两台机器打开。
+  openedFrom: '来自 {name}',
+  openedFromTitle: '从此终端打开：{name}',
   editorTailRoom: '末尾留白',
   editorTailRoomTitle: '末行之后保留一屏留白，使文件末尾几行能滚到视口最上方；Hex 查看器同样生效。',
   editorWrapLines: '自动换行',

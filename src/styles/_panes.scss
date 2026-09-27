@@ -703,6 +703,20 @@
     flex: 1;
   }
 
+  // Which terminal this file was opened from. Quieter than the name it follows and
+  // capped, because a long host must not push the toolbar's own controls onto a
+  // second row (`flex-wrap: wrap` above would otherwise let it).
+  .editor-origin {
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-xs);
+    color: $text-muted;
+  }
+
   .editor-filename {
     font-size: var(--fs-lg);
     color: $text-primary;

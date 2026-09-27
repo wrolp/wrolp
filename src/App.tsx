@@ -3476,6 +3476,25 @@ export default function App() {
     [tabs],
   )
 
+  /**
+   * Names the terminal a file was opened from. `EditorTab.sshTabId` is the owner
+   * session, and for a split pane that is the pane's own shell — so this names the
+   * exact terminal whose Files panel produced the open, not merely its connection.
+   * Null once that session is closed: the file stays open, there is just nothing
+   * left to point at.
+   */
+  const describeFileOrigin = useCallback(
+    (sshTabId: number): string | null => {
+      const src = tabs.find((t) => t.tabId === sshTabId)
+      if (!src) return null
+      const label = getTabLabel(src)
+      // Two connections can share a display name (`prod-web-01` on two hosts), and
+      // the tab label disambiguates those only among *open* siblings.
+      return src.host && src.host !== label ? `${label} · ${src.host}` : label
+    },
+    [tabs, getTabLabel],
+  )
+
   // What used to be an emoji prefix on the label. Text and icon are separate now so
   // the same value can feed a window title (text only) and the tab strip (both),
   // and so the glyphs stop rendering as colour pictures at a size where the shell
@@ -4505,6 +4524,7 @@ export default function App() {
       onChangeEncoding={changeEditorTabEncoding}
       onChangeLineEnding={changeEditorTabLineEnding}
       onFloat={onFloat}
+      describeOrigin={describeFileOrigin}
     />
   )
 
@@ -7424,12 +7444,22 @@ export default function App() {
                     tab.tabType === 'fileEditor'
                       ? editorTabs.find((e) => e.key === tab.editorKey)
                       : undefined
+                  // A file's tooltip says where it came from as well as what it is:
+                  // the same path can be open from two different boxes, and the tab
+                  // label alone cannot tell them apart.
+                  const origin = file ? describeFileOrigin(file.sshTabId) : null
                   return (
                     <div
                       key={tab.tabId}
                       className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
                       draggable
-                      title={file?.path}
+                      title={
+                        file
+                          ? origin
+                            ? `${file.path} — ${t('openedFrom', { name: origin })}`
+                            : file.path
+                          : undefined
+                      }
                       onClick={() => handleTabClick(tab.tabId)}
                       onDragStart={(e) => handleTabDragStart(e, idx)}
                       onDragOver={(e) => handleTabDragOver(e, idx)}

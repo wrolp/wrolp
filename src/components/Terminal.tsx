@@ -1711,7 +1711,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // the current row breaks immediately after the first row, leaving the
         // wrapped remainder of the name out of `logicalText` and breaking
         // every wrapped `ls` link.
-        type LogicalChar = { ch: string; globalCol: number }
+        type LogicalChar = { ch: string; globalCol: number; w: number }
         const logicalChars: LogicalChar[] = []
         let scanRow = firstRow
         while (true) {
@@ -1725,7 +1725,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             if (w === 0) continue // wide-char padding cell
             const ch = cell.getChars()
             if (ch === '') continue
-            logicalChars.push({ ch, globalCol: rowBase + x })
+            logicalChars.push({ ch, globalCol: rowBase + x, w })
           }
           const next = buf.getLine(scanRow + 1)
           if (!next || !next.isWrapped) break
@@ -1736,7 +1736,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           return
         }
         const logicalText = logicalChars.map((c) => c.ch).join('')
-        const endOfLineGlobalCol = (scanRow - firstRow + 1) * cols
 
         for (const entry of allEntries) {
           if (entry.name.length === 0 || seen.has(entry)) continue
@@ -1777,10 +1776,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             /[@*=|/]/.test(afterChar)
           if (!boundaryOk) continue
 
-          // Global column range of this occurrence (end is exclusive).
+          // Global column range of this occurrence (end is exclusive). The end is
+          // the last character's own cell plus its width — NOT the next entry in
+          // `logicalChars`, because that list skips empty cells and `ls` pads its
+          // columns with empty cells: taking the next character's column drew the
+          // underline across the whole padding gap, and for the last name on a line
+          // all the way to the right margin.
           const startGlobalCol = logicalChars[idx].globalCol
-          const endGlobalCol =
-            idx + len < logicalChars.length ? logicalChars[idx + len].globalCol : endOfLineGlobalCol
+          const lastChar = logicalChars[idx + len - 1]
+          const endGlobalCol = lastChar.globalCol + lastChar.w
 
           // Which visual rows does the occurrence span?
           const occStartRow = Math.floor(startGlobalCol / cols)

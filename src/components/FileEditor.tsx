@@ -48,6 +48,11 @@ interface FileEditorProps {
   /** Pops this editor out into its own floating window. Omitted when the editor
    *  *is* the floating window (there is nothing to pop out of). */
   onFloat?: () => void
+  /**
+   * Names the terminal each file was opened from, for the toolbar to show. Resolves
+   * `EditorTab.sshTabId`; null when that session has been closed.
+   */
+  describeOrigin?: (sshTabId: number) => string | null
 }
 
 const EOF_SEQ: Record<string, monaco.editor.EndOfLineSequence> = {
@@ -64,6 +69,7 @@ export function FileEditor({
   onChangeEncoding,
   onChangeLineEnding,
   onFloat,
+  describeOrigin,
 }: FileEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -87,6 +93,8 @@ export function FileEditor({
 
   // `tab` (not `t`): `t` is the i18n translator below.
   const active = tabs.find((tab) => tab.key === activeKey) || null
+  // Resolved once: the toolbar needs it twice (the label and its tooltip).
+  const origin = active ? (describeOrigin?.(active.sshTabId) ?? null) : null
 
   // Monaco's scrollbar is a 4px sliver by default — widen it while the pointer
   // is in the grab zone so it can actually be grabbed and dragged.
@@ -344,6 +352,15 @@ export function FileEditor({
                   </span>
                 )}
               </span>
+              {/* Which terminal this file came from. The same path can be open from
+                  two boxes at once, and the tab strip is the only thing that tells
+                  them apart — so the editor says it too. Nothing to click: the tab
+                  bar already selects the session. */}
+              {origin && (
+                <span className="editor-origin" title={t('openedFromTitle', { name: origin })}>
+                  {t('openedFrom', { name: origin })}
+                </span>
+              )}
               <div className="editor-toolbar-spacer" />
               <label className="editor-select">
                 <select
