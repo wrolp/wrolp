@@ -147,7 +147,7 @@ body,
   border-radius: 4px;
   cursor: pointer;
   &:hover {
-    background: $danger;
+    background: var(--danger-solid);
     color: #fff;
   }
 }
@@ -257,7 +257,7 @@ body,
   border-color: $danger;
   color: $danger;
   &:hover:not(:disabled) {
-    background: $danger;
+    background: var(--danger-solid);
     color: #fff;
   }
 }
@@ -298,7 +298,7 @@ body,
   flex: none;
   &.on {
     background: $success;
-    box-shadow: 0 0 6px rgba(31, 168, 126, 0.8);
+    box-shadow: 0 0 6px rgba($success, 0.8);
   }
   &.off {
     background: $text-dim;

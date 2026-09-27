@@ -16,8 +16,14 @@
   z-index: var(--z-modal);
 }
 
+// v5 P5: everything in this partial that *floats above* something else — the dialog,
+// its three autocomplete lists, and the two context menus — moved to the elevated
+// step. The mock draws `.palette` / `.cl-modal` / `.menu` on `--bg-elev` for the same
+// reason: a surface that is above the page has to say so without relying on its
+// border. They were all `$bg-secondary`, which is the sidebar's step, so a dropdown
+// opened inside a dialog was the same colour as the dialog behind it.
 .modal {
-  background: $bg-secondary;
+  background: $bg-tertiary;
   border: 1px solid $border;
   border-radius: var(--r-3);
   width: 440px;
@@ -154,16 +160,7 @@
     }
 
     .btn-danger {
-      background: $danger;
-      color: #fff;
-
-      &:hover {
-        background: #c0392b;
-      }
-    }
-
-    .btn-danger {
-      background: $danger;
+      background: var(--danger-solid);
       color: white;
 
       &:hover {
@@ -296,7 +293,7 @@
     margin: 2px 0 0;
     padding: 4px 0;
     list-style: none;
-    background: $bg-secondary;
+    background: $bg-tertiary;
     border: 1px solid $accent-hover;
     border-radius: var(--r-1);
     box-shadow: 0 4px 12px var(--shadow-1);
@@ -333,7 +330,7 @@
     margin: 2px 0 0;
     padding: 4px 0;
     list-style: none;
-    background: $bg-secondary;
+    background: $bg-tertiary;
     border: 1px solid $accent-hover;
     border-radius: var(--r-1);
     box-shadow: 0 4px 12px var(--shadow-1);
@@ -390,7 +387,7 @@
     margin: 2px 0 0;
     padding: 4px 0;
     list-style: none;
-    background: $bg-secondary;
+    background: $bg-tertiary;
     border: 1px solid $accent-hover;
     border-radius: var(--r-1);
     box-shadow: 0 4px 12px var(--shadow-1);
@@ -671,7 +668,7 @@ input[type='password']::-ms-clear {
 // Tab right-click context menu
 .tab-context-menu {
   position: fixed;
-  background: $bg-secondary;
+  background: $bg-tertiary;
   border: 1px solid $border;
   border-radius: var(--r-2);
   box-shadow: 0 4px 16px var(--shadow-1);
@@ -712,7 +709,7 @@ input[type='password']::-ms-clear {
 // Right-click context menu
 .context-menu {
   position: fixed;
-  background: $bg-secondary;
+  background: $bg-tertiary;
   border: 1px solid $border;
   border-radius: var(--r-2);
   box-shadow: 0 4px 16px var(--shadow-1);

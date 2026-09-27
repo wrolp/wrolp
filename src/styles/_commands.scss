@@ -44,7 +44,10 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: $bg-secondary;
+  // v5 P5: the elevated step (the mock's `.cl-modal` is `--bg-elev`). This panel is a
+  // float above the workspace, so it has to sit a rung above it; `$bg-secondary` was
+  // the same step as the sidebar and the drawer, which made the window read flush.
+  background: $bg-tertiary;
   opacity: var(--cmd-opacity, 1);
   border-radius: inherit;
   z-index: -1;
@@ -66,7 +69,9 @@
   align-items: center;
   gap: 6px;
   font-size: var(--fs-lg);
-  font-weight: 700;
+  // 600, not 700: the mock's `.cl-head` is 13.5px/600, and a bold title competed
+  // with the command text below it, which is the thing being read.
+  font-weight: 600;
   color: $text-primary;
   // Was `flex-shrink: 0`, which forced the trailing close ✕ off-screen (and
   // clipped by the panel's `overflow: hidden`) once the panel was dragged
@@ -101,7 +106,9 @@
   min-width: 0;
   flex-shrink: 1;
   font-size: var(--fs-xs);
-  color: $text-dim;
+  // The two switches are labelled options, not chrome: the decorative rung is 2.95:1
+  // on this panel.
+  color: $text-muted;
   cursor: pointer;
   user-select: none;
 
@@ -211,13 +218,27 @@
   }
 }
 
+// The mock's `.cl-search`: an inset field, not a full-bleed row under a divider.
+// It is the only editable thing in the window, so it gets the same recessed well the
+// nav filter uses (`.nav-search`) — and it reads in both themes, where a
+// `border-bottom` alone made the row look like part of the header.
 .cmd-list-search {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-bottom: 1px solid $border;
+  gap: 7px;
+  flex-shrink: 0;
+  height: 30px;
+  margin: 10px 14px 6px;
+  padding: 0 10px;
+  background: $bg-input;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
   color: $text-muted;
+  transition: border-color var(--d-1) var(--e-out);
+
+  &:focus-within {
+    border-color: $border-focus;
+  }
 
   svg {
     flex-shrink: 0;
@@ -225,6 +246,7 @@
 
   input {
     flex: 1;
+    min-width: 0;
     background: transparent;
     border: none;
     &:focus:not(:focus-visible) {
@@ -232,7 +254,7 @@
     }
     color: $text-primary;
     font-family: inherit;
-    font-size: var(--fs-lg);
+    font-size: var(--fs-sm);
 
     &::placeholder {
       color: $text-dim;
@@ -251,17 +273,20 @@
   padding: 32px 16px;
   text-align: center;
   font-size: var(--fs-sm);
-  color: $text-dim;
+  // `muted`: this sentence is the panel's only content, and the decorative rung is
+  // 2.95:1 on the panel's own background.
+  color: $text-muted;
 }
 
 .cmd-list-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: 10px;
+  padding: 8px 10px;
   border-radius: var(--r-2);
   cursor: pointer;
   user-select: none;
+  transition: background var(--d-1) var(--e-out);
 
   &:hover {
     background: $bg-hover;
@@ -283,7 +308,9 @@
 
 .cmd-list-star {
   flex-shrink: 0;
-  color: #e6c069;
+  // `var(--warning)` rather than the `#e6c069` this carried: a favourite is marked by
+  // colour alone, so the pale gold had to be readable on both themes' panels.
+  color: var(--warning);
 }
 
 .cmd-list-hidden-icon {
@@ -330,11 +357,11 @@
   }
 
   &.active {
-    color: #e6c069;
+    color: var(--warning);
   }
 
   &.danger:hover {
-    background: rgba(210, 70, 70, 0.35);
+    background: rgba($danger, 0.35);
     color: var(--danger-soft-40);
   }
 }
@@ -361,7 +388,10 @@
 
 .cmd-list-alias {
   font-size: var(--fs-xs);
-  color: $text-dim;
+  // Both lines of the row are content: `--text-dim` is the decorative rung and is
+  // 2.95:1 on this panel. The command stays the louder of the two by being mono and
+  // primary, not by the alias being unreadable.
+  color: $text-muted;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -370,7 +400,9 @@
 .cmd-list-command {
   font-family: $font-mono;
   font-size: var(--fs-md);
-  color: $text-secondary;
+  // The mock's `.cl-cmd` is `--fg`: the command string is what a person is scanning
+  // for, so it carries the primary ink and the alias beside it does not.
+  color: $text-primary;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -384,7 +416,7 @@
 
 .cmd-list-hint {
   font-size: var(--fs-xs);
-  color: $text-dim;
+  color: $text-muted;
 }
 
 .cmd-list-opacity {
@@ -393,7 +425,7 @@
   gap: 6px;
   margin-top: 6px;
   font-size: var(--fs-xs);
-  color: $text-dim;
+  color: $text-muted;
   user-select: none;
 
   input[type='range'] {
@@ -545,7 +577,7 @@
   z-index: var(--z-above-float);
   padding: 8px 16px;
   background: rgba($accent, 0.95);
-  color: #fff;
+  color: var(--text-on-accent);
   border-radius: var(--r-2);
   font-size: var(--fs-md);
   box-shadow: 0 4px 16px var(--shadow-1);
@@ -575,7 +607,7 @@
 
 .snip-vars-empty {
   font-size: var(--fs-sm);
-  color: $text-dim;
+  color: $text-muted;
   padding: 2px 0 6px;
 }
 
@@ -694,7 +726,7 @@
 .snip-fill-hint {
   margin-top: 4px;
   font-size: var(--fs-xs);
-  color: $text-dim;
+  color: $text-muted;
 }
 
 // ===== Command list: connection grouping =====
@@ -824,7 +856,7 @@
 .cmd-list-empty-group {
   padding: 6px 8px;
   font-size: var(--fs-xs);
-  color: $text-dim;
+  color: $text-muted;
 }
 
 // "New group" input row at the end of the list.
@@ -1135,7 +1167,7 @@
 
 .snip-link-empty {
   font-size: var(--fs-xs);
-  color: $text-dim;
+  color: $text-muted;
 }
 
 // Fill dialog: explains why a checkbox turned itself on.
@@ -1158,7 +1190,7 @@
   flex-basis: 100%;
   margin-left: 2px;
   font-size: var(--fs-xs);
-  color: #d08a4a;
+  color: var(--warning);
 }
 
 .snip-param-actions {
@@ -1251,7 +1283,7 @@
 .snip-fill-slot {
   flex-shrink: 0;
   font-size: var(--fs-xs);
-  color: $text-dim;
+  color: $text-muted;
   font-family: 'Cascadia Code', Consolas, monospace;
 }
 
@@ -1273,5 +1305,5 @@
 .snip-fill-error {
   margin-top: 6px;
   font-size: var(--fs-sm);
-  color: #e06c6c;
+  color: var(--danger-soft-40);
 }

@@ -120,7 +120,7 @@ const ON_DARK = '#171717'
  * plain card, and the hovered case is what decides whether the pair is readable.
  * Exported so the appearance spec asserts against the surface the clamp targets.
  */
-export const LIGHT_TEXT_BG = '#e4e6f1'
+export const LIGHT_TEXT_BG = '#dbe4f0'
 const AA_NORMAL = 4.5
 
 /** White or near-black text on `accent`, whichever reads better on it. */
@@ -132,7 +132,7 @@ export function textOnAccent(accent: string): string {
  * The accent as *text*: pushed toward white on dark, pulled toward black on
  * light. The light branch cannot stop at the fixed `-22`, because that travel is
  * measured in HSL lightness points and so only reaches AA by accident — a bright
- * preset like #4d9dff lands on #0063dc, 4.42:1 on `LIGHT_TEXT_BG`, and four of
+ * preset like #4d9dff lands on #0063dc, 4.29:1 on `LIGHT_TEXT_BG`, and four of
  * the six sit under 4.5. The shipped default never comes through here at all (no
  * accent means no override; `_theme.scss` hand-tunes its own `accent-soft-40`),
  * so this branch has to hold for *any* hex the picker can produce: keep pulling

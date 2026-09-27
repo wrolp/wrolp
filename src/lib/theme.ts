@@ -13,10 +13,14 @@
 import type { ITheme } from '@xterm/xterm'
 import type { ResolvedTheme } from './themeStore'
 
-// Kept verbatim from the pre-theme code so the dark terminal is unchanged.
+// The ANSI 16 below are deliberately NOT the v5 status colours: `sgrContrast`'s
+// dircolors guard (B29) is calibrated against these exact values, and the shell's
+// own colour choices are not ours to re-tint. Only the *base* pair moves, and it
+// has to, because xterm paints its own canvas — a `#1e1e1e` rectangle inside a
+// `#0e1116` pane is the first thing you see.
 const DARK_XTERM_THEME: ITheme = {
-  background: '#1e1e1e',
-  foreground: '#ffffff',
+  background: '#0e1116',
+  foreground: '#e7edf3',
   cursor: '#aeafad',
   selectionBackground: '#264f78',
   black: '#a0a0a0',

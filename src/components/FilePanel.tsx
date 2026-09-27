@@ -1271,7 +1271,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const handleUpload = async () => {
     setContextMenu(null)
     try {
-      const selected = await open({ multiple: true, title: 'Select files to upload' })
+      const selected = await open({ multiple: true, title: t('selectUploadFiles') })
       if (!selected) return
       const paths = Array.isArray(selected) ? selected : [selected]
       if (paths.length > 0) await uploadFiles(paths)
@@ -1611,7 +1611,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       return
     }
     try {
-      const filePath = await save({ title: 'Save file as', defaultPath: node.name })
+      const filePath = await save({ title: t('saveFileAs'), defaultPath: node.name })
       if (filePath) {
         setPaused(false)
         setTransferRows((prev) =>
@@ -1662,12 +1662,14 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     }
     let folder: string | null = null
     if (targets.length === 1) {
-      const filePath = await save({ title: 'Save file as', defaultPath: targets[0].name })
+      const filePath = await save({ title: t('saveFileAs'), defaultPath: targets[0].name })
       if (!filePath) return
       await downloadFilesInto([{ file: targets[0], localPath: filePath as string }])
       return
     }
-    folder = await open({ directory: true, title: 'Select folder to download into' })
+    // Reuses the directory-download key rather than adding a near-duplicate: the
+    // two paths ask the user for the same thing — which local folder to put files in.
+    folder = await open({ directory: true, title: t('selectDownloadFolder') })
     if (!folder) return
     const sep = (folder as string).includes('\\') ? '\\' : '/'
     await downloadFilesInto(

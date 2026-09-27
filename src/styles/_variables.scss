@@ -35,6 +35,11 @@ $danger-hover: var(--danger-hover);
 $success: var(--success);
 $warning: var(--warning);
 $info: var(--info);
+// 两支身份色（见 `_theme.scss` 同名注释）。它们在这里而不是让调用点写 `var(--cyan)`，
+// 是因为唯一的读者——侧栏协议瓷砖——要的是「同色 16% 浅底」，那需要 `rgba()` 垫片
+// 能把变量折成 `color-mix()`。
+$cyan: var(--cyan);
+$purple: var(--purple);
 $font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
 
 // ===== `rgba()` 垫片 =====

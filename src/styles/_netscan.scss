@@ -108,7 +108,7 @@
 
   .btn-primary {
     padding: 5px 14px;
-    // $success 在深色主题 (#1fa87e) 上白字只有 3.0:1 → 统一用 success-solid。
+    // `success` 是状态色，压白字两套主题都不够（深色 #3fb950 只有 2.9:1）→ 统一用 success-solid。
     background: var(--success-solid);
     color: #fff;
     border: none;

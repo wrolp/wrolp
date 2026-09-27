@@ -73,7 +73,7 @@
     align-items: center;
     gap: 6px;
     padding: 3px 8px;
-    background: var(--bg-tertiary, #252526);
+    background: var(--bg-tertiary, #1b222c);
     border-bottom: 1px solid var(--border, #333);
 
     .ai-dock-bar-title {
@@ -1420,9 +1420,12 @@
 }
 
 .ai-tool-confirm-allow {
-  color: var(--text-on-accent);
-  // #67c23a 上白字只有 2.24:1（两套主题都不够）——实心成功按钮统一用
-  // success-solid（两套主题都 ≥5:1），hover 往深走。
+  // `#fff`, **not** `--text-on-accent`: that token follows the user's accent pick,
+  // and a light accent flips it to near-black — 3.5:1 on this green. The surface
+  // here is a fixed theme literal, so its ink has to be one too.
+  color: #fff;
+  // 实心成功按钮统一用 `--success-solid`：表里的 `success` 是状态色，深色那档
+  // (#3fb950) 压白字只有 2.9:1。hover 往深走（下面那条 `#0a5c0a`）。
   background: var(--success-solid);
   border-color: var(--success-solid);
 
@@ -1522,11 +1525,11 @@
   min-height: 40px;
 
   &:focus-within {
-    // Gray, one step up from the resting `$border` — the same `--border-l12` the hover
+    // One step up the *border* ramp — the same `--border-l12` the hover
     // states elsewhere use. The wrap *is* the focus indicator for this box (see
-    // `.ai-chat-input` below), so it has to change, but not to a hue: the accent is user
-    // choice now, and a blue frame competing with the textarea's own ring read as two
-    // boxes.
+    // `.ai-chat-input` below), so it has to change, but it must stay inside the
+    // border ramp: the accent is user choice now, and a frame in the accent's hue
+    // competing with the textarea's own ring read as two boxes.
     border-color: var(--border-l12);
   }
 }

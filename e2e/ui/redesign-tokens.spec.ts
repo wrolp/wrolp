@@ -30,7 +30,7 @@ test('emits the structural tokens the component layer is built on', async ({ pag
 test('the default accent keeps the theme table values untouched', async ({ page }) => {
   await bootWith(page, {})
   const theme = await read(page, '--accent')
-  expect(['#0e639c', '#0066b8']).toContain(theme)
+  expect(['#1f6feb', '#0969da']).toContain(theme)
   // No inline override is written for 'default', so the derived shades stay the
   // build-time Sass ones rather than a runtime approximation.
   expect(

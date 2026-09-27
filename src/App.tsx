@@ -1425,20 +1425,6 @@ export default function App() {
     target: null,
     position: null,
   })
-  // Phase 3 — the drawer's dock drag. `source` says which panel is being dragged
-  // (only the bottom panel offers one now; the sidebar changes edge with
-  // Ctrl+Alt+B), and `over` is the zone currently under the pointer.
-  const [dockDrag, setDockDrag] = useState<{
-    source: 'bottomPanel' | null
-    over: 'right' | 'bottom' | null
-  }>({
-    source: null,
-    over: null,
-  })
-  const applyDock = (pos: 'right' | 'bottom') => {
-    updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, pos } }))
-    setDockDrag({ source: null, over: null })
-  }
   const leafIdCounter = useRef(1)
   const newLeafId = useCallback(() => `leaf-${leafIdCounter.current++}`, [])
   // The workspace the pane-level world belongs to. Usually that is simply the
@@ -4493,11 +4479,11 @@ export default function App() {
       const handleMouseUp = () => {
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
-        document.body.classList.remove('resize-col')
+        document.body.classList.remove('resize-h')
         document.body.style.userSelect = ''
         win.setResizable(true).catch(() => {})
       }
-      document.body.classList.add('resize-col')
+      document.body.classList.add('resize-h')
       document.body.style.userSelect = 'none'
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
@@ -7642,10 +7628,10 @@ export default function App() {
                     display: 'flex',
                     flexDirection: 'column',
                     boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
-                    borderRadius: 8,
+                    borderRadius: 'var(--r-3)',
                     overflow: 'hidden',
-                    background: 'var(--bg-secondary, #1e1e1e)',
-                    border: '1px solid var(--border, #333)',
+                    background: 'var(--bg-secondary, #151a21)',
+                    border: '1px solid var(--border, #232b36)',
                   }}
                 >
                   <div
@@ -7656,8 +7642,8 @@ export default function App() {
                       justifyContent: 'space-between',
                       padding: '6px 10px',
                       cursor: 'move',
-                      background: 'var(--bg-tertiary, #252526)',
-                      borderBottom: '1px solid var(--border, #333)',
+                      background: 'var(--bg-tertiary, #1b222c)',
+                      borderBottom: '1px solid var(--border, #232b36)',
                       userSelect: 'none',
                     }}
                     onMouseDown={(e) => {
@@ -7773,8 +7759,6 @@ export default function App() {
             expanded={bottomPanelExpanded}
             pos={layout.bottomPanel.pos}
             size={layout.bottomPanel.size}
-            onDockDragStart={() => setDockDrag({ source: 'bottomPanel', over: null })}
-            onDockDragEnd={() => setDockDrag({ source: null, over: null })}
             onToggleExpanded={() =>
               updateLayout((l) => ({
                 ...l,
@@ -7817,38 +7801,6 @@ export default function App() {
           <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
         )}
         {layout.sidebar.side === 'right' && sidebarEl}
-
-        {/* Phase 3 — dock drop zones, shown while the drawer is being dragged */}
-        {dockDrag.source && (
-          <div className="dock-overlay">
-            <div
-              className={`dock-zone dock-right${dockDrag.over === 'right' ? ' active' : ''}`}
-              onDragOver={(e) => {
-                e.preventDefault()
-                setDockDrag((d) => ({ ...d, over: 'right' }))
-              }}
-              onDrop={(e) => {
-                e.preventDefault()
-                applyDock('right')
-              }}
-            >
-              Right&nbsp;◨
-            </div>
-            <div
-              className={`dock-zone dock-bottom${dockDrag.over === 'bottom' ? ' active' : ''}`}
-              onDragOver={(e) => {
-                e.preventDefault()
-                setDockDrag((d) => ({ ...d, over: 'bottom' }))
-              }}
-              onDrop={(e) => {
-                e.preventDefault()
-                applyDock('bottom')
-              }}
-            >
-              ▁&nbsp;Bottom
-            </div>
-          </div>
-        )}
       </div>
 
       <StatusBar

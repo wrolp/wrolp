@@ -14,8 +14,6 @@ interface BottomPanelProps {
   pos?: DockPos
   size?: number
   onToggleExpanded: () => void
-  onDockDragStart?: () => void
-  onDockDragEnd?: () => void
 }
 
 type PanelTab = 'sessions' | 'cmdsets'
@@ -27,8 +25,6 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
   pos = 'bottom',
   size = DEFAULT_DRAWER_HEIGHT,
   onToggleExpanded,
-  onDockDragStart,
-  onDockDragEnd,
 }) => {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<PanelTab>('sessions')
@@ -62,20 +58,6 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
       style={expanded ? (pos === 'right' ? { width: size } : { height: size }) : undefined}
     >
       <div className="bottom-panel-tabs">
-        <span
-          className="panel-drag-handle"
-          title={t('dragToRedock')}
-          draggable
-          onMouseDown={(e) => e.stopPropagation()}
-          onDragStart={(e) => {
-            e.dataTransfer.effectAllowed = 'move'
-            e.dataTransfer.setData('text/plain', 'bottomPanel')
-            onDockDragStart?.()
-          }}
-          onDragEnd={() => onDockDragEnd?.()}
-        >
-          <Icon name="drag" size={12} />
-        </span>
         <button
           type="button"
           className="icon-btn drawer-toggle"

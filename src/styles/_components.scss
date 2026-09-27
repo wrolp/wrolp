@@ -96,14 +96,14 @@
     color: var(--danger-soft-40);
 
     &:hover {
-      background: $danger;
+      background: var(--danger-solid);
       color: #fff;
     }
   }
 
   // Armed: the confirm side of a delete dialog.
   &.dgr-solid {
-    background: $danger;
+    background: var(--danger-solid);
     border-color: transparent;
     color: #fff;
 
@@ -225,11 +225,15 @@
     background: transparent;
     border-bottom-color: transparent;
     cursor: pointer;
-    color: $text-muted;
+    // Same voice as the connection groups' header (`_chrome.scss`), which these
+    // sit next to in the same column: secondary, not muted, and relative tracking
+    // so the pair keeps its air when 界面字号 moves.
+    color: $text-secondary;
+    letter-spacing: 0.05em;
 
     &:hover {
       background: $bg-hover;
-      color: $text-secondary;
+      color: $text-primary;
     }
 
     // The section voice is scoped to the title, *not* to the bar. A header also

@@ -5,8 +5,11 @@
 .settings-card {
   margin-top: 18px;
   border: 1px solid $border;
-  border-radius: var(--r-3);
-  background: $bg-secondary;
+  // v5 P4: the mock's `.set-card` is an *elevated* block (radius-md on `--bg-elev`),
+  // not a recessed one. `$bg-secondary` here was the same step as the sidebar and the
+  // tab bar, so a settings card did not read as lifted above the page.
+  border-radius: var(--r-2);
+  background: $bg-tertiary;
   padding: 20px;
 
   &:first-child {
@@ -50,7 +53,9 @@
 .settings-card-desc {
   font-size: var(--fs-md);
   line-height: 1.6;
-  color: $text-dim;
+  // `muted`, not `dim`: this is a sentence a person reads, and `--text-dim` is the
+  // decorative rung (2.95:1 on this card).
+  color: $text-muted;
   margin: 0 0 18px;
   padding-bottom: 16px;
   border-bottom: 1px solid $border;
@@ -177,8 +182,10 @@
     }
   }
 
+  // The unit suffix (`MB`, `轮`) is part of what the number means, so it is on the
+  // body-copy rung rather than the decorative one.
   span {
-    color: $text-dim;
+    color: $text-muted;
     font-size: var(--fs-lg);
     white-space: nowrap;
   }
@@ -223,13 +230,15 @@
 
 .settings-help {
   font-size: var(--fs-xs);
-  color: $text-dim;
+  color: $text-muted;
   line-height: 1.5;
 
   code {
     font-family: $font-mono;
     font-size: 10.5px;
-    background: rgba(255, 255, 255, 0.06);
+    // `--overlay-1`, not `rgba(255,255,255,.06)`: a white wash is a dark-theme idiom
+    // and this token is the one that inverts per theme (black wash in light).
+    background: var(--overlay-1);
     padding: 0 4px;
     border-radius: var(--r-1);
     color: $text-secondary;
@@ -425,7 +434,8 @@
 
 .ai-profile-endpoint {
   font-size: var(--fs-xs);
-  color: $text-dim;
+  // The endpoint URL is a read-out a person checks, not decoration.
+  color: $text-muted;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

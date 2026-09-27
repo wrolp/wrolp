@@ -186,8 +186,10 @@ const en = {
   switchSftpUser: 'Switch SFTP user',
   uploadFile: 'Upload',
   uploadFolder: 'Upload folder',
+  selectUploadFiles: 'Select files to upload',
   selectUploadFolder: 'Select folder to upload',
   selectDownloadFolder: 'Select download folder',
+  saveFileAs: 'Save file as',
   newItem: 'New item',
   parentDir: 'Parent',
   home: 'Home',
@@ -232,7 +234,11 @@ const en = {
   copySelectedText: 'Copy selected text',
   copyAllLogs: 'Copy all logs',
   dlvLineNumbers: 'Line numbers',
-  dragToRedock: 'Drag to re-dock this panel',
+  // The card that floats over a clickable `ls` entry. It is a click target of its
+  // own, so the two actions read as verbs a pointer can land on.
+  lsCardOpenFile: 'Open file',
+  lsCardEnterFolder: 'Enter folder',
+  lsCardHint: '{mod} + click',
 
   // Inspector (right column)
   inspector: 'Inspector',

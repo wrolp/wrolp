@@ -10,142 +10,237 @@
 // 的 `$bg-secondary` / `rgba($accent, .12)` 调用点会自动跟随主题（后者靠那里的
 // `rgba()` 垫片转成 `color-mix()`）。
 //
-// 规则（重要）：`dark` 这张表里的值必须是**历史字面量的原样搬运**——擅自"顺手
-// 优化"会静默改变现有深色主题。只有 `light` 表允许是新值。
-//
 // 新增颜色时：两张表都要加同名的 key，否则浅色下会缺失该 token（回退到无效值
 // → 该属性不生效）。详见 task/plans/light-theme-plan.md。
+//
+// 值的来源（v5 换皮 P0 起）：`task/designs/v5-refined-workspace.html` 的 `:root`
+// 深色调色板。在此之前本文件的要求是"dark 必须是历史字面量的原样搬运"，v5 换皮
+// 是一次**有意的重新定基**，那条规则自 2026-09-27 起改为：两张表的每个值都要么
+// 直接取自设计稿，要么是为过 AA 门槛（`scripts/check-ui-contrast.mjs` 必须 0 违规）
+// 而相对设计稿调整过的——调整处必须在就近注释里写明原因，因为设计稿本身并不过 AA
+// （它在 #3d8bfd 上直接写了白字，只有 3.33:1）。
 
 @use 'sass:color';
 @use 'sass:map';
 
-// 深色强调色基数：下面几个 `color.adjust()` 派生 token 都由它算出，保证深色与
-// 改造前**逐位一致**（原先这些值是 App.scss 里直接调 color.adjust() 得到的）。
-$dark-accent: #0e639c;
+// 深色强调色基数：下面几个 `color.adjust()` 派生 token 都由它算出。
+//
+// 设计稿的 `--accent` 是 #3d8bfd，但本项目的 `--accent` **既是填充又是文字/描边**
+// （状态栏、主按钮配 `--text-on-accent` 白字），而白字压 #3d8bfd 只有 3.33:1。
+// 若照搬就得把深色主题的 `text-on-accent` 翻成近黑，而那又会压垮同样是填充角色的
+// `--success-solid`（#171717 压 #107c10 只有 3.34:1）。所以这里取 #1f6feb ——白字
+// 4.63:1 过 AA，色相与 #3d8bfd 同一支蓝，只是压深一档；设计稿那抹亮蓝改由
+// `--border-focus`、`--accent-soft-40` 和 `--link` 承担，也就是它在稿子里实际出现
+// 的那些位置（描边、发光、文字）。
+$dark-accent: #1f6feb;
+
+// 浅色强调色基数：浅色下 `accent` 同样是"填充 + 白字"和"文字/描边"双角色，
+// 两个方向由这张表里的 `text-on-accent: #ffffff` 与 `accent-soft-40` 分别保证
+// （白字压 #0969da 5.2:1，作文字压浅底则走压深后的那一档）。
+$light-accent: #0969da;
 
 $themes: (
   dark: (
-    // ---- L1 语义色（原 _variables.scss 的 19 个变量，值照搬）----
-    bg-primary: #1e1e1e,
-    bg-secondary: #2d2d2d,
-    bg-tertiary: #252526,
-    bg-sidebar: #252526,
-    bg-hover: #2a2d2e,
-    bg-active: #37373d,
-    bg-input: #3c3c3c,
-    border: #3e3e3e,
-    border-focus: #007acc,
-    text-primary: #d4d4d4,
-    text-secondary: #aaaaaa,
-    text-muted: #888888,
-    text-dim: #666666,
-    accent: #0e639c,
-    accent-hover: #1177bb,
-    danger: #c42b1c,
-    danger-hover: #e44b2c,
-    success: #1fa87e,
-    warning: #cca700,
+    // ---- L1 语义色：设计稿 `:root` 的六档蓝灰面 ----
+    //
+    // 层级方向与改造前**不同**，这是换皮的一部分而不是笔误：稿子里输入框是最深的
+    // 一档（`--bg-input #10151c`，凹槽），面板之上一层是浮层（`--bg-elev`），所以
+    // `bg-input` 不再是最亮档、`bg-tertiary` 不再比 `bg-secondary` 暗。下面两处
+    // 就近注释（`control-hover`、`_components.scss`）说的是同一件事。
+    bg-primary: #0e1116,
+    bg-secondary: #151a21,
+    bg-tertiary: #1b222c,
+    bg-sidebar: #151a21,
+    bg-hover: #202a36,
+    bg-active: #26313f,
+    bg-input: #10151c,
+    border: #232b36,
+    // 焦点环。稿子里所有发光/描边用的都是那抹亮蓝（#3d8bfd 及其 27%/40% alpha），
+    // 描边不是文字、不过 AA，所以这里可以照搬而不必跟着 `accent` 压深。
+    border-focus: #3d8bfd,
+    text-primary: #e7edf3,
+    text-secondary: #98a4b3,
+    // `muted` 是**正文档**（卡片描述、字段提示、窗格副标题），所以它的地板不是页面底而是
+    // 它实际压着的那张浮起卡片 #1b222c：稿子的 #7c8896 在那里只有 4.44:1，没过 AA。
+    // 提到 #828e9c 之后卡片/面板/页面三档分别是 4.80 / 5.24 / 5.67:1。
+    text-muted: #828e9c,
+    // 比 muted 更淡的 `text-dim`（稿子里的 `--fg-mute`）压卡片只有 2.95:1，所以它只用于
+    // 纯装饰或字号已大的位置（placeholder、图标）；门槛量不到它——这些规则同条里没有
+    // 背景，`check-ui-contrast.mjs` 看不见。正文要用它的时候，是 bug，不是设计。
+    text-dim: #5f6b7a,
+    accent: $dark-accent,
+    // 悬停往**深**走，与浅色同向：`accent` 的主用法是配白字的填充，而 #1f6feb 压
+    // 白字只有 4.63:1，往上提一档（哪怕 +4%）就跌破 AA。深色主题里"悬停更亮"这条
+    // 直觉由 `--accent-l8/l12/l14`（描边、发光、徽章）承担。
+    accent-hover: #1b66dd,
+    danger: #f85149,
+    // 见下 `danger-solid`：这一档是"危险填充按钮的悬停"，所以它压得住白字（5.6:1），
+    // 而不是稿子里那个只作文字/圆点用的亮红。
+    danger-hover: #c23131,
+    success: #3fb950,
+    warning: #d29922,
     // Fourth state colour, and deliberately *not* the accent: the accent is
     // user-configurable (P4), so anything encoding "in progress" or "note" has to
-    // stay put when they pick a colour. Value is the blue the app already uses for
-    // toasts/links rather than a new one.
-    info: #4aa3ff,
+    // stay put when they pick a colour. 稿子里没有第四态，取同一支蓝的更亮一档，
+    // 因为 `accent` 现在会被用户换掉而它不会。
+    info: #58a6ff,
+    // 两支**身份色**，只给侧栏的协议/发行版瓷砖用（`_chrome.scss` 的 `.proto-*` /
+    // `.shell-icon-*`）。之所以是令牌而不是字面量：瓷砖是"色相 + 自己的 16% 浅底"，
+    // 浅色主题下那支色相必须本身够深才压得住白底，字面量做不到一套值两主题通吃。
+    // 稿子的 `--cyan` / `--purple` 在深色下原样取用；浅色换成同色相的深档。
+    //
+    // key 必须加引号：`cyan` / `purple` 同时是 CSS 颜色名，Sass 会把裸 key 解析成
+    // 颜色，`--#{$key}` 就发出 "you probably don't mean to use the color value aqua
+    // in interpolation" 的警告。
+    'cyan': #39c5cf,
+    'purple': #b18bf5,
 
-    // ---- L2 派生色（原先是散落的 color.adjust 调用，这里由 Sass 精确复算）----
+    // ---- L2 派生色：由 Sass 从上面那批字面量精确复算，不再手写 ----
     accent-l8: color.adjust($dark-accent, $lightness: 8%),
     accent-l12: color.adjust($dark-accent, $lightness: 12%),
     accent-l14: color.adjust($dark-accent, $lightness: 14%),
-    accent-soft-40: color.adjust($dark-accent, $lightness: 40%),
-    border-l12: color.adjust(#3e3e3e, $lightness: 12%),
-    success-l8: color.adjust(#1fa87e, $lightness: 8%),
-    // 控件悬停底。深色主题的层级是 bg-primary < … < bg-input(#3c3c3c)，
-    // `bg-input` 已经是最亮的一档，所以输入框/按钮的 hover **没有**更高一档可用
-    // ——原先 5 处直接写了 #4c4c4c。浅色主题层级相反（bg-input 纯白最亮），因此
-    // 这里必须往暗走。
-    control-hover: #4c4c4c,
-    // 语义色的「当文字用」变体：语义色本身作前景压在**自己的浅底**上时对比度不足
-    // （深色 1.9–3.3:1），与 accent-soft-40 同思路——深色主题提亮、浅色主题加深。
-    danger-soft-40: color.adjust(#c42b1c, $lightness: 40%),
-    success-soft-40: color.adjust(#1fa87e, $lightness: 40%),
-    warning-soft-40: color.adjust(#cca700, $lightness: 40%),
-    // 同 *-soft-40 的用法（当文字压在自己的浅底上）。#4aa3ff 本身已经很亮，
-    // 只需轻提一档，不像 danger/success 那样要走 40%。
-    info-soft-40: color.adjust(#4aa3ff, $lightness: 12%),
-    // 实心成功按钮的底色（配 --text-on-accent 白字，两套主题均 ≥5:1）。
-    success-solid: #107c10,
+    // 强调色「当文字用」的变体。名字里的 -40 是历史包袱：它原本是 `accent` 提亮
+    // 40 个 HSL 亮度点，那是因为老 `accent` #0e639c 很暗。现在 `accent` 本身就亮，
+    // 再提 40% 会淡成近乎白的 #cfe4ff（压在 bg-active 上糊成一片），所以直接写定值：
+    // 稿子里作文字用的那支亮蓝再提一档，压在最深(#0e1116)/中(#151a21)/最高(#26313f)
+    // 三档底上分别是 8.2 / 7.6 / 5.8:1。用户选了强调色时这个 key 会被
+    // `themeColors.accentOverrides` 整个覆盖掉。
+    accent-soft-40: #78b4ff,
+    border-l12: color.adjust(#232b36, $lightness: 12%),
+    success-l8: color.adjust(#3fb950, $lightness: 8%),
+    // 控件悬停底。v5 深色主题里输入框是**凹槽**（#10151c，全表最深的一档），所以
+    // hover 往**上**走一档——与改造前正好相反（那时 bg-input #3c3c3c 是最亮档，
+    // 没有更高的可用，只能借用越级的 #4c4c4c）。浅色层级仍相反（bg-input 纯白最亮），
+    // 故那张表仍往暗走。
+    control-hover: #202a36,
+    // 语义色的「当文字用」变体：语义色本身作前景压在**自己的浅底**上时对比度不足，
+    // 与 accent-soft-40 同思路——深色主题提亮、浅色主题加深。这里取各自比基础色
+    // 更亮的一档（danger 的 #ff7b72 就是 `danger-hover`，同一个"更亮的红"语义）。
+    danger-soft-40: #ff9d95,
+    success-soft-40: #56d364,
+    warning-soft-40: #e3b341,
+    // 同 *-soft-40 的用法（当文字压在自己的浅底上）。#58a6ff 本身已经很亮，
+    // 只需轻提一档，不像 danger/success 那样要走得更远。
+    info-soft-40: #79c0ff,
+    // 见上面 `'cyan'` / `'purple'` 与 danger/success 那组的同名注释：瓷砖底就是这两支
+    // 色相自己的 16% 浅底，字要用提亮后的这一档（深色 7.3 / 6.7:1）。
+    'cyan-soft-40': #56d4dd,
+    'purple-soft-40': #c6a8ff,
+    // 实心危险按钮的底色（配 --text-on-accent / 白字）。表里的 `danger` 是**状态色**
+    // （圆点、报错文字），稿子里那抹 #f85149 压白字只有 3.35:1，所以填充另取一档，
+    // 与 `success-solid` 同一个思路。浅色下不需要这一档（#cf222e 压白字 5.0:1），
+    // 但 key 必须两张表都有，故与 `danger` 同值。
+    danger-solid: #b62324,
+    // 实心警告按钮/状态胶囊的底色（配白字，两套主题同值：#7a5200 压白字 6.9:1）。
+    // 表里的 `warning` #d29922 压白字只有 2.6:1，所以和 danger/success 一样要一档专用填充。
+    warning-solid: #7a5200,
+    // 实心成功按钮的底色（配 --text-on-accent 白字）。不能直接用表里的 `success`
+    // #3fb950：白字压它只有 2.9:1。#1a7f37 压白字 5.1:1，与改造前同一档。
+    success-solid: #1a7f37,
 
     // ---- L2 半透明叠加 / 阴影 / 遮罩 ----
     overlay-1: rgba(255, 255, 255, 0.06),
     overlay-2: rgba(255, 255, 255, 0.12),
     overlay-3: rgba(255, 255, 255, 0.25),
-    shadow-1: rgba(0, 0, 0, 0.4),
-    shadow-2: rgba(0, 0, 0, 0.55),
-    scrim: rgba(0, 0, 0, 0.5),
+    shadow-1: rgba(0, 0, 0, 0.45),
+    shadow-2: rgba(0, 0, 0, 0.6),
+    scrim: rgba(0, 0, 0, 0.55),
     // ---- L3 场景色（原先是散落的硬编码）----
-    titlebar-bg: #202020,
+    // 标题栏是一道 180° 渐变，两档都进表：一个色值装不下渐变，而把
+    // `linear-gradient()` 整个塞进令牌又会让 `check-ui-contrast.mjs` 读不出颜色
+    // （它按值解析色，见脚本的 parseColor）。渐变在 `_chrome.scss` 里组合。
+    titlebar-bg: #171d26,
+    titlebar-bg-2: #131820,
     text-on-accent: #ffffff,
-    link: #4da3ff,
+    link: #58a6ff,
     // 文件面板里"目录"行的前景色（图标 + 名称共用 currentColor）。
     // 深色底上是一抹浅蓝；浅色底必须显著加深，否则白底上看不清。
-    dir-fg: #b8e0ff,
-    menu-hover: #094771,
-    scrollbar-thumb: #424242,
-    scrollbar-thumb-hover: #555555,
-    term-scrollbar-thumb: rgba(128, 128, 128, 0.3),
-    term-scrollbar-thumb-hover: rgba(128, 128, 128, 0.55),
-    editor-blank: #101318,
-    toast-bg: rgba(30, 30, 34, 0.95),
-    toast-fg: #ffffff,
-    toast-border: rgba(255, 255, 255, 0.12),
-    toast-ok: #28c76f,
-    toast-error: #f44747,
-    toast-info: #4aa3ff,
-    toast-accent: #6c8cff,
+    dir-fg: #a5d3ff,
+    // 下拉菜单悬停行。用偏蓝的一档而不是中性的 `bg-hover`：菜单浮在
+    // `bg-tertiary` #1b222c 上，中性悬停只提亮 5 个亮度点，读起来像没反应。
+    // 前景三档压它分别是 10.4 / 4.9 / 3.4:1（后者是装饰用的 dim，不过门槛）。
+    menu-hover: #24384f,
+    scrollbar-thumb: #2c3947,
+    scrollbar-thumb-hover: #3a4a5c,
+    term-scrollbar-thumb: rgba(152, 164, 179, 0.3),
+    term-scrollbar-thumb-hover: rgba(152, 164, 179, 0.55),
+    editor-blank: #10151c,
+    toast-bg: rgba(27, 34, 44, 0.96),
+    toast-fg: #e7edf3,
+    toast-border: rgba(255, 255, 255, 0.1),
+    toast-ok: #3fb950,
+    toast-error: #f85149,
+    toast-info: #58a6ff,
+    toast-accent: #78b4ff,
   ),
   light: (
-    // ---- L1：对齐 VS Code Light+ 观感，层级关系与深色一致（tertiary 比
-    //      secondary 更亮，与深色里 tertiary 更暗互为镜像）----
+    // ---- L1：深色那张表的蓝灰镜像。稿子只画了深色，浅色的每一档是按同一层级
+    //      关系重定的：secondary（面板）< tertiary（浮层）在浅色里对应"更亮的白"，
+    //      与深色里 tertiary 更亮互为镜像；bg-input 仍是层级顶端（纯白）。----
     bg-primary: #ffffff,
-    bg-secondary: #f3f3f3,
-    bg-tertiary: #f8f8f8,
-    bg-sidebar: #f3f3f3,
-    bg-hover: #e8e8e8,
-    bg-active: #e4e6f1,
+    bg-secondary: #f2f5f9,
+    bg-tertiary: #f8fafc,
+    bg-sidebar: #f2f5f9,
+    bg-hover: #e9eef4,
+    // 选中/激活底，也是 `themeColors.LIGHT_TEXT_BG`——强调色当文字用时 AA 就是按
+    // 这一档压的，改这里必须同步改那个常量。
+    bg-active: #dbe4f0,
     bg-input: #ffffff,
-    border: #d4d4d4,
-    border-focus: #007acc,
-    text-primary: #1f1f1f,
-    text-secondary: #5a5a5a,
-    text-muted: #808080,
-    // 浅色下 dim 应比 muted 更浅（深色里 dim 比 muted 更暗），保持"最不显眼"语义
-    text-dim: #999999,
+    border: #d0d7de,
+    border-focus: #0969da,
+    text-primary: #1f2328,
+    text-secondary: #57606a,
+    // 见深色表同名的注释：浅色的正文档要压得住**卡片**（#f8fafc）而不是页面白底，
+    // 稿子的 #6e7781 在卡片上只有 4.35:1。提到 #67707a 后卡片/面板/白底 4.81 / 4.60 / 5.03:1。
+    text-muted: #67707a,
+    // 浅色下 dim 应比 muted 更浅（深色里 dim 比 muted 更暗），保持"最不显眼"语义。
+    // 同深色表：只给装饰用，正文用它就是 bug。
+    text-dim: #8c959f,
     // accent 在本项目里**既作背景（状态栏/主按钮配白字）又作前景/描边**，
-    // 浅色下必须足够深：#0066b8 配 #fff 的对比度约 5.3:1。
-    accent: #0066b8,
-    accent-hover: #0078d4,
-    danger: #d13438,
-    danger-hover: #e81123,
-    success: #107c10,
+    // 浅色下必须足够深：白字压 #0969da 约 5.2:1。
+    accent: $light-accent,
+    // 悬停往**深**走：`accent` 的主用法是配白字的填充，往亮走会把对比度做减法
+    // （改造前的 #0078d4 压白字只有 4.0:1，是靠"它不是同一条规则里的背景"才没被门槛抓到）。
+    accent-hover: color.adjust($light-accent, $lightness: -6%),
+    danger: #cf222e,
+    // 见下 `danger-solid`：这一档是"危险填充按钮的悬停"，压得往深走才配得上白字。
+    danger-hover: #a0111f,
+    success: #1a7f37,
     warning: #9a6700,
-    // 见深色表同名的注释：状态色不跟随可调强调色。
-    info: #0a69da,
+    // 见深色表同名的注释：状态色不跟随可调强调色。取比 `accent` 更深一档的蓝，
+    // 这样它与强调色在色相上分得开（`accent` 会被用户换掉而它不会）。
+    info: #0550ae,
+    // 见深色表同名的注释：瓷砖身份色要本身够深才压得住白底。青/紫换成同色相深档，
+    // 白底对比度分别 5.0 / 6.9:1。key 同样要加引号（见深色表 `'cyan'` 的注释）。
+    'cyan': #0a6a78,
+    'purple': #6639ba,
 
     // ---- L2 派生色：浅色下 hover 要往**更深**走，而不是更深色主题里的更亮 ----
-    accent-l8: #005aa3,
-    accent-l12: #00508f,
-    accent-l14: #004b86,
-    accent-soft-40: #0a5f9e,
-    border-l12: #b9b9b9,
-    success-l8: #0a5c0a,
+    accent-l8: color.adjust($light-accent, $lightness: -8%),
+    accent-l12: color.adjust($light-accent, $lightness: -12%),
+    accent-l14: color.adjust($light-accent, $lightness: -14%),
+    // 见深色表同名的注释：浅色的"当文字用"要压深，因为它压的是自己的浅底。这里
+    // 比 `themeColors.accentTextOnLight` 那条运行时夹取更狠一档，因为静态默认值还要
+    // 压住 `rgba($accent, .1)` 的标签底（夹取只管 `--bg-active` 那档纯底）。
+    accent-soft-40: #07509f,
+    border-l12: #b6bec6,
+    success-l8: color.adjust(#1a7f37, $lightness: -8%),
     // 见深色表同名注释：浅色的 bg-input 是纯白（层级顶端），悬停只能往暗走。
-    control-hover: #ebebeb,
+    control-hover: #eaeef2,
     // 见深色表同名的注释：浅色主题必须显著加深才压得住自己的浅底。
     danger-soft-40: #8f1d17,
     success-soft-40: #0e5c39,
-    warning-soft-40: #7a5200,
-    info-soft-40: #0857b4,
-    // 与浅色 success 同值：白字压它约 5.4:1。
-    success-solid: #107c10,
+    warning-soft-40: #6f4a00,
+    info-soft-40: #04428b,
+    // 见深色表同名的注释：浅色的"当文字用"要压深（5.7 / 6.3:1 压在自己的浅底上）。
+    'cyan-soft-40': #075b66,
+    'purple-soft-40': #5a2ea6,
+    // 见深色表同名的注释：浅色的 `danger` 本来就压得住白字，所以这一档只是把 key 补齐。
+    danger-solid: #cf222e,
+    // 见深色表同名的注释：两套主题同值，白字压它 6.9:1。
+    warning-solid: #7a5200,
+    // 与浅色 success 同值：白字压它约 5.1:1。
+    success-solid: #1a7f37,
 
     // ---- L2 半透明叠加：深色主题用"提亮"（白+低 alpha），浅色必须反转为"压暗"（黑+低 alpha）----
     overlay-1: rgba(0, 0, 0, 0.04),
@@ -154,27 +249,30 @@ $themes: (
     // 阴影在浅色下要更收敛，否则会显得脏
     shadow-1: rgba(0, 0, 0, 0.12),
     shadow-2: rgba(0, 0, 0, 0.18),
-    scrim: rgba(0, 0, 0, 0.35),
+    scrim: rgba(0, 0, 0, 0.4),
     // ---- L3 ----
-    titlebar-bg: #f3f3f3,
+    // 见深色表同名注释：渐变的两档。浅色下这道渐变几乎看不出来，但它把标题栏和
+    // 下面 `bg-secondary` 的面板分开了，所以留着而不是退回单色。
+    titlebar-bg: #f7fafc,
+    titlebar-bg-2: #eef2f7,
     // 强调底色上的文字两个主题都保持白色（accent 足够深）
     text-on-accent: #ffffff,
     link: #0969da,
-    // 白底 / #e8e8e8 悬停底上的对比度分别约 6.6:1 / 5.9:1。
+    // 白底 / #e9eef4 悬停底上的对比度分别约 6.6:1 / 5.9:1。
     dir-fg: #0b62c4,
-    menu-hover: #e8f0fe,
-    scrollbar-thumb: #c1c1c1,
-    scrollbar-thumb-hover: #a8a8a8,
-    term-scrollbar-thumb: rgba(120, 120, 120, 0.35),
-    term-scrollbar-thumb-hover: rgba(80, 80, 80, 0.55),
+    menu-hover: #d3e5fb,
+    scrollbar-thumb: #c8ced6,
+    scrollbar-thumb-hover: #a8b0ba,
+    term-scrollbar-thumb: rgba(120, 130, 140, 0.35),
+    term-scrollbar-thumb-hover: rgba(80, 90, 100, 0.55),
     // 编辑器空白底：深色是近黑，浅色必须纯白（否则 Monaco 的 light 主题会露底色）
     editor-blank: #ffffff,
     toast-bg: rgba(255, 255, 255, 0.98),
-    toast-fg: #1f1f1f,
-    toast-border: rgba(0, 0, 0, 0.12),
-    toast-ok: #1a9e5a,
-    toast-error: #d13438,
-    toast-info: #0a69da,
+    toast-fg: #1f2328,
+    toast-border: rgba(0, 0, 0, 0.1),
+    toast-ok: #1a7f37,
+    toast-error: #cf222e,
+    toast-info: #0550ae,
     toast-accent: #4a6cf7,
   ),
 );

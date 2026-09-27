@@ -28,7 +28,9 @@
   background: none;
   border: none;
   color: $text-secondary;
-  font-size: var(--fs-lg);
+  // 12.5px, the same step the pane titles use: the nav is a list of destinations,
+  // not louder than the content it leads to.
+  font-size: var(--fs-md);
   font-family: inherit;
   text-align: left;
   border-radius: var(--r-2);
@@ -80,7 +82,8 @@
 
   p {
     font-size: var(--fs-md);
-    color: $text-dim;
+    // `muted`, not `dim`: this is the pane's own description sentence.
+    color: $text-muted;
     margin: 0;
   }
 }
@@ -100,7 +103,10 @@
 
 .settings-update-status {
   font-size: var(--fs-sm);
-  color: #4ec9b0;
+  // `var(--cyan)` rather than the `#4ec9b0` this carried: that was the *previous*
+  // palette's teal and sat at 1.95:1 on the light theme's card. As cyan it is 6.0 /
+  // 7.7:1 (light / dark).
+  color: var(--cyan);
 }
 
 // ===== App Version Info =====

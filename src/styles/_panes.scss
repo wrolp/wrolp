@@ -5,30 +5,40 @@
 // pane and file-tab headers, the placeholder's 48px icon, and the markdown preview's
 // `em` headings — which scale with their own body text rather than the UI scale.
 
-// ===== Draggable Panel Divider =====
-.panel-divider {
-  width: 3px;
+// ===== Draggable Panel Dividers =====
+//
+// Three seams, one look: 4px of nothing that lights up when you can act on it.
+// They used to be 3/3/4px with two different accent steps, and the highlight
+// dropped the moment the pointer slid off the seam mid-drag — which it does
+// constantly, since a drag outruns the 4px. The `body.resize-*` classes are what
+// the drag handlers set (see `App.tsx`), so they keep it lit for the gesture.
+.panel-divider,
+.panel-divider-v {
+  width: 4px;
   cursor: ew-resize;
   background: transparent;
   flex-shrink: 0;
-  transition: background var(--d-2);
+  transition: background var(--d-1) var(--e-out);
   z-index: 10;
 
-  &:hover {
-    background: $accent-hover;
+  &:hover,
+  body.resize-h &,
+  body.resize-col & {
+    background: $accent;
   }
 }
 
 .panel-divider-h {
-  height: 3px;
+  height: 4px;
   cursor: ns-resize;
   background: transparent;
   flex-shrink: 0;
-  transition: background var(--d-2);
+  transition: background var(--d-1) var(--e-out);
   z-index: 10;
 
-  &:hover {
-    background: $accent-hover;
+  &:hover,
+  body.resize-v & {
+    background: $accent;
   }
 }
 
@@ -55,36 +65,37 @@
   flex-direction: column;
 }
 
-// Vertical divider used to resize a right-docked panel.
-.panel-divider-v {
-  flex-shrink: 0;
-  width: 4px;
-  cursor: col-resize;
-  background: transparent;
-
-  &:hover {
-    background: $accent;
-  }
-}
-
 // Tab bar
 .tab-bar {
   display: flex;
   align-items: center;
   min-height: var(--h-tabbar);
+  padding: 0 6px;
+  gap: 2px;
   background: $bg-secondary;
   border-bottom: 1px solid $border;
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
 
+  // 5px, and the thumb only appears while the bar is pointed at: the strip's whole
+  // job is the tabs, so a permanent thumb is 5px of bar spent on a scrollbar that
+  // is usually empty.
   &::-webkit-scrollbar {
-    height: 3px;
+    height: 5px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   &::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: var(--r-1);
+  }
+
+  &:hover::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
-    border-radius: 0;
   }
 
   // The two buttons bracketing the strip are bar chrome rather than tabs, so they
@@ -93,22 +104,31 @@
   // tabs overflow.
   > .icon-btn {
     flex-shrink: 0;
-    margin: 0 var(--sp-1);
+    margin: 0 2px;
   }
 }
 
 .tab-item {
   display: flex;
   align-items: center;
-  padding: 4px 6px 4px 10px;
+  height: 28px;
+  padding: 0 6px 0 11px;
   background: $bg-secondary;
-  border-right: 1px solid $border;
+  // A full 1px border instead of the old `border-right` divider: v5's tabs are
+  // rounded cards, and the active one is the only one whose border is visible.
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
   cursor: pointer;
   font-size: var(--fs-sm);
+  // The mock rests them at `--fg-mute`; that is 3.2:1 on this bar, so the label
+  // stays at `--text-secondary` (6.9:1) and only the *active* tab goes to primary.
   color: $text-secondary;
   white-space: nowrap;
-  transition: background var(--d-1);
-  gap: 6px;
+  transition:
+    background var(--d-1) var(--e-out),
+    border-color var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
+  gap: 7px;
   min-width: 0;
 
   // The icon says what *kind* of thing the tab is, so it stays quieter than the
@@ -136,12 +156,13 @@
 
   &:hover {
     background: $bg-hover;
+    color: $text-primary;
   }
 
   &.active {
-    background: $bg-primary;
+    background: $bg-active;
     color: $text-primary;
-    border-bottom: 2px solid $accent-hover;
+    border-color: var(--border-l12);
 
     .tab-icon {
       color: inherit;
@@ -150,7 +171,7 @@
 
   &.drag-over {
     background: rgba($accent, 0.15);
-    border-bottom: 2px solid $accent;
+    border-color: $accent;
   }
 
   // A button, not the `×` character it replaces: the glyph is 11px but the target
@@ -167,10 +188,16 @@
     background: transparent;
     color: $text-dim;
     cursor: pointer;
+    transition:
+      background var(--d-1) var(--e-out),
+      color var(--d-1) var(--e-out);
 
+    // Closing is destructive, so the hover says so in the danger colour instead of
+    // the generic `bg-active` lift it used to get. `--danger-soft-40` because the
+    // glyph now sits on its own 20% wash (the plain hue is 3.56:1 there).
     &:hover {
-      background: $bg-active;
-      color: $text-primary;
+      background: rgba($danger, 0.2);
+      color: var(--danger-soft-40);
     }
   }
 }
@@ -180,7 +207,9 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  // 6px, the same inset the tab bar uses, so the pane cards line up vertically with
+  // the tabs above them — the thing that makes the two read as one column.
+  padding: 6px;
   overflow: hidden;
 }
 
@@ -200,8 +229,9 @@
   padding: 0 10px;
   background: $bg-secondary;
   border-top: 1px solid $border;
-  border-right: 1px solid $border;
-  border-radius: var(--r-1);
+  // No radius of its own: the foot is the bottom of a rounded card now, and
+  // `.term-pane { overflow: hidden }` does the rounding. It also used to carry a
+  // `border-right`, which was a doubled line against the card's own border.
   user-select: none;
   gap: 12px;
 
@@ -230,7 +260,10 @@
 
   .tsb-size {
     font-size: var(--fs-sm);
-    color: #6ec3f0;
+    // `--link`, not the `#6ec3f0` this carried: that pale sky blue was 1.9:1 on the
+    // light theme's white, and the rule declares no background of its own, so the
+    // contrast gate could not see it.
+    color: var(--link);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -241,19 +274,26 @@
     border-radius: var(--r-1);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    // `#fff`, not `--text-on-accent`: every fill below is a fixed theme literal, so
+    // its ink has to be fixed too — an accent-derived ink flips to near-black on a
+    // light accent pick and lands around 3:1 on these.
     color: #fff;
 
+    // Four dark-theme-only hexes before (#2e7d32 / #b58900 / #c5392f / #555), i.e. a
+    // chip that stayed VS Code green on the light theme's white. Each fill now
+    // carries white at ≥5:1 in both themes.
     &.connected {
-      background: #2e7d32;
+      background: var(--success-solid);
     }
     &.connecting {
-      background: #b58900;
+      background: var(--warning-solid);
     }
     &.error {
-      background: #c5392f;
+      background: var(--danger-solid);
     }
     &.disconnected {
-      background: #555;
+      background: var(--bg-active);
+      color: var(--text-secondary);
     }
   }
 
@@ -292,20 +332,26 @@
     border-radius: var(--r-circle);
     flex-shrink: 0;
 
+    // The five pastel hexes these replace were a dark-theme island; as status dots
+    // they only need 3:1 against the foot, which the themed state colours all clear.
+    // `connecting` moves to `info` (blue = in progress, which is what that token
+    // exists for) because it used to be #e2c08d — one step off `suspect`'s #e5c07b,
+    // so the two were the same dot. `disconnected` takes `muted` rather than `dim`
+    // because the latter is 2.8:1 on the light foot.
     &.connected {
-      background: #4ec9b0;
+      background: $success;
     }
     &.connecting {
-      background: #e2c08d;
+      background: $info;
     }
     &.error {
-      background: #f44747;
+      background: $danger;
     }
     &.disconnected {
-      background: #888;
+      background: $text-muted;
     }
     &.suspect {
-      background: #e5c07b;
+      background: $warning;
     }
   }
 }
@@ -1113,12 +1159,22 @@
   min-width: 0;
   min-height: 0;
   border: 1px solid $border;
-  background: $bg-tertiary;
+  border-radius: var(--r-3);
+  // The card's body is the base colour, which is also what xterm paints its own
+  // canvas with (`theme.ts`) — so the terminal no longer shows as a slightly
+  // different rectangle inside its own pane.
+  background: $bg-primary;
   overflow: hidden;
 
+  // v5's focused pane is a *soft* ring: the border lifts one step off the resting
+  // line and a 20% accent halo sits outside it. Before this the border itself went
+  // full accent, which outlined the whole pane in solid blue and made the ring, not
+  // the terminal, the loudest thing in the window.
   &.focused {
-    border-color: $accent;
-    box-shadow: inset 0 0 0 1px rgba($accent, 0.4);
+    border-color: var(--border-l12);
+    box-shadow:
+      0 0 0 1px rgba($accent, 0.2),
+      0 8px 24px -12px var(--shadow-2);
   }
 
   .term-pane-header {
@@ -1129,7 +1185,9 @@
     justify-content: flex-start;
     gap: 6px;
     padding: 0 6px 0 8px;
-    background: $bg-secondary;
+    // The same two-rung lift the titlebar uses (`_theme.scss`'s L3 note): the head
+    // is a bar over the card's body, so it goes up one step and falls back.
+    background: linear-gradient(180deg, $bg-tertiary, $bg-secondary);
     border-bottom: 1px solid $border;
     user-select: none;
     cursor: default;
@@ -1512,7 +1570,7 @@ body.resizing-v .term-scrollbar-thumb {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  padding: 5px 11px;
   // Semi-transparent so the terminal text underneath stays readable.
   background: rgba($bg-secondary, 0.9);
   border: 1px solid rgba($border, 0.8);
@@ -1524,8 +1582,10 @@ body.resizing-v .term-scrollbar-thumb {
   z-index: 2000;
   cursor: pointer;
   user-select: none;
-  // backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  // Stated because its neighbours in this file (the AI status badge) opt *out* of
+  // hit-testing, and this element's whole job is to be hit.
+  pointer-events: auto;
+  backdrop-filter: blur(3px);
   // Anchored to the top-left of the entry name; rendered above the name.
   transform: translateY(-100%);
 

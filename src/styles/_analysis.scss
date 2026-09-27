@@ -1083,9 +1083,10 @@
     border-radius: var(--r-circle);
     border: 1px solid rgba($accent, 0.4);
     background: rgba(#0d1117, 0.85);
-    // 悬浮在日志区（两套主题下都是深色底）上的圆钮：用强调色上的文字色。
+    // 悬浮在日志区上的圆钮：底是固定的深色半透明，所以前景也必须是固定的白——
+    // `--text-on-accent` 会跟着用户的强调色走，选到亮色时它翻成近黑，压在近黑底上就没了。
     // 圆钮里只有一个 ↓ 字形，所以不跟界面字号缩放（同 `.docker-state-badge`）。
-    color: var(--text-on-accent);
+    color: #fff;
     font-size: 16px;
     cursor: pointer;
     display: flex;

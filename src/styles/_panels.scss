@@ -93,15 +93,28 @@
 // One tab-button look, shared by the bottom drawer and the inspector. Both
 // carried their own copy before; a placeholder means the second one cannot
 // drift, and it compiles into the same selector list rather than a new rule.
+//
+// v5 P3: the same card the tab bar uses (`_panes.scss`'s `.tab-item`) — a 1px
+// border that only shows on the active one, instead of the 2px accent underline
+// these had. Both strips sit directly above a resizable region, so they should
+// read as one system.
 %panel-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   background: none;
-  border: none;
-  color: $text-muted;
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  color: $text-secondary;
   cursor: pointer;
-  padding: 3px 10px;
+  height: 24px;
+  padding: 0 9px;
   font-size: var(--fs-sm);
-  border-radius: var(--r-1) var(--r-1) 0 0;
-  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition:
+    background var(--d-1) var(--e-out),
+    border-color var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
 
   &:hover {
     color: $text-primary;
@@ -109,7 +122,8 @@
   }
   &.active {
     color: $text-primary;
-    border-bottom-color: $accent;
+    background: $bg-active;
+    border-color: var(--border-l12);
   }
 }
 
@@ -156,13 +170,6 @@
     flex-shrink: 0;
     border-bottom: 1px solid $border;
     background: $bg-secondary;
-
-    // The handle is a text-glyph-sized span everywhere else; here it wraps an
-    // SVG, which would otherwise sit on the baseline.
-    .panel-drag-handle {
-      display: flex;
-      align-items: center;
-    }
 
     // The disclosure arrow. `.icon-btn` sizes and colours it; the rotation is
     // the only thing that says which way the drawer will move, so the arrow
@@ -214,16 +221,11 @@
 
       .tab-btn {
         writing-mode: vertical-rl;
-        border-radius: var(--r-1) 0 0 var(--r-1);
-        border-bottom: none;
-        border-left: 2px solid transparent;
-        border-bottom-color: transparent;
-        padding: 10px 3px;
-
-        &.active {
-          border-left-color: $accent;
-          border-bottom-color: transparent;
-        }
+        // The card look needs no per-side border surgery: the shared placeholder
+        // already carries a full 1px border, so the vertical variant only has to
+        // trade its width for height and let the strip's `gap` do the spacing.
+        padding: 9px 3px;
+        height: auto;
       }
     }
 
@@ -302,11 +304,26 @@
     bottom: 0;
     left: 0;
     width: 5px;
-    cursor: col-resize;
-    background: transparent;
+    // The plain double-headed arrow, not `col-resize`: the bar between the arrowheads
+    // is what the user asked to have removed here (2026-09-27, reversing the earlier
+    // call). `body.resize-h` below has to match, or the glyph changes mid-drag.
+    cursor: ew-resize;
     z-index: 10;
 
-    &:hover {
+    // The highlight is *not* the strip: 5px is the hit area, and painting all of it
+    // in the accent laid a stripe over the seam instead of making the seam light up.
+    // Half as wide, centred so it stays put when the column docks left instead.
+    &::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 2.5px;
+      margin-left: -1.25px;
+    }
+
+    &:hover::after {
       background: $accent;
     }
   }
@@ -433,7 +450,7 @@
     font-size: var(--fs-sm);
     &:hover {
       color: #fff;
-      background: $danger;
+      background: var(--danger-solid);
       border-color: $danger;
     }
   }
@@ -697,9 +714,9 @@
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--accent-soft-40);
-  // 28% 的强调色浅底在浅色主题下压不住 accent-soft-40（4.35:1），收窄到 20%。
+  // 28% 的强调色浅底在浅色主题下压不住 accent-soft-40（4.28:1），收窄到 20%（4.76:1）。
   background: rgba($accent, 0.2);
-  border: 1px solid rgba(#6ec3f0, 0.55);
+  border: 1px solid rgba($accent, 0.55);
   border-radius: var(--r-1);
   padding: 0 5px;
   line-height: 16px;
@@ -710,17 +727,19 @@
 }
 
 // Distinct, higher-contrast styling for Docker targets so the container name
-// is readable at a glance on the dark panel.
+// is readable at a glance on the dark panel. All three channels come from the
+// status colours — these used to be four raw hexes (#cca700 / #ffd27f / #4ec9b0
+// / #b4f0c4), which meant the chips kept the *previous* palette in both themes.
 .file-target-chip.docker {
   color: var(--warning-soft-40);
-  background: rgba(#cca700, 0.22);
-  border-color: rgba(#ffd27f, 0.6);
+  background: rgba($warning, 0.22);
+  border-color: rgba($warning, 0.6);
 }
 
 .file-target-chip.docker-ssh {
   color: var(--success-soft-40);
-  background: rgba(#4ec9b0, 0.2);
-  border-color: rgba(#b4f0c4, 0.55);
+  background: rgba($success, 0.2);
+  border-color: rgba($success, 0.55);
 }
 
 // Files-panel mode switcher (SSH / Jump / Docker).
@@ -971,7 +990,9 @@
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding: 2px 0;
+  // 6px of side inset, like the connection list: the rows are cards now, and a card
+  // that touches the column edge on both sides reads as a band.
+  padding: 2px 6px;
 
   &::-webkit-scrollbar {
     width: 4px;
@@ -994,19 +1015,37 @@
 // rows under it stayed put. `xs` is the secondary line and the two chips, `sm` the
 // name; the icon is an SVG sized by its own prop, so it is not part of the scale.
 .docker-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
   cursor: pointer;
-  border-bottom: 1px solid rgba($border, 0.4);
+  transition:
+    background var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
 
   &:hover {
     background: $bg-hover;
   }
+  // The same marker the sidebar rows use (v5's `.conn.active::before`): a short
+  // accent bar inset from the row's ends. It used to be a full-height `inset 2px 0`
+  // shadow plus a 12% accent wash, which read as "this whole row is tinted" rather
+  // than "this one is selected".
   &.active {
-    background: rgba($accent, 0.12);
-    box-shadow: inset 2px 0 0 $accent;
+    background: $bg-active;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 7px;
+      bottom: 7px;
+      width: 2.5px;
+      border-radius: 0 2px 2px 0;
+      background: $accent;
+    }
   }
   &.stopped {
     opacity: 0.55;
@@ -1028,8 +1067,11 @@
     flex-direction: column;
   }
 
+  // Container names are machine-generated, so the row reads better monospaced —
+  // the same call the mock makes for `.cname` / `.cmeta`.
   .docker-name {
     font-size: var(--fs-sm);
+    font-family: $font-mono;
     color: $text-primary;
     white-space: nowrap;
     overflow: hidden;
@@ -1062,7 +1104,10 @@
 
   .docker-image {
     font-size: var(--fs-xs);
-    color: $text-dim;
+    font-family: $font-mono;
+    // `muted`, not `dim`: `--text-dim` is 3.2:1 on this panel, and the rule declares
+    // no background of its own, so the contrast gate cannot see it.
+    color: $text-muted;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1071,24 +1116,26 @@
   .docker-state {
     font-size: var(--fs-xs);
     padding: 1px 6px;
-    border-radius: var(--r-1);
+    border-radius: var(--r-pill);
     flex-shrink: 0;
     text-transform: lowercase;
     background: $bg-secondary;
     border: 1px solid $border;
     color: $text-secondary;
 
+    // Two dark-theme-only hexes before (`#4ec9b0` / `#f48771`), which left these
+    // chips teal-and-salmon on the light theme's white.
     &.running {
       color: var(--success-soft-40);
-      border-color: rgba(#4ec9b0, 0.35);
-      background: rgba(#4ec9b0, 0.1);
+      border-color: rgba($success, 0.35);
+      background: rgba($success, 0.1);
     }
     &.exited,
     &.dead,
     &.paused {
       color: var(--danger-soft-40);
-      border-color: rgba(#f48771, 0.35);
-      background: rgba(#f48771, 0.08);
+      border-color: rgba($danger, 0.35);
+      background: rgba($danger, 0.08);
     }
   }
 }
@@ -1179,72 +1226,4 @@
     width: 100%;
     height: 100%;
   }
-}
-
-// ===== Phase 3: panel dock drag =====
-// The ⠿ handle is a glyph, so its size stays off the type scale.
-.panel-drag-handle {
-  flex-shrink: 0;
-  cursor: grab;
-  color: $text-dim;
-  font-size: 13px;
-  line-height: 1;
-  padding: 0 3px;
-  user-select: none;
-  border-radius: var(--r-1);
-
-  &:hover {
-    color: $text-primary;
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  &:active {
-    cursor: grabbing;
-  }
-}
-
-// Full-screen overlay shown while the drawer is being re-docked; its two zones
-// capture the drop.
-.dock-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-dock);
-  pointer-events: auto;
-}
-
-.dock-zone {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-md);
-  color: $text-primary;
-  background: rgba(0, 122, 204, 0.06);
-  border: 2px dashed rgba($accent, 0.35);
-  box-sizing: border-box;
-  transition:
-    background var(--d-1),
-    border-color var(--d-1);
-
-  &.active {
-    background: rgba(0, 122, 204, 0.22);
-    border-color: $accent;
-  }
-}
-
-.dock-right {
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 33.33%;
-  border-left: none;
-}
-
-.dock-bottom {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 33.33%;
-  border-top: none;
-  border-bottom: none;
 }

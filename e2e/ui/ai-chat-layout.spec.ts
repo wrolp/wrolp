@@ -234,17 +234,29 @@ test('the focused input shows one gray frame, not a ring inside it (B50)', async
   const wrap = page.locator('.ai-chat-input-wrap')
   const input = wrap.locator('textarea')
 
-  // A hue is what the user rejected, so make one impossible to miss: the accent is set to
-  // orange and the border must stay a neutral gray (r === g === b) that merely steps up
-  // from the resting line.
+  // A hue is what the user rejected, so make one impossible to miss: the accent is
+  // set to orange, and the frame must stay a step *within the border ramp* — resting
+  // on `--border`, focused on `--border-l12` — instead of borrowing the accent.
   const border = () => wrap.evaluate((el) => getComputedStyle(el).borderTopColor)
   await page.evaluate(() => document.documentElement.style.setProperty('--accent', '#e0714f'))
-  const resting = await border()
+  const [restingCss, focusCss] = await page.evaluate(() => {
+    const probe = document.createElement('div')
+    document.body.append(probe)
+    const read = (name: string) => {
+      probe.style.color = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+      return getComputedStyle(probe).color
+    }
+    const out = [read('--border'), read('--border-l12')]
+    probe.remove()
+    return out
+  })
+  expect(await border(), 'the resting frame is the themed border').toBe(restingCss)
   await input.focus()
-  // `transition: border-color` means a single read can land mid-animation — poll it.
-  await expect.poll(border, { message: 'the wrap must step up when focused' }).not.toBe(resting)
-  const rgb = (await border()).match(/\d+/g)!.map(Number)
-  expect(rgb).toEqual([rgb[0], rgb[0], rgb[0]])
+  // `transition: border-color` means a single read can land mid-animation, and the
+  // target of that animation is exactly what this asserts — so poll to the token.
+  await expect
+    .poll(border, { message: 'the focused frame must be one step up the border ramp' })
+    .toBe(focusCss)
 
   // Text inputs always match `:focus-visible`, so the global ring in `_a11y.scss` would
   // draw a second box inside the wrap unless the component opts out.

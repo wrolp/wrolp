@@ -465,11 +465,28 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Delay hiding the card after leaving the link, so the mouse can reach the
   // card and click it (the card floats above the link).
   const linkTooltipHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Delay showing the card until the mouse has hovered the link for 500ms.
+  // Whether the pointer is currently on the card. This is what makes the card
+  // reachable: while it is true the link's `leave` must not schedule a hide at
+  // all — that `leave` can arrive *after* the pointer is already on the card
+  // (see `hideLinkCard`), and a timer alone then wipes it out from under the
+  // cursor before the click lands.
+  const pointerOnCardRef = useRef(false)
+  // Delay showing the card until the mouse has rested on the link.
   const linkTooltipShowTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // The entry whose card is currently displayed (prevents re-arming the 500ms
-  // delay on repeat hover callbacks for the same link).
+  // The entry whose card is currently displayed (prevents re-arming the delay on
+  // repeat hover callbacks for the same link).
   const linkTooltipEntryRef = useRef<LsClickableEntry | null>(null)
+  // One place to take the card down. It has to clear the entry ref too: the
+  // `hover` handler skips re-arming while that ref still names the entry, so a
+  // card that hid without it would never come back for that same file.
+  const hideLinkCard = () => {
+    if (linkTooltipHideTimer.current) {
+      clearTimeout(linkTooltipHideTimer.current)
+      linkTooltipHideTimer.current = null
+    }
+    linkTooltipEntryRef.current = null
+    setLinkTooltip(null)
+  }
 
   // Compute the screen position of a link's top-left corner. `bufferRow` is the
   // 0-based buffer row and `col` the 0-based column where the link text starts.
@@ -1792,8 +1809,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             text: entry.name,
             decorations: { pointerCursor: true, underline: true },
             hover: () => {
-              // Card appears after a 500ms delay, anchored to the top-left of
-              // the entry name (like VSCode) instead of following the mouse.
+              // Card appears after a delay, anchored to the top-left of the entry
+              // name (like VSCode) instead of following the mouse.
               if (linkTooltipEntryRef.current === entry) return
               if (linkTooltipShowTimer.current) clearTimeout(linkTooltipShowTimer.current)
               linkTooltipShowTimer.current = setTimeout(() => {
@@ -1821,10 +1838,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 clearTimeout(linkTooltipShowTimer.current)
                 linkTooltipShowTimer.current = null
               }
-              linkTooltipEntryRef.current = null
-              // Delay hiding so the mouse can move up onto the card and click it.
+              // The pointer moved off the link *onto the card*: that is the
+              // intended way to use it, so nothing is scheduled and the card stays.
+              if (pointerOnCardRef.current) return
+              // Otherwise give the pointer time to travel the couple of pixels onto
+              // the card before it goes away.
               if (linkTooltipHideTimer.current) clearTimeout(linkTooltipHideTimer.current)
-              linkTooltipHideTimer.current = setTimeout(() => setLinkTooltip(null), 300)
+              linkTooltipHideTimer.current = setTimeout(hideLinkCard, 400)
             },
             activate: (event) => {
               // Follow the link only when Ctrl (Linux/Windows) or Cmd (macOS) is
@@ -3549,31 +3569,35 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         <div
           className={`term-link-tooltip${linkTooltip.below ? ' below' : ''}`}
           style={{ left: linkTooltip.x, top: linkTooltip.y }}
-          onMouseEnter={() => {
-            // Mouse is on the card — cancel the delayed hide.
+          onPointerEnter={() => {
+            // The card is the click target, so the pointer being on it has to
+            // outrank the link's `leave` — which can arrive *after* this, because
+            // once the card covers the cursor xterm's screen stops seeing the
+            // mousemoves and reports the leave late.
+            pointerOnCardRef.current = true
             if (linkTooltipHideTimer.current) {
               clearTimeout(linkTooltipHideTimer.current)
               linkTooltipHideTimer.current = null
             }
           }}
-          onMouseLeave={() => {
-            if (linkTooltipHideTimer.current) {
-              clearTimeout(linkTooltipHideTimer.current)
-              linkTooltipHideTimer.current = null
-            }
-            setLinkTooltip(null)
+          onPointerLeave={() => {
+            pointerOnCardRef.current = false
+            hideLinkCard()
           }}
           onClick={(e) => {
             e.stopPropagation()
-            setLinkTooltip(null)
-            onLsEntryClick(linkTooltip.entry)
+            const entry = linkTooltip.entry
+            hideLinkCard()
+            onLsEntryClick(entry)
           }}
         >
           <span className="term-link-tooltip-label">
-            {linkTooltip.entry.kind === 'dir' ? 'Enter folder' : 'Open file'}
+            {linkTooltip.entry.kind === 'dir' ? t('lsCardEnterFolder') : t('lsCardOpenFile')}
           </span>
           <span className="term-link-tooltip-hint">
-            ({/mac|iphone|ipad/i.test(navigator.userAgent) ? 'cmd' : 'ctrl'} + click)
+            {t('lsCardHint', {
+              mod: /mac|iphone|ipad/i.test(navigator.userAgent) ? 'cmd' : 'ctrl',
+            })}
           </span>
         </div>
       )}

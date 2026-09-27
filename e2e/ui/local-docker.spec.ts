@@ -411,3 +411,49 @@ test('nothing installed stays silent', async ({ page }) => {
   await expect(page.locator('.docker-local-retry')).toHaveCount(0)
   await expect(dockerGroup(page)).toHaveCount(0)
 })
+
+// v5 reskin P3: the container row is a rounded card with an inset accent bar, the
+// same row grammar the sidebar's connections use. It used to be a full-bleed band
+// separated by a `border-bottom` and marked active with a 12% accent wash plus an
+// `inset 2px 0` shadow — which read as "tinted", not "selected".
+test('the container row is a card, and its active marker is a short inset bar', async ({
+  page,
+}) => {
+  await boot(page, { localDockerProbe: RUNNING, localDockerContainers: [LOCAL] })
+  await expandSection(page, 'Docker')
+  const r = row(page, LOCAL.name)
+  await expect(r).toBeVisible()
+
+  const resting = await r.evaluate((el) => {
+    const s = getComputedStyle(el)
+    return {
+      radius: s.borderTopLeftRadius,
+      divider: s.borderBottomWidth,
+      bar: getComputedStyle(el, '::before').width,
+    }
+  })
+  expect(resting.radius, 'the row follows --r-2').toBe('7px')
+  expect(resting.divider, 'rows no longer rule themselves apart').toBe('0px')
+  expect(resting.bar).toBe('auto')
+
+  // The row only carries `.active` when its container *is* the focused terminal's,
+  // which needs a live PTY tab — so the class is applied directly here. What this
+  // pins is the CSS grammar (a short inset bar, not a wash), not the selection state.
+  await r.evaluate((el) => el.classList.add('active'))
+  const active = await r.evaluate((el) => {
+    const before = getComputedStyle(el, '::before')
+    return {
+      width: before.width,
+      colour: before.backgroundColor,
+      top: before.top,
+      bottom: before.bottom,
+      wash: getComputedStyle(el).backgroundColor,
+    }
+  })
+  expect(active.width).toBe('2.5px')
+  expect(active.top).toBe('7px')
+  expect(active.bottom).toBe('7px')
+  // The accent, not the old full-row wash.
+  expect(active.colour).not.toBe('rgba(0, 0, 0, 0)')
+  expect(active.colour).not.toBe(active.wash)
+})

@@ -1,20 +1,26 @@
 @use 'variables' as *;
 
 // ===== Custom Titlebar =====
+//
+// v5 换皮 P1：一条 180° 渐变带（两档都在 `_theme.scss`），描边落在渐变下面。
+// 稿子的 `.logo` 是一块 accent→cyan 渐变瓷砖包一个 13px 字标，本项目包的是
+// `/icon.png`（自带底色的位图），铺在渐变上会打架，所以 logo 保持原样不套瓷砖。
 .titlebar {
   display: flex;
   align-items: center;
   height: var(--h-titlebar);
   padding: 0 0 0 8px;
-  background: var(--titlebar-bg);
+  background: linear-gradient(180deg, var(--titlebar-bg), var(--titlebar-bg-2));
+  border-bottom: 1px solid $border;
   flex-shrink: 0;
   user-select: none;
   -webkit-app-region: drag;
 
   &-title {
-    font-weight: 500;
-    font-size: var(--fs-lg);
-    color: var(--text-muted);
+    font-weight: 600;
+    font-size: var(--fs-md);
+    letter-spacing: 0.02em;
+    color: var(--text-primary);
     margin-right: auto;
     padding-left: 4px;
     pointer-events: none;
@@ -59,16 +65,21 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 46px;
+    width: 44px;
     height: 100%;
     border: none;
     background: transparent;
-    color: var(--text-primary);
+    color: var(--text-secondary);
     cursor: pointer;
-    transition: background var(--d-1);
+    transition:
+      background var(--d-1) var(--e-out),
+      color var(--d-1) var(--e-out);
 
+    // `--bg-hover` rather than the `rgba(255,255,255,.1)` this used: a white wash is
+    // a dark-theme-only idiom, and on the light titlebar it was invisible.
     &:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--bg-hover);
+      color: var(--text-primary);
     }
   }
 
@@ -80,6 +91,9 @@
   }
 }
 
+// The five action buttons are 20px glyphs in a 44px-wide band, so their hit area is
+// the glyph box; the radius lives on the base rule (it used to appear only with the
+// hover background, which drew a rounded wash over a square hover).
 .settings-btn,
 .ai-chat-btn,
 .pin-btn,
@@ -87,43 +101,32 @@
 .net-tools-btn {
   width: 20px;
   height: 20px;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: var(--r-1);
-  }
+  border-radius: var(--r-1);
 }
 
+// Identity hues, so the five buttons stay apart without reading their tooltips.
+// These were raw hexes from the previous palette (#8ab4f8 / #7cc7ff / #4ec9b0),
+// which meant three pale glyphs on the light theme's near-white bar. Hovering lifts
+// them all to `--text-primary` like the band's other buttons — the hue is the
+// resting signature, not something to hold onto while pointed at.
 .cmd-list-btn {
-  color: #8ab4f8;
-
-  &:hover {
-    color: #b6d4ff;
-  }
+  color: var(--info);
 }
 
 .ai-chat-btn {
-  color: #7cc7ff;
-
-  &:hover {
-    color: #a5d8ff;
-  }
+  color: var(--purple);
 }
 
 .net-tools-btn {
-  color: #4ec9b0;
-
-  &:hover {
-    color: #6fe0c4;
-  }
+  color: var(--cyan);
 }
 
 .pin-btn.active {
-  color: var(--warning-soft-40);
+  color: var(--warning);
 
   &:hover {
-    color: var(--warning-soft-40);
-    background: rgba(255, 215, 106, 0.12);
+    color: var(--text-primary);
+    background: rgba($warning, 0.16);
   }
 }
 
@@ -178,7 +181,9 @@
   height: 20px;
   min-width: 0;
   padding: 0 8px;
-  background: $bg-secondary;
+  // One rung above the bar it sits on (`--bg-elev` in the mock), so the pill reads
+  // as a control on the gradient rather than a hole cut into it.
+  background: $bg-tertiary;
   border: 1px solid $border;
   border-radius: var(--r-pill);
   color: $text-secondary;
@@ -186,10 +191,15 @@
   font-family: inherit;
   cursor: pointer;
   text-align: left;
-  transition: background var(--d-1);
+  transition:
+    background var(--d-1) var(--e-out),
+    border-color var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
 
   &:hover {
-    background: $bg-active;
+    background: $bg-hover;
+    border-color: var(--border-l12);
+    color: $text-primary;
   }
 }
 
@@ -475,7 +485,9 @@
   &-list {
     flex: 1;
     overflow-y: scroll;
-    padding: 4px 0 12px 0;
+    // The 6px side inset is what lets the rows be rounded cards that float inside
+    // the column instead of full-bleed bands (v5's `.sb-body`).
+    padding: 4px 6px 12px;
 
     // Hide native scrollbar — custom overlay scrollbar takes over
     &::-webkit-scrollbar {
@@ -530,9 +542,10 @@
   user-select: none;
   font-size: var(--fs-xs);
   font-weight: 600;
-  color: $text-muted;
+  color: $text-secondary;
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  // Relative tracking, so the header keeps its air when the 界面字号 knob moves.
+  letter-spacing: 0.05em;
 
   // ">" group icon: rotates to point down when the group is expanded
   // (chevron geometry/rotation is defined on the base `.collapse-chevron`)
@@ -548,10 +561,19 @@
     white-space: nowrap;
   }
 
+  // The count is a pill, not bare digits: it sits at the right end of a header that
+  // also carries a chevron and a hover-only "+", and as plain text it read as the
+  // tail of the group name.
   .conn-group-count {
-    font-size: 10px;
-    color: $text-dim;
+    padding: 0 7px;
+    border-radius: var(--r-pill);
+    background: $bg-tertiary;
+    // `--text-muted` is the mock's `--fg-mute`, and it is 4.35:1 on this pill — the
+    // number is the whole content of the control, so it is not decoration.
+    color: $text-secondary;
+    font-size: var(--fs-xs);
     font-weight: 400;
+    line-height: 16px;
   }
 
   // "+" button shown on the group header to add a new connection directly
@@ -578,7 +600,7 @@
       background var(--d-1) ease;
 
     &:hover {
-      color: #fff;
+      color: var(--text-on-accent);
       background: $accent;
     }
   }
@@ -589,58 +611,120 @@
 
   // Drag-and-drop highlight when a connection or group is dragged over
   &.drag-over {
-    background: rgba(0, 122, 204, 0.15);
+    background: rgba($accent, 0.16);
     box-shadow: inset 0 -2px 0 var(--border-focus);
   }
 }
 
-.connection-item {
+// ===== Sidebar rows (v5 换皮 P1) =====
+//
+// `.connection-item` (SSH / telnet / serial) and `.conn-item` (local terminal
+// entries) are the same row with different payloads, so they share the geometry
+// rules below and only diverge for the tile and the indent.
+//
+// The row is a rounded card that floats inside the column (v5's `.conn`), and the
+// active marker is a 2.5px accent bar inset from the row's top and bottom — not the
+// full-height 3px `border-left` this used to carry. A border also had to be reserved
+// while inactive (`border-left: 3px solid transparent`) which pushed every label
+// right by 3px for no reason.
+
+.connection-item,
+.conn-item {
+  position: relative;
   display: flex;
   align-items: center;
-  padding: 4px 12px;
+  padding: 6px 8px;
   cursor: pointer;
-  border-left: 3px solid transparent;
-  transition: background var(--d-1);
-  gap: 8px;
-
-  &.indented {
-    padding-left: 24px;
-  }
+  gap: 9px;
+  border-radius: var(--r-2);
+  transition:
+    background var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
 
   &:hover {
     background: $bg-hover;
 
     .conn-item-edit,
-    .conn-item-del {
+    .conn-item-del,
+    .conn-item-btn {
       opacity: 1;
     }
   }
 
   &.active {
     background: $bg-active;
-    border-left-color: $accent-hover;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 7px;
+      bottom: 7px;
+      width: 2.5px;
+      border-radius: 0 2px 2px 0;
+      background: $accent;
+    }
   }
 
-  .conn-icon {
-    font-size: 16px;
+  // The 26px tile is the row's identity slot: hue = what kind of thing this is, and
+  // the hue is a 16% wash of itself so the same pair works on either theme's panel.
+  // Un-classed it stays neutral, which is what an entry with no flavour to name
+  // ("Open Local Terminal") should read as.
+  .conn-icon,
+  .conn-item-icon {
+    display: grid;
+    place-items: center;
     flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    border-radius: var(--r-2);
+    background: rgba($text-secondary, 0.16);
+    color: $text-secondary;
   }
 
-  .conn-info {
+  // `.proto-*` comes from `ConnectionConfig.kind`; the local entries key off the
+  // shell flavour instead (see `.shell-icon-*` further down). The glyph is the hue's
+  // own `-soft-40` variant, which is what that family exists for: a status colour is
+  // tuned against the *panel*, and this one sits on its own 16% wash.
+  .proto-ssh {
+    background: rgba($info, 0.16);
+    color: var(--info-soft-40);
+  }
+
+  .proto-telnet {
+    background: rgba($warning, 0.16);
+    color: var(--warning-soft-40);
+  }
+
+  .proto-serial {
+    background: rgba($purple, 0.16);
+    color: var(--purple-soft-40);
+  }
+
+  .conn-info,
+  .conn-item-label {
     flex: 1;
+    min-width: 0;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
-  .conn-name {
-    font-size: var(--fs-lg);
+  .conn-name,
+  .conn-item-name {
+    font-size: var(--fs-md);
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .conn-host {
+  // The address is monospaced and tabular so a column of `host:port` lines up
+  // vertically — the one place in the row where a glyph grid earns its keep.
+  .conn-host,
+  .conn-item-sub {
     font-size: var(--fs-xs);
+    font-family: var(--font-mono);
     color: $text-muted;
     white-space: nowrap;
     overflow: hidden;
@@ -659,7 +743,7 @@
   .conn-item-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 2px;
     margin-left: auto;
     flex-shrink: 0;
   }
@@ -679,20 +763,28 @@
     }
   }
 
+  // The `×` glyph, not an icon: pinned off the scale on purpose (see the type-scale
+  // note in `_layout.scss`).
   .conn-item-del {
     font-size: 15px;
     line-height: 1;
+  }
+}
+
+.connection-item {
+  &.indented {
+    padding-left: 24px;
   }
 
   // Drag-and-drop visual feedback
   &.drag-over-before {
     border-top: 2px solid var(--border-focus);
-    padding-top: 2px;
+    padding-top: 4px;
   }
 
   &.drag-over-after {
     border-bottom: 2px solid var(--border-focus);
-    padding-bottom: 2px;
+    padding-bottom: 4px;
   }
 }
 
@@ -839,103 +931,41 @@
   }
 }
 
-// Local terminal entry (in the "Local" sidebar group)
+// Local terminal entries (in the "Local" sidebar group). Geometry, type and the
+// tile shape all live in the shared row block above; this is only what differs:
+// they sit indented under their group, and the tile's hue keys off the shell
+// flavour instead of a connection kind.
 .conn-item {
-  display: flex;
-  align-items: center;
-  padding: 4px 12px 4px 24px;
-  cursor: pointer;
-  border-left: 3px solid transparent;
-  transition: background var(--d-1);
-  gap: 8px;
+  padding-left: 24px;
 
-  &:hover {
-    background: $bg-hover;
-
-    .conn-item-edit,
-    .conn-item-del,
-    .conn-item-btn {
-      opacity: 1;
-    }
-  }
-
-  .conn-item-icon {
-    font-size: 14px;
-    flex-shrink: 0;
-    color: $text-dim;
-  }
-
-  // Local-terminal entries tint the icon by shell flavour, so cmd / PowerShell
-  // / bash / WSL / Git Bash stay apart at a glance even at 14px.
+  // Local-terminal entries tint the tile by shell flavour, so cmd / PowerShell /
+  // bash / WSL / Git Bash stay apart at a glance. These used to be five raw hexes
+  // (#9cdcfe / #4c9aff / #89d185 / #f5c26b / #f0883e) — pale glyph colours that only
+  // worked on a dark panel; as tiles they need a hue that also reads on white.
+  // The "Open Local Terminal" action has no flavour, so it keeps the neutral tile.
   .shell-icon-shellCmd {
-    color: #9cdcfe;
+    background: rgba($info, 0.16);
+    color: var(--info-soft-40);
   }
 
   .shell-icon-shellPowershell {
-    color: #4c9aff;
+    background: rgba($purple, 0.16);
+    color: var(--purple-soft-40);
   }
 
   .shell-icon-shellBash {
-    color: #89d185;
+    background: rgba($success, 0.16);
+    color: var(--success-soft-40);
   }
 
   .shell-icon-shellWsl {
-    color: #f5c26b;
+    background: rgba($warning, 0.16);
+    color: var(--warning-soft-40);
   }
 
   .shell-icon-shellGitBash {
-    color: #f0883e;
-  }
-
-  .conn-item-label {
-    flex: 1;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .conn-item-name {
-    font-size: var(--fs-lg);
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .conn-item-sub {
-    font-size: var(--fs-xs);
-    color: $text-muted;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .conn-item-edit,
-  .conn-item-del {
-    flex-shrink: 0;
-    opacity: 0;
-    cursor: pointer;
-    color: $text-dim;
-    transition:
-      opacity var(--d-1),
-      color var(--d-1);
-
-    &:hover {
-      color: $text-primary;
-    }
-  }
-
-  .conn-item-del {
-    font-size: 15px;
-    line-height: 1;
-  }
-
-  .conn-item-actions {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    margin-left: auto;
-    flex-shrink: 0;
+    background: rgba($cyan, 0.16);
+    color: var(--cyan-soft-40);
   }
 }
 

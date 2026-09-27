@@ -80,10 +80,12 @@ test('a seeded interface size moves the whole scale it feeds', async ({ page }) 
   await boot(page, { 'wrolp-ui-font-size': '14' })
   expect(await inline(page, '--fs-ui')).toBe('14px')
   await openAppearance(page)
-  // `.settings-label` is `--fs-md` (= `--fs-ui`) and `.settings-nav-item` is
-  // `--fs-lg` (= `--fs-ui` + 1px): the scale, not one hard-coded rule.
+  // `.settings-label` is `--fs-md` (= `--fs-ui`) and `.settings-card-title` is
+  // `--fs-xl` (= `--fs-ui` + 3px): the scale, not one hard-coded rule. (The nav item
+  // used to be the second probe; v5 P4 moved it down to `--fs-md`, which made it a
+  // duplicate of the first.)
   expect(await fontSizeOf(page, '.settings-label')).toBe('14px')
-  expect(await fontSizeOf(page, '.settings-nav-item')).toBe('15px')
+  expect(await fontSizeOf(page, '.settings-card-title')).toBe('17px')
 })
 
 test('the slider commits through the registry, so the pick survives a reload', async ({ page }) => {
@@ -199,11 +201,13 @@ test('density is written to <html> and to storage from the segment', async ({ pa
 })
 
 test('density moves the columns a user never dragged…', async ({ page }) => {
-  await boot(page)
+  // Seeded on the compact defaults (v5's `--sidebar-w` is 250), which is exactly what
+  // marks a column as never dragged.
+  await boot(page, {}, JSON.stringify({ sidebar: { width: 250 }, inspector: { width: 308 } }))
   await openAppearance(page)
   await page.getByRole('button', { name: 'Comfy' }).click()
   await expect.poll(async () => (await lastLayout(page))?.inspector.width).toBe(344)
-  expect((await lastLayout(page))?.sidebar.width).toBe(276)
+  expect((await lastLayout(page))?.sidebar.width).toBe(266)
 })
 
 test('…and leaves the one they did alone', async ({ page }) => {

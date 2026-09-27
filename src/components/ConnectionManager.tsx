@@ -1410,7 +1410,13 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
       onDrop={(e) => onDrop(e, conn)}
       onDragEnd={onDragEnd}
     >
-      <span className="conn-icon">
+      {/* The tile's hue is this row's only "what kind of connection" cue, and `kind`
+          comes from persisted JSON, so the class is mapped rather than interpolated. */}
+      <span
+        className={`conn-icon proto-${
+          conn.kind === 'telnet' || conn.kind === 'serial' ? conn.kind : 'ssh'
+        }`}
+      >
         <Icon name="link" />
       </span>
       <div className="conn-info">

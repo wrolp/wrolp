@@ -33,10 +33,16 @@ $spacings: (
 // `circle` is on the list rather than left as a literal because 16 rules used
 // `50%` on an intentionally round thing (avatar, status dot, slider knob), and
 // `grep "border-radius: [0-9]"` is how this repo finds off-token values.
+//
+// The three steps are `task/designs/v5-refined-workspace.html`'s `--radius-sm/md/lg`.
+// They are a full step larger than the previous 3/5/8 because everything they round
+// got larger too: the chrome bands went 28 → 38px tall and the panes the mock frames
+// with `--radius-lg` are several hundred px wide, where 8px reads as merely clipped
+// rather than as a shaped corner.
 $radii: (
-  1: 3px,
-  2: 5px,
-  3: 8px,
+  1: 5px,
+  2: 7px,
+  3: 10px,
   pill: 999px,
   circle: 50%,
 );
@@ -55,24 +61,28 @@ $font-sizes: (
 );
 
 // ---- Chrome bands ----
-// The full-width horizontal bands of the window, at the compact values the approved
-// static draft specifies (`task/designs/ui-redesign-v1/design.css`). Column widths
-// and the nav/inspector/drawer bands join this list when their region lands —
-// a dimension token with no reader is the same mistake as a colour token with none.
+// The full-width horizontal bands of the window, at the values the approved
+// `task/designs/v5-refined-workspace.html` draws (`--titlebar-h: 38`, `.tabbar: 36`,
+// `--statusbar-h: 25`). Column widths and the nav/inspector/drawer bands join this
+// list when their region lands — a dimension token with no reader is the same
+// mistake as a colour token with none.
 $dims: (
-  h-titlebar: 28px,
-  h-tabbar: 28px,
-  h-statusbar: 22px,
+  h-titlebar: 38px,
+  h-tabbar: 36px,
+  h-statusbar: 25px,
 );
 
 // `themeStore` writes one of these to `<html data-density>`. `'default'` and
 // `'compact'` both get the table above, so only `'comfy'` needs an override block;
 // adding a mode here without a reader in `$dims` would silently do nothing.
+// (That coupling is also why the settings control only offers 紧凑/舒适: there are
+// two distinct band sets, not three. Comfort is v5 + one step rather than v5 − one,
+// because the point of the density knob is "give me more air".)
 $densities: (
   comfy: (
-    h-titlebar: 34px,
-    h-tabbar: 32px,
-    h-statusbar: 26px,
+    h-titlebar: 44px,
+    h-tabbar: 42px,
+    h-statusbar: 29px,
   ),
 );
 
@@ -91,18 +101,19 @@ $easings: (
 
 // ---- Stacking ----
 // Only the rungs that compete *app-wide* belong here, which in practice means the
-// `position: fixed` roots: the modal scrim, the re-dock overlay, the floating
-// panels, the lightbox, the toast. Everything else — a tooltip inside a pane, a
-// resize handle inside the command list, a dropdown inside a menu — is in its own
+// `position: fixed` roots: the modal scrim, the floating panels, the lightbox, the
+// toast. Everything else — a tooltip inside a pane, a resize handle inside the
+// command list, a dropdown inside a menu — is in its own
 // stacking context and its number only orders it against its siblings, so giving
 // it a global token would be a lie that breaks the moment the real rung moves.
 // The values are what the app already used, so this renames, not reorders.
 //
 // `above-float` exists because the command list portals its dialogs and copy
 // notice to <body>; they must beat their own window, and did so with 2200/2400.
+// `dock` (1500) went with the drawer's drag-to-re-dock overlay: the rung lost its
+// last reader, so per the rule above it is not kept "just in case".
 $z-layers: (
   modal: 1000,
-  dock: 1500,
   float: 2000,
   above-float: 2400,
   lightbox: 3000,

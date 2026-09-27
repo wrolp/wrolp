@@ -186,8 +186,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   switchSftpUser: '切换 SFTP 用户',
   uploadFile: '上传',
   uploadFolder: '上传文件夹',
+  selectUploadFiles: '选择要上传的文件',
   selectUploadFolder: '选择要上传的文件夹',
   selectDownloadFolder: '选择下载文件夹',
+  saveFileAs: '另存为',
   newItem: '新建项',
   parentDir: '上级',
   home: '主目录',
@@ -231,7 +233,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   copySelectedText: '复制选中内容',
   copyAllLogs: '复制全部日志',
   dlvLineNumbers: '行号',
-  dragToRedock: '拖动以重新停靠此面板',
+  // 悬停在可点击的 ls 条目上浮出的小卡。它自己就是点击目标，所以两个动作写成动词。
+  lsCardOpenFile: '打开文件',
+  lsCardEnterFolder: '进入目录',
+  lsCardHint: '按住 {mod} 点击',
 
   // 检查器（右栏）
   inspector: '检查器',

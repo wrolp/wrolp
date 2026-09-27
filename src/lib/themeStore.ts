@@ -73,8 +73,11 @@ export const UI_FONT_SIZE = { base: 12.5, min: 11, max: 15, step: 0.5 } as const
  * density's default, and leaves any width the user dragged alone.
  */
 export const DENSITY_WIDTHS: Record<'compact' | 'comfy', { nav: number; inspector: number }> = {
-  compact: { nav: 260, inspector: 308 },
-  comfy: { nav: 276, inspector: 344 },
+  // `nav` is the same 250 `defaultLayout.sidebar.width` uses; the +16 that comfort
+  // adds is the delta this table has always carried, so a column still sitting on
+  // one density's default is recognisable as never-dragged.
+  compact: { nav: 250, inspector: 308 },
+  comfy: { nav: 266, inspector: 344 },
 }
 
 function read(key: string): string | null {
