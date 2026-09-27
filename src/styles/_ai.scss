@@ -1,5 +1,11 @@
 @use 'variables' as *;
 
+// Text sizes are tokens off `--fs-ui` (the 界面字号 setting), as in `_panels` /
+// `_analysis` / `_panes` / `_files` / `_commands` / `_modal`. Two deliberate exceptions:
+// `.ai-dock-bar-btn` holds only `⤢` / `×` glyphs, and the markdown `h1`–`h6` inside a
+// message are `em` against `.ai-chat-msg-content`, so a heading scales with the body it
+// sits in instead of jumping on its own.
+
 // ===== AI Chat Panel =====
 
 .ai-chat-panel {
@@ -8,7 +14,7 @@
   height: 100%;
   background: $bg-primary;
   color: $text-primary;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   // Never let the panel's *min-content* width (its widest message / a long
   // unbreakable line in the transcript) push it past its container: the panel
   // must always be exactly as wide as the space it was given, and wide content
@@ -71,7 +77,7 @@
     border-bottom: 1px solid var(--border, #333);
 
     .ai-dock-bar-title {
-      font-size: 11px;
+      font-size: var(--fs-xs);
       color: var(--text-secondary, #aaa);
       font-weight: 600;
     }
@@ -121,7 +127,7 @@
       border: 1px solid transparent;
       color: $text-dim;
       cursor: pointer;
-      font-size: 12px;
+      font-size: var(--fs-sm);
       line-height: 1;
       padding: 2px 8px;
       border-radius: var(--r-1);
@@ -143,7 +149,7 @@
 
 .ai-chat-title {
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: var(--fs-lg);
   color: $text-primary;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -154,7 +160,7 @@
   display: inline-flex;
   align-items: center;
   margin-left: 6px;
-  font-size: 14px;
+  font-size: var(--fs-lg);
   font-weight: 400;
   letter-spacing: 0.5px;
 
@@ -195,7 +201,7 @@
 }
 
 .ai-chat-subtitle {
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   color: $text-muted;
   letter-spacing: 0.3px;
   overflow: hidden;
@@ -214,7 +220,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: $text-secondary;
   background: $bg-input;
@@ -252,7 +258,7 @@
 .ai-chat-select {
   appearance: none;
   max-width: 150px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-secondary;
   background: $bg-input;
   border: 1px solid $border;
@@ -327,7 +333,7 @@
 
 .ai-chat-more-label {
   flex: 1;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   margin-right: 8px;
   white-space: nowrap;
@@ -364,7 +370,7 @@
 
 .ai-max-rounds-title {
   display: block;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   color: $text-dim;
   margin-bottom: 10px;
 }
@@ -383,7 +389,7 @@
   border: 1px solid $border;
   border-radius: var(--r-1);
   padding: 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   &:focus:not(:focus-visible) {
     outline: none;
   }
@@ -401,7 +407,7 @@
   color: #fff;
   border: none;
   border-radius: var(--r-1);
-  font-size: 13px;
+  font-size: var(--fs-lg);
   cursor: pointer;
   flex-shrink: 0;
 
@@ -415,7 +421,7 @@
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   background: transparent;
   border: 1px solid $border;
   color: $text-muted;
@@ -468,19 +474,19 @@
 
 .ai-chat-empty-title {
   margin: 0 0 8px;
-  font-size: 17px;
+  font-size: var(--fs-xl);
   font-weight: 600;
   color: $text-primary;
 }
 
 .ai-chat-empty-text {
-  font-size: 13px;
+  font-size: var(--fs-lg);
   line-height: 1.6;
   margin: 0 0 10px;
 }
 
 .ai-chat-empty-hint {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: $text-dim;
   margin: 0 0 18px;
@@ -502,7 +508,7 @@
 }
 
 .ai-chat-suggestion-group-title {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -516,7 +522,7 @@
 }
 
 .ai-chat-suggestion {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   padding: 10px 12px;
   background: $bg-input;
@@ -537,7 +543,7 @@
 }
 
 .ai-chat-suggestion-custom {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   padding: 10px 12px;
   background: rgba($accent, 0.05);
@@ -563,7 +569,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -618,7 +624,7 @@
 }
 
 .ai-tmpl-modal-title {
-  font-size: 13px;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: $text-primary;
 }
@@ -632,14 +638,14 @@
 }
 
 .ai-tmpl-empty {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: $text-dim;
   text-align: center;
   padding: 16px 0;
 }
 
 .ai-tmpl-section-title {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: $text-dim;
   text-transform: uppercase;
@@ -653,7 +659,7 @@
 
 .ai-tmpl-item-cat {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: $text-secondary;
   background: $bg-input;
   border: 1px solid $border;
@@ -678,13 +684,13 @@
 }
 
 .ai-tmpl-item-name {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: $text-primary;
 }
 
 .ai-tmpl-item-prompt {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   margin-top: 2px;
   white-space: nowrap;
@@ -727,7 +733,7 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 8px;
   border-radius: var(--r-3);
   border: 1px dashed $border;
@@ -755,7 +761,7 @@
 }
 
 .ai-tmpl-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
 }
 
@@ -763,7 +769,7 @@
 .ai-tmpl-textarea {
   width: 100%;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-family: inherit;
   color: $text-primary;
   background: $bg-input;
@@ -786,7 +792,7 @@
 
 .ai-tmpl-save,
 .ai-tmpl-delete {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   padding: 7px 14px;
   border-radius: var(--r-3);
@@ -883,7 +889,7 @@
 }
 
 .ai-chat-msg-role {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -933,7 +939,7 @@
 .ai-chat-msg-content {
   padding: 10px 14px;
   border-radius: var(--r-3);
-  font-size: 13px;
+  font-size: var(--fs-lg);
   line-height: 1.6;
   // `anywhere` rather than `break-word`: both break an over-long word when it
   // would overflow, but `anywhere` ALSO lowers this element's min-content width.
@@ -983,18 +989,18 @@
     }
   }
   h1 {
-    font-size: 17px;
+    font-size: 1.26em;
   }
   h2 {
-    font-size: 16px;
+    font-size: 1.19em;
   }
   h3 {
-    font-size: 15px;
+    font-size: 1.11em;
   }
   h4,
   h5,
   h6 {
-    font-size: 14px;
+    font-size: 1.04em;
   }
   ul,
   ol {
@@ -1019,7 +1025,7 @@
     border-collapse: collapse;
     margin: 0 0 8px;
     width: 100%;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   th,
   td {
@@ -1055,7 +1061,7 @@
 
   code {
     font-family: $font-mono;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: #e2e8f0;
     white-space: pre-wrap;
     word-break: break-all;
@@ -1065,7 +1071,7 @@
     position: absolute;
     top: 4px;
     left: 8px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     // 代码块底色是**固定深色** #1a1f2b（两套主题一致），所以这里必须用浅色文字，
     // 不能跟主题走的 $text-dim（浅色主题下 #999 压黑底也不够亮 / 深色下 #666 太暗）。
     color: rgba(255, 255, 255, 0.6);
@@ -1094,7 +1100,7 @@
 
   .ai-chat-code-copy,
   .ai-chat-code-send {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1;
     // 同上：固定深色代码块上的按钮。
     color: rgba(255, 255, 255, 0.75);
@@ -1120,7 +1126,7 @@
 
 .ai-chat-inline-code {
   font-family: $font-mono;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   background: rgba($text-primary, 0.08);
   padding: 1px 5px;
   border-radius: var(--r-1);
@@ -1157,7 +1163,7 @@
   align-items: center;
   gap: 6px;
   color: var(--danger-soft-40);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 8px 12px;
   background: rgba(#f44747, 0.08);
   border: 1px solid rgba(#f44747, 0.2);
@@ -1178,7 +1184,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1218,7 +1224,7 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -1232,7 +1238,7 @@
   border-radius: var(--r-3);
   background: $bg-input;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 
   &.ai-tool-executing {
     border-color: var(--accent-l8);
@@ -1279,7 +1285,7 @@
   align-items: center;
   gap: 4px;
   color: $text-dim;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -1299,7 +1305,7 @@
   background: var(--editor-blank);
   color: $text-secondary;
   font-family: $font-mono;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   max-height: 200px;
   overflow: auto;
   white-space: pre-wrap;
@@ -1324,7 +1330,7 @@
     background: rgba(255, 255, 255, 0.03);
     color: $text-secondary;
     font-family: $font-mono;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     max-height: 160px;
     overflow: auto;
     white-space: pre-wrap;
@@ -1334,7 +1340,7 @@
 
 .ai-tool-detail-label {
   padding: 4px 10px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1389,7 +1395,7 @@
 }
 
 .ai-tool-confirm-text {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: #e6a23c;
   line-height: 1.3;
 }
@@ -1402,7 +1408,7 @@
 
 .ai-tool-confirm-allow,
 .ai-tool-confirm-deny {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   border-radius: var(--r-1);
   padding: 3px 12px;
@@ -1448,7 +1454,7 @@
   background: rgba($accent, 0.1);
   border-radius: var(--r-3);
   color: $text-secondary;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   line-height: 1.4;
 
   .ai-chat-config-warning-btn {
@@ -1458,7 +1464,7 @@
     border-radius: var(--r-2);
     background: $accent;
     color: #fff;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
 
     &:hover {
@@ -1631,7 +1637,7 @@
   }
 
   .ai-chat-template-group-title {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: $text-dim;
     padding: 3px 6px;
   }
@@ -1643,7 +1649,7 @@
     background: transparent;
     border: none;
     color: $text-primary;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 5px 8px;
     border-radius: var(--r-2);
     cursor: pointer;
@@ -1668,7 +1674,7 @@
     border: 1px solid $accent-hover;
     border-radius: var(--r-2);
     color: #fff;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     cursor: pointer;
 
@@ -1735,7 +1741,7 @@
   }
   color: $text-primary;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   line-height: 1.5;
   resize: none;
   min-height: 24px;
@@ -1779,7 +1785,7 @@
   // instead of flashing bright white on hover.
   background: $bg-input;
   color: $text-secondary;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   transition: all var(--d-2);
 
@@ -1849,7 +1855,7 @@
 
 .ai-chat-input-hint {
   margin-top: 6px;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   text-align: center;
 }

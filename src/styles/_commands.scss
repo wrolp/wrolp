@@ -1,5 +1,10 @@
 @use 'variables' as *;
 
+// Text sizes are tokens off `--fs-ui` (the 界面字号 setting), as in `_panels` /
+// `_analysis` / `_panes` / `_files`. The two px values left below — the add-snippet and
+// new-group buttons — hold nothing but an `<Icon>`, which sizes itself by prop, so a
+// font-size there would do nothing.
+
 // ===== Floating command list (command snippets) =====
 // No backdrop/mask — the panel floats freely and can be dragged by its header.
 .cmd-list-float {
@@ -60,7 +65,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: $text-primary;
   // Was `flex-shrink: 0`, which forced the trailing close ✕ off-screen (and
@@ -95,7 +100,7 @@
   gap: 4px;
   min-width: 0;
   flex-shrink: 1;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   cursor: pointer;
   user-select: none;
@@ -227,7 +232,7 @@
     }
     color: $text-primary;
     font-family: inherit;
-    font-size: 13px;
+    font-size: var(--fs-lg);
 
     &::placeholder {
       color: $text-dim;
@@ -245,7 +250,7 @@
 .cmd-list-empty {
   padding: 32px 16px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: $text-dim;
 }
 
@@ -355,7 +360,7 @@
 }
 
 .cmd-list-alias {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   white-space: nowrap;
   overflow: hidden;
@@ -364,7 +369,7 @@
 
 .cmd-list-command {
   font-family: $font-mono;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: $text-secondary;
   white-space: nowrap;
   overflow: hidden;
@@ -378,7 +383,7 @@
 }
 
 .cmd-list-hint {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
 }
 
@@ -387,7 +392,7 @@
   align-items: center;
   gap: 6px;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   user-select: none;
 
@@ -542,7 +547,7 @@
   background: rgba($accent, 0.95);
   color: #fff;
   border-radius: var(--r-2);
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   box-shadow: 0 4px 16px var(--shadow-1);
 }
 
@@ -556,7 +561,7 @@
   background: rgba($accent, 0.22);
   color: var(--accent-soft-40);
   border-radius: var(--r-1);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   font-family: 'Cascadia Code', Consolas, monospace;
   flex-shrink: 0;
@@ -569,7 +574,7 @@
 }
 
 .snip-vars-empty {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: $text-dim;
   padding: 2px 0 6px;
 }
@@ -587,7 +592,7 @@
     border: 1px solid $border;
     color: $text-primary;
     border-radius: var(--r-1);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     font-family: 'Cascadia Code', Consolas, monospace;
     &:focus:not(:focus-visible) {
       outline: none;
@@ -626,7 +631,7 @@
   cursor: pointer;
   padding: 4px 10px;
   border-radius: var(--r-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -657,7 +662,7 @@
 }
 
 .snip-fill-desc {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: $text-secondary;
   margin-bottom: 10px;
   line-height: 1.5;
@@ -670,7 +675,7 @@
   padding: 6px 10px;
   margin-bottom: 14px;
   font-family: 'Cascadia Code', Consolas, monospace;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: $text-primary;
   word-break: break-all;
   white-space: pre-wrap;
@@ -680,7 +685,7 @@
 // Multi-line plain text — `pre-wrap` keeps the author's line breaks.
 .snip-fill-snippet-desc {
   margin: 0 0 14px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
   color: $text-secondary;
   white-space: pre-wrap;
@@ -688,7 +693,7 @@
 
 .snip-fill-hint {
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
 }
 
@@ -737,7 +742,7 @@
 .cmd-list-section-title {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: $text-secondary;
   overflow: hidden;
@@ -748,7 +753,7 @@
 .cmd-list-section-count {
   flex-shrink: 0;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: $text-secondary;
   background: $bg-hover;
   border-radius: var(--r-3);
@@ -770,7 +775,7 @@
   background: $bg-primary;
   border: none;
   color: $text-secondary;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   cursor: pointer;
 
@@ -808,7 +813,7 @@
   border: 1px solid $accent;
   border-radius: var(--r-1);
   color: $text-primary;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   font-family: inherit;
   &:focus:not(:focus-visible) {
     outline: none;
@@ -818,7 +823,7 @@
 // Placeholder row of a group that has no commands yet.
 .cmd-list-empty-group {
   padding: 6px 8px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
 }
 
@@ -838,7 +843,7 @@
     border: 1px solid $border;
     border-radius: var(--r-1);
     color: $text-primary;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-family: inherit;
     &:focus:not(:focus-visible) {
       outline: none;
@@ -898,7 +903,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 13px;
+    font-size: var(--fs-lg);
     cursor: pointer;
   }
 
@@ -919,7 +924,7 @@
   flex: 0 0 auto;
   gap: 5px;
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   white-space: nowrap;
   cursor: pointer;
 
@@ -960,7 +965,7 @@
     border: 1px solid $border;
     color: $text-primary;
     border-radius: var(--r-1);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     &:focus:not(:focus-visible) {
       outline: none;
     }
@@ -1035,7 +1040,7 @@
   border: 1px solid $border;
   border-radius: var(--r-1);
   color: $text-secondary;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   cursor: pointer;
 
   &:hover {
@@ -1052,7 +1057,7 @@
 }
 
 .snip-link-count {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 
@@ -1084,7 +1089,7 @@
   padding: 2px 8px;
   border: 1px solid $border;
   border-radius: var(--r-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.35;
   color: $text-secondary;
   cursor: pointer;
@@ -1129,7 +1134,7 @@
 }
 
 .snip-link-empty {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
 }
 
@@ -1152,7 +1157,7 @@
 .snip-param-hint {
   flex-basis: 100%;
   margin-left: 2px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: #d08a4a;
 }
 
@@ -1178,7 +1183,7 @@
 
 .snip-fill-group-title {
   margin-bottom: 6px;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: $text-secondary;
   text-transform: uppercase;
@@ -1200,7 +1205,7 @@
     border: 1px solid $border;
     color: $text-primary;
     border-radius: var(--r-1);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     font-family: 'Cascadia Code', Consolas, monospace;
     &:focus:not(:focus-visible) {
       outline: none;
@@ -1235,7 +1240,7 @@
 }
 
 .snip-fill-name {
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: $text-primary;
   font-family: 'Cascadia Code', Consolas, monospace;
   overflow: hidden;
@@ -1245,7 +1250,7 @@
 
 .snip-fill-slot {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: $text-dim;
   font-family: 'Cascadia Code', Consolas, monospace;
 }
@@ -1267,6 +1272,6 @@
 
 .snip-fill-error {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: #e06c6c;
 }

@@ -1,5 +1,9 @@
 @use 'variables' as *;
 
+// Text sizes are tokens off `--fs-ui` (the 界面字号 setting), as in `_panels` /
+// `_analysis` / `_panes`. The five px values left below cannot express a text size: four
+// wrap an `<Icon>` SVG (which sizes itself by prop), and one is a literal `✕`.
+
 // ===== Sidebar Container =====
 .sidebar-container {
   display: flex;
@@ -63,7 +67,7 @@
     gap: 8px;
     padding: 8px 12px;
     border-radius: var(--r-2);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.3;
     color: #fff;
     background: rgba(30, 30, 34, 0.96);
@@ -102,7 +106,7 @@
     input {
       height: 22px;
       padding: 2px 6px;
-      font-size: 11px;
+      font-size: var(--fs-xs);
       background: $bg-input;
       border: 1px solid $border;
       border-radius: var(--r-1);
@@ -120,7 +124,7 @@
     button {
       height: 22px;
       padding: 0 8px;
-      font-size: 11px;
+      font-size: var(--fs-xs);
       background: rgba($accent, 0.15);
       border: 1px solid rgba($accent, 0.3);
       border-radius: var(--r-1);
@@ -153,7 +157,7 @@
     background: $bg-primary;
     border-bottom: 1px solid $border;
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: $text-secondary;
     overflow: hidden;
 
@@ -205,7 +209,7 @@
 
     .file-path-jump-label {
       padding: 4px 12px 2px;
-      font-size: 10px;
+      font-size: var(--fs-xs);
       text-transform: uppercase;
       letter-spacing: 0.4px;
       color: $text-muted;
@@ -216,7 +220,7 @@
       align-items: center;
       gap: 8px;
       padding: 6px 12px;
-      font-size: 12px;
+      font-size: var(--fs-sm);
       cursor: pointer;
       color: $text-primary;
       white-space: nowrap;
@@ -254,20 +258,6 @@
       }
     }
 
-    .file-path-root {
-      flex-shrink: 0;
-      margin-left: 4px;
-      padding: 1px 6px;
-      border-radius: var(--r-1);
-      font-size: 10px;
-      color: var(--accent-soft-40);
-      background: rgba(0, 122, 204, 0.12);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 45%;
-    }
-
     .file-path-text {
       flex: 1;
       overflow: hidden;
@@ -287,7 +277,7 @@
       border: 1px solid $accent-hover;
       border-radius: var(--r-1);
       color: $text-primary;
-      font-size: 11px;
+      font-size: var(--fs-xs);
       padding: 2px 6px;
       &:focus:not(:focus-visible) {
         outline: none;
@@ -322,51 +312,13 @@
     scrollbar-width: none;
   }
 
-  .file-entry {
-    display: flex;
-    align-items: center;
-    padding: 2px 12px;
-    cursor: pointer;
-    font-size: 12px;
-    color: $text-secondary;
-    gap: 6px;
-    transition: background var(--d-1);
-
-    &:hover {
-      background: $bg-hover;
-    }
-
-    &.is-dir {
-      color: var(--dir-fg);
-    }
-
-    .file-icon {
-      flex-shrink: 0;
-      width: 18px;
-      text-align: center;
-    }
-
-    .file-name {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .file-size {
-      flex-shrink: 0;
-      font-size: 10px;
-      color: $text-muted;
-    }
-  }
-
   // Tree view rows
   .tree-row {
     display: flex;
     align-items: center;
     padding: 2px 12px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: $text-secondary;
     gap: 6px;
     transition: background var(--d-1);
@@ -419,7 +371,7 @@
 
     .tree-size {
       flex-shrink: 0;
-      font-size: 10px;
+      font-size: var(--fs-xs);
       color: $text-muted;
     }
 
@@ -433,7 +385,7 @@
       flex-shrink: 0;
       margin-left: 4px;
       padding: 0 5px;
-      font-size: 9px;
+      font-size: var(--fs-xs);
       line-height: 14px;
       border-radius: var(--r-pill);
       background: $accent;
@@ -448,7 +400,7 @@
   .file-empty {
     padding: 16px;
     text-align: center;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: $text-muted;
   }
 
@@ -471,12 +423,6 @@
     background: $accent;
     border-radius: var(--r-pill);
     animation: progress-indeterminate 1.2s ease-in-out infinite;
-  }
-
-  .file-progress-detail {
-    font-size: 10px;
-    color: $text-dim;
-    margin-top: 2px;
   }
 
   .file-pause-btn {
@@ -527,7 +473,7 @@
     flex-shrink: 0;
 
     .file-transfers-title {
-      font-size: 11px;
+      font-size: var(--fs-xs);
       font-weight: 600;
       color: $text-dim;
       flex: 1;
@@ -591,7 +537,7 @@
     }
 
     .file-transfer-name {
-      font-size: 11px;
+      font-size: var(--fs-xs);
       color: $text-primary;
       white-space: nowrap;
       overflow: hidden;
@@ -617,7 +563,7 @@
     }
 
     .file-transfer-meta {
-      font-size: 10px;
+      font-size: var(--fs-xs);
       color: $text-dim;
     }
 

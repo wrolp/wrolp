@@ -349,6 +349,46 @@ test('an installed CLI with no daemon offers one retry, and it lifts when the da
   await expect(row(page, LOCAL.name)).toBeVisible()
 })
 
+test('the container list follows the interface font size', async ({ page }) => {
+  const sizeOf = (sel: string) =>
+    page.evaluate((s) => getComputedStyle(document.querySelector(s)!).fontSize, sel)
+
+  await boot(page, {
+    localDockerProbe: RUNNING,
+    localDockerContainers: [LOCAL],
+    // Follow is turned off below, so the viewer renders its body from one tail fetch —
+    // that body text (`.dlv-output`) is what has to track the scale.
+    dockerLogsByContainer: { [LOCAL.name]: '2026-09-28T10:00:00Z INFO boot\nready' },
+  })
+  await expandSection(page, 'Docker')
+  await expect(row(page, LOCAL.name)).toBeVisible()
+  // `--fs-ui` ships at 12.5px, so the name (`--fs-sm`) computes to 12px.
+  const nameBefore = await sizeOf('.docker-name')
+  expect(Number.parseFloat(nameBefore)).toBeCloseTo(12, 0)
+
+  // The 界面字号 knob writes `--fs-ui` (its range tops out at 15px), and the list reads
+  // the scale derived from it — so the rows move with their own section header instead
+  // of staying at their px values, which is exactly what they used to do.
+  await page.addInitScript(() => {
+    localStorage.setItem('wrolp-ui-font-size', '15')
+    localStorage.setItem('wrolp-docker-follow', '0')
+  })
+  await page.reload()
+  await expandSection(page, 'Docker')
+  await expect(row(page, LOCAL.name)).toBeVisible()
+  expect(Number.parseFloat(await sizeOf('.docker-name'))).toBeCloseTo(14.5, 0)
+  expect(Number.parseFloat(await sizeOf('.docker-image'))).toBeCloseTo(13.5, 0)
+  expect(Number.parseFloat(await sizeOf('.docker-state'))).toBeCloseTo(13.5, 0)
+
+  // The log viewer is the other surface of the same two partials, and it is the one
+  // users stare at longest — its body and header read the same scale.
+  await row(page, LOCAL.name).click({ button: 'right' })
+  await page.locator('.context-menu-item', { hasText: 'View Logs' }).click()
+  await expect(page.locator('.dlv-output')).toBeVisible()
+  expect(Number.parseFloat(await sizeOf('.dlv-output'))).toBeCloseTo(14.5, 0)
+  expect(Number.parseFloat(await sizeOf('.dlv-container-name'))).toBeCloseTo(16, 0)
+})
+
 test('a podman daemon is labelled as podman, not silently called docker', async ({ page }) => {
   // Decision ④: the probe may resolve `podman`. Everything downstream is the same CLI
   // surface, but the header has to say which daemon the rows came from.
