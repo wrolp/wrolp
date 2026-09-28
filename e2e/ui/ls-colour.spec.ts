@@ -269,6 +269,34 @@ test('a bare `ls` colors directories from the listing it fetches anyway', async 
   expect(await colouredRunsInRow(page, 'backups')).toEqual(['backups', 'note.txt'])
 })
 
+test('the prompt after a bare `ls` keeps its category highlighting', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    pollOutputChunks: [[PROMPT]],
+    fileEntries: [entry('backups', true), entry('note.txt', false)],
+  })
+  await openShell(page, 'ls', ['backups   note.txt', '', PROMPT].join('\r\n'))
+
+  // The flushed tail ends with the next prompt, and that row is ordinary output:
+  // `parseMultiLine` used to claim its tokens as listing names, so the whole row
+  // was handed out as (uncolored) name spans and never reached the category
+  // highlighter — the prompt's path stayed plain while the listing above it was
+  // colored. `dir` / `ls -l` reject a prompt line in their parsers, which is why
+  // only the bare `ls` forms lost the prompt highlighting.
+  await expect
+    .poll(async () => {
+      const runs = await page
+        .locator('.xterm-rows > div')
+        .filter({ hasText: '/srv' })
+        .last()
+        .evaluate((row) =>
+          Array.from(row.querySelectorAll('span[style*="color:"]')).map((s) => s.textContent ?? ''),
+        )
+      return runs.find((r) => r.startsWith('/srv')) ?? ''
+    })
+    .not.toBe('')
+})
+
 test('the gate reads "already colored" as colour SGR, not any escape', async () => {
   // Imported directly: this decides whether a listing is painted at all, and the
   // DOM cannot show it — wrapping the shell's own SGR in ours leaves *its* hue

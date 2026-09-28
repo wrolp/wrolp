@@ -4,6 +4,25 @@ import { colorizeCommand } from '../../lib/cmdEcho'
 import { commitCommand } from '../../commands'
 import { canRecolorInPlace, isWrappedContinuation, logicalTopRow } from './wrapDetect'
 
+// What marks a screen as application-owned (an inline TUI that opens neither the
+// alternate buffer nor mouse tracking, so `isApplicationScreen` cannot see it):
+// its output moves the cursor, where a shell's linear output only ever advances it
+// with printable text + CR/LF. Match a complete CSI whose final byte is a cursor
+// move (`A`B`C`D`E`F`G`H`, `f`, `d`); params are digits/`;`, so SGR (`…m`), erase
+// (`…K`/`…J`), mode sets (`ESC[?1000h`) and save/restore (`s`/`u`) never match.
+// Ink TUIs repaint by moving up (`ESC[<n>A`) and rewriting, not only by absolute
+// `H`, so the relative moves are essential — matching just `H`/`f` let Qoder CLI's
+// command list slip through (BUGS.md B46 ④).
+export const CURSOR_REPOSITION = /\x1b\[[0-9;]*[ABCDEFGHdf]/
+// The subset that changes the ROW: up/down, next/prev line, set-row. A LOCAL
+// shell's ConPTY re-serializes the console *screen*, so it repaints the input line
+// with absolute moves — once per keystroke (`ESC[1;20Hnetstat -ano ESC[1;32H`) and
+// a lone `ESC[8;20H` after every prompt. Those are not frames, so for local shells
+// only a row change counts: comparing a move's target against `cursorY` cannot
+// work, because writes parse asynchronously and every chunk of one poll batch
+// reads the same pre-batch row.
+export const VERTICAL_MOVE = /\x1b\[[0-9;]*[ABEFd]/
+
 // Read the full logical line under the cursor, reassembling wrapped
 // continuation lines so long tab-completed commands are not truncated.
 export function getCurrentCommandLine(term: Terminal): string {
@@ -115,29 +134,6 @@ export function splitPromptCommand(line: string): { prompt: string; command: str
     return { prompt: noAnsi.slice(0, end), command: noAnsi.slice(end).trimEnd() }
   }
   return { prompt: '', command: noAnsi.trim() }
-}
-
-// ConPTY re-serializes the console *screen*, so every keystroke echo of a local
-// shell is repainted with absolute cursor moves (`ESC[4;20Hnetstat -ano
-// ESC[4;32H`). Those moves never leave the row the cursor already sits on — the
-// input line. An application redraws elsewhere (up with `ESC[<n>A`, or to another
-// absolute row), which is what the output highlighter must keep off. So: at least
-// one absolute move, every one of them on `cursorRow`, and no other cursor-move
-// sequence at all.
-const ABSOLUTE_MOVE = /\x1b\[([0-9]*)(?:;[0-9]*)?([Hf])/g
-const OTHER_CURSOR_MOVE = /\x1b\[[0-9;]*[ABCDEFGdg]/
-
-/** True when `chunk` only repositions within the cursor's current row. */
-export function isInputLineRepaint(chunk: string, cursorRow: number): boolean {
-  ABSOLUTE_MOVE.lastIndex = 0
-  let saw = false
-  let m: RegExpExecArray | null
-  while ((m = ABSOLUTE_MOVE.exec(chunk)) !== null) {
-    // An omitted row parameter means row 1 (`ESC[H`).
-    if ((m[1] ? parseInt(m[1], 10) : 1) !== cursorRow) return false
-    saw = true
-  }
-  return saw && !OTHER_CURSOR_MOVE.test(chunk)
 }
 
 // Pager prompts that network CLIs print at the bottom of a full screen: Cisco

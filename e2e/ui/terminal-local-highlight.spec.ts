@@ -1,6 +1,6 @@
 import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
-import { isInputLineRepaint } from '../../src/components/terminal/promptLine'
+import { VERTICAL_MOVE } from '../../src/components/terminal/promptLine'
 
 // The category highlighter never ran on a LOCAL terminal's output. ConPTY
 // re-serializes the *screen*, so every keystroke echo — and the repaint of the
@@ -117,11 +117,38 @@ test('the exemption covers echoes only: a later frame still stops it', async ({ 
   expect(await rowHtml(page, 'rewritten')).not.toContain('color:')
 })
 
-test('only a repaint confined to the cursor row counts as an echo', () => {
-  expect(isInputLineRepaint('\x1b[4;20Hping\x1b[4;24H', 4)).toBe(true)
-  // A row of its own: an application redrawing elsewhere.
-  expect(isInputLineRepaint('\x1b[1;1Hframe head\x1b[4;1H', 4)).toBe(false)
-  // Relative moves are how Ink repaints.
-  expect(isInputLineRepaint('\x1b[4;20Hping\x1b[2A', 4)).toBe(false)
-  expect(isInputLineRepaint('plain output 10.0.0.1\r\n', 4)).toBe(false)
+test('a prompt that follows ConPTY’s input-column move is still highlighted', async ({ page }) => {
+  // Recorded from a live PTY: after a listing, cmd prints its prompt, then ConPTY
+  // sends a *lone* `ESC[8;20H` to park the cursor on the input column, then the
+  // next prompt. That move is not an app frame, but arming the hold from it left
+  // every following prompt line uncoloured ("执行ls 后提示符没匹配分类高亮").
+  await runLocalCmd(page, 'ping', [
+    ECHO,
+    '\r\n',
+    OUTPUT,
+    '\r\n',
+    PROMPT,
+    '\x1b[8;20H',
+    '\r\n',
+    PROMPT,
+    '\x1b[9;20H',
+    '\r\n',
+    PROMPT,
+  ])
+
+  const prompts = await page
+    .locator('.xterm-rows > div')
+    .filter({ hasText: 'wrolp' })
+    .evaluateAll((els) => els.map((e) => !!e.querySelector('span[style*="color:"]')))
+  expect(prompts.length).toBeGreaterThanOrEqual(3)
+  expect(prompts.every((p) => p)).toBe(true)
+})
+
+test('a local repaint signal is a row change, not any cursor move', () => {
+  // ConPTY's input-line repaints: absolute moves, with or without text.
+  expect(VERTICAL_MOVE.test('\x1b[8;20H')).toBe(false)
+  expect(VERTICAL_MOVE.test('\x1b[1;20Hnetstat -ano\x1b[1;32H')).toBe(false)
+  // An inline TUI redrawing above itself (BUGS.md B46) must still count.
+  expect(VERTICAL_MOVE.test('\x1b[2A')).toBe(true)
+  expect(VERTICAL_MOVE.test('\x1b[1;1Hframe\x1b[3A')).toBe(true)
 })
