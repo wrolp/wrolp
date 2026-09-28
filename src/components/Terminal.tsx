@@ -1149,6 +1149,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // recent chunk carried a cursor reposition (see CURSOR_REPOSITION). The
   // highlighter bypasses while `performance.now() < appFrameUntilRef`.
   const appFrameUntilRef = useRef(0)
+  // True from submitting a command until the shell moves past its input line.
+  // ConPTY re-serializes the *screen*, so the echo of that line arrives wrapped
+  // in absolute cursor moves (`ESC[4;20Hdir ESC[4;23H`) — indistinguishable from
+  // an app frame by `CURSOR_REPOSITION` alone.
+  const pendingSubmitEchoRef = useRef(false)
   // The streaming highlighter holds back a trailing token fragment until it is
   // complete (or a newline arrives). A short debounce ensures such a fragment is
   // still flushed when output goes quiet (e.g. a prompt ending in a path char),
@@ -1373,10 +1378,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // TUI that opens neither the alternate buffer nor mouse tracking (Qoder CLI)
     // is still recognised — Ink redraws by moving up + rewriting, which the
     // absolute-`H`-only signal used to miss.
-    if (CURSOR_REPOSITION.test(chunk)) {
+    //
+    // ConPTY breaks that signal for local shells: it re-serializes the *screen*,
+    // so echoing the command line we just submitted arrives as
+    // `ESC[4;20Hdir ESC[4;23H`. Passing that through without extending the hold is
+    // what makes a local command's own output highlightable at all — otherwise
+    // every command spent its first 600ms (i.e. all of its output) inside the
+    // hold, which is the reported "本地终端没有将数字/IP等高亮应用上".
+    const echoRepaint = isLocal && pendingSubmitEchoRef.current && !chunk.includes('\n')
+    if (CURSOR_REPOSITION.test(chunk) && !echoRepaint) {
       appFrameUntilRef.current = performance.now() + APP_FRAME_HOLD_MS
     }
-    const appScreen = isApplicationScreen(term) || performance.now() < appFrameUntilRef.current
+    const appScreen =
+      echoRepaint || isApplicationScreen(term) || performance.now() < appFrameUntilRef.current
     if (
       !appScreen &&
       hl &&
@@ -1400,7 +1414,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // callback and killed live highlighting (the reported "typing after a command
     // isn't highlighted until Enter"). Only `\n` (or the Enter submit handler)
     // ends the echo-await.
-    if (chunk.includes('\n')) expectingEchoRef.current = false
+    if (chunk.includes('\n')) {
+      expectingEchoRef.current = false
+      // The shell has moved off the submitted line: from here on a cursor move is
+      // the app's own doing again, so the frame signal resumes.
+      pendingSubmitEchoRef.current = false
+    }
     // Telnet/Serial: detect login vs shell-prompt state from the latest output.
     // Login/password prompts disable live coloring so the echoed first character
     // isn't duplicated; a real shell prompt re-enables it. This also handles sudo
@@ -2257,6 +2276,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // prompt still got classified as a command. The keystroke itself is still
           // forwarded to the device below — only the bookkeeping is skipped.
           if (!isPagerPrompt(command)) {
+            // Expect ConPTY's repaint of this line before the shell's output. Set
+            // on the Enter itself, not on the parsed command: a fast Enter can
+            // beat the poll that drains the typed characters, leaving `command`
+            // empty while the echo chunk still carries cursor moves.
+            if (isLocal) pendingSubmitEchoRef.current = true
             // Track directory changes (local AND ssh) by following cd/Set-Location.
             // The backend never updates LocalShell.cwd on `cd`, and SSH prompts only
             // show a *relative* cwd, so we keep the real (absolute) cwd here for `ls`

@@ -206,6 +206,32 @@ test('the window title cmd sets mid-listing never reaches the screen', async ({ 
   expect(await rowHtml(page, 'Cert_Info.bin')).toContain(hues.exec)
 })
 
+test('a `dir` row the window title is glued onto is still colored', async ({ page }) => {
+  await installTauriMock(page, { connections: [DEMO_CONN], pollOutputChunks: [[PROMPT]] })
+  // The case the title sequence really breaks: it has no newline of its own, so
+  // it lands in front of an entry row. `dir` rows are matched from column 0, so
+  // anything sitting before the date used to cost that row its coloring — the
+  // "前面有些没着色" report.
+  const hues = await openShell(
+    page,
+    'dir',
+    [
+      '\x1b]0;C:\\WINDOWS\\system32\\cmd.exe - dir\x1b\\2026-09-16  10:23    <DIR>          backups',
+      '\r\n',
+      '2026-09-19  14:14               414 note.txt',
+      '\r\n',
+      PROMPT,
+    ],
+    'backups',
+  )
+
+  const html = await rowHtml(page, 'backups')
+  expect(html).toContain(hues.dir)
+  expect(html).toContain(DATE_RGB)
+  expect(html).not.toContain('system32')
+  expect(await rowHtml(page, 'note.txt')).toContain(hues.file)
+})
+
 test('`ls -l`: directory, symlink and executable each take their own hue', async ({ page }) => {
   await installTauriMock(page, { connections: [DEMO_CONN], pollOutputChunks: [[PROMPT]] })
   const hues = await openShell(

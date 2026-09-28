@@ -37,18 +37,79 @@ export function stripAnsi(text: string): string {
 }
 
 /**
- * Blank out escape sequences instead of removing them, so the result has the
- * same length and every column still addresses the original line. A trailing
- * unterminated sequence (its rest arrives in the next chunk) is blanked too —
- * that is exactly the window-title shape cmd writes before a listing row.
+ * Split a line into printable runs and the escape sequences between them. The
+ * sequences are never data: cmd prepends its window-title sequence to the first
+ * listing row, and touching those bytes (by parsing them as names, or by
+ * colorizing around them) splices an `ESC` into the sequence, which aborts it and
+ * dumps the title text onto the screen.
  */
-function maskEscapes(text: string): string {
-  if (!text.includes('\x1b')) return text
-  const blank = (m: string): string => ' '.repeat(m.length)
-  return text
-    .replace(OSC_RE, blank)
-    .replace(CSI_RE, blank)
-    .replace(/\x1b[^\n]*/g, blank)
+function splitEscapeRuns(line: string): { text: string; esc: boolean }[] {
+  const runs: { text: string; esc: boolean }[] = []
+  let from = 0
+  let i = 0
+  while (i < line.length) {
+    if (line[i] !== '\x1b') {
+      i++
+      continue
+    }
+    if (i > from) runs.push({ text: line.slice(from, i), esc: false })
+    let j = i + 1
+    if (line[j] === ']') {
+      // OSC: runs to BEL or to the `ESC \` string terminator.
+      j++
+      while (j < line.length && line[j] !== '\x07' && line[j] !== '\x1b') j++
+      if (j < line.length) j += line[j] === '\x1b' ? 2 : 1
+    } else if (line[j] === '[') {
+      // CSI: parameter bytes, then one final byte.
+      j++
+      while (j < line.length && /[0-9;?<>! ]/.test(line[j])) j++
+      if (j < line.length) j++
+    }
+    // A sequence cut in half by the chunk boundary has already run to the end of
+    // the line, so its remainder can never be data either.
+    runs.push({ text: line.slice(i, j), esc: true })
+    i = j
+    from = j
+  }
+  if (from < line.length) runs.push({ text: line.slice(from), esc: false })
+  return runs
+}
+
+/**
+ * Remove the escape sequences from one line and report where each surviving
+ * character came from. `dir` rows and `ls -l` rows are matched from column 0 (the
+ * date, the mode bits), so a title sequence sitting in front of one costs the row
+ * its entry unless the line is parsed without them — `src` maps the resulting
+ * columns back onto the raw bytes so the colorizing still addresses the original.
+ */
+function stripLineEscapes(line: string): { text: string; src: number[] } {
+  const chars: string[] = []
+  const src: number[] = []
+  let offset = 0
+  for (const run of splitEscapeRuns(line)) {
+    if (!run.esc) {
+      for (let k = 0; k < run.text.length; k++) {
+        chars.push(run.text[k])
+        src.push(offset + k)
+      }
+    }
+    offset += run.text.length
+  }
+  return { text: chars.join(''), src }
+}
+
+/**
+ * The raw span of `name`, or null when the name is not contiguous in the raw
+ * line (two tokens that an escape sequence used to separate). Painting such a
+ * span would splice SGR into that sequence.
+ */
+function rawSpan(src: number[], col: number, len: number): { start: number; end: number } | null {
+  const start = src[col]
+  if (start === undefined) return null
+  for (let k = 0; k < len; k++) {
+    if (src[col + k] !== start + k) return null
+  }
+  return { start, end: start + len }
 }
 
 // ---- command recognition ----
@@ -846,36 +907,39 @@ export function highlightTableText(
 ): string[] {
   const palette = lsListingPalette()
   const lines = text.split('\n')
-  // Entries are located on a copy with every escape sequence blanked out. cmd
-  // prepends its window-title sequence to the first listing row, and tokenizing
-  // that yields a "name" ending in `.exe` — wrapping it splices an `ESC` into the
-  // sequence, which aborts it and dumps the title text onto the screen. Blanking
-  // keeps every length, so the columns still address the raw line.
-  const entries = parseLsBlock(maskEscapes(text), format, 500, skipEchoLine)
+  // Parsed on the printable text; `src[i]` maps line i's columns back onto the
+  // raw bytes (see `stripLineEscapes`).
+  const stripped = lines.map(stripLineEscapes)
+  const entries = parseLsBlock(stripped.map((s) => s.text).join('\n'), format, 500, skipEchoLine)
   const byLine: Record<number, LsEntry[]> = {}
   for (const e of entries) (byLine[e.line] ??= []).push(e)
-  // Escape bytes are not data: splicing colour into them aborts the sequence (see
-  // `maskEscapes`), and the ordinary highlighter refuses ANSI input for the same
-  // reason. So a segment that still carries one is written through as-is.
-  const plain = (s: string, colorize: boolean): string =>
-    colorize && other && !s.includes('\x1b') ? other(s) : s
+  // Everything that is not an entry name keeps the ordinary output highlighting.
+  // It is applied run by run, around the escape sequences rather than across them:
+  // the row a title sequence is glued onto still has to have its date and size
+  // colored.
+  const plain = (s: string, colorize: boolean): string => {
+    if (!colorize || !other) return s
+    if (!s.includes('\x1b')) return other(s)
+    return splitEscapeRuns(s)
+      .map((run) => (run.esc ? run.text : other(run.text)))
+      .join('')
+  }
   return lines.map((line, i) => {
     // The echoed command line is repainted by the input-line colorizer.
     const colorizeOther = !!other && !(skipEchoLine && i === 0)
     const es = (byLine[i] ?? []).slice().sort((a, b) => a.col - b.col)
     if (!es.length) return plain(line, colorizeOther)
+    const src = stripped[i].src
     let out = ''
     let pos = 0
     for (const e of es) {
-      const end = e.col + e.name.length
-      if (end > line.length || e.col < pos) continue
+      const span = rawSpan(src, e.col, e.name.length)
+      if (!span || span.start < pos) continue
       const color = lsNameColor(e, palette, dirFlags ?? null)
-      // The raw slice rather than `e.name`: masking splits a token wherever an
-      // escape stood, so the two agree — but emitting the original bytes keeps
-      // that a property of the layout instead of something this line relies on.
-      const name = line.slice(e.col, end)
-      out += plain(line.slice(pos, e.col), colorizeOther) + (color ? wrapHex(color, name) : name)
-      pos = end
+      const name = line.slice(span.start, span.end)
+      out +=
+        plain(line.slice(pos, span.start), colorizeOther) + (color ? wrapHex(color, name) : name)
+      pos = span.end
     }
     return out + plain(line.slice(pos), colorizeOther)
   })
