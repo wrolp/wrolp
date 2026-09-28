@@ -86,6 +86,10 @@ test('`cd ` opens the dropdown on the space itself — directories only', async 
   // directories and files excluded, `..` as the synthetic parent row.
   await expect.poll(() => rowNames(page)).toEqual(['..', 'local', 'log', 'nginx'])
   await expect.poll(() => listed(page, '/var/www')).toBeGreaterThanOrEqual(1)
+  // The panel must actually GROW to fit its rows — regression guard for the
+  // maxHeight-stuck-at-the-loading-floor bug (user screenshot 2026-09-29: the
+  // list never expanded past ~1.5 rows).
+  await expect.poll(async () => (await panel(page).boundingBox())?.height ?? 0).toBeGreaterThan(80)
 })
 
 test('keeping to type narrows the list without relisting the directory', async ({ page }) => {
