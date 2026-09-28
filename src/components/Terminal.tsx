@@ -27,7 +27,7 @@ import {
 } from '../commands'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
-import { stripAnsi, highlightTableText } from '../lib/termHighlight'
+import { stripAnsi, highlightTableText, outputHasColor } from '../lib/termHighlight'
 import { highlightStore } from '../lib/highlightStore'
 import type { HighlightConfig } from '../lib/highlightRules'
 import {
@@ -890,10 +890,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const arr = map.get(row)
       if (arr) arr.push(clickable)
       else map.set(row, [clickable])
-      // No background-color decoration: the link provider (hover underline +
-      // pointer cursor) is the sole visual affordance that the name is
-      // clickable. xterm decorations only support backgroundColor/foregroundColor
-      // (no underline), and a persistent background was deemed too noisy.
+      // Colour by kind is already baked into these rows by `paintLsText`. What
+      // stays off is a *background* decoration: xterm decorations only support
+      // backgroundColor/foregroundColor (no underline), and a persistent
+      // highlight was judged too noisy for a listing the user just asked for.
+      // The link provider's hover underline + pointer cursor carries "this is
+      // clickable".
     }
   }
 
@@ -945,10 +947,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     lsCaptureRef.current = null
     let text = ls.buf
     if (promptEnd) text = text.slice(0, text.length - promptEnd.length)
-    // Flush any leftover trailing partial line (plain ls/dir coloring): it never
-    // got a newline, so colorize it now before the capture is torn down.
-    if (ls.pending && ls.format !== 'long') {
-      term.write(highlightTableText(ls.pending, ls.format).join('\n'))
+    // Flush the leftover trailing partial line: it never got its newline, so it
+    // was held back above. Colorize it here unless the shell already did.
+    if (ls.pending) {
+      term.write(paintLsText(ls, ls.pending))
       ls.pending = ''
     }
     const rawEntries = parseLsBlock(text, ls.format)
@@ -962,27 +964,52 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }
 
+  // The listing's text as it should reach the screen: the shell's own bytes when
+  // it printed colour, otherwise hue-wrapped by name (`dir` blue, symlink cyan,
+  // executable green, plain files untouched).
+  //
+  // Only the FIRST group written for a listing starts with the echoed command
+  // line. ConPTY flushes each output row as its own chunk — a `dir` entry even
+  // arrives split from its own `\r\n` — so a later group's line 0 IS an entry
+  // row; skipping it left local `ls`/`dir` entirely uncoloured while the links
+  // (parsed once, from the whole buffer) still worked.
+  const paintLsText = (ls: LsCaptureState, text: string): string => {
+    if (ls.colored) return text
+    const skipEchoLine = ls.firstGroup
+    ls.firstGroup = false
+    // Everything outside an entry name goes through the ordinary output
+    // highlighter: the capture owns these bytes, so without this the listing's
+    // date / time / size / path columns lose the highlighting the rest of the
+    // terminal gets.
+    return highlightTableText(
+      text,
+      ls.format,
+      ls.dirFlags,
+      skipEchoLine,
+      (segment) => highlighterRef.current?.colorizeLine(segment) ?? segment,
+    ).join('\n')
+  }
+
   const writeLsChunk = (term: Terminal, ls: LsCaptureState, chunk: string) => {
     ls.buf += stripAnsi(chunk)
     ls.bytes += chunk.length
     if (ls.bytes > LS_MAX_BYTES) {
+      // Give back everything we are still holding: the line we sliced off has
+      // already reached the screen, but the partial one has not, and dropping it
+      // would silently swallow output the shell printed.
+      if (ls.pending) term.write(ls.pending)
       resetLsCapture()
       return
     }
-    // Long format: passthrough (only clickable links are added on finalize).
-    // Plain `ls`/`dir` (multi/dir): colorize complete lines as they arrive, like
-    // the old `startCaptureIfLsPlain` path did — but keep the buffer so rows still
-    // become clickable. The trailing partial line waits for the next chunk.
-    if (ls.format === 'long') {
-      term.write(chunk)
-    } else {
-      ls.pending += chunk
-      const nl = ls.pending.lastIndexOf('\n')
-      if (nl >= 0) {
-        const complete = ls.pending.slice(0, nl + 1)
-        ls.pending = ls.pending.slice(nl + 1)
-        term.write(highlightTableText(complete, ls.format).join('\n'))
-      }
+    if (!ls.colored && outputHasColor(chunk)) ls.colored = true
+    // Hold the incomplete trailing line back: its name is still growing, and
+    // colorizing half a span would paint the wrong run of cells.
+    ls.pending += chunk
+    const nl = ls.pending.lastIndexOf('\n')
+    if (nl >= 0) {
+      const complete = ls.pending.slice(0, nl + 1)
+      ls.pending = ls.pending.slice(nl + 1)
+      term.write(paintLsText(ls, complete))
     }
     if (ls.prompt && ls.buf.endsWith(ls.prompt)) {
       void finalizeLsCapture(term, ls, ls.prompt)
@@ -998,9 +1025,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const startLsCaptureIfMatch = (cmd: string, prompt: string) => {
     const format = detectLsCommand(cmd)
     if (!format) return
-    // All ls/dir forms are clickable here. Plain multi-column listings (`ls` /
-    // `ls -F` / `dir`) are colorized inline by writeLsChunk (via highlightTableText)
-    // while buffering, so they keep their original color AND gain clickable links.
+    // All ls/dir forms are clickable here, and every one of them is colorized by
+    // writeLsChunk as it streams (`paintLsText`) — unless the shell already sent
+    // colour, in which case its bytes go through untouched and only the links are
+    // added.
     resetCapture()
     resetLsCapture()
     const term = termRef.current
@@ -1063,7 +1091,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       return isLocal ? base : expandTilde(base, home)
     })
     const buf = term.buffer.active
-    lsCaptureRef.current = {
+    const ls: LsCaptureState = {
       format,
       prompt: prompt || '',
       startRow: buf.baseY + buf.cursorY,
@@ -1071,6 +1099,43 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       bytes: 0,
       timeout: null,
       pending: '',
+      firstGroup: true,
+      colored: false,
+      dirFlags: null,
+    }
+    lsCaptureRef.current = ls
+    // A bare `ls` prints only names, so telling a directory from a file needs the
+    // directory itself. Fetch it now — the command has not even reached the shell
+    // yet, so the map is normally in hand before the first line of output needs
+    // it. Long/`-F`/`dir` listings state the type in the text, so they don't pay
+    // for the listing (and a remote one is an SFTP round trip).
+    //
+    // Two bases are tried: the prompt's own path, which is known immediately and
+    // good enough here (a wrong base only means the names miss the map and stay
+    // plain), and the captured base the click path resolves to — that one waits on
+    // a hidden `pwd` query over SSH, so it can easily lose the race.
+    if (format === 'multi') {
+      const seed = (base: string | null) => {
+        if (!base || ls.dirFlags || lsCaptureRef.current !== ls) return
+        void (async () => {
+          const cached = lsDirCacheRef.current.get(base)
+          if (cached) {
+            ls.dirFlags = cached
+            return
+          }
+          try {
+            const got = await fsListFiles(lsFsTarget(), base)
+            const map = new Map(got.map((e) => [e.name, e.isDir]))
+            lsDirCacheRef.current.set(base, map)
+            if (lsCaptureRef.current === ls) ls.dirFlags = map
+          } catch {
+            // No map: directories simply stay uncoloured, links still work.
+          }
+        })()
+      }
+      // A `~`-relative prompt can't be listed until $HOME is known.
+      if (promptCwd && !promptCwd.startsWith('~')) seed(promptCwd)
+      void lsBaseDirPromiseRef.current?.then(seed)
     }
   }
 
@@ -1382,25 +1447,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const h = commandHighlighter(cmd)
     if (!h) return
     startPrintCapture(h.lang, h.highlighter, prompt)
-  }
-
-  // Plain multi-column `ls` / `dir` (no `-l`): colorize the listing in place.
-  // The `ls -l`/`ll`/`dir` long form is handled separately by the clickable
-  // listing linkifier, so we only intercept the plain form here.
-  const startCaptureIfLsPlain = (cmd: string, prompt: string) => {
-    const fmt = detectLsCommand(cmd)
-    if (!fmt || fmt === 'long') return
-    resetCapture()
-    captureRef.current = {
-      lang: 'ls',
-      highlighter: (t) => highlightTableText(t, fmt),
-      prompt: prompt || '',
-      buf: '',
-      writtenLines: 0,
-      bytes: 0,
-      timeout: null,
-      flushTimer: null,
-    }
   }
 
   // Keep the right-click menu fully on-screen (e.g. when triggered near the
@@ -1724,8 +1770,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             const w = cell.getWidth()
             if (w === 0) continue // wide-char padding cell
             const ch = cell.getChars()
-            if (ch === '') continue
-            logicalChars.push({ ch, globalCol: rowBase + x, w })
+            // A never-written cell still occupies its column. Skipping it glued the
+            // names of adjacent columns into one word, and the boundary check below
+            // then rejected every `ls` column after the first (no whitespace before
+            // it). Continuation cells of wide characters are gone already — they have
+            // width 0 — so anything blank here is a one-column space.
+            logicalChars.push({ ch: ch === '' ? ' ' : ch, globalCol: rowBase + x, w })
           }
           const next = buf.getLine(scanRow + 1)
           if (!next || !next.isWrapped) break
@@ -2317,11 +2367,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             resetTableCapture()
             // TODO(临时): 暂注释命令输出相关高亮（表格/print），保留输入高亮与 ls/dir。
             // startCaptureIfPrint(command, prompt)          // 命令输出高亮：cat/head/tail
-            // startCaptureIfLsPlain 已由 startLsCaptureIfMatch 兼管（plain ls/dir 在
-            // writeLsChunk 里完成着色+可点击，避免两个 capture 同时占用输出）。
             // Telnet has no SFTP channel, so `ls` entries can't be resolved or
             // opened — skip the clickable-link capture entirely for it.
-            if (!isTelnet) startLsCaptureIfMatch(command, prompt) // 保留：原 ls/dir 着色+可点击
+            if (!isTelnet) startLsCaptureIfMatch(command, prompt) // ls/dir 着色+可点击
             // startTableCaptureIfMatch(command, prompt)     // 命令输出高亮：df/ps/free/netstat/...
           }
         }

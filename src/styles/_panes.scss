@@ -1635,6 +1635,11 @@ body.resizing-v .term-scrollbar-thumb {
   height: 100%;
   min-height: 0;
   min-width: 0;
+  // Air on both sides of the text. It goes here rather than on
+  // `.terminal-wrapper` so the pane card keeps its 6px alignment with the tab
+  // bar above it; the global `box-sizing: border-box` makes the padding eat into
+  // the 100% width, so FitAddon just reports two fewer columns.
+  padding: 0 4px;
 }
 
 // Line-number gutter (xterm has no gutter API — see `syncGutter` in Terminal.tsx).

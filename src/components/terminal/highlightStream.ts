@@ -96,6 +96,16 @@ export class AnsiHighlighter {
     this.curBase = ''
   }
 
+  /**
+   * Colorize a settled line, with no cross-chunk hold-back. For a consumer that
+   * does its own line buffering and therefore never goes through `push` — the
+   * `ls`/`dir` listing painter, which would otherwise strip the date/size/path
+   * columns of the highlighting every other terminal line gets.
+   */
+  colorizeLine(line: string): string {
+    return this.active ? this.engine.colorize(line, '') : line
+  }
+
   private colorizeRun(run: string): string {
     return this.engine.colorize(run, this.curBase)
   }
@@ -281,10 +291,7 @@ export class AnsiHighlighter {
       segs.length === 1 && !!segs[0].color && segs[0].text === t && /[.:%/@+_-]/.test(t)
     const joined = segs.map((s) => s.text).join('')
     const multiComplete =
-      segs.length > 1 &&
-      segs.every((s) => !!s.color) &&
-      joined === t &&
-      /:\d{1,5}$/.test(t)
+      segs.length > 1 && segs.every((s) => !!s.color) && joined === t && /:\d{1,5}$/.test(t)
     // IPv6-in-brackets + port (`[::]:8080`, `[fe80::1%18]:135`) is a finished
     // token whose bracket characters are intentionally left plain, so neither
     // singleComplete nor multiComplete is satisfied; emit it once the trailing

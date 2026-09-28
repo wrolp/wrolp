@@ -162,3 +162,53 @@ export function accentOverrides(accent: string, dark: boolean): Record<string, s
     '--text-on-accent': textOnAccent(accent),
   }
 }
+
+/** The four hues an uncoloured directory listing is painted with. */
+export interface LsListingPalette {
+  dir: string
+  link: string
+  exec: string
+  file: string
+}
+
+// The dark theme's tokens, for non-DOM callers and for a document that somehow
+// lacks them. Terminals paint on the theme's `background` (#0e1116 dark /
+// #ffffff light), where each of the eight shipped values lands at 5.08–9.06:1.
+const LS_PALETTE_FALLBACK: LsListingPalette = {
+  dir: '#58a6ff',
+  link: '#39c5cf',
+  exec: '#3fb950',
+  file: '#b18bf5',
+}
+
+let lsPaletteCache: { theme: string | undefined; value: LsListingPalette } | null = null
+
+/**
+ * `--link` / `--cyan` / `--success` / `--purple` as hex, for the theme currently
+ * applied.
+ *
+ * `ls`/`dir` colouring happens in the byte stream (SGR), so it needs literal hex
+ * rather than a CSS custom property — and xterm bakes the colour into the buffer
+ * at write time, so a listing keeps the hue it was printed with across a theme
+ * switch, exactly like the shell's own `--color` output does. Reading the live
+ * token is therefore only about *new* listings following the new theme; the
+ * cache is keyed on `data-theme` to keep the per-chunk call cheap.
+ */
+export function lsListingPalette(): LsListingPalette {
+  const root = typeof document === 'undefined' ? null : document.documentElement
+  if (!root) return LS_PALETTE_FALLBACK
+  const theme = root.dataset.theme
+  if (lsPaletteCache && lsPaletteCache.theme === theme) return lsPaletteCache.value
+  const token = (name: string, fallback: string): string => {
+    const v = getComputedStyle(root).getPropertyValue(name).trim()
+    return parseHex(v) ? v : fallback
+  }
+  const value: LsListingPalette = {
+    dir: token('--link', LS_PALETTE_FALLBACK.dir),
+    link: token('--cyan', LS_PALETTE_FALLBACK.link),
+    exec: token('--success', LS_PALETTE_FALLBACK.exec),
+    file: token('--purple', LS_PALETTE_FALLBACK.file),
+  }
+  lsPaletteCache = { theme, value }
+  return value
+}

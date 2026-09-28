@@ -20,8 +20,27 @@ export interface LsCaptureState {
   buf: string
   bytes: number
   timeout: ReturnType<typeof setTimeout> | null
-  /** Raw bytes of an incomplete trailing line (plain `ls`/`dir` coloring only). */
+  /** Raw bytes of an incomplete trailing line (held back until its newline arrives). */
   pending: string
+  /**
+   * True until the first group of text has been painted. Only that one begins
+   * with the echoed command line, whose column positions must not be read as
+   * entries (see `parseLsBlock`'s `skipFirstLine`).
+   */
+  firstGroup: boolean
+  /**
+   * True once a chunk of this listing carried the shell's own colour SGR. From
+   * then on every chunk is passed through untouched: `ls --color` knows things
+   * about those names we can't see (a `.gz` is red, a door is magenta), and
+   * layering our hues on top would fight them.
+   */
+  colored: boolean
+  /**
+   * The listed directory's name → is-directory map, or null while the fetch is
+   * still in flight. A bare `ls` prints nothing but names, so this is the only
+   * way to know which of them are directories.
+   */
+  dirFlags: Map<string, boolean> | null
 }
 
 /**

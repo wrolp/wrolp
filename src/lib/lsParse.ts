@@ -20,6 +20,12 @@ export interface LsEntry {
   col: number
   /** Line index within the captured output block (0 = the echoed command). */
   line: number
+  /**
+   * True when the listing states the name is runnable — long-format permission
+   * bits (`-rwxr-xr-x`) or an `ls -F` trailing `*`. Bare names carry no such
+   * mark, so this stays undefined and colour has to fall back to the extension.
+   */
+  exec?: boolean
 }
 
 /**
@@ -73,15 +79,23 @@ export function detectLsCommand(rawCmd: string): LsFormat | null {
 }
 
 /**
- * Parse a captured `ls`-style output block (echo line included at index 0).
- * Non-entry lines (the echo, `total N`, headers, the trailing prompt) are
- * skipped. Returns [] when the block is too large to decorate safely.
+ * Parse a captured `ls`-style output block. `skipFirstLine` drops the line at
+ * index 0, which is the echoed command when the whole block is parsed at once —
+ * but NOT when a block arrives in per-line pieces (ConPTY flushes each row on
+ * its own), where skipping it would throw away a real entry row.
+ * Non-entry lines (`total N`, headers, the trailing prompt) are skipped anyway.
+ * Returns [] when the block is too large to decorate safely.
  */
-export function parseLsBlock(text: string, format: LsFormat, maxLines = 200): LsEntry[] {
+export function parseLsBlock(
+  text: string,
+  format: LsFormat,
+  maxLines = 200,
+  skipFirstLine = true,
+): LsEntry[] {
   const lines = text.split('\n')
   if (lines.length > maxLines + 1) return []
   const out: LsEntry[] = []
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = skipFirstLine ? 1 : 0; i < lines.length; i++) {
     const line = lines[i]
     if (format === 'multi' || format === 'multiF') {
       for (const e of parseMultiLine(line, format === 'multiF')) out.push({ ...e, line: i })
@@ -100,7 +114,7 @@ export function parseLsBlock(text: string, format: LsFormat, maxLines = 200): Ls
  * Parse one plain `ls` line (multi-column or single-column, no `-l`). Each
  * whitespace-separated token is a name. With `-F`/`--classify` (`classify =
  * true`), a trailing indicator reveals the kind:
- *   `/` → dir, `@` → link, `*`/`=`/`|` → file.
+ *   `/` → dir, `@` → link, `*` → executable, `=`/`|` → file.
  * Without `-F` the kind is `unknown` and resolved at click time.
  *
  * Names containing spaces can't be reliably split this way — GNU `ls` quotes
@@ -115,13 +129,16 @@ function parseMultiLine(line: string, classify: boolean): Omit<LsEntry, 'line'>[
     const raw = m[0]
     let name = raw
     let kind: LsEntryKind = 'unknown'
+    let exec: boolean | undefined
     if (classify && /[@*=|/]$/.test(raw) && raw.length > 1) {
       const ind = raw[raw.length - 1]
       name = raw.slice(0, -1)
       kind = ind === '/' ? 'dir' : ind === '@' ? 'link' : 'file'
+      // `*` is `-F`'s mark for an executable file.
+      exec = ind === '*'
     }
     if (!name) continue
-    out.push({ name, kind, col: m.index })
+    out.push({ name, kind, col: m.index, exec })
   }
   return out
 }
@@ -149,7 +166,10 @@ function parseLongLine(line: string): Omit<LsEntry, 'line'> | null {
   }
   name = name.replace(/\s+$/, '')
   if (!name) return null
-  return { name, kind, col: nameStart }
+  // Permission bits occupy chars 1–9 of the mode field (`-rwxr-xr-x`); an `x`
+  // (or a setuid/sticky `s`/`t`, which imply it) in any of the three triples
+  // means the shell considers it runnable.
+  return { name, kind, col: nameStart, exec: /[xst]/.test(t.slice(1, 10)) }
 }
 
 /** Parse one Windows `dir` line. */
@@ -158,13 +178,22 @@ function parseDirLine(line: string): Omit<LsEntry, 'line'> | null {
   if (!t) return null
   // Entries look like: `MM/DD/YYYY  HH:MM AM  <DIR>          name`
   // or                 `MM/DD/YYYY  HH:MM AM      1,234  name`
-  const m = /^(\d{2}\/\d{2}\/\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s+)(<DIR>|\d[\d,]*)\s+(.+)$/i.exec(
-    t,
-  )
+  //
+  // The date is locale-ordered: an English Windows prints `09/28/2026`, a Chinese
+  // one prints `2026-09-28`, and both can carry AM/PM or 上午/下午. Accepting only
+  // the US order silently produced **no** entries for every other locale — `dir`
+  // then had no clickable names at all.
+  const m =
+    /^(?:\d{2}[/\-]\d{2}[/\-]\d{4}|\d{4}[/\-]\d{2}[/\-]\d{2})\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|上午|下午)?\s+(<DIR>|\d[\d,]*)\s+(.+)$/i.exec(
+      t,
+    )
   if (!m) return null
-  const kind: LsEntryKind = m[2].toUpperCase() === '<DIR>' ? 'dir' : 'file'
-  const name = m[3]
+  const kind: LsEntryKind = m[1].toUpperCase() === '<DIR>' ? 'dir' : 'file'
+  const name = m[2]
   if (!name) return null
+  // `.` and `..` are listed by every `dir`, and clicking them means "the directory
+  // you are already looking at". Names like `.gitignore` still count.
+  if (name === '.' || name === '..') return null
   return { name, kind, col: t.length - name.length }
 }
 

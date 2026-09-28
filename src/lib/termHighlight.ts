@@ -13,7 +13,8 @@
  * highlighting at all. Our own tokenizer is synchronous and always works.
  */
 import { detectLanguage } from '../editor/languages'
-import { detectLsCommand, parseLsBlock, LsFormat, LsEntry } from './lsParse'
+import { parseLsBlock, LsFormat, LsEntry } from './lsParse'
+import { lsListingPalette, type LsListingPalette } from './themeColors'
 
 const RESET = '\x1b[0m'
 
@@ -33,6 +34,21 @@ export function stripAnsi(text: string): string {
   if (out.includes('\x1b')) out = out.replace(OSC_RE, '').replace(CSI_RE, '')
   if (out.includes('\r')) out = out.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   return out
+}
+
+/**
+ * Blank out escape sequences instead of removing them, so the result has the
+ * same length and every column still addresses the original line. A trailing
+ * unterminated sequence (its rest arrives in the next chunk) is blanked too —
+ * that is exactly the window-title shape cmd writes before a listing row.
+ */
+function maskEscapes(text: string): string {
+  if (!text.includes('\x1b')) return text
+  const blank = (m: string): string => ' '.repeat(m.length)
+  return text
+    .replace(OSC_RE, blank)
+    .replace(CSI_RE, blank)
+    .replace(/\x1b[^\n]*/g, blank)
 }
 
 // ---- command recognition ----
@@ -732,71 +748,137 @@ export function highlightMultiline(text: string, lang: string): string[] {
   return applyMultilineSpans(text, l)
 }
 
-// ---- plain `ls` / `dir` listing highlight (multi-column) ----
+// ---- `ls` / `dir` listing highlight ----
+//
+// Four hues, one per kind: directory, symlink, executable, plain file. Everything
+// that is not a name — the date, time, size and path columns — keeps the ordinary
+// output highlighting, which the caller hands in as `other` (the listing capture
+// owns these bytes, so the highlighter never sees them otherwise).
+//
+// Colors are resolved from the live theme tokens (see `lsListingPalette`), which
+// also means this never duplicates the palette the CSS theme table owns.
 
-const LS_DIR = '#4ec9b0'
-const LS_LINK = '#c586c0'
-const LS_EXEC = '#dcdcaa'
-const LS_DEFAULT = '#d4d4d4'
+/** An extension is the only executability signal a bare name carries. */
 const EXEC_EXT = new Set([
   'sh',
   'bash',
-  'exe',
+  'zsh',
+  'ksh',
+  'fish',
+  'ps1',
+  'psm1',
   'bat',
   'cmd',
-  'ps1',
+  'exe',
+  'com',
   'bin',
   'run',
-  'out',
-  'com',
-  'py',
-  'pl',
-  'rb',
-  'js',
-  'ts',
-  'zsh',
-  'fish',
-  'ksh',
+  'appimage',
 ])
 
-function lsNameColor(name: string, kind: string): string {
-  if (kind === 'dir') return LS_DIR
-  if (kind === 'link') return LS_LINK
-  // `unknown`: best-effort by name (plain `ls` carries no type indicator)
-  if (name.endsWith('/')) return LS_DIR
-  if (name.includes(' -> ')) return LS_LINK
-  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
-  if (EXEC_EXT.has(ext)) return LS_EXEC
-  return LS_DEFAULT
+/**
+ * True when the shell already painted colour into this text (`ls --color=auto`,
+ * PowerShell's own table), in which case its hues win and we write the bytes
+ * through untouched. Bold/dim/underline-only SGR doesn't count.
+ */
+export function outputHasColor(text: string): boolean {
+  if (!text.includes('\x1b[')) return false
+  const re = /\x1b\[([\d;]*)m/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    for (const raw of m[1].split(';')) {
+      const p = Number(raw)
+      if (p === 38 || p === 48 || (p >= 30 && p <= 37) || (p >= 40 && p <= 47)) return true
+      if (p >= 90 && p <= 97) return true
+      if (p >= 100 && p <= 107) return true
+    }
+  }
+  return false
+}
+
+/** The hue for one entry, or null when the listing gives no reason to color it. */
+function lsNameColor(
+  entry: LsEntry,
+  palette: LsListingPalette,
+  dirFlags: Map<string, boolean> | null,
+): string | null {
+  let kind = entry.kind
+  // A bare `ls` name states nothing about its type, so ask the directory
+  // listing that was fetched anyway to make the names clickable.
+  if (kind === 'unknown' && dirFlags) {
+    const isDir = dirFlags.get(entry.name)
+    if (isDir !== undefined) kind = isDir ? 'dir' : 'file'
+  }
+  if (kind === 'dir') return palette.dir
+  if (kind === 'link') return palette.link
+  // Without permission bits (a bare name) an extension is all we have to go on.
+  const ext = entry.name.includes('.') ? entry.name.split('.').pop()!.toLowerCase() : ''
+  if (entry.exec || EXEC_EXT.has(ext)) return palette.exec
+  // `unknown` — a bare `ls` name the directory listing could not resolve either —
+  // stays plain, because calling it a file would be a guess.
+  return kind === 'file' ? palette.file : null
 }
 
 /**
- * Colorize a captured plain `ls` / `dir` block. Entries are resolved by column
- * (via `parseLsBlock`) so only the entry name gets wrapped — spacing/alignment
- * is preserved. Returns 1:1 line array.
+ * Colorize an `ls` / `dir` block. Entries are resolved by column (via
+ * `parseLsBlock`) so only the entry name gets wrapped — spacing/alignment is
+ * preserved — and the result is a 1:1 line array.
+ *
+ * `dirFlags` (name → is-directory, from a real directory listing) is what lets a
+ * bare `ls`, whose output carries no type information at all, still show its
+ * directories.
+ *
+ * `skipEchoLine` must be false for a listing streamed a line at a time, where
+ * the piece in hand is a real entry row rather than the echoed command — see
+ * `parseLsBlock`.
+ *
+ * `other` colorizes everything that is NOT an entry name (the date, time, size
+ * and path columns). The listing capture owns the write, so the ordinary output
+ * highlighter never sees these bytes — without it a `dir` listing loses the
+ * column highlighting every other line of the terminal gets.
  */
-export function highlightTableText(text: string, format: LsFormat): string[] {
+export function highlightTableText(
+  text: string,
+  format: LsFormat,
+  dirFlags?: Map<string, boolean> | null,
+  skipEchoLine = true,
+  other?: (segment: string) => string,
+): string[] {
+  const palette = lsListingPalette()
   const lines = text.split('\n')
-  const entries = parseLsBlock(text, format, 500)
+  // Entries are located on a copy with every escape sequence blanked out. cmd
+  // prepends its window-title sequence to the first listing row, and tokenizing
+  // that yields a "name" ending in `.exe` — wrapping it splices an `ESC` into the
+  // sequence, which aborts it and dumps the title text onto the screen. Blanking
+  // keeps every length, so the columns still address the raw line.
+  const entries = parseLsBlock(maskEscapes(text), format, 500, skipEchoLine)
   const byLine: Record<number, LsEntry[]> = {}
   for (const e of entries) (byLine[e.line] ??= []).push(e)
+  // Escape bytes are not data: splicing colour into them aborts the sequence (see
+  // `maskEscapes`), and the ordinary highlighter refuses ANSI input for the same
+  // reason. So a segment that still carries one is written through as-is.
+  const plain = (s: string, colorize: boolean): string =>
+    colorize && other && !s.includes('\x1b') ? other(s) : s
   return lines.map((line, i) => {
-    const es = (byLine[i] ?? []).slice().sort((a, b) => b.col - a.col)
-    let s = line
+    // The echoed command line is repainted by the input-line colorizer.
+    const colorizeOther = !!other && !(skipEchoLine && i === 0)
+    const es = (byLine[i] ?? []).slice().sort((a, b) => a.col - b.col)
+    if (!es.length) return plain(line, colorizeOther)
+    let out = ''
+    let pos = 0
     for (const e of es) {
       const end = e.col + e.name.length
-      if (end > s.length) continue
-      const color = lsNameColor(e.name, e.kind)
-      if (color === LS_DEFAULT) continue // default foreground: leave untouched
-      s = s.slice(0, e.col) + wrapHex(color, s.slice(e.col, end)) + s.slice(end)
+      if (end > line.length || e.col < pos) continue
+      const color = lsNameColor(e, palette, dirFlags ?? null)
+      // The raw slice rather than `e.name`: masking splits a token wherever an
+      // escape stood, so the two agree — but emitting the original bytes keeps
+      // that a property of the layout instead of something this line relies on.
+      const name = line.slice(e.col, end)
+      out += plain(line.slice(pos, e.col), colorizeOther) + (color ? wrapHex(color, name) : name)
+      pos = end
     }
-    return s
+    return out + plain(line.slice(pos), colorizeOther)
   })
-}
-
-/** Convenience table highlighter factory (colorizes a captured block). */
-export function makeTableHighlighter(format: LsFormat): { colorize: (t: string) => string[] } {
-  return { colorize: (t: string) => highlightTableText(t, format) }
 }
 
 const PRINT_READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'nl', 'sed', 'awk'])
@@ -809,10 +891,4 @@ export function isPrintLike(cmd: string): boolean {
   if (PRINT_READERS.has(prog)) return true
   // a reader anywhere in a pipeline (e.g. `grep x | cat`, `cat < foo`)
   return /\b(cat|head|tail|less|more)\b/.test(cmd)
-}
-
-/** True when `cmd` is a plain (non-`ls -l`) `ls`/`dir` listing we can colorize. */
-export function isLsPlain(cmd: string): boolean {
-  const fmt = detectLsCommand(cmd)
-  return fmt === 'multi' || fmt === 'multiF' || fmt === 'dir'
 }
