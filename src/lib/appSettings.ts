@@ -126,6 +126,7 @@ export const TERMINAL_APPEARANCE_KEYS = {
   cursorBlink: 'wrolp-terminal-cursor-blink',
   lineNumbers: 'wrolp-terminal-line-numbers',
   continuationSymbol: 'wrolp-terminal-continuation-symbol',
+  cdSuggest: 'wrolp-terminal-cd-suggest',
 } as const
 
 export type TerminalCursorStyle = 'block' | 'underline' | 'bar'
@@ -328,6 +329,22 @@ const DEFS: SettingDef[] = [
     storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.lineNumbers },
     describe:
       'Show a line-number gutter on the left of the terminal (per-terminal switch in the pane status bar; hidden while a full-screen app owns the screen).',
+  },
+  {
+    key: 'terminal.cdSuggest',
+    kind: 'boolean',
+    group: 'terminal',
+    default: true,
+    // Same reasoning as `terminal.tailRoom`: behaviour, not appearance, but this
+    // registry is what gives the settings page, the AI bridge and the terminal's
+    // own right-click menu one shared storage/subscribe path. ON by default — the
+    // panel only appears while the input line reads `cd <partial path>`, costs
+    // nothing when it doesn't, and a slow link is protected by the debounce +
+    // TTL cache rather than by asking the user to discover the switch. Sessions
+    // without a filesystem (Telnet, serial) stay off regardless.
+    storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.cdSuggest },
+    describe:
+      'Show a dropdown of real subdirectories under the caret while typing `cd <partial path>` (terminal right-click menu also toggles it).',
   },
   {
     key: 'terminal.continuationSymbol',

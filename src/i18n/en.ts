@@ -394,6 +394,16 @@ const en = {
   termContinuationNone: 'Nothing',
   termContinuationHelp:
     'What the line-number gutter shows on a wrapped line’s continuation rows (only applies while line numbers are on).',
+  termCdSuggest: '`cd` suggestions',
+  termCdSuggestTitle:
+    'While the input line reads `cd <partial path>`, list the real subdirectories of that path (read through the session itself — SFTP, local FS, docker exec, WSL) and let ↑↓/Tab/Enter complete the name. Enter inserts without running it, so the command still needs your own Enter. Off for sessions without a filesystem (Telnet, serial).',
+  termCdSuggestHelp:
+    'On by default; the terminal’s right-click menu toggles it too. Nothing is listed until you actually type `cd `.',
+  // Rows of the `cd` directory dropdown itself.
+  cdSuggest: 'Subdirectories',
+  cdSuggestHint: '↑↓ pick · Tab drill in · Enter complete · Esc close',
+  cdSuggestMore: '{n} more — keep typing to narrow',
+  cdSuggestLoading: 'Listing…',
   maxFileOpenSize: 'Max File Open Size (MB)',
   maxFileOpenSizeDesc: 'Files larger than this cannot be opened in the editor.',
   updates: 'Updates',

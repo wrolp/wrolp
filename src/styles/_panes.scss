@@ -1619,6 +1619,85 @@ body.resizing-v .term-scrollbar-thumb {
   }
 }
 
+// `cd` directory dropdown (Warp-style): the candidate list that opens under the
+// caret while the input line reads `cd <partial path>`. Same placement family as
+// `.term-link-tooltip` — fixed overlay pinned to a terminal cell — but it is a
+// list with its own scroll box, so it can never be `white-space: nowrap`.
+.term-cd-suggest {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: 460px;
+  overflow: hidden;
+  // Opaque enough that the terminal text underneath never bleeds through the rows.
+  background: rgba($bg-secondary, 0.96);
+  border: 1px solid rgba($border, 0.8);
+  border-radius: var(--r-1);
+  box-shadow: 0 4px 14px var(--shadow-1);
+  color: $text-primary;
+  font-size: var(--fs-xs);
+  z-index: 2100;
+  user-select: none;
+  pointer-events: auto;
+  backdrop-filter: blur(3px);
+
+  .term-cd-suggest-list {
+    overflow-y: auto;
+    padding: 2px 0;
+
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-thumb);
+      border-radius: var(--r-pill);
+    }
+  }
+
+  .term-cd-suggest-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+
+    // The `--menu-hover` token is the "row under the pointer" blue shared with the
+    // context menu: a neutral hover would barely register against this backdrop.
+    &.is-active {
+      background: var(--menu-hover);
+    }
+
+    .term-cd-suggest-icon {
+      opacity: 0.9;
+    }
+
+    .term-cd-suggest-name {
+      // Same blue as a directory in `ls` output, so the two read alike.
+      color: var(--dir-fg);
+      font-weight: 600;
+    }
+
+    .term-cd-suggest-path {
+      color: $text-dim;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  .term-cd-suggest-hint {
+    padding: 3px 8px;
+    border-top: 1px solid rgba($border, 0.6);
+    color: $text-muted;
+  }
+}
+
 // Relative wrapper so the overlay scrollbar can be positioned absolutely
 // over the right edge of the xterm container.
 //

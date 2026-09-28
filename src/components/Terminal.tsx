@@ -5,7 +5,12 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { ansiThemeColors, xtermTheme } from '../lib/theme'
 import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
-import { getTerminalAppearance, readSetting, subscribeAppSettings } from '../lib/appSettings'
+import {
+  applySettingChanges,
+  getTerminalAppearance,
+  readSetting,
+  subscribeAppSettings,
+} from '../lib/appSettings'
 import { listen } from '@tauri-apps/api/event'
 import '@xterm/xterm/css/xterm.css'
 import {
@@ -20,6 +25,7 @@ import {
   pollWorkingDir,
   fsListFiles,
   fsFileExists,
+  listLocalDrives,
   connectSerial,
   serialSendInput,
   connectTelnet,
@@ -33,6 +39,7 @@ import type { HighlightConfig } from '../lib/highlightRules'
 import {
   isPosixLocalShell,
   isPosixSession,
+  isWslShell,
   loadPasteGuard,
   pasteLineCount,
   pastePreview,
@@ -50,7 +57,7 @@ import {
 } from '../lib/lsParse'
 import type { LsEntry } from '../lib/lsParse'
 import { detectTableCommand } from '../lib/tableOutput'
-import type { AiTermMark, TargetRef } from '../types'
+import type { AiTermMark, FileEntry, TargetRef } from '../types'
 import {
   activeTerminalByTab,
   latestTerminalByTab,
@@ -60,6 +67,7 @@ import {
   unregisterPaste,
   registerExpectEcho,
   unregisterExpectEcho,
+  markInputEcho,
 } from './terminal/registry'
 import type { CaptureState } from './terminal/capture'
 import {
@@ -145,6 +153,23 @@ import {
 import { commandHighlighter } from './terminal/langHighlight'
 import type { TableCaptureState } from './terminal/tableCapture'
 import { feedTable } from './terminal/tableCapture'
+import type { CdCandidate, CdShellKind } from './terminal/cdSuggest'
+import {
+  CD_DEBOUNCE_MS,
+  CdListCache,
+  applyKeystroke,
+  buildCdCandidates,
+  cdCacheKey,
+  cdCommandFor,
+  clearLineBytes,
+  parseCdInput,
+  planCdAccept,
+  projectInputLine,
+  splitCdArg,
+} from './terminal/cdSuggest'
+import { KeyInterceptRouter } from './terminal/keyIntercept'
+import { CdSuggestPanel } from './terminal/CdSuggestPanel'
+import type { CdSuggestAnchor } from './terminal/CdSuggestPanel'
 import type { TerminalComponentProps } from './terminal/types'
 
 export {
@@ -163,6 +188,21 @@ function applyGutterFont(el: HTMLElement | null): void {
   const a = getTerminalAppearance()
   el.style.fontFamily = a.fontFamily
   el.style.fontSize = `${a.fontSize}px`
+}
+
+/** Live state of the `cd` directory dropdown (plan §2/§4.1). */
+interface CdSuggestState {
+  /** The projected input line (`cd <arg>`) — NOT necessarily what the buffer shows. */
+  line: string
+  /** Directory the candidates were listed from; null ⇒ nothing to list. */
+  base: string | null
+  /** Filter prefix (last path segment). */
+  prefix: string
+  items: CdCandidate[]
+  active: number
+  omitted: number
+  loading: boolean
+  anchor: CdSuggestAnchor
 }
 
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
@@ -686,13 +726,28 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // CONTAINER's filesystem, listed through the host session's docker CLI — the
   // host session's SFTP would resolve container paths against the host and
   // fail. Everything else uses the session's SFTP, or the local FS.
+  // Which line editor / quoting flavour this session's shell speaks: POSIX shells
+  // (SSH, WSL, git-bash) vs cmd.exe / PowerShell. Every place that writes a
+  // command on the user's behalf goes through this, so there is one answer to
+  // "how do I quote a path here" instead of one per call site.
+  const cdShellKind = useCallback((): CdShellKind => {
+    const kind: SessionKind = isSerial ? 'serial' : isTelnet ? 'telnet' : isLocal ? 'local' : 'ssh'
+    return isPosixSession(kind, localShellTypeRef.current) ? 'posix' : 'windows'
+  }, [isLocal, isSerial, isTelnet])
+
   const lsFsTarget = (): TargetRef => {
     const container = dockerContainerRef.current
-    return isLocal
-      ? { kind: 'local', tabId: tabIdRef.current }
-      : container
-        ? { kind: 'docker', jumpTabId: tabIdRef.current, container }
-        : { kind: 'session', tabId: tabIdRef.current }
+    if (isLocal) {
+      // A WSL tab must browse the DISTRIBUTION's filesystem — the plain `local`
+      // target lists the Windows drives instead (the Files panel already makes
+      // this distinction in App.tsx). `ls` click-to-open used to get this wrong.
+      return isWslShell(localShellTypeRef.current)
+        ? { kind: 'wsl', tabId: tabIdRef.current, distro: localDistroRef.current }
+        : { kind: 'local', tabId: tabIdRef.current }
+    }
+    return container
+      ? { kind: 'docker', jumpTabId: tabIdRef.current, container }
+      : { kind: 'session', tabId: tabIdRef.current }
   }
 
   const lookupIsDir = async (base: string | null, name: string): Promise<boolean | null> => {
@@ -736,17 +791,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       isDir = resolved === null ? true : resolved
     }
     if (isDir) {
+      // One quoting rule (`cdSuggest.ts`), so this click and the `cd` dropdown
+      // rewrite can never drift apart. `~` stays unquoted so the shell expands
+      // it; everything else is quoted per dialect to survive spaces and quotes.
+      const cmd = `${cdCommandFor(cdShellKind(), abs)}\r`
       if (isLocal) {
-        // cmd/PowerShell: double-quote to tolerate spaces; both accept it.
-        localSendInput(tabIdRef.current, `cd "${abs}"\r`).catch((e) =>
+        localSendInput(tabIdRef.current, cmd).catch((e) =>
           console.error('local_send_input error:', e),
         )
       } else {
-        // `~` must stay unquoted so the shell expands it; absolute/relative
-        // paths are single-quoted to tolerate spaces and special chars.
-        const cmd = abs.startsWith('~')
-          ? `cd -- ${abs}\r`
-          : `cd -- '${abs.replace(/'/g, "'\\''")}'\r`
         sendInput(tabIdRef.current, cmd)
       }
       // Track the new directory so the FilePanel shell-sync can follow it.
@@ -1704,6 +1757,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     termRef.current = term
     fitRef.current = fitAddon
+    // Announce the instance: effects that need a live xterm (the shared key
+    // interceptor among them) key off this.
+    setTermCreated((n) => n + 1)
     // xterm owns its palette in JS, so CSS tokens can't reach it — re-apply on
     // every theme / terminal-palette change for this instance's lifetime.
     const unsubTheme = subscribeTheme(() => {
@@ -1720,6 +1776,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       term.options.cursorBlink = a.cursorBlink
       setTailRoomGlobal(readSetting('terminal.tailRoom')?.value === true)
       setLnGlobal(a.lineNumbers)
+      setCdSuggestGlobal(readSetting('terminal.cdSuggest')?.value === true)
       setLnSymbol(continuationGlyph(a.continuationSymbol))
       applyGutterFont(gutterRef.current)
       fitAddon.fit()
@@ -2264,6 +2321,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // duplicate instances (transient double-mounts) are blocked here, so a
       // single keystroke is sent exactly once.
       if (activeTerminalByTab.get(currentTabId) !== term) return
+      // `cd` directory dropdown: judge the line BEFORE this keystroke's echo is
+      // written back (it lags by one keystroke — plan §4.1). Must run before any
+      // early return below, or a keystroke could go unjudged.
+      cdEvalRef.current(data)
       // Capture the full command line (with tab-completed text) when the user
       // submits it, before the remote echo changes the buffer row.
       if (data.includes('\r') || data.includes('\n')) {
@@ -3533,15 +3594,376 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const term = termRef.current
     if (!term) return
     term.focus()
-    const sessionKind: SessionKind = isSerial
-      ? 'serial'
-      : isTelnet
-        ? 'telnet'
-        : isLocal
-          ? 'local'
-          : 'ssh'
-    sendRawToSession(isPosixSession(sessionKind, localShellType) ? '\x01\x0b' : '\x1b')
-  }, [isLocal, isSerial, isTelnet, localShellType, sendRawToSession])
+    sendRawToSession(clearLineBytes(cdShellKind()))
+  }, [cdShellKind, sendRawToSession])
+
+  // ---- `cd` directory dropdown (Warp-style) --------------------------------
+  // While the input line reads `cd <partial path>`, offer REAL subdirectories of
+  // that path (plan: task/plans/cd-directory-dropdown-plan.md). Every action is
+  // either a pure helper from `cdSuggest.ts` or a keystroke the user could have
+  // typed, so the remote line editor stays authoritative — nothing is written
+  // straight into the buffer.
+
+  // Global switch (decision ⑥: ON by default). Telnet has no SFTP channel and
+  // serial has no filesystem at all, so they are excluded structurally rather
+  // than by a second flag.
+  const [cdSuggestGlobal, setCdSuggestGlobal] = useState(
+    () => readSetting('terminal.cdSuggest')?.value === true,
+  )
+  const cdSuggestEnabled = cdSuggestGlobal && !isTelnet && !isSerial
+  // Bumped by the init effect once xterm exists, so the key-interceptor effect can
+  // re-run and claim the new instance's single key-handler slot.
+  const [termCreated, setTermCreated] = useState(0)
+  // The panel's source of truth. A ref because `onData` (registered once, inside
+  // the init effect) and the key interceptor both read it per keystroke, where
+  // React state would still be the value from the previous render.
+  const cdRef = useRef<CdSuggestState | null>(null)
+  const [cdView, setCdView] = useState<CdSuggestState | null>(null)
+  // Keystrokes already sent but not yet echoed into the buffer — what §4.1 uses
+  // to judge the line on the very keystroke that completes `cd `.
+  const cdLagRef = useRef('')
+  // SFTP opens a NEW SSH connection per operation, so listings must never run per
+  // keystroke: 120ms debounce on the request, 15s TTL cache on the result.
+  const cdCacheRef = useRef(new CdListCache<FileEntry[]>())
+  const cdDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Guards against a slow listing landing after the user typed something else.
+  const cdTokenRef = useRef(0)
+  // xterm allows ONE custom key handler per instance; this router owns that slot
+  // for every feature that needs to swallow keys (plan §4.3).
+  const cdKeyRouterRef = useRef<KeyInterceptRouter | null>(null)
+  // Refs so the once-registered listeners always call the CURRENT closures.
+  const cdKeyRef = useRef<(ev: KeyboardEvent) => boolean>(() => false)
+  const cdEvalRef = useRef<(data: string) => void>(() => {})
+  const cdCloseRef = useRef<() => void>(() => {})
+
+  /** Take the panel down and stop every pending request. */
+  const closeCdSuggest = () => {
+    if (cdDebounceRef.current) {
+      clearTimeout(cdDebounceRef.current)
+      cdDebounceRef.current = null
+    }
+    // Invalidate in-flight listings: their answer describes a line we left.
+    cdTokenRef.current += 1
+    if (cdRef.current) {
+      cdRef.current = null
+      setCdView(null)
+    }
+  }
+
+  /** The caret cell, in viewport px — same anchor the `ls` hover card uses. */
+  const cdAnchor = (): CdSuggestAnchor | null => {
+    const term = termRef.current
+    if (!term) return null
+    const buffer = term.buffer.active
+    return computeLinkAnchor(term, buffer.baseY + buffer.cursorY, buffer.cursorX)
+  }
+
+  const sameCdItems = (a: readonly CdCandidate[], b: readonly CdCandidate[]) =>
+    a.length === b.length && a.every((it, i) => it.name === b[i].name)
+
+  /** Publish a new panel state (or take it down when it cannot be placed). */
+  const renderCdSuggest = (
+    line: string,
+    base: string | null,
+    prefix: string,
+    items: CdCandidate[],
+    omitted: number,
+    loading: boolean,
+  ) => {
+    const prev = cdRef.current
+    // Plan §2: never show an empty panel — with nothing to offer there is nothing
+    // the user can act on. The loading state is the exception: it explains itself.
+    if (items.length === 0 && !loading) {
+      closeCdSuggest()
+      return
+    }
+    const anchor = cdAnchor()
+    if (!anchor) {
+      closeCdSuggest()
+      return
+    }
+    // Keep the highlight on the same row while the user narrows the filter.
+    const keepActive = !!prev && prev.active < items.length && sameCdItems(prev.items, items)
+    const next: CdSuggestState = {
+      line,
+      base,
+      prefix,
+      items,
+      omitted,
+      loading,
+      anchor,
+      active: keepActive && prev ? prev.active : 0,
+    }
+    cdRef.current = next
+    setCdView(next)
+  }
+
+  /** Send bytes the shell will echo back, without going through `onData`. */
+  const injectCdInput = (bytes: string) => {
+    if (!bytes) return
+    sendRawToSession(bytes)
+    // Bypassing `onData` means the "awaiting echo" gate was never raised; do it
+    // explicitly or the stream highlighter holds the echo's tail back (issue #26).
+    markInputEcho(tabIdRef.current)
+    termRef.current?.focus()
+  }
+
+  const cdTargetKey = () => JSON.stringify(lsFsTarget())
+
+  /**
+   * (Re)list `dir` and feed the result into the panel. Cache hits render
+   * synchronously — walking the filter must not wait for a round trip; only the
+   * request itself is debounced.
+   */
+  const requestCdListing = (line: string, base: string, prefix: string, force: boolean) => {
+    const targetKey = cdTargetKey()
+    const key = cdCacheKey(targetKey, base)
+    const cached = force ? null : cdCacheRef.current.get(key)
+    if (cached) {
+      const built = buildCdCandidates(base, cached, prefix)
+      renderCdSuggest(line, base, prefix, built.items, built.omitted, false)
+      return
+    }
+    const prevItems = cdRef.current?.base === base ? cdRef.current.items : []
+    renderCdSuggest(line, base, prefix, prevItems, 0, true)
+    if (cdDebounceRef.current) clearTimeout(cdDebounceRef.current)
+    const token = ++cdTokenRef.current
+    cdDebounceRef.current = setTimeout(() => {
+      cdDebounceRef.current = null
+      fsListFiles(lsFsTarget(), base)
+        .then((entries) => {
+          if (token !== cdTokenRef.current) return
+          cdCacheRef.current.set(key, entries)
+          const st = cdRef.current
+          if (!st || st.base !== base) return // the user moved on
+          const built = buildCdCandidates(base, entries, st.prefix)
+          renderCdSuggest(st.line, base, st.prefix, built.items, built.omitted, false)
+        })
+        .catch(() => {
+          // §P3: a failed listing is silent — the panel simply stays empty rather
+          // than nagging about a directory the user may have mistyped anyway.
+          if (token !== cdTokenRef.current) return
+          const st = cdRef.current
+          if (!st || st.base !== base) return
+          renderCdSuggest(st.line, base, st.prefix, [], 0, false)
+        })
+    }, CD_DEBOUNCE_MS)
+  }
+
+  /** Local Windows only: `cd C:` has no directory to list — offer the drives. */
+  const requestCdDrives = (line: string, prefix: string) => {
+    renderCdSuggest(line, null, prefix, [], 0, true)
+    const token = ++cdTokenRef.current
+    listLocalDrives()
+      .then((drives) => {
+        if (token !== cdTokenRef.current) return
+        const st = cdRef.current
+        if (!st) return
+        const built = buildCdCandidates(
+          '',
+          drives.map((d) => ({ name: d, isDir: true })),
+          st.prefix,
+        )
+        renderCdSuggest(st.line, null, st.prefix, built.items, built.omitted, false)
+      })
+      .catch(() => {
+        /* silent, same reasoning as a failed listing */
+      })
+  }
+
+  /**
+   * Decide what to show for the projected input line. Called on every keystroke
+   * (with the drone projected line) and again after accepting a candidate.
+   */
+  const evaluateCdSuggest = (line: string | null, force = false) => {
+    if (!cdSuggestEnabled || line === null) {
+      closeCdSuggest()
+      return
+    }
+    const arg = parseCdInput(line)
+    if (arg === null) {
+      closeCdSuggest()
+      return
+    }
+    const { base, prefix, drives } = splitCdArg(arg, cwdRef.current)
+    if (drives) {
+      // Only a Windows shell has drives (`cd C:`); a POSIX one cannot use the
+      // list, so there is nothing to offer.
+      if (!isLocal || cdShellKind() !== 'windows') {
+        closeCdSuggest()
+        return
+      }
+      requestCdDrives(line, prefix)
+      return
+    }
+    if (!base) {
+      closeCdSuggest()
+      return
+    }
+    const key = cdCacheKey(cdTargetKey(), base)
+    const cached = cdCacheRef.current.get(key)
+    if (!force && cached) {
+      const built = buildCdCandidates(base, cached, prefix)
+      renderCdSuggest(line, base, prefix, built.items, built.omitted, false)
+      return
+    }
+    requestCdListing(line, base, prefix, force)
+  }
+
+  /**
+   * One keystroke arrived. Judge the line the way it will read once the shell
+   * echoes this key: buffer text + what we sent but haven't seen echoed + this
+   * very keystroke (§4.1). Without the projection the dropdown would open one
+   * keystroke late, i.e. `cd ` would need another key before anything appeared.
+   */
+  const handleCdKeystroke = (data: string) => {
+    const term = termRef.current
+    // `getInputLineAtCursorEnd` only answers for a live shell input line whose
+    // caret sits at its end (program output, pagers and TUIs give null), which
+    // is also how §2 keeps the dropdown off full-screen apps.
+    const live = term ? (getInputLineAtCursorEnd(term)?.command ?? null) : null
+    const projected = projectInputLine(live, cdLagRef.current, data)
+    cdLagRef.current = projected.lag
+    if (!cdSuggestEnabled) {
+      closeCdSuggest()
+      return
+    }
+    evaluateCdSuggest(projected.line)
+  }
+
+  const moveCdActive = (delta: number) => {
+    const st = cdRef.current
+    if (!st || st.items.length === 0) return
+    const next: CdSuggestState = {
+      ...st,
+      active: (st.active + delta + st.items.length) % st.items.length,
+    }
+    cdRef.current = next
+    setCdView(next)
+  }
+
+  /**
+   * Complete the highlighted candidate into the input line.
+   *  `enter`/`click` — complete and close, WITHOUT submitting (decision ②): the
+   *   user's next Enter runs `cd` through the existing cwd tracking.
+   *  `tab` — complete and drill one level deeper (decision ③), relisting with a
+   *   forced refresh since we are moving into a new directory.
+   */
+  const acceptCdSuggest = (index: number, mode: 'enter' | 'tab' | 'click') => {
+    const st = cdRef.current
+    if (!st) return
+    const item = st.items[index]
+    if (!item) return
+    // Zero-deletion append whenever possible; otherwise clear the line and write
+    // the whole quoted command — `planCdAccept` decides, `cdSuggest.ts` owns the
+    // quoting rules shared with the `ls` click-to-open.
+    if (item.append === null) {
+      injectCdInput(planCdAccept(item, cdShellKind()))
+      // The line is now a complete command, not a prefix we can keep filtering:
+      // re-read from the buffer from here on.
+      cdLagRef.current = ''
+      closeCdSuggest()
+      return
+    }
+    if (mode === 'enter' || mode === 'click') {
+      injectCdInput(item.append)
+      cdLagRef.current = applyKeystroke(cdLagRef.current, item.append) ?? ''
+      closeCdSuggest()
+      return
+    }
+    const sep = st.base && /^[A-Za-z]:[\\/]/.test(st.base) ? '\\' : '/'
+    const drill = `${item.append}${sep}`
+    injectCdInput(drill)
+    cdLagRef.current = applyKeystroke(cdLagRef.current, drill) ?? ''
+    evaluateCdSuggest(`${st.line}${drill}`, true)
+  }
+
+  /** Keys the panel owns while it is open — nothing else is ever swallowed. */
+  const interceptCdKey = (ev: KeyboardEvent): boolean => {
+    const st = cdRef.current
+    if (!st) return false
+    switch (ev.key) {
+      case 'ArrowDown':
+        moveCdActive(1)
+        return true
+      case 'ArrowUp':
+        moveCdActive(-1)
+        return true
+      case 'Tab':
+        acceptCdSuggest(st.active, 'tab')
+        return true
+      case 'Enter':
+        acceptCdSuggest(st.active, 'enter')
+        return true
+      case 'Escape':
+        // Swallowed on purpose: a bare Esc reaching readline is a META prefix
+        // that would corrupt the next keystroke.
+        closeCdSuggest()
+        return true
+      default:
+        return false
+    }
+  }
+
+  // Keep the once-registered listeners pointing at the current closures.
+  useEffect(() => {
+    cdEvalRef.current = handleCdKeystroke
+    cdKeyRef.current = interceptCdKey
+    cdCloseRef.current = closeCdSuggest
+  })
+
+  // Own xterm's single key-handler slot and register the dropdown's rule on it.
+  useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+    const router = cdKeyRouterRef.current ?? new KeyInterceptRouter()
+    cdKeyRouterRef.current = router
+    router.attach(term)
+    return router.register({
+      id: 'cd-suggest',
+      handle: (ev) => cdKeyRef.current(ev),
+    })
+  }, [termCreated])
+
+  // Scrolling moves the row the panel hangs from; so does a resize, and a click
+  // anywhere outside means the user is doing something else. All three close it.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const close = () => cdCloseRef.current()
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target?.closest('.term-cd-suggest')) return
+      close()
+    }
+    el.addEventListener('wheel', close, { passive: true })
+    document.addEventListener('mousedown', onDown, true)
+    window.addEventListener('resize', close)
+    return () => {
+      el.removeEventListener('wheel', close)
+      document.removeEventListener('mousedown', onDown, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [])
+
+  // A different session target (reconnect, `docker exec`, WSL switch) invalidates
+  // every cached listing — drop them along with the panel.
+  useEffect(() => {
+    cdCacheRef.current.clear()
+    closeCdSuggest()
+  }, [isLocal, localShellType, dockerContainer, reconnectTrigger])
+
+  const handleToggleCdSuggest = useCallback(() => {
+    setCtxMenu(null)
+    // Written straight to the registry (not a per-pane override like the tail
+    // room): it is a global preference, and `notify()` refreshes every terminal.
+    try {
+      applySettingChanges({ 'terminal.cdSuggest': !cdSuggestGlobal }, 'user')
+    } catch {
+      /* an unknown key must never break the menu */
+    }
+    termRef.current?.focus()
+  }, [cdSuggestGlobal])
 
   const handleAskAi = useCallback(() => {
     setCtxMenu(null)
@@ -3696,6 +4118,25 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           </span>
         </div>
       )}
+      {cdView && (
+        <CdSuggestPanel
+          items={cdView.items}
+          activeIndex={cdView.active}
+          omitted={cdView.omitted}
+          loading={cdView.loading}
+          anchor={cdView.anchor}
+          // ~11 rows: enough for real use, small enough to never swallow the pane.
+          maxHeight={260}
+          onPick={(i) => acceptCdSuggest(i, 'click')}
+          onHover={(i) => {
+            const st = cdRef.current
+            if (!st || st.active === i) return
+            const next = { ...st, active: i }
+            cdRef.current = next
+            setCdView(next)
+          }}
+        />
+      )}
       {ctxMenu && (
         <div
           ref={ctxMenuRef}
@@ -3737,6 +4178,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             title={t('termLineNumbersTitle')}
           >
             # {t('termLineNumbers')} {t(lineNumbersOn ? 'on' : 'off')}
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={handleToggleCdSuggest}
+            title={t('termCdSuggestTitle')}
+          >
+            📁 {t('termCdSuggest')} {t(cdSuggestGlobal ? 'on' : 'off')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleAskAi}>

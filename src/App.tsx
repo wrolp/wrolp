@@ -5047,6 +5047,12 @@ export default function App() {
                             help={t('termLineNumbersHelp')}
                           />
 
+                          <TerminalToggleSetting
+                            settingKey="terminal.cdSuggest"
+                            label={t('termCdSuggest')}
+                            help={t('termCdSuggestHelp')}
+                          />
+
                           <TerminalContinuationSetting />
                         </div>
                       </div>

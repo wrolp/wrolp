@@ -55,12 +55,14 @@
 ## 功能特性
 
 ### SSH 终端
+
 - **连接管理**：增删改查连接配置、分组、拖拽排序、重命名分组。可右键连接进行连接 / 编辑 / 删除与分栏打开（右 / 下）；删除使用应用内确认对话框（`ConfirmDialog`），而非浏览器的 `confirm()`。
 - **交互式终端**：每个标签使用 xterm.js 渲染，支持多标签切换。
 - **认证方式**：支持密码与 SSH 密钥认证。
 - **PTY**：`xterm-256color` PTY + Shell，支持窗口大小调整。
 - **连接健康状态**：SSH 层保活（间隔与最大重试次数，可在设置中配置）驱动标签状态点 —— 探测失败转黄（`connection-suspect`），重试耗尽转红（`connection-closed`）。通过 **重连** 按钮复用同一标签实例；通过过期的任务守卫（`session_id` 单调递增计数器）防止被取代的后台任务破坏状态。
 - **工作目录同步**：SFTP 操作与在 Shell 中输入的 `cd` 保持同步（`poll_working_dir` 会在一次性 exec 通道上执行 `pwd`）。
+- **`cd` 目录建议**：输入行呈 `cd <部分路径>` 时，光标下方弹出该目录的真实子目录列表（经会话自身读取 —— SFTP / 本地 FS / docker exec / WSL），↑↓ 选择、Tab 下钻、Enter 只补全不执行（再次回车才真正 `cd`）、Esc 关闭。本地 Windows 下键入 `cd C:` 时列出盘符。开关位于「设置 → 终端」或终端右键菜单，无文件系统的会话（Telnet / 串口）不生效。
 - **网络扫描**：扫描网段内开放 SSH 或 Telnet 端口的主机，并直接从结果创建连接（`network_scan.rs`）。
 
 ### SSH 隧道
@@ -82,20 +84,24 @@
 - **波特率自动检测**：UART 没有时钟线也没有协商机制，因此无法读取对端的真实速率。后端改为逐个探测常用速率，监听（对静默设备发送换行试探）并对收到的字节像终端文本的程度打分 —— 结果按置信度排序返回，并附带样本预览。
 
 ### SFTP 文件管理
+
 - 远程文件树浏览器（侧边栏 `FilePanel`）。
 - 列举 / 读取 / 写入 / 重命名 / 删除 / 新建目录。
 - 上传与下载（文件或原始字节），支持**暂停 / 继续**，并通过 `transfer-progress` 事件上报进度。
 - 切换 SFTP 操作用户（`switch_sftp_user` / `revert_sftp_user`），以其他账号身份操作。
 
 ### 远程文件编辑器
+
 - 基于 Monaco 的远程文件内联编辑器，以分栏树面板或浮动窗口形式呈现。
 - 编码自动检测：UTF-8 → GBK（`encoding_rs`）；非 UTF-8 文件会被标记，必须以相同字符集重新保存。
 
 ### 本地终端与本地文件
+
 - 可将**本地 Shell** 作为顶层标签打开，也可在现有工作区内作为分栏面板打开（`openLocalShellTab` / `handleOpenLocalSplit`）；在本机运行原生 Shell。
 - **本地文件浏览器**：通过同一套 `FilePanel` / `FileEditor` 界面在本机浏览与编辑文件。一个 `LocalFs`（`local_fs.rs`）实现了与 SFTP 相同的 `RemoteFs` trait，因此本地与远程目标共用同一套代码路径。在 Windows 上本地根目录映射到当前盘符的根。
 
 ### Hex 与图片查看器
+
 - 在编辑器中打开的二进制文件可以十六进制转储方式查看（`hex_base64` + `HexViewer.tsx`）。
 - 图片文件支持内联预览；后端通过 `image_mime` / `detect_image_mime` 上报 MIME 类型。
 
@@ -109,11 +115,13 @@
 - **TFTP 客户端** — 通过 TFTP 收发单个文件。
 
 ### 浮动窗口与分栏布局
+
 - 终端区域采用**分栏树**布局（`splitTree.ts`）：标签可水平或垂直分割，每个叶节点显示终端、Docker 日志或已打开的文件编辑器。
 - 任意面板都可**弹出**为浮动窗口（`floatPane` / `FloatingWindow.tsx`，`position: fixed`，z-index 从 1000 起）。终端浮动会从树中摘下该叶节点（会话保持存活）；文件编辑器 / Docker 日志的浮动以覆盖层形式渲染在依然挂载的 Shell 之上，关闭浮动时恢复 `shellView`。
 - **按会话隔离的视图状态**（`shellView` / `activeEditorKey` 均为 `Record<number, ...>`）让每个标签打开的文件与 Docker 日志互不干扰 —— 在某个会话中打开的文件不会出现在另一个会话里。
 
 ### 会话录制
+
 - 录制默认**关闭**。可在 **设置** 开启自动录制，或用环境变量 `WROLP_RECORDING=1` / `true` 全局强制开启（`0` / `false` 强制关闭）。
 - 事件先缓存在内存中，每 5 秒（以及断开连接时）追加到该会话独立的 NDJSON 文件：`<数据目录>/recordings/<工作空间>/<分组>/<连接>/<YYYYMMDD-HHMMSS>_<会话前8位>.jsonl`。SQLite 的 `sessions` 表只保留索引（`events_file`、`event_count` 以及工作空间 / 分组快照），因此 `wrolp.db` 始终很小。
 - 两类事件：`input`（原始按键）与 `command`（回车时捕获的完整命令行，保留 Tab 补全文本）。
@@ -121,10 +129,12 @@
 - 维护操作：一键**迁移**仍存放在 `session_events` 中的旧录制，**重建索引**（扫描 `recordings/` 目录恢复索引，并清理空的孤儿文件）。
 
 ### 命令集
+
 - 在 SQLite 中保存可复用的命令组（可选绑定到某个连接）。
 - 通过底部面板的 `CommandSetPanel` 管理。
 
 ### Docker 与主机分析
+
 - **两个 daemon，一套命令面。** 所有 Docker 能力都通过 `DockerHostRef` 决定去向：`{kind:'ssh', jumpTabId}` 是"已连接 SSH 会话那台跳板机上的容器"，经 exec 通道跑 `docker exec`；`{kind:'local'}` 是本机 daemon，直接 spawn CLI 进程（不经 shell，所以 `--format` 模板与容器名都不需要引号转义）。`probe_local_docker` 决定本机这半边存不存在：先试 `docker`、再试 `podman`，并区分"没安装"与"装了但 daemon 没起"；一旦设了 `DOCKER_HOST` 就只认 `docker`（podman 连的是它自己的 socket，报上来的不是用户配的那个端点）。侧栏只有一个 Docker 分组，它的宿主跟随当前聚焦的终端：本地 shell（或根本没有终端）读本机，已连接的 SSH / Telnet 会话读那台主机；串口没有可 exec 的 shell，因此不显示该分组。
 - 列表、启动 / 停止 / 重启 / 删除、一次性与流式日志、三层分析报告、容器文件浏览、进容器 shell，两个宿主都已支持；进 shell 的路径不同：跳板机容器是在该会话里新开一个面板并注入 `docker exec -it …`（存为 `postConnectCmd`，重连会重发），本机容器则直接以 PTY 跑 exec（`open_local_docker_shell`，镜像里有 bash 就用 bash，否则退回 sh）。
 - 日志视图通常覆盖在当前页签面板上，文件面板通常也属于某个会话，但当分组的宿主是本机时它并不依赖会话 —— 于是这两个入口都不再要求先打开终端：没有面板时，「查看日志」会作为一个独立页签占据主区域（与「设置」标签同一层级）；打开容器文件则会在空工作区上显示文件面板分区（那里只提供 Docker 模式，SSH 与跳板都要指向一个会话）。
@@ -135,6 +145,7 @@
 - 相关 UI 面板：`DockerPanel`、`DockerLogViewer`、`DockerAnalysisPanel`、`HostAnalysisPanel`。
 
 ### AI 助手
+
 - 聊天面板（`AiChatPanel`），含两种模式：
   - **对话**（非流式，`ai_chat_sync`）。
   - **智能体**（带工具调用的流式模式，`run_agent_stream`）—— 一个完整的智能体循环，可在连接的服务器上调用工具。
@@ -154,6 +165,7 @@
 - **数据库维护**：设置页显示 `wrolp.db` 当前占用与可回收空间，并提供**立即瘦身**（`VACUUM`）。删除会话或迁移旧录制时，空闲页达到一定规模也会自动回收，因此删掉数据后数据库不会再保持原大小。
 
 ### 窗口与系统集成
+
 - 自定义标题栏（窗口 `decorations: false`）；窗口位置 / 尺寸 / 透明度持久化（`window.json`）。
 - 关闭时隐藏、系统托盘图标、自动更新（GitHub Release 端点 —— 发布前需在 `tauri.conf.json` 中设置真实 `pubkey`）。
 - 持久化的连接配置（`connections.json`，已加密 —— 同时保存工作区）与 SQLite 数据库（`wrolp.db`，WAL 模式）存放在 OS 配置目录下的 `wrolp-terminal/`。

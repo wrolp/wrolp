@@ -55,12 +55,14 @@
 ## Features
 
 ### SSH terminal
+
 - **Connection management**: CRUD connection profiles, grouping, drag-to-reorder, rename groups. Right-click a connection for connect / edit / delete and split-pane open (right / below); deletes use an in-app confirmation dialog (`ConfirmDialog`), not a browser `confirm()`.
 - **Interactive terminal**: xterm.js rendering per tab, multi-tab switching.
 - **Authentication**: password and SSH key authentication.
 - **PTY**: `xterm-256color` PTY + shell, resize support.
 - **Connection health**: an SSH-level keepalive (interval + max retries, configurable in Settings) drives the tab status dot — green → yellow (`connection-suspect`) on a failed probe, red (`connection-closed`) once the retries are exhausted. A **Reconnect** button re-uses the same tab instance; a stale-task guard (`session_id` monotonic counter) prevents a superseded background task from corrupting state.
 - **Working directory sync**: SFTP operations stay in sync with `cd` typed in the shell (`poll_working_dir` runs `pwd` on a throwaway exec channel).
+- **`cd` directory suggestions**: while the input line reads `cd <partial path>`, a dropdown under the caret lists the path's real subdirectories (read through the session itself — SFTP / local FS / docker exec / WSL). ↑↓ move, Tab drills one level deeper, Enter completes without submitting (a second Enter actually runs `cd`), Esc closes. `cd C:` on a local Windows shell lists drives. Toggle in Settings → Terminal or the terminal's right-click menu; sessions without a filesystem (Telnet, serial) stay excluded.
 - **Network scanning**: scan a subnet for hosts with an open SSH or Telnet port and create a connection straight from the results (`network_scan.rs`).
 
 ### SSH tunnels
@@ -82,20 +84,24 @@
 - **Baud-rate auto-detection**: UART has no clock line and no negotiation, so the peer's real rate cannot be read. The backend instead probes each common rate, listens (nudging silent devices with a newline) and scores how much the received bytes look like terminal text — results come back ranked with a confidence score and a sample preview.
 
 ### SFTP file management
+
 - Remote file tree browser (sidebar `FilePanel`).
 - List / read / write / rename / delete / create directories.
 - Upload and download (file or raw bytes), with **pause / resume** support and `transfer-progress` events.
 - Switching the SFTP user (`switch_sftp_user` / `revert_sftp_user`) to operate as a different account.
 
 ### Remote file editor
+
 - Monaco-based inline editor for remote files, shown as a split-tree pane or a floating window.
 - Encoding auto-detect: UTF-8 → GBK (`encoding_rs`); non-UTF-8 files are flagged and must be re-saved in the same charset.
 
 ### Local terminal & local files
+
 - Open a **local shell** as a top-level tab or as a split pane inside an existing workspace (`openLocalShellTab` / `handleOpenLocalSplit`); runs a native shell on your own machine.
 - **Local file browser**: navigate and edit files on the local machine through the same `FilePanel` / `FileEditor` UI. A `LocalFs` (`local_fs.rs`) implements the same `RemoteFs` trait as SFTP, so local and remote targets share one code path. On Windows the local root maps to the current drive's root.
 
 ### Hex & image viewer
+
 - Binary files opened in the editor can be viewed as a **hex dump** (`hex_base64` + `HexViewer.tsx`).
 - Image files are previewed inline; the backend reports the MIME type via `image_mime` / `detect_image_mime`.
 
@@ -109,11 +115,13 @@
 - **TFTP client** — get / put single files over TFTP.
 
 ### Floating panes & split layout
+
 - The terminal area is a **split-tree** layout (`splitTree.ts`): tabs can be split horizontally or vertically, and each leaf shows a terminal, a docker-log, or an open file editor.
 - Any pane can be **popped out** into a floating window (`floatPane` / `FloatingWindow.tsx`, `position: fixed`, z-index starting at 1000). Terminal floats detach the leaf from the tree (the session stays alive); file-editor / docker-log floats render as an overlay above the still-mounted shell and restore `shellView` on close.
 - **Per-session view state** (`shellView` / `activeEditorKey` are `Record<number, ...>`) keeps each tab's open files and docker logs isolated — files opened in one session don't appear in another.
 
 ### Session recording
+
 - Recording is **off by default**. Turn on auto-recording in **Settings**, or force it globally with the env var `WROLP_RECORDING=1` / `true` (`0` / `false` forces it off).
 - Events are buffered in memory and appended every 5s (and on disconnect) to one NDJSON file per session: `<data dir>/recordings/<workspace>/<group>/<connection>/<YYYYMMDD-HHMMSS>_<session8>.jsonl`. The SQLite `sessions` table only keeps the index (`events_file`, `event_count`, plus a workspace/group snapshot), which keeps `wrolp.db` small.
 - Two event kinds: `input` (raw keystrokes) and `command` (full command line captured on Enter, preserving tab-completed text).
@@ -121,10 +129,12 @@
 - Maintenance actions: one-click **migration** of legacy recordings still stored in `session_events`, and **rescan** which rebuilds the index from the `recordings/` folder (dropping empty orphan files).
 
 ### Command sets
+
 - Save reusable groups of commands (optionally scoped to a connection) in SQLite.
 - Managed via `CommandSetPanel` in the bottom panel.
 
 ### Docker & host analysis
+
 - **Two daemons, one command surface.** Every Docker feature runs against a `DockerHostRef`: either `{kind:'ssh', jumpTabId}` — a container on the jump host of a connected SSH session, reached with `docker exec` over the exec channel — or `{kind:'local'}`, this machine's own daemon, reached by spawning the CLI directly (no shell, so `--format` templates and container names need no quoting). `probe_local_docker` decides whether the local half exists at all: it tries `docker`, then `podman`, and distinguishes "not installed" from "installed but the daemon is not running"; with `DOCKER_HOST` set only `docker` is tried, since podman would answer for a different endpoint. The sidebar has one Docker group, and its host follows the focused terminal: a local shell — or no terminal at all — reads this machine, a connected SSH / Telnet session reads that host. Serial has no shell to exec in, so the group is absent there.
 - List, start / stop / restart / remove, one-shot and streaming logs, the three-layer analysis report, container file browsing and entering a container's shell all work on both hosts. The shells get there differently: a jump-host container opens a new pane of that session with `docker exec -it …` typed into it (persisted as `postConnectCmd`, so a reconnect re-sends it), while a local one runs the exec as its own PTY (`open_local_docker_shell`, which picks `bash` when the image has it and `sh` otherwise).
 - A log view normally rides the focused pane and the Files panel is normally a session section, but the group needs no session when its host is this machine — so neither action asks for one. With no pane on screen 「View Logs」 opens the log as a tab-bar entry that takes the main area (like a Settings tab), and opening a container's files shows the Files section over an empty workspace (only the Docker mode is offered there; SSH and ProxyJump point at a session).
@@ -135,6 +145,7 @@
 - UI panels: `DockerPanel`, `DockerLogViewer`, `DockerAnalysisPanel`, `HostAnalysisPanel`.
 
 ### AI assistant
+
 - Chat panel (`AiChatPanel`) with two modes:
   - **Chat** (non-streaming `ai_chat_sync`).
   - **Agent** (streaming with tool calling, `run_agent_stream`) — a full agent loop that can call tools on the connected servers.
@@ -154,6 +165,7 @@
 - **Database maintenance**: Settings shows the current `wrolp.db` size and how much of it is reclaimable, with a **Shrink now** action (`VACUUM`). Deleting sessions or migrating legacy recordings also releases the freed pages automatically once the freed space is worth a rewrite, so the database no longer keeps its old size after data is removed.
 
 ### Window & shell integration
+
 - Custom titlebar (window `decorations: false`); window geometry/opacity persisted (`window.json`).
 - Show/hide on close, tray icon, auto-updater (GitHub release endpoint — set a real `pubkey` in `tauri.conf.json` before shipping).
 - Persistent connection configs (`connections.json`, encrypted — it also stores workspaces) and SQLite DB (`wrolp.db`, WAL mode) under the OS config dir + `wrolp-terminal/`.
