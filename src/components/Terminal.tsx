@@ -146,6 +146,7 @@ import {
   commitSubmittedCommands,
   isPagerPrompt,
   isApplicationScreen,
+  isInputLineRepaint,
 } from './terminal/promptLine'
 import { commandHighlighter } from './terminal/langHighlight'
 import type { TableCaptureState } from './terminal/tableCapture'
@@ -1380,17 +1381,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // absolute-`H`-only signal used to miss.
     //
     // ConPTY breaks that signal for local shells: it re-serializes the *screen*,
-    // so echoing the command line we just submitted arrives as
-    // `ESC[4;20Hdir ESC[4;23H`. Passing that through without extending the hold is
-    // what makes a local command's own output highlightable at all — otherwise
-    // every command spent its first 600ms (i.e. all of its output) inside the
-    // hold, which is the reported "本地终端没有将数字/IP等高亮应用上".
-    const echoRepaint = isLocal && pendingSubmitEchoRef.current && !chunk.includes('\n')
+    // so every keystroke echo — and the repaint of the line you submitted —
+    // arrives as `ESC[4;20Hnetstat -ano ESC[4;32H`. Those moves stay on the
+    // cursor's own row, which no app frame does for long, so they must not arm the
+    // hold: with them counted, the last keystroke before Enter kept the whole first
+    // 600ms — usually a command's entire output — out of the highlighter (the
+    // reported "本地终端没有将数字/IP等高亮应用上").
+    const echoRepaint = isLocal && isInputLineRepaint(chunk, term.buffer.active.cursorY + 1)
     if (CURSOR_REPOSITION.test(chunk) && !echoRepaint) {
       appFrameUntilRef.current = performance.now() + APP_FRAME_HOLD_MS
     }
     const appScreen =
-      echoRepaint || isApplicationScreen(term) || performance.now() < appFrameUntilRef.current
+      isApplicationScreen(term) ||
+      // The submitted line's own echo is repainted by the input-line colorizer.
+      (isLocal && pendingSubmitEchoRef.current && !chunk.includes('\n')) ||
+      performance.now() < appFrameUntilRef.current
     if (
       !appScreen &&
       hl &&

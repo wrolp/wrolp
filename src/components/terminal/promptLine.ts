@@ -117,6 +117,29 @@ export function splitPromptCommand(line: string): { prompt: string; command: str
   return { prompt: '', command: noAnsi.trim() }
 }
 
+// ConPTY re-serializes the console *screen*, so every keystroke echo of a local
+// shell is repainted with absolute cursor moves (`ESC[4;20Hnetstat -ano
+// ESC[4;32H`). Those moves never leave the row the cursor already sits on — the
+// input line. An application redraws elsewhere (up with `ESC[<n>A`, or to another
+// absolute row), which is what the output highlighter must keep off. So: at least
+// one absolute move, every one of them on `cursorRow`, and no other cursor-move
+// sequence at all.
+const ABSOLUTE_MOVE = /\x1b\[([0-9]*)(?:;[0-9]*)?([Hf])/g
+const OTHER_CURSOR_MOVE = /\x1b\[[0-9;]*[ABCDEFGdg]/
+
+/** True when `chunk` only repositions within the cursor's current row. */
+export function isInputLineRepaint(chunk: string, cursorRow: number): boolean {
+  ABSOLUTE_MOVE.lastIndex = 0
+  let saw = false
+  let m: RegExpExecArray | null
+  while ((m = ABSOLUTE_MOVE.exec(chunk)) !== null) {
+    // An omitted row parameter means row 1 (`ESC[H`).
+    if ((m[1] ? parseInt(m[1], 10) : 1) !== cursorRow) return false
+    saw = true
+  }
+  return saw && !OTHER_CURSOR_MOVE.test(chunk)
+}
+
 // Pager prompts that network CLIs print at the bottom of a full screen: Cisco
 // `--More--`, Huawei/H3C `---- More ----`, HP `-- MORE --`, and the bracketed
 // `---(more)---` variant. These are command OUTPUT waiting for a keypress, NOT a
