@@ -835,7 +835,7 @@ export interface SectionLayout {
  * fixed bands next to it (`h-tabbar`, `h-statusbar`) never move because a mouse
  * dragged them.
  */
-export const DEFAULT_DRAWER_HEIGHT = 232
+export const DEFAULT_DRAWER_HEIGHT = 224
 
 export interface WorkspaceLayout {
   sidebar: {
@@ -871,11 +871,11 @@ export const defaultLayout: WorkspaceLayout = {
   sidebar: {
     visible: true,
     side: 'left',
-    // 250 is v5's `--sidebar-w`. The row anatomy that sets the floor (26px tile +
-    // 9px gap + a two-line label + two hover actions) fits the same way it did at
-    // 260, and `DENSITY_WIDTHS.compact` moves with it so the density knob's
+    // 264 is v8's `--wl-sidebar-w` (the mode panel the activity rail drives).
+    // v5 was 250; the +14 goes to the panel head and the filter row, and
+    // `DENSITY_WIDTHS.compact` moves with it so the density knob's
     // "never dragged" test still recognises the default.
-    width: 250,
+    width: 264,
     sections: {
       // Connections is the entry point, so it opens. Files opens too: its
       // section is not rendered at all until a session is connected

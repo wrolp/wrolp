@@ -64,17 +64,23 @@ test('closing a tab is a button with a real hit area, not a × character', async
   expect(box?.height).toBeGreaterThanOrEqual(18)
 })
 
-test('the strip brackets itself with two labelled icon buttons', async ({ page }) => {
+test('the strip brackets itself with a labelled icon button', async ({ page }) => {
   await bootEnglish(page)
 
-  // Both used to be bespoke classes with hand-drawn SVG / an U+229E glyph.
-  await expect(page.getByRole('button', { name: 'Hide sidebar' })).toHaveCount(1)
+  // The sidebar toggle used to live here too; the activity rail owns it now
+  // (clicking the active mode folds the column), so the strip keeps only the
+  // inspector button.
   await expect(page.getByRole('button', { name: 'Open inspector' })).toHaveCount(1)
-  // The tab bar only appears once a tab exists, so assert the toggle survives
-  // the transition from the boot state to a session state.
-  await page.getByRole('button', { name: 'Hide sidebar' }).click()
-  await expect(page.locator('.sidebar')).toBeHidden()
-  await expect(page.getByRole('button', { name: 'Show sidebar' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Hide sidebar' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Show sidebar' })).toHaveCount(0)
+
+  // The toggle survived as rail behaviour: clicking the active mode hides the
+  // sidebar, clicking it again brings it back.
+  const hosts = page.locator('.rail-item[data-mode="hosts"]')
+  await hosts.click()
+  await expect(page.locator('.sidebar-container.mode-panel')).toBeHidden()
+  await hosts.click()
+  await expect(page.locator('.sidebar-container.mode-panel')).toBeVisible()
 })
 
 test('non-terminal tabs read their kind from the icon, not from the name', async ({ page }) => {

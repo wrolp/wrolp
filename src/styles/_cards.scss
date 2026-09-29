@@ -120,7 +120,9 @@
     border-color var(--d-2),
     box-shadow var(--d-2);
 
-  &:focus {
+  // Keyboard focus only: a mouse click used to paint the accent halo + border
+  // too, which read as an unsolicited thick blue frame around the field.
+  &:focus-visible {
     border-color: rgba($accent, 0.5);
     box-shadow: 0 0 0 2px rgba($accent, 0.12);
   }

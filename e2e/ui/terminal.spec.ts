@@ -51,7 +51,11 @@ test('split panes are separated by a real gap', async ({ page }) => {
   // Ctrl+\ splits the active session into a second pane (row). The tab-bar button
   // is gone (it duplicated the shortcut and did nothing unless the focused pane
   // held a connected SSH session), so this drives the shortcut the user has.
-  await page.locator('.titlebar').click()
+  // Not the titlebar's centre: that is the command-palette trigger now, so a
+  // click there opens the palette over the pane this case is about to measure.
+  // The brand corner is inert, which is all this needs — a click outside the
+  // terminal, so the shortcut reaches the app instead of xterm.
+  await page.locator('.titlebar').click({ position: { x: 8, y: 8 } })
   await page.keyboard.press('Control+\\')
   await expect(page.locator('.term-pane')).toHaveCount(2)
   await expect(page.locator('.term-split-divider.divider-row')).toHaveCount(1)

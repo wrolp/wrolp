@@ -16,6 +16,9 @@ async function boot(page: Page, layout?: string) {
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await installTauriMock(page, { connections: CONNS, layout })
   await page.goto('/')
+  // Ctrl+J is an app-level listener: it only exists once React has mounted, and
+  // `goto` resolving is earlier than that.
+  await expect(page.locator('.titlebar')).toBeVisible()
 }
 
 /** The drawer's own height divider — the nav column has `.panel-divider-h` too,

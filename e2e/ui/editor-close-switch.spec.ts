@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock } from './helpers/tauriMock'
 
 // Closing a file tab must always leave a live view behind: pick the neighbouring
@@ -57,6 +58,7 @@ async function openConnection(page: Page) {
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await expect(page.locator('.term-pane')).toHaveCount(1)
 }
 

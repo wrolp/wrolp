@@ -1,18 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from '../i18n'
+import { Icon } from './Icon'
 
 interface TitlebarProps {
   onSettings?: () => void
   onAiChat?: () => void
-  /** Toggle the floating command list. */
+  /** Toggle the floating command list (command *snippets* — not the palette). */
   onCommandList?: () => void
-  /** Open the built-in FTP/HTTP/TFTP tools window. */
+  /** Open the Ctrl+K command palette. */
+  onCommandPalette?: () => void
+  /** Put the built-in FTP/HTTP/TFTP tools in the rail's mode column. */
   onNetTools?: () => void
   /**
-   * The workspace pill. It lives here rather than at the top of the sidebar
-   * because it describes the whole window, not the connection list — and the
-   * sidebar can be hidden, which used to hide the workspace switcher with it.
+   * The workspace pill. It lives here rather than at the top of the mode panel
+   * because it describes the whole window, not the panel — and the panel can be
+   * hidden, which used to hide the workspace switcher with it.
    * The caller renders the element so this file stays free of app state.
    */
   workspace?: React.ReactNode
@@ -22,6 +25,7 @@ export const Titlebar: React.FC<TitlebarProps> = ({
   onSettings,
   onAiChat,
   onCommandList,
+  onCommandPalette,
   onNetTools,
   workspace,
 }) => {
@@ -83,13 +87,41 @@ export const Titlebar: React.FC<TitlebarProps> = ({
 
   return (
     <div className="titlebar" ref={titlebarRef} data-tauri-drag-region>
-      <span className="titlebar-title">
-        <img src="/icon.png" alt="" className="titlebar-icon" />
-        Wrolp Terminal
-      </span>
-
-      <div className="titlebar-actions" ref={controlsRef}>
+      <div className="tb-left">
+        <span className="titlebar-title">
+          <img src="/icon.png" alt="" className="titlebar-icon" />
+          <span className="brand-name">Wrolp Terminal</span>
+        </span>
+        <span className="vdiv" />
         {workspace}
+      </div>
+
+      <div className="tb-center">
+        {onCommandPalette && (
+          <button
+            type="button"
+            className="cmd-trigger"
+            onClick={onCommandPalette}
+            title={`${t('commandPalette')} (Ctrl+K)`}
+          >
+            <Icon name="search" size={14} />
+            <span className="cmd-ph">{t('commandPalettePlaceholder')}</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+        )}
+      </div>
+
+      <div className="tb-right" ref={controlsRef}>
+        {onAiChat && (
+          <button
+            className="titlebar-btn ai-chat-btn"
+            onClick={onAiChat}
+            title={t('titlebarAi')}
+            aria-label={t('titlebarAi')}
+          >
+            <Icon name="sparkles" size={15} />
+          </button>
+        )}
         {onCommandList && (
           <button
             className="titlebar-btn cmd-list-btn"
@@ -112,57 +144,14 @@ export const Titlebar: React.FC<TitlebarProps> = ({
             </svg>
           </button>
         )}
-        {onAiChat && (
-          <button className="titlebar-btn ai-chat-btn" onClick={onAiChat} title={t('titlebarAi')}>
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              {/* sparkle — AI */}
-              <path
-                d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"
-                fill="currentColor"
-                stroke="none"
-              />
-              <path
-                d="M19 15l.9 2.4L22 18.3l-2.1.9L19 21.6l-.9-2.4-2.1-.9 2.1-.9L19 15z"
-                fill="currentColor"
-                stroke="none"
-              />
-              <path
-                d="M5.5 14l.6 1.6L7.7 16.2l-1.6.6L5.5 18.4l-.6-1.6-1.6-.6 1.6-.6L5.5 14z"
-                fill="currentColor"
-                stroke="none"
-              />
-            </svg>
-          </button>
-        )}
         {onNetTools && (
           <button
             className="titlebar-btn net-tools-btn"
             onClick={onNetTools}
             title={t('netToolTitle')}
+            aria-label={t('netToolTitle')}
           >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="2" y1="12" x2="22" y2="12" />
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-            </svg>
+            <Icon name="network" size={14} />
           </button>
         )}
         <button
@@ -170,19 +159,7 @@ export const Titlebar: React.FC<TitlebarProps> = ({
           onClick={toggleAlwaysOnTop}
           title={alwaysOnTop ? t('alwaysOnTopOn') : t('alwaysOnTop')}
         >
-          <svg
-            width="11"
-            height="11"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 17v5" />
-            <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
-          </svg>
+          <Icon name="pin" size={14} />
         </button>
         {onSettings && (
           <button
@@ -190,21 +167,10 @@ export const Titlebar: React.FC<TitlebarProps> = ({
             onClick={onSettings}
             title={t('titlebarSettings')}
           >
-            <svg
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
+            <Icon name="settings" size={14} />
           </button>
         )}
+        <span className="vdiv" />
         <div className="titlebar-controls">
           <button
             className="titlebar-btn"

@@ -25,6 +25,9 @@ const sentInput = async (page: Page) =>
 test('Ctrl+Shift+P opens the command list showing saved snippets', async ({ page }) => {
   await installTauriMock(page, { commandSnippets: SNIPPETS })
   await page.goto('/')
+  // Ctrl+Shift+P is an app-level listener, so it only exists once React has
+  // mounted — and `goto` resolving is earlier than that.
+  await expect(page.locator('.titlebar')).toBeVisible()
 
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()

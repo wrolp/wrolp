@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useI18n } from '../../i18n'
 import FtpServerPanel from './FtpServerPanel'
 import FtpClientPanel from './FtpClientPanel'
@@ -16,69 +16,40 @@ const TABS: { id: ToolsTab; key: string }[] = [
   { id: 'tftpClient', key: 'netToolTftpClient' },
 ]
 
-/** Floating tools window hosting the built-in file servers and TFTP client. */
-export default function NetToolsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+/**
+ * The rail's 网络工具 mode: the built-in FTP/HTTP/TFTP servers and the TFTP
+ * client, in the mode column. It used to be a modal, which meant it could only
+ * be looked at — as a mode it can stay open beside a terminal.
+ *
+ * Only the selected tab is mounted: four of the five panels poll (1–2s), and a
+ * mode stays mounted for as long as the user leaves it selected.
+ */
+export default function NetToolsPanel() {
   const { t } = useI18n()
   const [active, setActive] = useState<ToolsTab>('ftpServer')
 
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
-  if (!open) return null
-
   return (
-    <div className="nt-overlay">
-      <div className="nt-dialog" role="dialog" aria-modal="true">
-        <div className="nt-head">
-          <div className="nt-title">{t('netToolTitle')}</div>
-          <div className="nt-tabs">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                className={`nt-tab${active === tab.id ? ' active' : ''}`}
-                onClick={() => setActive(tab.id)}
-              >
-                {t(tab.key as never)}
-              </button>
-            ))}
-          </div>
-          <button className="nt-close" title={t('ntClose')} onClick={onClose}>
-            ✕
+    <div className="nt-panel">
+      <div className="panel-head sec">
+        <div className="panel-title">{t('netToolTitle')}</div>
+      </div>
+      <div className="nt-tabs">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            className={`nt-tab${active === tab.id ? ' active' : ''}`}
+            onClick={() => setActive(tab.id)}
+          >
+            {t(tab.key as never)}
           </button>
-        </div>
-        <div className="nt-body">
-          <div
-            style={{ display: active === 'ftpServer' ? 'flex' : 'none', flexDirection: 'column', gap: 12, flex: 1 }}
-          >
-            <FtpServerPanel />
-          </div>
-          <div
-            style={{ display: active === 'ftpClient' ? 'flex' : 'none', flexDirection: 'column', gap: 12, flex: 1 }}
-          >
-            <FtpClientPanel />
-          </div>
-          <div
-            style={{ display: active === 'httpServer' ? 'flex' : 'none', flexDirection: 'column', gap: 12, flex: 1 }}
-          >
-            <HttpServerPanel />
-          </div>
-          <div
-            style={{ display: active === 'tftpServer' ? 'flex' : 'none', flexDirection: 'column', gap: 12, flex: 1 }}
-          >
-            <TftpServerPanel />
-          </div>
-          <div
-            style={{ display: active === 'tftpClient' ? 'flex' : 'none', flexDirection: 'column', gap: 12, flex: 1 }}
-          >
-            <TftpClientPanel />
-          </div>
-        </div>
+        ))}
+      </div>
+      <div className="nt-body">
+        {active === 'ftpServer' && <FtpServerPanel />}
+        {active === 'ftpClient' && <FtpClientPanel />}
+        {active === 'httpServer' && <HttpServerPanel />}
+        {active === 'tftpServer' && <TftpServerPanel />}
+        {active === 'tftpClient' && <TftpClientPanel />}
       </div>
     </div>
   )

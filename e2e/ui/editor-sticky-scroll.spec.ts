@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock } from './helpers/tauriMock'
 
 // The editor toolbar's sticky toggle must pin the enclosing scope (function /
@@ -80,6 +81,7 @@ async function openScopesFile(page: Page, seedSticky = false) {
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await expect(page.locator('.term-pane')).toHaveCount(1)
   const file = page.locator('.tree-row.file', { hasText: FILE_NAME })
   await expect(file).toBeVisible()

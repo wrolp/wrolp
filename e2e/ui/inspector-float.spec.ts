@@ -23,6 +23,9 @@ async function boot(page: Page, layout?: string) {
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await installTauriMock(page, { connections: CONNS, layout })
   await page.goto('/')
+  // Ctrl+Alt+I is an app-level listener: it only exists once React has mounted,
+  // and `goto` resolving is earlier than that.
+  await expect(page.locator('.titlebar')).toBeVisible()
 }
 
 const inspector = (page: Page) => page.locator('.inspector')
@@ -150,13 +153,14 @@ test('docking to the other edge reorders the row without an unmount', async ({ p
   await expect(inspector(page)).toHaveClass(/is-left/)
   await expect(inspector(page)).toHaveCSS('position', 'relative')
 
-  // nav | inspector | workspace. The nav column keeps its claim on the window
-  // edge — the convention it has on both sides — so the column moves inside it
-  // rather than in front of it.
+  // rail | nav | inspector | workspace. The nav column keeps its claim on the
+  // edge of the area the rail leaves it — the convention it has on both sides —
+  // so the column moves inside it rather than in front of it.
+  const rail = await page.locator('.activity-rail').boundingBox()
   const nav = await page.locator('.sidebar-container').boundingBox()
   const insp = await inspector(page).boundingBox()
   const work = await page.locator('.terminal-area').boundingBox()
-  expect(nav!.x).toBeCloseTo(0, 0)
+  expect(nav!.x).toBeCloseTo(rail!.x + rail!.width, 0)
   expect(insp!.x).toBeGreaterThanOrEqual(nav!.x + nav!.width - 1)
   expect(work!.x).toBeGreaterThanOrEqual(insp!.x + insp!.width - 1)
   expect(insp!.x + insp!.width).toBeLessThan(1440)

@@ -8,6 +8,8 @@ import { check } from '@tauri-apps/plugin-updater'
 import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
 import { WorkspaceSelector } from './components/WorkspaceSelector'
+import { ActivityRail, type RailMode } from './components/ActivityRail'
+import { CommandPalette } from './components/CommandPalette'
 import { ConnectionManager } from './components/ConnectionManager'
 import {
   TerminalComponent,
@@ -18,6 +20,9 @@ import {
 } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
 import { BottomPanel } from './components/BottomPanel'
+import { SessionListPanel } from './components/SessionListPanel'
+import { WelcomePage } from './components/WelcomePage'
+import { DualFilePane } from './components/DualFilePane'
 import { InspectorPanel, type InspectorFloatState } from './components/InspectorPanel'
 import { NetworkScanPanel } from './components/NetworkScanPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
@@ -126,6 +131,7 @@ import type {
   DockerHostRef,
   DockerProbe,
   DockerAnalysisTarget,
+  SessionSummary,
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
@@ -1296,7 +1302,43 @@ export default function App() {
   // of showing a stale list — opening it again was the only way to see the new
   // entry before.
   const [commandListReloadKey, setCommandListReloadKey] = useState(0)
-  const [toolsOpen, setToolsOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  // The dual-pane file view (v8-P5). It takes the main area, so it is a view the
+  // user opens and closes rather than a panel that is always mounted.
+  const [dualPaneOpen, setDualPaneOpen] = useState(false)
+  // A session the rail's list asked to replay. The viewer itself lives in the
+  // drawer, so this hands it over instead of mounting a second copy.
+  const [sessionToView, setSessionToView] = useState<SessionSummary | null>(null)
+  // Commands the rail's session list extracted for the command-set tab — same
+  // hand-over, since the list no longer lives inside the drawer.
+  const [prefillCommands, setPrefillCommands] = useState<string[] | null>(null)
+  // Which panel the activity rail has parked in the mode column. It is window
+  // chrome rather than workspace geometry, so it is stored next to the other
+  // display preferences instead of in the persisted `layout`.
+  const [railMode, setRailMode] = useState<RailMode>(() => {
+    try {
+      const saved = localStorage.getItem('wrolp-rail-mode')
+      if (
+        saved === 'hosts' ||
+        saved === 'files' ||
+        saved === 'containers' ||
+        saved === 'sessions' ||
+        saved === 'nettools'
+      )
+        return saved
+    } catch {
+      /* ignore */
+    }
+    return 'hosts'
+  })
+  const changeRailMode = useCallback((mode: RailMode) => {
+    setRailMode(mode)
+    try {
+      localStorage.setItem('wrolp-rail-mode', mode)
+    } catch {
+      /* ignore */
+    }
+  }, [])
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('default')
@@ -1321,6 +1363,19 @@ export default function App() {
     (updater: (prev: WorkspaceLayout) => WorkspaceLayout) => setLayout(updater),
     [],
   )
+  // Picking a mode while the column is hidden has to bring it back, or the
+  // click looks like it did nothing. Every entry point that means "show me this
+  // panel" — the rail, the titlebar's globe, the welcome card — goes through
+  // here so they cannot drift apart.
+  const openRailMode = useCallback(
+    (mode: RailMode) => {
+      changeRailMode(mode)
+      updateLayout((l) =>
+        l.sidebar.visible ? l : { ...l, sidebar: { ...l.sidebar, visible: true } },
+      )
+    },
+    [changeRailMode, updateLayout],
+  )
   // The inspector column popped out into its own window (null = docked in the
   // row). Not part of `layout`: a float shares the restart rule every other
   // popped-out pane follows, and its `z` rides the same ladder the terminal
@@ -1333,8 +1388,21 @@ export default function App() {
   const connectionsExpanded = !layout.sidebar.sections.connections.collapsed
   const filesExpanded = !layout.sidebar.sections.files.collapsed
   const dockerExpanded = !layout.sidebar.sections.docker.collapsed
-  const connectionListHeight = layout.sidebar.sections.connections.height ?? 200
-  const dockerHeight = layout.sidebar.sections.docker.height ?? 220
+  // The rail's own buttons toggle: clicking the mode that is already showing
+  // folds the column away (VS Code activity-bar behaviour). Other entry points
+  // — the titlebar globe, the welcome card — always mean "show me this panel",
+  // so they keep going through `openRailMode`. Declared after `showSidebar`
+  // because its deps array reads that derived value.
+  const toggleRailMode = useCallback(
+    (mode: RailMode) => {
+      if (mode === railMode && showSidebar) {
+        updateLayout((l) => ({ ...l, sidebar: { ...l.sidebar, visible: false } }))
+      } else {
+        openRailMode(mode)
+      }
+    },
+    [openRailMode, railMode, showSidebar, updateLayout],
+  )
   // What this machine has, as last probed (null = the probe has not answered yet).
   const [localDocker, setLocalDocker] = useState<DockerProbe | null>(null)
   const [localDockerProbing, setLocalDockerProbing] = useState(false)
@@ -2303,7 +2371,6 @@ export default function App() {
   }, [])
   const [reconnectKeys, setReconnectKeys] = useState<Record<number, number>>({})
   const isDragging = useRef(false)
-  const isDraggingV = useRef(false)
   const panelDragRef = useRef(false)
 
   // Update state
@@ -2425,6 +2492,24 @@ export default function App() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  // Ctrl+K toggles the command palette — the shell's single "go somewhere / do
+  // something" entry point, which is why the titlebar carries only its trigger.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === 'k' || e.key === 'K')
+      ) {
+        e.preventDefault()
+        setPaletteOpen((prev) => !prev)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   // Load persisted workspace layout on startup (merged onto defaults).
   useEffect(() => {
     let cancelled = false
@@ -2454,6 +2539,14 @@ export default function App() {
     }, 400)
     return () => clearTimeout(id)
   }, [layout])
+
+  // Opening the dual-pane file view also opens the drawer: every transfer it
+  // starts shows up in the queue, and a queue you cannot see is only half a
+  // transfer.
+  const openDualPane = useCallback(() => {
+    setDualPaneOpen(true)
+    updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
+  }, [updateLayout])
 
   // Layout shortcuts:
   //   Ctrl+B            toggle sidebar visibility
@@ -2509,10 +2602,17 @@ export default function App() {
         }))
         return
       }
+      // Ctrl+Shift+F: the dual-pane file view. It also opens the drawer, because
+      // a transfer you cannot see the queue for is only half a transfer.
+      if (key === 'f' && e.shiftKey) {
+        e.preventDefault()
+        openDualPane()
+        return
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [updateLayout])
+  }, [updateLayout, openDualPane])
 
   // Ref to keep current opacity accessible in debounced save without re-registering listeners
   const opacityRef = useRef(opacity)
@@ -4280,10 +4380,17 @@ export default function App() {
       const win = getCurrentWindow()
       win.setResizable(false).catch(() => {})
 
+      // Delta-based, not absolute: the divider no longer sits at the window
+      // edge (the rail occupies the left of it), so `clientX` at the divider is
+      // already `rail + width` — the first mousemove used to jump the panel
+      // right by the rail's width.
+      const side = layout.sidebar.side
+      const startX = e.clientX
+      const startWidth = layout.sidebar.width
       const handleMouseMove = (ev: MouseEvent) => {
         if (!isDragging.current) return
-        const newWidth =
-          layout.sidebar.side === 'right' ? window.innerWidth - ev.clientX : ev.clientX
+        const delta = ev.clientX - startX
+        const newWidth = side === 'right' ? startWidth - delta : startWidth + delta
         updateLayout((l) => ({
           ...l,
           sidebar: { ...l.sidebar, width: Math.max(160, Math.min(500, newWidth)) },
@@ -4304,103 +4411,13 @@ export default function App() {
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     },
-    [layout.sidebar.side],
+    [layout.sidebar.side, layout.sidebar.width],
   )
 
-  // Connection list / SFTP vertical divider drag-to-resize
-  const handleVDividerMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      isDraggingV.current = true
-      const win = getCurrentWindow()
-      const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
-      const startY = e.clientY
-      const startHeight = connectionListHeight
-      win.setResizable(false).catch(() => {})
-
-      const handleMouseMove = (ev: MouseEvent) => {
-        if (!isDraggingV.current) return
-        const delta = ev.clientY - startY
-        const containerHeight = sidebarEl?.clientHeight || 700
-        const newHeight = Math.max(60, Math.min(containerHeight - 100, startHeight + delta))
-        updateLayout((l) => ({
-          ...l,
-          sidebar: {
-            ...l.sidebar,
-            sections: {
-              ...l.sidebar.sections,
-              connections: { ...l.sidebar.sections.connections, height: newHeight },
-            },
-          },
-        }))
-      }
-
-      const handleMouseUp = () => {
-        isDraggingV.current = false
-        document.removeEventListener('mousemove', handleMouseMove)
-        document.removeEventListener('mouseup', handleMouseUp)
-        document.body.classList.remove('resize-v')
-        document.body.style.userSelect = ''
-        win.setResizable(true).catch(() => {})
-      }
-
-      document.body.classList.add('resize-v')
-      document.body.style.userSelect = 'none'
-      document.addEventListener('mousemove', handleMouseMove)
-      document.addEventListener('mouseup', handleMouseUp)
-    },
-    [connectionListHeight],
-  )
-
-  // Divider drag-to-resize for a sidebar section that sits BELOW its divider — the
-  // Docker group and the Files panel both share this, differing only in which section
-  // key receives the height.
-  const handleSectionDividerMouseDown = useCallback(
-    (section: 'docker', startHeight: number) => (e: React.MouseEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      isDraggingV.current = true
-      const win = getCurrentWindow()
-      const sidebarEl = (e.target as HTMLElement).closest('.sidebar-container')
-      const startY = e.clientY
-      win.setResizable(false).catch(() => {})
-
-      const handleMouseMove = (ev: MouseEvent) => {
-        if (!isDraggingV.current) return
-        // The section sits below this divider, so dragging the divider down
-        // (increasing clientY) must SHRINK it — mirror the shell divider's sign.
-        const delta = startY - ev.clientY
-        const containerHeight = sidebarEl?.clientHeight || 700
-        const newHeight = Math.max(80, Math.min(containerHeight - 100, startHeight + delta))
-        updateLayout((l) => ({
-          ...l,
-          sidebar: {
-            ...l.sidebar,
-            sections: {
-              ...l.sidebar.sections,
-              [section]: { ...l.sidebar.sections[section], height: newHeight },
-            },
-          },
-        }))
-      }
-
-      const handleMouseUp = () => {
-        isDraggingV.current = false
-        document.removeEventListener('mousemove', handleMouseMove)
-        document.removeEventListener('mouseup', handleMouseUp)
-        document.body.classList.remove('resize-v')
-        document.body.style.userSelect = ''
-        win.setResizable(true).catch(() => {})
-      }
-
-      document.body.classList.add('resize-v')
-      document.body.style.userSelect = 'none'
-      document.addEventListener('mousemove', handleMouseMove)
-      document.addEventListener('mouseup', handleMouseUp)
-    },
-    [],
-  )
+  // v8 removed the dividers between sidebar sections — the rail shows one section
+  // at a time, so there is nothing to split. The two drag handlers they drove
+  // (`handleVDividerMouseDown` / `handleSectionDividerMouseDown`) went with them
+  // rather than being left as dead code.
 
   // Bottom panel resize when docked to the bottom (horizontal divider -> height).
   const handleBottomDividerMouseDown = useCallback(
@@ -7034,14 +7051,33 @@ export default function App() {
         {/* A pane-free container log. Mounted only while selected: the viewer's
             unmount cleanup stops its own follow stream. */}
         {activeLogTab && <div className="dockerlog-overlay">{renderLogHost(activeLogTab)}</div>}
+        {/* The dual-pane file view (v8-P5). Mounted only while open: both sides
+            are real file panels, and a hidden one would keep listing directories
+            and holding SFTP sessions for a view nobody is looking at. */}
+        {dualPaneOpen && (
+          <div className="dual-pane-overlay">
+            <DualFilePane
+              tabId={focusedLeafTabId ?? 0}
+              remoteTarget={fileTarget}
+              fileMode={fileMode}
+              onFileModeChange={setFileMode}
+              onSelectTarget={setFileTarget}
+              hasSession={tabs.some((t) => t.status === 'connected')}
+              onEditFile={openInEditor}
+              onClose={() => setDualPaneOpen(false)}
+            />
+          </div>
+        )}
         {terminalPortals}
       </div>
       <div ref={terminalPoolRefCb} className="terminal-pool" />
     </div>
   )
 
-  // Sidebar body (connections / files / docker), reused for left or right placement.
-  const sidebarBody = (() => {
+  // Mode-panel body — reused for left or right placement. v8's activity rail owns
+  // this column, so exactly ONE panel is mounted at a time; the old sidebar
+  // stacked all of them and each kept its own collapsed/expanded state.
+  const modePanelBody = (() => {
     // Show the Files panel only when the focused pane's connection is connected.
     // In a split, focusedLeafTabId points at the focused pane's session, so the
     // panel tracks whichever connection you clicked into.
@@ -7063,16 +7099,13 @@ export default function App() {
         : dockerHost
     return (
       <>
-        {layout.sidebar.sections.connections.visible && (
+        {railMode === 'hosts' && layout.sidebar.sections.connections.visible && (
           <div
             className="collapsible-section"
-            style={
-              connectionsExpanded
-                ? showFilePanel && filesExpanded
-                  ? { height: connectionListHeight, flexShrink: 0, overflow: 'hidden' }
-                  : { flex: 1, overflow: 'hidden' }
-                : { flexShrink: 0 }
-            }
+            // Alone in the mode column it always takes the whole column. It used
+            // to split the column with the Files panel below it, which is why a
+            // stored pixel height existed at all.
+            style={connectionsExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
           >
             <ConnectionManager
               connections={connections}
@@ -7135,12 +7168,8 @@ export default function App() {
           </div>
         )}
 
-        {showFilePanel && layout.sidebar.sections.files.visible && (
+        {railMode === 'files' && showFilePanel && layout.sidebar.sections.files.visible && (
           <>
-            {connectionsExpanded && (
-              <div className="panel-divider-h" onMouseDown={handleVDividerMouseDown} />
-            )}
-
             {/* Files section (session, or a jump/docker target) */}
             <div
               className="collapsible-section"
@@ -7256,91 +7285,89 @@ export default function App() {
             list along with the Files panel above it, and a machine with only a local
             daemon gets the same group with nothing connected. The head's metadata run
             is what names the host it is reading (`4 · docker 29.8.0` vs `0 · web:22`). */}
-        {(() => {
-          const host = panelDockerHost
-          if (!host) return null
-          const isLocal = host.kind === 'local'
-          return (
-            <>
-              {dockerExpanded && (
+        {railMode === 'containers' &&
+          (() => {
+            const host = panelDockerHost
+            if (!host) return null
+            const isLocal = host.kind === 'local'
+            return (
+              <>
                 <div
-                  className="panel-divider-h"
-                  onMouseDown={handleSectionDividerMouseDown('docker', dockerHeight)}
-                />
-              )}
-              <div
-                className="collapsible-section"
-                style={
-                  dockerExpanded
-                    ? { flexShrink: 0, height: dockerHeight, overflow: 'hidden' }
-                    : { flexShrink: 0 }
-                }
-              >
-                <DockerPanel
-                  host={host}
-                  refreshSignal={dockerRefreshKey}
-                  serverLabel={
-                    isLocal
-                      ? localDocker?.serverVersion
-                        ? `${localDocker.bin} ${localDocker.serverVersion}`
-                        : undefined
-                      : (() => {
-                          const dt = tabs.find((t) => t.tabId === host.jumpTabId)
-                          const dc = dt?.connectionId
-                            ? connections.find((c) => c.id === dt.connectionId)
-                            : undefined
-                          return dc
-                            ? dc.name === dc.host
-                              ? `${dc.host}:${dc.port}`
-                              : `${dc.name} (${dc.host}:${dc.port})`
-                            : dt?.connectionName
-                        })()
+                  className="collapsible-section"
+                  style={
+                    dockerExpanded
+                      ? // Alone in the mode column it takes the whole column; the
+                        // fixed height only applies when it shared the old sidebar.
+                        { flex: 1, overflow: 'hidden' }
+                      : { flexShrink: 0 }
                   }
-                  expanded={dockerExpanded}
-                  onToggleExpanded={() =>
-                    updateLayout((l) => ({
-                      ...l,
-                      sidebar: {
-                        ...l.sidebar,
-                        sections: {
-                          ...l.sidebar.sections,
-                          docker: {
-                            ...l.sidebar.sections.docker,
-                            collapsed: !l.sidebar.sections.docker.collapsed,
+                >
+                  <DockerPanel
+                    host={host}
+                    refreshSignal={dockerRefreshKey}
+                    serverLabel={
+                      isLocal
+                        ? localDocker?.serverVersion
+                          ? `${localDocker.bin} ${localDocker.serverVersion}`
+                          : undefined
+                        : (() => {
+                            const dt = tabs.find((t) => t.tabId === host.jumpTabId)
+                            const dc = dt?.connectionId
+                              ? connections.find((c) => c.id === dt.connectionId)
+                              : undefined
+                            return dc
+                              ? dc.name === dc.host
+                                ? `${dc.host}:${dc.port}`
+                                : `${dc.name} (${dc.host}:${dc.port})`
+                              : dt?.connectionName
+                          })()
+                    }
+                    expanded={dockerExpanded}
+                    onToggleExpanded={() =>
+                      updateLayout((l) => ({
+                        ...l,
+                        sidebar: {
+                          ...l.sidebar,
+                          sections: {
+                            ...l.sidebar.sections,
+                            docker: {
+                              ...l.sidebar.sections.docker,
+                              collapsed: !l.sidebar.sections.docker.collapsed,
+                            },
                           },
                         },
-                      },
-                    }))
-                  }
-                  activeContainer={
-                    isLocal
-                      ? fileTarget?.kind === 'dockerLocal'
-                        ? fileTarget.container
-                        : null
-                      : fileTarget?.kind === 'docker'
-                        ? fileTarget.container
-                        : null
-                  }
-                  filter={navFilter}
-                  onOpenContainer={(c) => handleOpenContainer(host, c)}
-                  onEnterShell={(c) => handleEnterContainerShell(host, c)}
-                  onAnalyzeContainer={(c) => handleAnalyzeContainer(host, c)}
-                  onViewLogs={(c) => handleViewContainerLogs(host, c)}
-                  onRestartContainer={(c) => runDockerVerb(host, c, 'restart')}
-                  onStopContainer={(c) => runDockerVerb(host, c, 'stop')}
-                  onStartContainer={(c) => runDockerVerb(host, c, 'start')}
-                  onDeleteContainer={(c) => runDockerVerb(host, c, 'rm')}
-                />
-              </div>
-            </>
-          )
-        })()}
+                      }))
+                    }
+                    activeContainer={
+                      isLocal
+                        ? fileTarget?.kind === 'dockerLocal'
+                          ? fileTarget.container
+                          : null
+                        : fileTarget?.kind === 'docker'
+                          ? fileTarget.container
+                          : null
+                    }
+                    filter={navFilter}
+                    onOpenContainer={(c) => handleOpenContainer(host, c)}
+                    onEnterShell={(c) => handleEnterContainerShell(host, c)}
+                    onAnalyzeContainer={(c) => handleAnalyzeContainer(host, c)}
+                    onViewLogs={(c) => handleViewContainerLogs(host, c)}
+                    onRestartContainer={(c) => runDockerVerb(host, c, 'restart')}
+                    onStopContainer={(c) => runDockerVerb(host, c, 'stop')}
+                    onStartContainer={(c) => runDockerVerb(host, c, 'start')}
+                    onDeleteContainer={(c) => runDockerVerb(host, c, 'rm')}
+                  />
+                </div>
+              </>
+            )
+          })()}
         {/* A CLI that is installed but has no daemon is the one case the user can fix
             themselves (start Docker Desktop), so it gets a retry line — but only while the
             group would actually be pointing here, not while an SSH session owns the head.
             No CLI at all stays silent — that row would be permanent noise on every machine
             without Docker. */}
-        {layout.sidebar.sections.docker.visible &&
+        {railMode === 'containers' &&
+          layout.sidebar.sections.docker.visible &&
           dockerHost?.kind === 'local' &&
           localDocker?.installed &&
           !localDocker.serverRunning && (
@@ -7354,35 +7381,72 @@ export default function App() {
               {t('dockerLocalUnavailable')}
             </button>
           )}
+        {/* Sessions — recorded terminal sessions get their own column instead of
+            being buried in the drawer. */}
+        {railMode === 'sessions' && (
+          <div className="collapsible-section" style={{ flex: 1, overflow: 'hidden' }}>
+            <SessionListPanel
+              connections={connections}
+              onPlaySession={(session) => {
+                setSessionToView(session)
+                setLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
+              }}
+              // Command extraction lands in the drawer's command-set tab, so the
+              // request is handed over the same way a replay is.
+              onExtractCommands={(commands) => {
+                setPrefillCommands(commands)
+                setLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
+              }}
+            />
+          </div>
+        )}
+        {/* Network file tools — the built-in FTP/HTTP/TFTP servers and the TFTP
+            client. It used to be a modal; as a mode it can stay open beside a
+            terminal instead of covering one. */}
+        {railMode === 'nettools' && (
+          <div className="collapsible-section" style={{ flex: 1, overflow: 'hidden' }}>
+            <NetToolsPanel />
+          </div>
+        )}
       </>
     )
   })()
 
+  // The rail's mode column. Still the sidebar in layout terms (same width, same
+  // divider, same left/right placement) — it just holds one panel now.
   const sidebarEl = showSidebar ? (
-    <div className="sidebar-container" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-      <div className="nav-search">
-        <Icon name="search" size={12} />
-        <input
-          type="text"
-          value={navQuery}
-          onChange={(e) => setNavQuery(e.target.value)}
-          placeholder={t('navSearchPlaceholder')}
-          aria-label={t('search')}
-          spellCheck={false}
-        />
-        {navQuery && (
-          <button
-            type="button"
-            className="nav-search-clear"
-            onClick={() => setNavQuery('')}
-            aria-label={t('clearSearch')}
-            title={t('clearSearch')}
-          >
-            <Icon name="x" size={11} />
-          </button>
-        )}
-      </div>
-      {sidebarBody}
+    <div
+      className="sidebar-container mode-panel"
+      style={{ width: sidebarWidth, minWidth: sidebarWidth }}
+      data-rail-mode={railMode}
+    >
+      {/* The filter belongs to whichever panel can use it: hosts and containers
+          filter their list, files and sessions have their own controls. */}
+      {(railMode === 'hosts' || railMode === 'containers') && (
+        <div className="nav-search">
+          <Icon name="search" size={12} />
+          <input
+            type="text"
+            value={navQuery}
+            onChange={(e) => setNavQuery(e.target.value)}
+            placeholder={t('navSearchPlaceholder')}
+            aria-label={t('search')}
+            spellCheck={false}
+          />
+          {navQuery && (
+            <button
+              type="button"
+              className="nav-search-clear"
+              onClick={() => setNavQuery('')}
+              aria-label={t('clearSearch')}
+              title={t('clearSearch')}
+            >
+              <Icon name="x" size={11} />
+            </button>
+          )}
+        </div>
+      )}
+      {modePanelBody}
     </div>
   ) : null
 
@@ -7397,7 +7461,8 @@ export default function App() {
         onSettings={handleOpenSettings}
         onAiChat={() => handleOpenAiChat()}
         onCommandList={() => setCommandListOpen((prev) => !prev)}
-        onNetTools={() => setToolsOpen((prev) => !prev)}
+        onNetTools={() => openRailMode('nettools')}
+        onCommandPalette={() => setPaletteOpen(true)}
         workspace={
           <WorkspaceSelector
             workspaces={workspaces}
@@ -7410,433 +7475,481 @@ export default function App() {
         }
       />
 
-      {/* The three regions are ordered by which edge each column is docked to, not
-        by DOM order — see the `order` rules on `.main-content`. */}
-      <div
-        className={`main-content ${layout.sidebar.side === 'left' ? 'nav-left' : 'nav-right'} ${
-          layout.inspector.side === 'left' ? 'insp-left' : 'insp-right'
-        }`}
-      >
-        {layout.sidebar.side === 'left' && sidebarEl}
-        {layout.sidebar.side === 'left' && showSidebar && (
-          <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
-        )}
+      {/* v8 shell: the rail is the window's mode switcher and always sits on the
+          left edge, outside the sidebar's own left/right placement. */}
+      <div className="app-body">
+        <ActivityRail
+          mode={railMode}
+          onModeChange={toggleRailMode}
+          // Same test the Files section used to apply to itself: a connected
+          // session, or a local container target (which needs no session).
+          filesAvailable={
+            tabs.some((tab) => tab.status === 'connected') || fileTarget?.kind === 'dockerLocal'
+          }
+          containersAvailable={!!dockerHost}
+          onSettings={handleOpenSettings}
+        />
 
-        {/* Terminal area (right) */}
-        <div className={`terminal-area ${layout.bottomPanel.pos === 'right' ? 'panel-right' : ''}`}>
-          <div className="terminal-main">
-            {/* Tab bar */}
+        {/* The three regions are ordered by which edge each column is docked to, not
+          by DOM order — see the `order` rules on `.main-content`. */}
+        <div
+          className={`main-content ${layout.sidebar.side === 'left' ? 'nav-left' : 'nav-right'} ${
+            layout.inspector.side === 'left' ? 'insp-left' : 'insp-right'
+          }`}
+        >
+          {layout.sidebar.side === 'left' && sidebarEl}
+          {layout.sidebar.side === 'left' && showSidebar && (
+            <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
+          )}
+
+          {/* Terminal area (right) */}
+          <div
+            className={`terminal-area ${layout.bottomPanel.pos === 'right' ? 'panel-right' : ''}`}
+          >
+            <div className="terminal-main">
+              {/* Tab bar */}
             <div className="tab-bar">
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={() =>
-                  updateLayout((l) => ({
-                    ...l,
-                    sidebar: { ...l.sidebar, visible: !l.sidebar.visible },
-                  }))
-                }
-                aria-label={showSidebar ? t('hideSidebar') : t('showSidebar')}
-                title={showSidebar ? t('hideSidebar') : t('showSidebar')}
-              >
-                <Icon name={showSidebar ? 'panelLeft' : 'panelRight'} size={14} />
-              </button>
               {tabs
-                .filter((tab) => !tab.embedded)
-                .map((tab, idx) => {
-                  // A file tab's unsaved marker comes from the buffer it points
-                  // at; the TabInfo itself never knows about edits.
-                  const file =
-                    tab.tabType === 'fileEditor'
-                      ? editorTabs.find((e) => e.key === tab.editorKey)
-                      : undefined
-                  // A file's tooltip says where it came from as well as what it is:
-                  // the same path can be open from two different boxes, and the tab
-                  // label alone cannot tell them apart.
-                  const origin = file ? describeFileOrigin(file.sshTabId) : null
-                  return (
-                    <div
-                      key={tab.tabId}
-                      className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
-                      draggable
-                      title={
-                        file
-                          ? origin
-                            ? `${file.path} — ${t('openedFrom', { name: origin })}`
-                            : file.path
-                          : undefined
-                      }
-                      onClick={() => handleTabClick(tab.tabId)}
-                      onDragStart={(e) => handleTabDragStart(e, idx)}
-                      onDragOver={(e) => handleTabDragOver(e, idx)}
-                      onDrop={(e) => handleTabDrop(e, idx)}
-                      onDragEnd={handleTabDragEnd}
-                      onContextMenu={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
-                      }}
-                    >
-                      <Icon className="tab-icon" name={getTabIcon(tab)} size={13} />
-                      <span className="tab-label">{getTabLabel(tab)}</span>
-                      {file?.isDirty && <span className="tab-dirty" title={t('unsavedChanges')} />}
-                      <button
-                        type="button"
-                        className="tab-close"
-                        onClick={(e) => {
+                  .filter((tab) => !tab.embedded)
+                  .map((tab, idx) => {
+                    // A file tab's unsaved marker comes from the buffer it points
+                    // at; the TabInfo itself never knows about edits.
+                    const file =
+                      tab.tabType === 'fileEditor'
+                        ? editorTabs.find((e) => e.key === tab.editorKey)
+                        : undefined
+                    // A file's tooltip says where it came from as well as what it is:
+                    // the same path can be open from two different boxes, and the tab
+                    // label alone cannot tell them apart.
+                    const origin = file ? describeFileOrigin(file.sshTabId) : null
+                    return (
+                      <div
+                        key={tab.tabId}
+                        className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
+                        draggable
+                        title={
+                          file
+                            ? origin
+                              ? `${file.path} — ${t('openedFrom', { name: origin })}`
+                              : file.path
+                            : undefined
+                        }
+                        onClick={() => handleTabClick(tab.tabId)}
+                        onDragStart={(e) => handleTabDragStart(e, idx)}
+                        onDragOver={(e) => handleTabDragOver(e, idx)}
+                        onDrop={(e) => handleTabDrop(e, idx)}
+                        onDragEnd={handleTabDragEnd}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
                           e.stopPropagation()
-                          // An editor tab closes the file (with the unsaved-changes
-                          // prompt), not the session it came from.
-                          if (tab.tabType === 'fileEditor' && tab.editorKey)
-                            requestCloseEditorTab(tab.editorKey)
-                          else closeTab(tab.tabId)
+                          setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
                         }}
-                        aria-label={t('closeTab')}
                       >
-                        <Icon name="x" size={11} />
-                      </button>
-                    </div>
-                  )
-                })}
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={() => {
-                  // `hideInspector` rather than a bare visibility flip, so the
-                  // tab-bar control and the column's own ✕ leave the same state.
-                  if (inspectorOpen) {
-                    hideInspector()
-                    return
-                  }
-                  updateLayout((l) => ({
-                    ...l,
-                    inspector: { ...l.inspector, visible: true },
-                  }))
-                }}
-                aria-label={inspectorOpen ? t('closeInspector') : t('openInspector')}
-                title={`${inspectorOpen ? t('closeInspector') : t('openInspector')} (Ctrl+Alt+I)`}
-                data-on={inspectorOpen ? 'true' : undefined}
-              >
-                <Icon name="inspector" size={14} />
-              </button>
-            </div>
-
-            {/* Tab right-click context menu (SSH terminals + local shell tabs) */}
-            {tabContextMenu &&
-              ((tabContextMenu.tab.tabType === 'terminal' && tabContextMenu.tab.connectionId) ||
-                tabContextMenu.tab.tabType === 'localShell') && (
-                <div
-                  ref={tabContextMenuRef}
-                  className="tab-context-menu"
-                  style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
-                  onClick={(e) => e.stopPropagation()}
+                        <Icon className="tab-icon" name={getTabIcon(tab)} size={13} />
+                        <span className="tab-label">{getTabLabel(tab)}</span>
+                        {file?.isDirty && (
+                          <span className="tab-dirty" title={t('unsavedChanges')} />
+                        )}
+                        <button
+                          type="button"
+                          className="tab-close"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            // An editor tab closes the file (with the unsaved-changes
+                            // prompt), not the session it came from.
+                            if (tab.tabType === 'fileEditor' && tab.editorKey)
+                              requestCloseEditorTab(tab.editorKey)
+                            else closeTab(tab.tabId)
+                          }}
+                          aria-label={t('closeTab')}
+                        >
+                          <Icon name="x" size={11} />
+                        </button>
+                      </div>
+                    )
+                  })}
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => {
+                    // `hideInspector` rather than a bare visibility flip, so the
+                    // tab-bar control and the column's own ✕ leave the same state.
+                    if (inspectorOpen) {
+                      hideInspector()
+                      return
+                    }
+                    updateLayout((l) => ({
+                      ...l,
+                      inspector: { ...l.inspector, visible: true },
+                    }))
+                  }}
+                  aria-label={inspectorOpen ? t('closeInspector') : t('openInspector')}
+                  title={`${inspectorOpen ? t('closeInspector') : t('openInspector')} (Ctrl+Alt+I)`}
+                  data-on={inspectorOpen ? 'true' : undefined}
                 >
-                  {tabContextMenu.tab.tabType === 'localShell' && (
+                  <Icon name="inspector" size={14} />
+                </button>
+              </div>
+
+              {/* Tab right-click context menu (SSH terminals + local shell tabs) */}
+              {tabContextMenu &&
+                ((tabContextMenu.tab.tabType === 'terminal' && tabContextMenu.tab.connectionId) ||
+                  tabContextMenu.tab.tabType === 'localShell') && (
+                  <div
+                    ref={tabContextMenuRef}
+                    className="tab-context-menu"
+                    style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {tabContextMenu.tab.tabType === 'localShell' && (
+                      <div
+                        className="context-menu-item"
+                        onClick={() => openLocalShellDir(tabContextMenu.tab)}
+                      >
+                        {t('openInFileManager')}
+                      </div>
+                    )}
                     <div
                       className="context-menu-item"
-                      onClick={() => openLocalShellDir(tabContextMenu.tab)}
+                      onClick={() => duplicateTab(tabContextMenu.tab, tabContextMenu.fromPane)}
                     >
-                      {t('openInFileManager')}
+                      {t('duplicateTab')}
                     </div>
-                  )}
-                  <div
-                    className="context-menu-item"
-                    onClick={() => duplicateTab(tabContextMenu.tab, tabContextMenu.fromPane)}
-                  >
-                    {t('duplicateTab')}
                   </div>
-                </div>
-              )}
+                )}
 
-            {/* Shell pane. The view tab bar (Terminal + open files) sits at the
+              {/* Shell pane. The view tab bar (Terminal + open files) sits at the
               top; the content area below it shows EITHER the terminal split
               tree OR the file editor. `terminalContent` stays mounted in the
               same DOM position regardless of the active view so opening a file
               never remounts the TerminalComponent (which would trigger a fresh
               connect() and lose focus). */}
-            <div className="shell-pane" style={{ flex: 1, minHeight: 0 }}>
-              <div
-                className="shell-pane-body"
-                style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'row' }}
-              >
+              <div className="shell-pane" style={{ flex: 1, minHeight: 0 }}>
                 <div
-                  style={{
-                    display: 'flex',
-                    flex: 1,
-                    minHeight: 0,
-                    flexDirection: 'column',
-                  }}
-                >
-                  {terminalContent}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Floating AI chat panel (popped out from a shell tab) */}
-          {aiFloatingTabId !== null &&
-            activeProfile &&
-            (() => {
-              const MIN_W = 280
-              const MIN_H = 240
-              const startResize = (e: React.MouseEvent, dir: string) => {
-                e.preventDefault()
-                e.stopPropagation()
-                aiFloatResizeRef.current = {
-                  dir,
-                  sx: e.clientX,
-                  sy: e.clientY,
-                  sw: aiFloatSize.w,
-                  sh: aiFloatSize.h,
-                }
-                const onMove = (ev: MouseEvent) => {
-                  const r = aiFloatResizeRef.current
-                  if (!r) return
-                  let { w, h } = { w: r.sw, h: r.sh }
-                  let { x, y } = aiFloatPos
-                  const dx = ev.clientX - r.sx
-                  const dy = ev.clientY - r.sy
-                  if (r.dir.includes('e')) w = Math.max(MIN_W, r.sw + dx)
-                  if (r.dir.includes('s')) h = Math.max(MIN_H, r.sh + dy)
-                  if (r.dir.includes('w')) {
-                    w = Math.max(MIN_W, r.sw - dx)
-                    x = aiFloatPos.x - (w - r.sw)
-                  }
-                  if (r.dir.includes('n')) {
-                    h = Math.max(MIN_H, r.sh - dy)
-                    y = aiFloatPos.y - (h - r.sh)
-                  }
-                  setAiFloatSize({ w, h })
-                  setAiFloatPos({ x, y })
-                }
-                const onUp = () => {
-                  aiFloatResizeRef.current = null
-                  window.removeEventListener('mousemove', onMove)
-                  window.removeEventListener('mouseup', onUp)
-                }
-                window.addEventListener('mousemove', onMove)
-                window.addEventListener('mouseup', onUp)
-              }
-              const resizeHandles: { dir: string; style: React.CSSProperties; cursor: string }[] = [
-                { dir: 'n', style: { top: -3, left: 8, right: 8, height: 6 }, cursor: 'ns-resize' },
-                {
-                  dir: 's',
-                  style: { bottom: -3, left: 8, right: 8, height: 6 },
-                  cursor: 'ns-resize',
-                },
-                { dir: 'w', style: { left: -3, top: 8, bottom: 8, width: 6 }, cursor: 'ew-resize' },
-                {
-                  dir: 'e',
-                  style: { right: -3, top: 8, bottom: 8, width: 6 },
-                  cursor: 'ew-resize',
-                },
-                {
-                  dir: 'nw',
-                  style: { top: -3, left: -3, width: 10, height: 10 },
-                  cursor: 'nwse-resize',
-                },
-                {
-                  dir: 'ne',
-                  style: { top: -3, right: -3, width: 10, height: 10 },
-                  cursor: 'nesw-resize',
-                },
-                {
-                  dir: 'sw',
-                  style: { bottom: -3, left: -3, width: 10, height: 10 },
-                  cursor: 'nesw-resize',
-                },
-                {
-                  dir: 'se',
-                  style: { bottom: -3, right: -3, width: 10, height: 10 },
-                  cursor: 'nwse-resize',
-                },
-              ]
-              return (
-                <div
-                  className="ai-floating-panel"
-                  style={{
-                    position: 'fixed',
-                    left: aiFloatPos.x,
-                    top: aiFloatPos.y,
-                    width: aiFloatSize.w,
-                    height: aiFloatSize.h,
-                    zIndex: 1000,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
-                    borderRadius: 'var(--r-3)',
-                    overflow: 'hidden',
-                    background: 'var(--bg-secondary, #151a21)',
-                    border: '1px solid var(--border, #232b36)',
-                  }}
+                  className="shell-pane-body"
+                  style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'row' }}
                 >
                   <div
-                    className="ai-floating-header"
                     style={{
                       display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '6px 10px',
-                      cursor: 'move',
-                      background: 'var(--bg-tertiary, #1b222c)',
-                      borderBottom: '1px solid var(--border, #232b36)',
-                      userSelect: 'none',
-                    }}
-                    onMouseDown={(e) => {
-                      aiFloatDragRef.current = {
-                        dx: e.clientX - aiFloatPos.x,
-                        dy: e.clientY - aiFloatPos.y,
-                      }
-                      const onMove = (ev: MouseEvent) => {
-                        setAiFloatPos({
-                          x: ev.clientX - (aiFloatDragRef.current?.dx ?? 0),
-                          y: ev.clientY - (aiFloatDragRef.current?.dy ?? 0),
-                        })
-                      }
-                      const onUp = () => {
-                        aiFloatDragRef.current = null
-                        window.removeEventListener('mousemove', onMove)
-                        window.removeEventListener('mouseup', onUp)
-                      }
-                      window.addEventListener('mousemove', onMove)
-                      window.addEventListener('mouseup', onUp)
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        fontSize: 12,
-                        color: 'var(--text-secondary, #aaa)',
-                      }}
-                    >
-                      <Icon name="sparkles" size={12} /> {t('aiChatTitle')} ·{' '}
-                      {tabs.find((t) => t.tabId === aiFloatingTabId)?.connectionName ||
-                        t('shellTerminal')}
-                    </span>
-                    <button
-                      className="ai-float-header-btn"
-                      onClick={() => setAiFloatingTabId(null)}
-                      title={t('aiChatDockBack')}
-                    >
-                      <Icon name="panelRight" size={12} /> {t('aiChatDock')}
-                    </button>
-                  </div>
-                  <div
-                    style={{
                       flex: 1,
-                      minWidth: 0,
                       minHeight: 0,
-                      display: 'flex',
                       flexDirection: 'column',
                     }}
                   >
-                    <AiChatPanel
-                      tabId={aiFloatingTabId}
-                      isLocal={
-                        connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
-                          .isLocal
-                      }
-                      isSerial={
-                        connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
-                          .isSerial
-                      }
-                      isTelnet={
-                        connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
-                          .isTelnet
-                      }
-                      config={activeProfile}
-                      profiles={aiConfig?.profiles ?? []}
-                      onSelectProfile={handleSelectAiProfile}
-                      onSelectModel={handleSelectAiModel}
-                      conv={getAiConv(aiFloatingTabId)}
-                      setConv={(u) => setAiConv(aiFloatingTabId, u)}
-                      floating
-                      onToggleFloat={() => setAiFloatingTabId(null)}
-                      onClose={() => {
-                        setShowAiByTab((prev) => ({ ...prev, [aiFloatingTabId]: false }))
-                        setAiFloatingTabId(null)
-                      }}
-                      inputHeight={aiInputHeight}
-                      onInputHeightChange={handleAiInputHeightChange}
-                      onOpenSettings={handleOpenAiSettings}
-                      defaultMode={aiConfig?.defaultMode ?? 'command'}
-                      defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
-                      onAddCommandSnippet={handleAddCommandSnippet}
-                    />
+                    {/* With no tab at all there is no terminal to show, and an empty
+                      black rectangle is the least useful answer — so the stage
+                      becomes the ways back in (`WelcomePage`). A Settings tab
+                      counts as a tab and takes the stage as before. */}
+                    {tabs.length === 0 ? (
+                      <WelcomePage
+                        connections={connections}
+                        onOpenConnection={handleSelectConnection}
+                        onNewConnection={() => {
+                          changeRailMode('hosts')
+                          updateLayout((l) =>
+                            l.sidebar.visible
+                              ? l
+                              : { ...l, sidebar: { ...l.sidebar, visible: true } },
+                          )
+                        }}
+                        onOpenLocalTerminal={() => void handleOpenLocalTerminal()}
+                        onOpenFiles={() => changeRailMode('files')}
+                        onOpenNetTools={() => openRailMode('nettools')}
+                        onOpenCommandList={() => setCommandListOpen(true)}
+                        onScanNetwork={() =>
+                          updateLayout((l) => ({
+                            ...l,
+                            inspector: { ...l.inspector, visible: true, tab: 'network' },
+                          }))
+                        }
+                      />
+                    ) : (
+                      terminalContent
+                    )}
                   </div>
-                  {resizeHandles.map((h) => (
-                    <div
-                      key={h.dir}
-                      onMouseDown={(e) => startResize(e, h.dir)}
-                      style={{
-                        position: 'absolute',
-                        ...h.style,
-                        cursor: h.cursor,
-                        zIndex: 1001,
-                      }}
-                    />
-                  ))}
                 </div>
-              )
-            })()}
+              </div>
+            </div>
 
-          {/* Bottom panel — session recordings & command sets */}
-          {layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (
-            <div className="panel-divider-v" onMouseDown={handlePanelDividerMouseDown} />
-          )}
-          {layout.bottomPanel.pos === 'bottom' && bottomPanelExpanded && (
-            <div className="panel-divider-h" onMouseDown={handleBottomDividerMouseDown} />
-          )}
-          <BottomPanel
-            connections={connections}
-            activeTabId={focusedLeafTabId}
-            expanded={bottomPanelExpanded}
-            pos={layout.bottomPanel.pos}
-            size={layout.bottomPanel.size}
-            onToggleExpanded={() =>
-              updateLayout((l) => ({
-                ...l,
-                bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
-              }))
-            }
-          />
-        </div>
+            {/* Floating AI chat panel (popped out from a shell tab) */}
+            {aiFloatingTabId !== null &&
+              activeProfile &&
+              (() => {
+                const MIN_W = 280
+                const MIN_H = 240
+                const startResize = (e: React.MouseEvent, dir: string) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  aiFloatResizeRef.current = {
+                    dir,
+                    sx: e.clientX,
+                    sy: e.clientY,
+                    sw: aiFloatSize.w,
+                    sh: aiFloatSize.h,
+                  }
+                  const onMove = (ev: MouseEvent) => {
+                    const r = aiFloatResizeRef.current
+                    if (!r) return
+                    let { w, h } = { w: r.sw, h: r.sh }
+                    let { x, y } = aiFloatPos
+                    const dx = ev.clientX - r.sx
+                    const dy = ev.clientY - r.sy
+                    if (r.dir.includes('e')) w = Math.max(MIN_W, r.sw + dx)
+                    if (r.dir.includes('s')) h = Math.max(MIN_H, r.sh + dy)
+                    if (r.dir.includes('w')) {
+                      w = Math.max(MIN_W, r.sw - dx)
+                      x = aiFloatPos.x - (w - r.sw)
+                    }
+                    if (r.dir.includes('n')) {
+                      h = Math.max(MIN_H, r.sh - dy)
+                      y = aiFloatPos.y - (h - r.sh)
+                    }
+                    setAiFloatSize({ w, h })
+                    setAiFloatPos({ x, y })
+                  }
+                  const onUp = () => {
+                    aiFloatResizeRef.current = null
+                    window.removeEventListener('mousemove', onMove)
+                    window.removeEventListener('mouseup', onUp)
+                  }
+                  window.addEventListener('mousemove', onMove)
+                  window.addEventListener('mouseup', onUp)
+                }
+                const resizeHandles: { dir: string; style: React.CSSProperties; cursor: string }[] =
+                  [
+                    {
+                      dir: 'n',
+                      style: { top: -3, left: 8, right: 8, height: 6 },
+                      cursor: 'ns-resize',
+                    },
+                    {
+                      dir: 's',
+                      style: { bottom: -3, left: 8, right: 8, height: 6 },
+                      cursor: 'ns-resize',
+                    },
+                    {
+                      dir: 'w',
+                      style: { left: -3, top: 8, bottom: 8, width: 6 },
+                      cursor: 'ew-resize',
+                    },
+                    {
+                      dir: 'e',
+                      style: { right: -3, top: 8, bottom: 8, width: 6 },
+                      cursor: 'ew-resize',
+                    },
+                    {
+                      dir: 'nw',
+                      style: { top: -3, left: -3, width: 10, height: 10 },
+                      cursor: 'nwse-resize',
+                    },
+                    {
+                      dir: 'ne',
+                      style: { top: -3, right: -3, width: 10, height: 10 },
+                      cursor: 'nesw-resize',
+                    },
+                    {
+                      dir: 'sw',
+                      style: { bottom: -3, left: -3, width: 10, height: 10 },
+                      cursor: 'nesw-resize',
+                    },
+                    {
+                      dir: 'se',
+                      style: { bottom: -3, right: -3, width: 10, height: 10 },
+                      cursor: 'nwse-resize',
+                    },
+                  ]
+                return (
+                  <div
+                    className="ai-floating-panel"
+                    style={{
+                      position: 'fixed',
+                      left: aiFloatPos.x,
+                      top: aiFloatPos.y,
+                      width: aiFloatSize.w,
+                      height: aiFloatSize.h,
+                      zIndex: 1000,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+                      borderRadius: 'var(--r-3)',
+                      overflow: 'hidden',
+                      background: 'var(--bg-secondary, #151a21)',
+                      border: '1px solid var(--border, #232b36)',
+                    }}
+                  >
+                    <div
+                      className="ai-floating-header"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        cursor: 'move',
+                        background: 'var(--bg-tertiary, #1b222c)',
+                        borderBottom: '1px solid var(--border, #232b36)',
+                        userSelect: 'none',
+                      }}
+                      onMouseDown={(e) => {
+                        aiFloatDragRef.current = {
+                          dx: e.clientX - aiFloatPos.x,
+                          dy: e.clientY - aiFloatPos.y,
+                        }
+                        const onMove = (ev: MouseEvent) => {
+                          setAiFloatPos({
+                            x: ev.clientX - (aiFloatDragRef.current?.dx ?? 0),
+                            y: ev.clientY - (aiFloatDragRef.current?.dy ?? 0),
+                          })
+                        }
+                        const onUp = () => {
+                          aiFloatDragRef.current = null
+                          window.removeEventListener('mousemove', onMove)
+                          window.removeEventListener('mouseup', onUp)
+                        }
+                        window.addEventListener('mousemove', onMove)
+                        window.addEventListener('mouseup', onUp)
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          fontSize: 12,
+                          color: 'var(--text-secondary, #aaa)',
+                        }}
+                      >
+                        <Icon name="sparkles" size={12} /> {t('aiChatTitle')} ·{' '}
+                        {tabs.find((t) => t.tabId === aiFloatingTabId)?.connectionName ||
+                          t('shellTerminal')}
+                      </span>
+                      <button
+                        className="ai-float-header-btn"
+                        onClick={() => setAiFloatingTabId(null)}
+                        title={t('aiChatDockBack')}
+                      >
+                        <Icon name="panelRight" size={12} /> {t('aiChatDock')}
+                      </button>
+                    </div>
+                    <div
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        minHeight: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                      }}
+                    >
+                      <AiChatPanel
+                        tabId={aiFloatingTabId}
+                        isLocal={
+                          connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
+                            .isLocal
+                        }
+                        isSerial={
+                          connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
+                            .isSerial
+                        }
+                        isTelnet={
+                          connFlagsForType(tabs.find((t) => t.tabId === aiFloatingTabId)?.tabType)
+                            .isTelnet
+                        }
+                        config={activeProfile}
+                        profiles={aiConfig?.profiles ?? []}
+                        onSelectProfile={handleSelectAiProfile}
+                        onSelectModel={handleSelectAiModel}
+                        conv={getAiConv(aiFloatingTabId)}
+                        setConv={(u) => setAiConv(aiFloatingTabId, u)}
+                        floating
+                        onToggleFloat={() => setAiFloatingTabId(null)}
+                        onClose={() => {
+                          setShowAiByTab((prev) => ({ ...prev, [aiFloatingTabId]: false }))
+                          setAiFloatingTabId(null)
+                        }}
+                        inputHeight={aiInputHeight}
+                        onInputHeightChange={handleAiInputHeightChange}
+                        onOpenSettings={handleOpenAiSettings}
+                        defaultMode={aiConfig?.defaultMode ?? 'command'}
+                        defaultMaxAgentRounds={aiConfig?.maxAgentRounds ?? 200}
+                        onAddCommandSnippet={handleAddCommandSnippet}
+                      />
+                    </div>
+                    {resizeHandles.map((h) => (
+                      <div
+                        key={h.dir}
+                        onMouseDown={(e) => startResize(e, h.dir)}
+                        style={{
+                          position: 'absolute',
+                          ...h.style,
+                          cursor: h.cursor,
+                          zIndex: 1001,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )
+              })()}
 
-        {/* Inspector — read-outs about the focused tab. Docked, it is placed
+            {/* Bottom panel — session recordings & command sets */}
+            {layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (
+              <div className="panel-divider-v" onMouseDown={handlePanelDividerMouseDown} />
+            )}
+            {layout.bottomPanel.pos === 'bottom' && bottomPanelExpanded && (
+              <div className="panel-divider-h" onMouseDown={handleBottomDividerMouseDown} />
+            )}
+            <BottomPanel
+              connections={connections}
+              activeTabId={focusedLeafTabId}
+              pendingSession={sessionToView}
+              onPendingSessionConsumed={() => setSessionToView(null)}
+              prefillCommands={prefillCommands}
+              onPrefillConsumed={() => setPrefillCommands(null)}
+              expanded={bottomPanelExpanded}
+              pos={layout.bottomPanel.pos}
+              size={layout.bottomPanel.size}
+              onToggleExpanded={() =>
+                updateLayout((l) => ({
+                  ...l,
+                  bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
+                }))
+              }
+            />
+          </div>
+
+          {/* Inspector — read-outs about the focused tab. Docked, it is placed
           before the right-docked sidebar so the sidebar stays flush with the
           window edge; floated, it leaves the row entirely (`position: fixed`), so
           the resizer goes with it and the workspace takes back the column's
           width. Same element in both states — see `InspectorPanel`. */}
-        {inspectorOpen && (
-          <InspectorPanel
-            connections={connections}
-            activeTabId={focusedLeafTabId}
-            width={layout.inspector.width}
-            tab={layout.inspector.tab}
-            side={layout.inspector.side}
-            float={inspectorFloat}
-            onTabChange={(tab) =>
-              updateLayout((l) => ({ ...l, inspector: { ...l.inspector, tab } }))
-            }
-            onClose={hideInspector}
-            onToggleFloat={toggleInspectorFloat}
-            onDockSide={dockInspectorSide}
-            onFloatMove={moveInspectorFloat}
-            onFloatResize={resizeInspectorFloat}
-            onFloatFocus={focusInspectorFloat}
-            onColumnResizeStart={handleInspectorResizeMouseDown}
-            dockerAnalysisTarget={dockerAnalysisTarget}
-            onDockerAnalyzed={() => setDockerAnalysisTarget(null)}
-            ai={aiPanelNode}
-            network={networkPanelNode}
-          />
-        )}
-        {layout.sidebar.side === 'right' && showSidebar && (
-          <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
-        )}
-        {layout.sidebar.side === 'right' && sidebarEl}
+          {inspectorOpen && (
+            <InspectorPanel
+              connections={connections}
+              activeTabId={focusedLeafTabId}
+              width={layout.inspector.width}
+              tab={layout.inspector.tab}
+              side={layout.inspector.side}
+              float={inspectorFloat}
+              onTabChange={(tab) =>
+                updateLayout((l) => ({ ...l, inspector: { ...l.inspector, tab } }))
+              }
+              onClose={hideInspector}
+              onToggleFloat={toggleInspectorFloat}
+              onDockSide={dockInspectorSide}
+              onFloatMove={moveInspectorFloat}
+              onFloatResize={resizeInspectorFloat}
+              onFloatFocus={focusInspectorFloat}
+              onColumnResizeStart={handleInspectorResizeMouseDown}
+              dockerAnalysisTarget={dockerAnalysisTarget}
+              onDockerAnalyzed={() => setDockerAnalysisTarget(null)}
+              ai={aiPanelNode}
+              network={networkPanelNode}
+            />
+          )}
+          {layout.sidebar.side === 'right' && showSidebar && (
+            <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
+          )}
+          {layout.sidebar.side === 'right' && sidebarEl}
+        </div>
       </div>
 
       <StatusBar
@@ -7846,6 +7959,34 @@ export default function App() {
         update={updateInfo && showUpdateBanner ? { ...updateInfo, state: updateState } : null}
         onDownloadUpdate={() => void handleDownloadUpdate()}
         onDismissUpdate={() => setShowUpdateBanner(false)}
+      />
+
+      {/* Ctrl+K command palette — the shell's one entry point for "open this /
+          do that". It is portalled to <body>, so DOM order here is irrelevant. */}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        connections={connections}
+        onOpenConnection={handleSelectConnection}
+        onRunCommand={handleSendSnippetToTerminal}
+        onOpenCommandList={() => setCommandListOpen(true)}
+        onOpenDualPane={openDualPane}
+        // Creating a connection lives in the hosts panel (it needs the full
+        // form), so this just parks the rail there.
+        onNewConnection={() => {
+          changeRailMode('hosts')
+          updateLayout((l) =>
+            l.sidebar.visible ? l : { ...l, sidebar: { ...l.sidebar, visible: true } },
+          )
+        }}
+        onScanNetwork={() =>
+          updateLayout((l) => ({
+            ...l,
+            inspector: { ...l.inspector, visible: true, tab: 'network' },
+          }))
+        }
+        onOpenSettings={handleOpenSettings}
+        onOpenAi={() => handleOpenAiChat()}
       />
 
       {toast && (
@@ -7884,9 +8025,6 @@ export default function App() {
         onSendToTerminal={handleSendSnippetToTerminal}
         reloadKey={commandListReloadKey}
       />
-
-      {/* Built-in FTP / HTTP / TFTP file servers + TFTP client */}
-      <NetToolsPanel open={toolsOpen} onClose={() => setToolsOpen(false)} />
 
       {/* Ask before closing an editor tab with unsaved changes */}
       {pendingCloseEditorKey && (

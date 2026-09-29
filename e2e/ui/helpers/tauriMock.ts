@@ -257,6 +257,12 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_hidden_builtin_templates':
           case 'list_ai_models':
             return []
+          // The transfer rows of the net tools. A `null` here used to be fine
+          // because the panel only rendered inside a modal no spec opened; as a
+          // rail mode it is reachable, and the panels read `rows.length` — so
+          // the mock has to answer with the empty list the real one does.
+          case 'tftp_rows':
+            return []
           case 'probe_local_docker': {
             // Default: nothing installed, so the 「本机 Docker」 group stays hidden in
             // every spec that does not opt in. `refresh` (the retry row) can answer
@@ -345,7 +351,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_files':
           case 'target_list_files':
             return opts.filesByDir?.[String(args.path)] ?? opts.fileEntries ?? []
+          // Same content read, addressed through a non-session target (the local
+          // pane of the dual-pane view opens files this way).
           case 'read_file_content':
+          case 'target_read_file':
             return opts.fileContent ?? null
           case 'get_recording_enabled':
             return true

@@ -107,7 +107,7 @@
 
 ### Network file tools
 
-- Opened from the **Network tools** button in the titlebar; everything runs inside the app, so no external client is needed.
+- Opened from the **Network tools** mode in the activity rail (or the **Network file tools** button in the titlebar); it docks in the mode column rather than floating over the window, so it can stay open next to a terminal. Everything runs inside the app, so no external client is needed.
 - **FTP server** — share a local folder over FTP (PASV / EPSV).
 - **HTTP/HTTPS file server** — serve a folder with a built-in page for browsing and uploading; HTTPS can use a self-signed certificate generated with one click.
 - **TFTP server** — minimal TFTP serving for legacy / PXE equipment.

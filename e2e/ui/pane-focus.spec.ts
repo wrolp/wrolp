@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Pane chrome must not steal the keyboard from the shell.
@@ -48,6 +49,7 @@ async function openTerminal(page: Page) {
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await expect(page.locator('.xterm-helper-textarea')).toBeAttached()
   await page.waitForTimeout(300)
 }
@@ -112,6 +114,7 @@ async function openEditorFile(page: Page) {
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await expect(page.locator('.term-pane')).toHaveCount(1)
   const file = page.locator('.tree-row.file', { hasText: FILE_NAME })
   await expect(file).toBeVisible()

@@ -1,6 +1,7 @@
 import { test, expect } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
 import { expandSection } from './helpers/sections'
+import { selectRailMode } from './helpers/sections'
 
 // B49: clicking 「All」 in the Docker head collapsed the whole panel, so the filter could
 // never actually be used. The head *is* the collapse switch (`onClick={onToggleExpanded}`),
@@ -37,6 +38,7 @@ test('「All」 filters the list without collapsing the panel (B49)', async ({ p
   })
   await page.goto('/')
   await page.locator('.connection-item').first().click()
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
 
   const head = page

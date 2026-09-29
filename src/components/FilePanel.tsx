@@ -37,6 +37,13 @@ import {
 } from '../commands'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
+import { formatSize } from '../lib/format'
+import {
+  useTransferRows,
+  useUpdateTransferRows,
+  formatSpeed,
+  type TransferRow,
+} from '../lib/transferQueue'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
 
@@ -65,35 +72,6 @@ async function runConcurrent<T>(
 }
 
 /* ---------- types ---------- */
-
-interface TransferProgress {
-  tabId: number
-  op: 'upload' | 'download' | 'directory' | 'delete' | 'upload-dir'
-  filename: string
-  transferred: number
-  total: number
-  elapsed: number
-  /** Directory downloads: the base directory name (row key), the current
-      file's path relative to it, and aggregate counters. */
-  dirName?: string
-  relativePath?: string
-  doneFiles?: number
-  totalFiles?: number
-  doneBytes?: number
-  totalBytes?: number
-}
-
-/** One row in the multi-file transfer progress list. */
-interface TransferRow {
-  /** Stable unique key: op + full path (local path for upload, remote path for download). */
-  key: string
-  filename: string
-  op: 'upload' | 'download' | 'directory' | 'delete'
-  status: 'queued' | 'active' | 'done' | 'error' | 'cancelled'
-  transferred: number
-  total: number
-  speed: string
-}
 
 interface TreeNode {
   name: string
@@ -153,6 +131,25 @@ interface FilePanelProps {
   onFileModeChange?: (mode: FileTargetMode) => void
   /** Set the active filesystem target (e.g. a selected container or jump host). */
   onSelectTarget?: (target: TargetRef | null) => void
+  /**
+   * Reports the panel's browse state outward. The dual-pane view is two of these
+   * panels and its seam buttons can only work if each side says where it is and
+   * what it has selected — neither can reach into the other.
+   */
+  onBrowseChange?: (state: FilePanelBrowseState) => void
+  /**
+   * Whether this panel renders its own inline transfer list. The dual-pane view
+   * turns it off: the drawer's queue tab is where a transfer is reviewed there,
+   * and two copies of the same rows would only fight for height.
+   */
+  showTransfers?: boolean
+}
+
+/** What a panel reports through `onBrowseChange`. */
+export interface FilePanelBrowseState {
+  /** Directory currently listed. */
+  path: string
+  selected: { path: string; name: string; isDir: boolean }[]
 }
 
 export interface FileTreeHandle {
@@ -286,24 +283,6 @@ function mergePreservingExpansion(prev: TreeNode[], next: TreeNode[]): TreeNode[
   })
 }
 
-const formatSize = (bytes: number): string => {
-  if (bytes === 0) return '-'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let i = 0
-  let size = bytes
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024
-    i++
-  }
-  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
-}
-
-const formatSpeed = (bytesPerSec: number): string => {
-  if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
-  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
-}
-
 /* ---------- component ---------- */
 
 // Per-target browse state, kept at module scope (NOT inside the component):
@@ -337,6 +316,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     onFileModeChange,
     onSelectTarget,
     serverLabel,
+    onBrowseChange,
+    showTransfers = true,
   },
   ref,
 ) {
@@ -534,7 +515,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // Per-file transfer rows shown in the bottom progress panel. Both upload and
   // download batches populate this list so the user sees one row per file
   // (filename + progress bar + speed) instead of a single shared progress bar.
-  const [transferRows, setTransferRows] = useState<TransferRow[]>([])
+  // The rows are the app-wide queue (v8-P4): the drawer's transfer tab reads the
+  // same list, so closing this panel no longer discards what is in flight.
+  const transferRows = useTransferRows()
+  const setTransferRows = useUpdateTransferRows()
   // Keys of rows the user cancelled. The sequential transfer loops consult it
   // to skip cancelled queued files and to mark an aborted in-flight file as
   // 'cancelled' instead of 'error'.
@@ -550,6 +534,36 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   const [switchPassword, setSwitchPassword] = useState('')
   const [editingPath, setEditingPath] = useState(false)
   const [editPathValue, setEditPathValue] = useState('')
+
+  /* ---- outward browse state ---- */
+  // Held in a ref: the callback is an inline arrow at the call site, and an
+  // effect keyed on it would re-report on every render of the parent — which, in
+  // the dual-pane view, is the parent this reports to.
+  const onBrowseChangeRef = useRef(onBrowseChange)
+  onBrowseChangeRef.current = onBrowseChange
+  useEffect(() => {
+    const report = onBrowseChangeRef.current
+    if (!report) return
+    // A local panel opened at "" only ever knows the empty string — the backend
+    // resolves it to the user's home — but a transfer needs a real directory to
+    // write into. Every listing of "" comes back with absolute child paths, so
+    // the parent of the first one *is* that directory. Reported outward only:
+    // the panel keeps displaying (and navigating from) the path it was given.
+    let path = currentPath
+    if (path.length === 0) {
+      const first = tree.find((n) => n.path.includes('/'))
+      if (first) path = getParentDir(first.path)
+    }
+    const selected = [...selPaths].map((p) => {
+      const node = findNode(tree, p)
+      return {
+        path: p,
+        name: node?.name ?? p.split('/').filter(Boolean).pop() ?? p,
+        isDir: node?.isDir ?? false,
+      }
+    })
+    report({ path, selected })
+  }, [currentPath, selPaths, tree])
 
   /* ---- sync ---- */
   const syncRef = useRef(syncEnabled)
@@ -829,160 +843,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     }
   }, [syncEnabled, isConnected, sessionTabId, loadRootDir, expanded, remoteCwd])
 
-  // Transfer progress events (main session only). Each event carries the
-  // filename, so we can route it to the matching per-file row in the list.
-  useEffect(() => {
-    if (sessionTabId == null) return
-    const unlisten = listen<TransferProgress>('transfer-progress', (event) => {
-      const p = event.payload
-      if (p.tabId !== sessionTabId) return
-      const elapsed = p.elapsed > 0 ? p.elapsed / 1000 : 0.001
-
-      // Backend events carry only the *basename* (e.g. `a.txt`) while rows are
-      // keyed by unique full paths, so match candidates by basename/suffix.
-      // Uploads now run concurrently, so several rows may be in flight with the
-      // same basename: prefer the active row whose transferred count still
-      // trails the event (per-row progress is monotonic), then the sole
-      // candidate. Done/error rows are skipped so late events can't resurrect
-      // a finished row.
-      const findTarget = (rows: TransferRow[], op: TransferRow['op'], base: string) => {
-        if (base.length === 0) return null
-        const candidates = rows.filter(
-          (r) =>
-            r.op === op &&
-            r.status !== 'done' &&
-            r.status !== 'error' &&
-            (r.filename === base || r.filename.endsWith(`/${base}`)),
-        )
-        return (
-          candidates.find((r) => r.status === 'active' && r.transferred < p.transferred) ??
-          candidates.find((r) => r.status === 'active') ??
-          (candidates.length === 1 ? candidates[0] : null)
-        )
-      }
-
-      if (p.op === 'directory') {
-        // A directory download streams many files; the row is keyed by the
-        // remote directory path and shows aggregate bytes + the current
-        // relative path.
-        const dirName = p.dirName ?? ''
-        const bytesPerSec = (p.doneBytes ?? 0) / elapsed
-        setTransferRows((prev) => {
-          if (dirName.length === 0) return prev
-          const candidates = prev.filter(
-            (r) =>
-              r.op === 'directory' &&
-              r.status !== 'done' &&
-              r.status !== 'error' &&
-              (r.key === `directory:${dirName}` || r.key.endsWith(`/${dirName}`)),
-          )
-          const target =
-            candidates.find((r) => r.status === 'active') ??
-            (candidates.length === 1 ? candidates[0] : null)
-          if (!target) return prev
-          return prev.map((r) =>
-            r.key === target.key
-              ? {
-                  ...r,
-                  filename: p.relativePath || p.filename,
-                  transferred: p.doneBytes ?? r.transferred,
-                  total: p.totalBytes ?? r.total,
-                  speed: formatSpeed(bytesPerSec),
-                  status: 'active',
-                }
-              : r,
-          )
-        })
-        return
-      }
-      if (p.op === 'delete') {
-        // A recursive directory delete streams one event per removed file; the
-        // row is keyed by the remote directory path and shows the aggregate
-        // file count as progress.
-        const dirName = p.dirName ?? ''
-        setTransferRows((prev) => {
-          if (dirName.length === 0) return prev
-          const candidates = prev.filter(
-            (r) =>
-              r.op === 'delete' &&
-              r.status !== 'done' &&
-              r.status !== 'error' &&
-              (r.key === `delete:${dirName}` || r.key.endsWith(`/${dirName}`)),
-          )
-          const target =
-            candidates.find((r) => r.status === 'active') ??
-            (candidates.length === 1 ? candidates[0] : null)
-          if (!target) return prev
-          return prev.map((r) =>
-            r.key === target.key
-              ? {
-                  ...r,
-                  transferred: p.doneFiles ?? r.transferred,
-                  total: p.totalFiles ?? r.total,
-                  status: 'active',
-                }
-              : r,
-          )
-        })
-        return
-      }
-      if (p.op === 'upload-dir') {
-        // A local-directory upload streams many files on the Rust side; the
-        // row is keyed by the full normalized local path (the event's
-        // `dirName`) and shows aggregate bytes + the current relative path.
-        const dirName = p.dirName ?? ''
-        const bytesPerSec = (p.doneBytes ?? 0) / elapsed
-        setTransferRows((prev) => {
-          if (dirName.length === 0) return prev
-          const candidates = prev.filter(
-            (r) =>
-              r.op === 'upload' &&
-              r.status !== 'done' &&
-              r.status !== 'error' &&
-              r.key === `upload-dir:${dirName}`,
-          )
-          const target =
-            candidates.find((r) => r.status === 'active') ??
-            (candidates.length === 1 ? candidates[0] : null)
-          if (!target) return prev
-          return prev.map((r) =>
-            r.key === target.key
-              ? {
-                  ...r,
-                  filename: p.relativePath || r.filename,
-                  transferred: p.doneBytes ?? r.transferred,
-                  total: p.totalBytes ?? r.total,
-                  speed: formatSpeed(bytesPerSec),
-                  status: 'active',
-                }
-              : r,
-          )
-        })
-        return
-      }
-      const bytesPerSec = p.transferred / elapsed
-      setTransferRows((prev) => {
-        // `upload-dir` is handled above; the cast is safe because of the early
-        // return (TS doesn't narrow `p.op` into this callback).
-        const target = findTarget(prev, p.op as TransferRow['op'], p.filename)
-        if (!target) return prev
-        return prev.map((r) =>
-          r.key === target.key
-            ? {
-                ...r,
-                transferred: p.transferred,
-                total: p.total,
-                speed: formatSpeed(bytesPerSec),
-                status: 'active',
-              }
-            : r,
-        )
-      })
-    })
-    return () => {
-      unlisten.then((fn) => fn())
-    }
-  }, [sessionTabId])
+  // Transfer progress is applied by the app-wide queue (src/lib/transferQueue.ts):
+  // the rows outlived this panel in v8-P4, so the listener had to as well.
 
   // Close context menu
   useEffect(() => {
@@ -1083,6 +945,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           transferred: 0,
           total: 0,
           speed: '',
+          tabId: sessionTabId ?? undefined,
         }
       })
       setTransferRows((prev) => mergeRows(prev, rows))
@@ -1145,6 +1008,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           transferred: 0,
           total: 0,
           speed: '',
+          tabId: sessionTabId ?? undefined,
         }
       })
       setTransferRows((prev) => mergeRows(prev, rows))
@@ -1528,6 +1392,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             transferred: 0,
             total: 0,
             speed: '',
+            tabId: sessionTabId ?? undefined,
           },
         ]),
       )
@@ -1578,6 +1443,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               transferred: 0,
               total: 0,
               speed: '',
+              tabId: sessionTabId ?? undefined,
             },
           ]),
         )
@@ -1624,6 +1490,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               transferred: 0,
               total: 0,
               speed: '',
+              tabId: sessionTabId ?? undefined,
             },
           ]),
         )
@@ -1693,6 +1560,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       transferred: 0,
       total: 0,
       speed: '',
+      tabId: sessionTabId ?? undefined,
     }))
     setTransferRows((prev) => mergeRows(prev, rows))
     for (let i = 0; i < items.length; i++) {
@@ -1863,14 +1731,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     onMouseLeave: onTransfersMouseLeave,
   } = useCustomScrollbar()
 
-  // Auto-clear the panel a few seconds after every row has finished, so the
-  // transfer list doesn't linger after the work is done.
-  useEffect(() => {
-    if (transferRows.length === 0) return
-    if (transferRows.some((r) => r.status === 'queued' || r.status === 'active')) return
-    const t = window.setTimeout(() => setTransferRows([]), 2500)
-    return () => window.clearTimeout(t)
-  }, [transferRows])
+  // Finished rows are no longer swept away on a timer: this list is the app-wide
+  // queue now, and the drawer's transfer tab is where it is reviewed. Clearing it
+  // is the "clear finished" action there, not something a panel does on its own.
 
   /* ---- transfers panel drag-to-resize ---- */
   const transfersDragRef = useRef<{ startY: number; startH: number } | null>(null)
@@ -2349,7 +2212,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
           {/* Multi-file transfer progress list. Height is user-adjustable via the
               drag handle on its top edge; rows scroll internally when they overflow. */}
-          {transferRows.length > 0 && (
+          {showTransfers && transferRows.length > 0 && (
             <div className="file-transfers" style={{ height: transfersPanelHeight }}>
               <div
                 className="file-transfers-drag"

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 import { expandSection } from './helpers/sections'
 
@@ -59,6 +60,8 @@ const dockerGroup = (page: Page) => page.locator('.docker-panel')
 
 /** Open the built-in local shell, which makes this machine the group's host. */
 async function openLocalShell(page: Page) {
+  // The local-terminal entry is part of the host list, so it needs the Hosts mode.
+  await selectRailMode(page, 'hosts')
   await page.locator('.conn-item.local-term-default').click()
   await expect
     .poll(async () => (await invokedCalls(page)).filter((c) => c.cmd === 'open_local_shell').length)
@@ -72,21 +75,13 @@ test('with no terminal open the one group reads this machine', async ({ page }) 
     dockerContainers: [REMOTE],
   })
   // No connection was opened — that is the point: the group must not need a jump host.
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await expect(dockerGroup(page)).toHaveCount(1)
   // One group, so the head's metadata run is what says which daemon the rows came from.
   await expect(dockerGroup(page).locator('.cnt')).toHaveText('1 · docker 27.1.1')
   await expect(row(page, LOCAL.name)).toBeVisible()
   await expect(row(page, REMOTE.name)).toHaveCount(0)
-
-  // Its drag-to-resize divider, sitting directly above the section it sizes.
-  expect(
-    await page.evaluate(() =>
-      Array.from(document.querySelectorAll('.panel-divider-h')).some((d) =>
-        Boolean(d.nextElementSibling?.querySelector('.docker-panel')),
-      ),
-    ),
-  ).toBe(true)
 
   // Everything the jump-host group offers works here too, including the shell — P2b
   // gave it a real PTY (`open_local_docker_shell`) instead of typing `docker exec`
@@ -104,6 +99,7 @@ test('entering a local container’s shell opens a PTY tab of its own', async ({
     localDockerProbe: RUNNING,
     localDockerContainers: [LOCAL],
   })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await row(page, LOCAL.name).click({ button: 'right' })
   await page.locator('.context-menu-item', { hasText: 'Enter Shell' }).click()
@@ -124,19 +120,25 @@ test('the group follows the focused terminal, and only one is ever mounted', asy
     localDockerContainers: [LOCAL],
     dockerContainers: [REMOTE],
   })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   // Nothing focused yet → this machine.
   await expect(row(page, LOCAL.name)).toBeVisible()
 
   // An SSH session takes the group over: the remote rows appear, the local ones go, and
-  // the second `list_docker_containers` carries the session's host.
+  // the second `list_docker_containers` carries the session's host. Opening it means
+  // going back to the Hosts mode first — the list only lives there.
+  await selectRailMode(page, 'hosts')
   await page.locator('.connection-item').first().click()
+  await selectRailMode(page, 'containers')
   await expect(row(page, REMOTE.name)).toBeVisible()
   await expect(row(page, LOCAL.name)).toHaveCount(0)
   await expect(dockerGroup(page)).toHaveCount(1)
 
   // A local shell hands it back.
+  await selectRailMode(page, 'hosts')
   await openLocalShell(page)
+  await selectRailMode(page, 'containers')
   await expect(row(page, LOCAL.name)).toBeVisible()
   await expect(row(page, REMOTE.name)).toHaveCount(0)
 
@@ -153,6 +155,7 @@ test('a local lifecycle verb is sent to the local host', async ({ page }) => {
     localDockerContainers: [LOCAL],
     dockerContainers: [REMOTE],
   })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await row(page, LOCAL.name).click({ button: 'right' })
   await page.locator('.context-menu-item', { hasText: 'Stop' }).click()
@@ -173,6 +176,7 @@ test('logs of a local container are read from the local host', async ({ page }) 
   // pane-free case is below). A *local* shell, because the group follows the focused
   // terminal — and the container it then reads is the local one.
   await openLocalShell(page)
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await row(page, LOCAL.name).click({ button: 'right' })
   await page.locator('.context-menu-item', { hasText: 'View Logs' }).click()
@@ -201,14 +205,17 @@ test('a local container’s files are addressed at the local daemon', async ({ p
   // Two different listings, so "entrypoint.sh showed up" can only mean the container
   // root was read — not whatever the terminal's own filesystem is.
   await page.locator('.connection-item').first().click()
+  await selectRailMode(page, 'files')
   await expect(page.locator('.tree-row.file', { hasText: 'session-only.txt' })).toBeVisible()
   // The group follows the focused terminal, so an SSH session's Docker is the remote
   // one: reaching a local container while a session is open means a local shell.
   await openLocalShell(page)
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   // The name, not the row's centre: the container-id chip at the right edge stops the
   // click from reaching the row's handler.
   await row(page, LOCAL.name).locator('.docker-name').click()
+  await selectRailMode(page, 'files')
   await expect(page.locator('.tree-row.file', { hasText: 'entrypoint.sh' })).toBeVisible()
   await expect(page.locator('.tree-row.file', { hasText: 'session-only.txt' })).toHaveCount(0)
 
@@ -228,8 +235,11 @@ test('a local container’s files open with no session tab at all', async ({ pag
     localDockerContainers: [LOCAL],
     filesByDir: { '/': [fileEntry('entrypoint.sh')] },
   })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await row(page, LOCAL.name).locator('.docker-name').click()
+  // The tree the click opened lives in the Files panel, which is its own mode now.
+  await selectRailMode(page, 'files')
 
   // The Files panel used to be a session-only section; a local container's tree needs
   // nothing but the CLI, so it now appears over an empty workspace.
@@ -247,8 +257,12 @@ test('a local container’s files open with no session tab at all', async ({ pag
 
   // The row is a toggle, and with no session behind it closing the target has to take
   // the section away — otherwise an empty panel with nothing left to browse stays open.
+  // The row lives in the Containers mode; the panel it closes lives in Files.
+  await selectRailMode(page, 'containers')
   await row(page, LOCAL.name).locator('.docker-name').click()
-  await expect(page.locator('.file-panel')).toHaveCount(0)
+  // With the target gone there is nothing left for Files to browse, so the rail
+  // drops the mode instead of leaving an empty panel open.
+  await expect(page.locator('.rail-item[data-mode="files"]')).toHaveCount(0)
 })
 
 test('a local container is analysed against the local daemon', async ({ page }) => {
@@ -280,6 +294,7 @@ test('a local container is analysed against the local daemon', async ({ page }) 
       analyzedAt: 1758000000000,
     },
   })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await row(page, LOCAL.name).click({ button: 'right' })
   await page.locator('.context-menu-item', { hasText: 'Analyze Container' }).click()
@@ -302,6 +317,7 @@ test('with no terminal tab open, View logs takes the main area as its own tab', 
     localDockerProbe: RUNNING,
     localDockerContainers: [LOCAL],
   })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await row(page, LOCAL.name).click({ button: 'right' })
   await page.locator('.context-menu-item', { hasText: 'View Logs' }).click()
@@ -334,6 +350,8 @@ test('an installed CLI with no daemon offers one retry, and it lifts when the da
     localDockerProbeAfterRefresh: RUNNING,
     localDockerContainers: [LOCAL],
   })
+  // The retry line belongs to the Containers mode, like the group it stands in for.
+  await selectRailMode(page, 'containers')
   const retry = page.locator('.docker-local-retry')
   await expect(retry).toBeVisible()
   await expect(retry).toContainText('Local Docker daemon not running')
@@ -345,6 +363,7 @@ test('an installed CLI with no daemon offers one retry, and it lifts when the da
   // The group is there now but still collapsed, which is how it ships.
   await expect(dockerGroup(page)).toBeVisible()
   await expect(row(page, LOCAL.name)).toBeHidden()
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await expect(row(page, LOCAL.name)).toBeVisible()
 })
@@ -360,6 +379,7 @@ test('the container list follows the interface font size', async ({ page }) => {
     // that body text (`.dlv-output`) is what has to track the scale.
     dockerLogsByContainer: { [LOCAL.name]: '2026-09-28T10:00:00Z INFO boot\nready' },
   })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await expect(row(page, LOCAL.name)).toBeVisible()
   // `--fs-ui` ships at 12.5px, so the name (`--fs-sm`) computes to 12px.
@@ -374,6 +394,7 @@ test('the container list follows the interface font size', async ({ page }) => {
     localStorage.setItem('wrolp-docker-follow', '0')
   })
   await page.reload()
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await expect(row(page, LOCAL.name)).toBeVisible()
   expect(Number.parseFloat(await sizeOf('.docker-name'))).toBeCloseTo(14.5, 0)
@@ -401,6 +422,7 @@ test('a podman daemon is labelled as podman, not silently called docker', async 
     },
     localDockerContainers: [LOCAL],
   })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   await expect(dockerGroup(page).locator('.cnt')).toHaveText(`1 · podman 5.2.0`)
   await expect(row(page, LOCAL.name)).toBeVisible()
@@ -420,6 +442,7 @@ test('the container row is a card, and its active marker is a short inset bar', 
   page,
 }) => {
   await boot(page, { localDockerProbe: RUNNING, localDockerContainers: [LOCAL] })
+  await selectRailMode(page, 'containers')
   await expandSection(page, 'Docker')
   const r = row(page, LOCAL.name)
   await expect(r).toBeVisible()

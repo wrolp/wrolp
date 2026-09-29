@@ -23,6 +23,9 @@ async function boot(page: Page, layout?: string) {
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await installTauriMock(page, { connections: CONNS, layout })
   await page.goto('/')
+  // The shortcuts below are app-level listeners, so the app has to be mounted
+  // before a key press can reach them — `goto` resolving is not that moment.
+  await expect(page.locator('.titlebar')).toBeVisible()
 }
 
 const toggle = (page: Page) => page.getByRole('button', { name: /^(Open|Close) inspector$/ })
@@ -121,7 +124,16 @@ test('dragging the column edge changes only the inspector width', async ({ page 
   expect(after!.x + after!.width).toBeCloseTo(1440, 0)
 })
 
-test('the drawer no longer offers the tabs the inspector took', async ({ page }) => {
+test('the drawer keeps its own tabs; analysis and Docker stay in the inspector', async ({
+  page,
+}) => {
   await boot(page, JSON.stringify({ bottomPanel: { visible: true, pos: 'bottom', size: 200 } }))
-  await expect(page.locator('.bottom-panel-tabs .tab-btn')).toHaveText(['Sessions', 'Command Sets'])
+  // Analysis and Docker are the inspector's tabs, so the drawer must not grow
+  // copies of them. The transfer queue is the one it added in v8-P4 — it has no
+  // home anywhere else now that the rows outlive the file panel.
+  await expect(page.locator('.bottom-panel-tabs .tab-btn')).toHaveText([
+    'Sessions',
+    'Command Sets',
+    'Transfer Queue',
+  ])
 })

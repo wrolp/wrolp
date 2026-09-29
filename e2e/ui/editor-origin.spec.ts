@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock } from './helpers/tauriMock'
 
 // Which terminal an open file came from. The same path can be open from two hosts at
@@ -37,6 +38,7 @@ async function openFile(page: Page) {
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await page.locator('.tree-row.file', { hasText: 'notes.txt' }).click()
   await expect(page.locator('.monaco-editor')).toBeVisible()
 }

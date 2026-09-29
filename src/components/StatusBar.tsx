@@ -50,6 +50,7 @@ export function StatusBar({
 
   return (
     <div className="status-bar">
+      {/* Left: what the window is connected to, and how big the grid is. */}
       <div className="status-bar-left">
         {!tab && <span className="status-item dim">{t('noActiveConnection')}</span>}
         {tab?.tabType === 'settings' && (
@@ -67,7 +68,7 @@ export function StatusBar({
             {/* `host` already folds in the port (`10.0.1.22:22`) or the serial port
                 name, which is why there is no separate port read-out here. */}
             {target.host && target.host !== target.connectionName && (
-              <span className="status-item dim">
+              <span className="status-item mono dim">
                 <span>{target.host}</span>
               </span>
             )}
@@ -80,22 +81,20 @@ export function StatusBar({
             </span>
           </span>
         )}
+      </div>
+
+      {/* Right: the two things that ask for attention — an active recording and
+          an available update. */}
+      <div className="status-bar-right">
         {recording && (
           <span className="status-item">
             <span className="dot rec" />
             <span>{t('statusRecording')}</span>
           </span>
         )}
-      </div>
-      <div className="status-bar-right">
         {update && (
-          <>
-            <button
-              type="button"
-              className="status-item upd"
-              onClick={onDownloadUpdate}
-              disabled={update.state !== 'idle'}
-            >
+          <span className="status-item update-pill">
+            <button type="button" onClick={onDownloadUpdate} disabled={update.state !== 'idle'}>
               <span>
                 v{update.version}{' '}
                 {update.state === 'downloading'
@@ -107,13 +106,14 @@ export function StatusBar({
             </button>
             <button
               type="button"
-              className="status-item"
+              className="update-dismiss"
               onClick={onDismissUpdate}
               title={t('close')}
+              aria-label={t('close')}
             >
-              <Icon name="x" size={12} />
+              <Icon name="x" size={11} />
             </button>
-          </>
+          </span>
         )}
       </div>
     </div>

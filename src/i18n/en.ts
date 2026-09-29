@@ -40,6 +40,46 @@ const en = {
   clearSearch: 'Clear search',
   navNoMatches: 'No match for “{query}”',
 
+  // Activity rail + the mode panel it drives (v8 shell)
+  railNav: 'Main navigation',
+  railHosts: 'Hosts',
+  railFiles: 'Files',
+  railContainers: 'Containers',
+  railSessions: 'Sessions',
+  railNetTools: 'Network tools',
+
+  // Command palette (Ctrl+K)
+  commandPalette: 'Command palette',
+  commandPalettePlaceholder: 'Search connections, hosts, commands, files…',
+  paletteGroupCommands: 'Commands',
+  paletteGroupActions: 'Actions',
+  paletteRunInTerminal: 'Run in the current terminal',
+  paletteEmpty: 'No matches',
+  paletteHintNav: 'Navigate',
+  paletteHintRun: 'Run',
+  paletteOpenCommandList: 'Open command list',
+  paletteNewConnection: 'New SSH connection',
+  paletteScanNetwork: 'Scan network',
+  paletteOpenSettings: 'Open settings',
+  paletteOpenAi: 'Open AI chat',
+  paletteOpenDualPane: 'Open dual-pane file transfer',
+  paletteOpenDualPaneSub: 'Local ↔ remote',
+
+  // Welcome page (shown while no tab is open)
+  welcomeTitle: 'Wrolp Terminal',
+  welcomeSub: 'SSH, Telnet, serial and local shells — in one window',
+  welcomeNewConn: 'New SSH connection',
+  welcomeLocalTerm: 'Open local terminal',
+  welcomeRecentHosts: 'Saved hosts',
+  welcomeNoHosts: 'No saved hosts yet',
+  welcomeSftp: 'File transfer',
+  welcomeSftpDesc: 'Browse the remote filesystem and transfer files over SFTP',
+  welcomeNetTools: 'Network tools',
+  welcomeNetToolsDesc: 'Serve this folder over FTP, HTTP or TFTP',
+  welcomeCmdList: 'Command list',
+  welcomeCmdListDesc: 'Saved command snippets, one click from the terminal',
+  welcomeScan: 'Scan network',
+
   // Titlebar
   titlebarSettings: 'Settings',
   titlebarAi: 'AI Chat',
@@ -228,6 +268,27 @@ const en = {
   analysis: 'Analysis',
   docker: 'Docker',
   dockerLocalUnavailable: 'Local Docker daemon not running — click to retry',
+  // Drawer transfer queue (v8-P4). The queue outlives the file panel, so it
+  // gets its own tab instead of living inside one.
+  transferQueue: 'Transfer Queue',
+  transfersAll: 'All',
+  transfersDone: 'Done',
+  clearFinished: 'Clear finished',
+  removeFromList: 'Remove from the list',
+  pauseTransfers: 'Pause transfers',
+  resumeTransfers: 'Resume transfers',
+  noTransfers: 'No transfers yet — upload or download from the file panel.',
+  transferSummary: '{active} active · {done} done · {failed} failed · {total} total',
+  paused: 'Paused',
+  // Dual-pane file transfer (v8-P5).
+  dualPane: 'Dual pane',
+  dualPaneTitle: 'Dual-pane file transfer',
+  closeDualPane: 'Close the dual-pane view',
+  dualPaneLocal: 'Local',
+  dualPaneRemote: 'Remote',
+  uploadSelected: 'Upload the selection to the other pane',
+  downloadSelected: 'Download the selection to the other pane',
+  dualPaneNothingSelected: 'Select files in the source pane first',
   selectAll: 'Select All',
   askAiSelectedText: 'Ask AI (selected text)',
   askAiAllLogs: 'Ask AI (all logs)',
@@ -718,8 +779,6 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   paste: 'Paste',
   closeTerminal: 'Close Terminal',
   closeTab: 'Close tab',
-  showSidebar: 'Show sidebar',
-  hideSidebar: 'Hide sidebar',
   shellTerminal: 'Terminal',
   // The per-pane button docks an AI pane beside *that* terminal, so the label
   // says "dock" — "AI Chat" alone would read as the inspector's global tab.

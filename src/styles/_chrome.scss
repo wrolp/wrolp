@@ -91,6 +91,120 @@
   }
 }
 
+// ===== v8 three-column titlebar =====
+//
+// The bar used to be `logo … [auto] … actions` with the workspace pill riding on
+// the right. v8 puts the brand + workspace on the left, the command-palette
+// trigger in the middle (the window's one "go somewhere / do something" entry
+// point), and actions + window controls on the right.
+.tb-left,
+.tb-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  min-width: 0;
+  -webkit-app-region: no-drag;
+}
+
+// The right group holds the window controls, which never give way. The left one
+// carries the brand and the workspace pill, and it is the pill that must be able
+// to: keeping `flex-shrink: 0` here would push the close button off the edge of
+// a narrow window instead.
+.tb-right {
+  flex-shrink: 0;
+}
+
+.tb-left {
+  padding-left: 4px;
+  flex-shrink: 1;
+
+  .titlebar-title {
+    // `margin-right: auto` above was for the old two-column row; here the centre
+    // column owns the free space instead.
+    margin-right: 0;
+    gap: 8px;
+  }
+}
+
+.tb-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  // The trigger is a button, and the region behind it has to stay draggable.
+  -webkit-app-region: no-drag;
+}
+
+.tb-right {
+  gap: 6px;
+  padding-right: 0;
+}
+
+.brand-name {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: $text-primary;
+  white-space: nowrap;
+}
+
+// A hairline between groups — v8's `.vdiv`, 1px on a 16px stem.
+.vdiv {
+  width: 1px;
+  height: 16px;
+  background: $border;
+  flex-shrink: 0;
+}
+
+// The palette trigger: a sunken input-like strip that never looks like text the
+// user typed into, hence `--text-dim` rather than `--text-secondary`.
+.cmd-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(420px, 100%);
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: $bg-input;
+  color: $text-dim;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
+
+  &:hover {
+    border-color: $border-focus;
+    color: $text-secondary;
+  }
+
+  .cmd-ph {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  kbd {
+    flex-shrink: 0;
+    height: 18px;
+    padding: 0 6px;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    background: $bg-tertiary;
+    color: $text-muted;
+    font-family: inherit;
+    font-size: var(--fs-xs);
+    line-height: 16px;
+  }
+}
+
 // The five action buttons are 20px glyphs in a 44px-wide band, so their hit area is
 // the glyph box; the radius lives on the base rule (it used to appear only with the
 // hover background, which drew a rounded wash over a square hover).

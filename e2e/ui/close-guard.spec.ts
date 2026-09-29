@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock } from './helpers/tauriMock'
 
 // Closing a terminal / pane that still has open files must ask first, so an
@@ -40,6 +41,7 @@ async function openFileInEditor(page: Page) {
   await page.goto('/')
   await expect(page.locator('.connection-item')).toBeVisible()
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await expect(page.locator('.term-pane')).toHaveCount(1)
 
   // The file panel lists the mock file; a plain click opens it as its own tab.

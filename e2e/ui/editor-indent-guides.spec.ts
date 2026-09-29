@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock } from './helpers/tauriMock'
 
 // BUGS.md B38 — indent-guide alignment guard.
@@ -41,6 +42,7 @@ async function openXml(page: Page, content: string) {
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await page.locator('.tree-row.file', { hasText: 'a.xml' }).click()
   await expect(page.locator('.monaco-editor')).toBeVisible()
   await expect(page.locator('.tree-row.file', { hasText: 'a.xml' })).toBeVisible()

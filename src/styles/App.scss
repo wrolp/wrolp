@@ -26,6 +26,7 @@
 @use 'cards'; // settings shared card styles
 @use 'commands'; // floating command list, variable/param editors, fill dialog
 @use 'netscan'; // network scan dialog
+@use 'shell'; // v8 shell: activity rail, mode column, Ctrl+K palette
 
 // Primitives the redesign is built from, and the accessibility baseline. These
 // come after the area partials deliberately: `.btn.pri` must be able to override

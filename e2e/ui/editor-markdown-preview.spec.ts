@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock } from './helpers/tauriMock'
 
 // Markdown preview in the file editor (task/plans/markdown-preview-plan.md).
@@ -61,6 +62,7 @@ async function openFile(page: Page, name: string, path: string, content: string)
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await page.locator('.tree-row.file', { hasText: name }).click()
   await expect(page.locator('.tab-item', { hasText: name })).toHaveCount(1)
   await expect(page.locator('.monaco-editor')).toBeVisible()

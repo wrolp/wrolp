@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock } from './helpers/tauriMock'
 import { contrastRatio, type Rgb } from '../../src/components/terminal/sgrContrast'
 
@@ -53,6 +54,7 @@ async function openEditor(page: Page, theme: 'dark' | 'light') {
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
   await expect(page.locator('.term-pane')).toHaveCount(1)
   const file = page.locator('.tree-row.file', { hasText: FILE_NAME })
   await expect(file).toBeVisible()

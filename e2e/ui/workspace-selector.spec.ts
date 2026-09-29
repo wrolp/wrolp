@@ -39,8 +39,13 @@ test('the switcher lives in the titlebar, so hiding the sidebar keeps it', async
   await installTauriMock(page, { workspaces: WORKSPACES })
   await page.goto('/')
 
-  await expect(page.locator('.titlebar-actions .workspace-selector')).toBeVisible()
-  await page.getByRole('button', { name: 'Hide sidebar' }).click()
+  // `.titlebar`, not the old `.titlebar-actions` wrapper: the bar is three
+  // columns now (brand / palette trigger / actions) and the switcher rides in
+  // the last of them.
+  await expect(page.locator('.titlebar .workspace-selector')).toBeVisible()
+  // The tab-bar toggle is gone; the rail folds the column (active mode = off).
+  await page.locator('.rail-item[data-mode="hosts"]').click()
+  await expect(page.locator('.sidebar-container.mode-panel')).toBeHidden()
   await expect(page.locator('.workspace-selector-trigger')).toBeVisible()
 })
 

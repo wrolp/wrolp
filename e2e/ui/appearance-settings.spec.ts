@@ -201,13 +201,13 @@ test('density is written to <html> and to storage from the segment', async ({ pa
 })
 
 test('density moves the columns a user never dragged…', async ({ page }) => {
-  // Seeded on the compact defaults (v5's `--sidebar-w` is 250), which is exactly what
-  // marks a column as never dragged.
-  await boot(page, {}, JSON.stringify({ sidebar: { width: 250 }, inspector: { width: 308 } }))
+  // Seeded on the compact defaults (v8's mode column is 264), which is exactly
+  // what marks a column as never dragged.
+  await boot(page, {}, JSON.stringify({ sidebar: { width: 264 }, inspector: { width: 308 } }))
   await openAppearance(page)
   await page.getByRole('button', { name: 'Comfy' }).click()
   await expect.poll(async () => (await lastLayout(page))?.inspector.width).toBe(344)
-  expect((await lastLayout(page))?.sidebar.width).toBe(266)
+  expect((await lastLayout(page))?.sidebar.width).toBe(280)
 })
 
 test('…and leaves the one they did alone', async ({ page }) => {

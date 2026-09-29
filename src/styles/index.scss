@@ -70,50 +70,26 @@ body,
 }
 
 // ==================== Network file tools (FTP/HTTP/TFTP) ====================
-.nt-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 4000;
-}
+//
+// One of the rail's modes, so this is a ~264px column and not the 900px dialog
+// it used to be: the tab strip wraps onto as many rows as it needs, and a field
+// stacks its label over its input instead of putting the two side by side.
 
-.nt-dialog {
-  width: min(900px, calc(100vw - 96px));
-  height: min(660px, calc(100vh - 120px));
+.nt-panel {
   display: flex;
   flex-direction: column;
-  background: $bg-primary;
-  border: 1px solid $border;
-  border-radius: 8px;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
-}
-
-.nt-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  border-bottom: 1px solid $border;
-  background: $bg-sidebar;
-  flex: none;
-}
-
-.nt-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: $text-primary;
-  white-space: nowrap;
+  flex: 1;
+  min-height: 0;
 }
 
 .nt-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  flex: 1;
-  overflow-x: auto;
+  flex: none;
+  padding: 6px 8px;
+  border-bottom: 1px solid $border;
+  background: $bg-sidebar;
 }
 
 .nt-tab {
@@ -121,7 +97,7 @@ body,
   border: none;
   color: $text-secondary;
   font-size: 12.5px;
-  padding: 5px 12px;
+  padding: 4px 8px;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
@@ -136,29 +112,14 @@ body,
   }
 }
 
-.nt-close {
-  background: transparent;
-  border: none;
-  color: $text-secondary;
-  font-size: 16px;
-  line-height: 1;
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
-  cursor: pointer;
-  &:hover {
-    background: var(--danger-solid);
-    color: #fff;
-  }
-}
-
 .nt-body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 14px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .nt-card {
@@ -182,16 +143,17 @@ body,
 }
 
 .nt-field {
+  // Label above the control: a 150px label column left nothing for the input
+  // in a 264px mode column.
   display: grid;
-  grid-template-columns: minmax(150px, 190px) 1fr;
-  gap: 8px;
-  align-items: center;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  align-items: start;
   font-size: 12.5px;
   color: $text-secondary;
 }
 
 .nt-field.check {
-  grid-template-columns: 1fr;
   padding-left: 2px;
   label {
     display: flex;

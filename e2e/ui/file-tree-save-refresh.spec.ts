@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './helpers/fixtures'
+import { selectRailMode } from './helpers/sections'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
 // Regression for BUGS.md B36 — "保存文件整个目录刷新, 只应局部刷新".
@@ -67,6 +68,7 @@ async function openFileWithExpandedDir(page: Page) {
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
 
   const dir = page.locator('.tree-row.dir', { hasText: 'sub' })
   await expect(dir).toBeVisible()

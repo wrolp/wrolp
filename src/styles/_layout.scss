@@ -61,15 +61,18 @@ $font-sizes: (
 );
 
 // ---- Chrome bands ----
-// The full-width horizontal bands of the window, at the values the approved
-// `task/designs/v5-refined-workspace.html` draws (`--titlebar-h: 38`, `.tabbar: 36`,
-// `--statusbar-h: 25`). Column widths and the nav/inspector/drawer bands join this
-// list when their region lands — a dimension token with no reader is the same
-// mistake as a colour token with none.
+// The full-width horizontal bands of the window. v5 drew 38 / 36 / 25; v8
+// (`task/designs/wrolp-redesign-v8/colors_and_type.css`) sets 42 / 38 / 26 and
+// adds the two vertical bands the new shell introduced — the 52px activity rail
+// and the 264px mode panel it drives. Every key below has a reader in the shell
+// partial / the component that owns the band; a dimension token with no reader
+// is the same mistake as a colour token with none.
 $dims: (
-  h-titlebar: 38px,
-  h-tabbar: 36px,
-  h-statusbar: 25px,
+  h-titlebar: 42px,
+  h-tabbar: 38px,
+  h-statusbar: 26px,
+  w-rail: 52px,
+  w-modepanel: 264px,
 );
 
 // `themeStore` writes one of these to `<html data-density>`. `'default'` and
@@ -80,9 +83,11 @@ $dims: (
 // because the point of the density knob is "give me more air".)
 $densities: (
   comfy: (
-    h-titlebar: 44px,
-    h-tabbar: 42px,
-    h-statusbar: 29px,
+    h-titlebar: 48px,
+    h-tabbar: 44px,
+    h-statusbar: 32px,
+    w-rail: 60px,
+    w-modepanel: 280px,
   ),
 );
 
