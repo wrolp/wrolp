@@ -1704,7 +1704,11 @@ body.resizing-v .term-scrollbar-thumb {
     }
 
     .term-cd-suggest-icon {
-      opacity: 0.9;
+      // The stroke glyph inherits the row's text colour, which reads as one more
+      // neutral label — so give it the directory blue the name beside it uses
+      // (the same colour `ls` paints a directory). `opacity` went out with the
+      // 📁 emoji it used to dim.
+      color: var(--dir-fg);
     }
 
     .term-cd-suggest-name {

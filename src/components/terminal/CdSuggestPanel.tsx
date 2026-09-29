@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef } from 'react'
 import { useI18n } from '../../i18n'
+import { Icon } from '../Icon'
 import type { CdCandidate } from './cdSuggest'
 
 /** Where the panel hangs: the caret cell, already translated to viewport px. */
@@ -109,7 +110,11 @@ export function CdSuggestPanel({
             onMouseEnter={() => onHover(i)}
             onClick={() => onPick(i)}
           >
-            <span className="term-cd-suggest-icon">📁</span>
+            {/* The linear folder from the shared icon set, not the 📁 emoji: an
+                emoji is a full-colour glyph that ignores the theme and its
+                outline weight does not match the 2px stroke every other icon in
+                the app is drawn with. */}
+            <Icon name="folder" size={12} className="term-cd-suggest-icon" />
             <span className="term-cd-suggest-name">{item.name}</span>
             <span className="term-cd-suggest-path">{item.fullPath}</span>
           </div>
