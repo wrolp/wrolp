@@ -36,7 +36,7 @@
 - 🤖 **AI assistant** with tool-calling agent mode, multimodal input, and encrypted API-key storage
 - 🗄️ **Portable data folder** — move all app data anywhere and monitor / shrink `wrolp.db` from Settings
 - 🪟 **Floating panes & split layout** — split the terminal area any way you like and pop panes out into independent floating windows
-- 🪟 **Polished UX** — custom titlebar, tray icon, window geometry persistence, auto-updater
+- 🪟 **Polished UX** — custom titlebar, window geometry persistence, auto-updater
 
 ## 📸 Screenshots
 
@@ -167,7 +167,7 @@
 ### Window & shell integration
 
 - Custom titlebar (window `decorations: false`); window geometry/opacity persisted (`window.json`).
-- Show/hide on close, tray icon, auto-updater (GitHub release endpoint — set a real `pubkey` in `tauri.conf.json` before shipping).
+- Auto-updater (GitHub release endpoint — set a real `pubkey` in `tauri.conf.json` before shipping).
 - Persistent connection configs (`connections.json`, encrypted — it also stores workspaces) and SQLite DB (`wrolp.db`, WAL mode) under the OS config dir + `wrolp-terminal/`.
 
 ## System Dependencies
@@ -290,7 +290,11 @@ E2E_PORT=1430 yarn test:e2e
 
 ## License
 
-Released under the [MIT License](./LICENSE). See [LICENSE](./LICENSE) for details.
+Released under the [MIT License](./LICENSE) (Copyright (c) 2026 Wrolp). In short:
+
+- You may freely use, copy, modify, merge, publish, distribute, sublicense and sell copies of this software, including for commercial purposes.
+- The copyright notice and this license notice must be included in all copies or substantial portions of the software.
+- The software is provided "as is", without warranty of any kind, express or implied; the authors or copyright holders are not liable for any claim, damages or other liability.
 
 ## Acknowledgements
 

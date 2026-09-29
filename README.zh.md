@@ -36,7 +36,7 @@
 - 🤖 **AI 助手** — 支持工具调用 Agent 模式、多模态输入，API Key 加密存储
 - 🗄️ **可迁移的数据目录** — 全部数据可搬到任意位置，并可在设置中查看 / 瘦身 `wrolp.db`
 - 🪟 **浮动窗口与分栏布局** — 自由分割终端区域，并将面板弹出为独立浮动窗口
-- 🪟 **精致体验** — 自定义标题栏、托盘图标、窗口状态记忆、自动更新
+- 🪟 **精致体验** — 自定义标题栏、窗口状态记忆、自动更新
 
 ## 📸 截图
 
@@ -167,7 +167,7 @@
 ### 窗口与系统集成
 
 - 自定义标题栏（窗口 `decorations: false`）；窗口位置 / 尺寸 / 透明度持久化（`window.json`）。
-- 关闭时隐藏、系统托盘图标、自动更新（GitHub Release 端点 —— 发布前需在 `tauri.conf.json` 中设置真实 `pubkey`）。
+- 自动更新（GitHub Release 端点 —— 发布前需在 `tauri.conf.json` 中设置真实 `pubkey`）。
 - 持久化的连接配置（`connections.json`，已加密 —— 同时保存工作区）与 SQLite 数据库（`wrolp.db`，WAL 模式）存放在 OS 配置目录下的 `wrolp-terminal/`。
 
 ## 系统依赖
@@ -287,6 +287,14 @@ E2E_PORT=1430 yarn test:e2e
 - 与 Rust 共享的类型在 Rust 侧使用 `#[serde(rename_all = "camelCase")]`，并在 `src/types.ts` 中使用对应的 camelCase 接口。
 - 前端格式由 Prettier 强制约束（`.prettierrc`：singleQuote、no semi、printWidth 100）—— 运行 `yarn format`。
 - 后端命令按职责拆分在 `src-tauri/src/commands/` 下的子模块中（如 `serial.rs`）；新增命令还要在 `src-tauri/src/lib.rs` 的 `generate_handler!` 列表中注册，前端包装函数放在 `src/commands.ts`。
+
+## 许可证
+
+本项目基于 [MIT 许可证](./LICENSE) 发布（Copyright (c) 2026 Wrolp），详见 [LICENSE](./LICENSE)。简要说明：
+
+- 允许自由使用、复制、修改、合并、发布、分发、再授权和销售本软件的副本，包括用于商业目的。
+- 在所有副本或重要部分中必须保留版权声明与本许可证声明。
+- 本软件按「原样」提供，不含任何明示或暗示的担保；作者或版权持有人不对任何索赔、损害或其他责任负责。
 
 ## 致谢
 
