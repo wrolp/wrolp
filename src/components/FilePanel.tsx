@@ -1623,13 +1623,39 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   }
 
   /* ---- header actions ---- */
+
+  // The directory actually on screen, which is not always what `currentPath`
+  // says: a local panel opened at "" only ever holds the empty string (the
+  // backend resolves it to the user's home), so the path is recovered from the
+  // listing itself — every entry of "" comes back absolute, and their parent is
+  // that directory. `onBrowseChange` above already does exactly this to name a
+  // transfer destination.
+  const browsePath =
+    currentPath.length > 0
+      ? normalizePath(currentPath)
+      : (() => {
+          const first = tree.find((n) => n.path.includes('/'))
+          return first ? normalizePath(getParentDir(first.path)) : ''
+        })()
+
+  // Where "up" leads, or `null` when there is nowhere to go: the panel's own
+  // root, "/" and home ("." — the shell resolves it), and a Windows drive root,
+  // whose parent is itself. Derived rather than computed inside the handler so
+  // the button can be dimmed for the same reasons it does nothing.
+  const upTarget = (() => {
+    if (!browsePath) return null
+    // Compare against the *displayed* path: a local panel's root is "" while it
+    // is really sitting in the user's home, and comparing those two strings is
+    // what left the local pane's up button permanently dead.
+    if (normalizePath(rootPath) === browsePath) return null
+    if (currentPath === '/' || currentPath === '.') return null
+    const parent = normalizePath(getParentDir(browsePath))
+    return parent === browsePath ? null : parent
+  })()
+
   const navigateUp = () => {
-    if (currentPath === rootPath) return
-    if (currentPath === '/' || currentPath === '.') return
-    const parent = normalizePath(getParentDir(currentPath))
-    // Windows drive root (e.g. "D:/") has no parent — stay put.
-    if (parent === currentPath) return
-    loadRootDir(parent, true)
+    if (!upTarget) return
+    loadRootDir(upTarget, true)
   }
   const setRoot = (path: string) => {
     const p = normalizePath(path)
@@ -1843,7 +1869,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     ))
   }
 
-  const pathDisplay = currentPath === '.' ? '~ (home)' : currentPath
+  // The local pane's `currentPath` is the empty string (see `browsePath`), and an
+  // empty path bar next to a live up button explains neither where you are nor
+  // where "up" goes — so show the directory recovered from the listing.
+  const pathDisplay = currentPath === '.' ? '~ (home)' : currentPath || browsePath
 
   return (
     <div
@@ -2114,8 +2143,8 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               </span>
             )}
             <span
-              className={`file-path-up${currentPath === rootPath ? ' disabled' : ''}`}
-              onClick={currentPath === rootPath ? undefined : navigateUp}
+              className={`file-path-up${upTarget ? '' : ' disabled'}`}
+              onClick={upTarget ? navigateUp : undefined}
               title={t('parentDir')}
             >
               <Icon name="arrowUp" />

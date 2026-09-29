@@ -142,6 +142,28 @@ test('the down arrow downloads the remote selection into the local directory', a
   await expect(page.locator('.dq-row')).toHaveCount(1)
 })
 
+// The local pane opens at "" — the empty path the backend resolves to the user's
+// home — so `currentPath` and `rootPath` are both "" and comparing them (the old
+// rule for "is there anywhere to go up to") said "no" on every screen. Up has to
+// take its bearing from the listing instead: every entry of "" comes back
+// absolute, and their parent is the directory on screen.
+test('the local pane can go up although its path is the empty string', async ({ page }) => {
+  await boot(page)
+  await openDualPane(page)
+
+  const localPane = page.locator('.dual-side').nth(0)
+  const up = localPane.locator('.file-path-up')
+  await expect(up).not.toHaveClass(/disabled/)
+  await up.click()
+
+  // One entry at "C:/work/deploy.ps1" puts the pane in "C:/work", so up asks for
+  // its parent — the drive root. The point of the case is that it asks for
+  // anything at all: before, the button was dimmed and dead on this screen.
+  const list = (await invokedCalls(page)).filter((c) => c.cmd === 'target_list_files').pop()
+  expect(list).toBeTruthy()
+  expect(String(list!.args.path)).toBe('C:/')
+})
+
 test('closing the view leaves the queue alone', async ({ page }) => {
   await boot(page)
   await openDualPane(page)
