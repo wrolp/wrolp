@@ -1083,3 +1083,120 @@ pub fn vacuum(conn: &Connection, db_path: &Path) -> Result<(u64, u64), String> {
   let after = file_len(db_path) + file_len(&wal_path(db_path));
   Ok((before, after))
 }
+
+// ==================== Command history ====================
+
+/// How many commands the persisted history keeps. Older rows are dropped on write.
+pub const COMMAND_HISTORY_KEEP: i64 = 300;
+
+/// One entry of the persisted (cross-tab, cross-restart) command history, shown in
+/// the terminal pane's 历史 dropdown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandHistoryDto {
+  pub command: String,
+  /// Where it was run: `terminal` / `localShell` / `serial` / `telnet`.
+  pub tab_type: String,
+  /// Host or local-terminal label, empty when the session has no host.
+  pub host: String,
+  pub used_at_ms: i64,
+}
+
+/// Record a submitted command. Re-running it refreshes the existing row (the
+/// `UNIQUE` on the text) so the list stays newest-first without duplicates, then
+/// trims to the newest [`COMMAND_HISTORY_KEEP`].
+pub fn record_command(
+  conn: &Connection,
+  command: &str,
+  tab_type: &str,
+  host: &str,
+  used_at_ms: i64,
+) -> Result<(), String> {
+  conn
+    .execute(
+      "INSERT INTO command_history (command, tab_type, host, used_at_ms) \
+       VALUES (?1, ?2, ?3, ?4) \
+       ON CONFLICT(command) DO UPDATE SET tab_type = ?2, host = ?3, used_at_ms = ?4",
+      params![command, tab_type, host, used_at_ms],
+    )
+    .map_err(|e| e.to_string())?;
+  conn
+    .execute(
+      "DELETE FROM command_history WHERE id NOT IN \
+       (SELECT id FROM command_history ORDER BY used_at_ms DESC LIMIT ?1)",
+      params![COMMAND_HISTORY_KEEP],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// The persisted history, newest first.
+pub fn list_commands(conn: &Connection, limit: i64) -> Result<Vec<CommandHistoryDto>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT command, tab_type, host, used_at_ms FROM command_history \
+       ORDER BY used_at_ms DESC LIMIT ?1",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map(params![limit], |row| {
+      Ok(CommandHistoryDto {
+        command: row.get(0)?,
+        tab_type: row.get(1)?,
+        host: row.get(2)?,
+        used_at_ms: row.get(3)?,
+      })
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+#[cfg(test)]
+mod command_history_tests {
+  use super::*;
+
+  fn conn_with_schema() -> Connection {
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    conn
+      .execute_batch(include_str!("schema.sql"))
+      .expect("create schema");
+    conn
+  }
+
+  #[test]
+  fn re_running_a_command_moves_it_up_instead_of_duplicating() {
+    let conn = conn_with_schema();
+    record_command(&conn, "ls", "localShell", "cmd", 1).unwrap();
+    record_command(&conn, "pwd", "localShell", "cmd", 2).unwrap();
+    record_command(&conn, "ls", "terminal", "demo.local", 3).unwrap();
+
+    let list = list_commands(&conn, 10).unwrap();
+    assert_eq!(
+        vec![("ls", "terminal", "demo.local"), ("pwd", "localShell", "cmd")],
+        list.iter()
+          .map(|e| (e.command.as_str(), e.tab_type.as_str(), e.host.as_str()))
+          .collect::<Vec<_>>()
+      );
+  }
+
+  #[test]
+  fn the_table_is_trimmed_to_the_newest_rows() {
+    let conn = conn_with_schema();
+    for i in 0..(COMMAND_HISTORY_KEEP + 25) {
+      record_command(&conn, &format!("cmd-{i}"), "terminal", "", i).unwrap();
+    }
+    let list = list_commands(&conn, COMMAND_HISTORY_KEEP + 25).unwrap();
+    assert_eq!(list.len() as i64, COMMAND_HISTORY_KEEP);
+    assert_eq!(list.first().unwrap().command, format!("cmd-{}", COMMAND_HISTORY_KEEP + 24));
+  }
+
+  #[test]
+  fn limit_caps_the_result() {
+    let conn = conn_with_schema();
+    record_command(&conn, "a", "terminal", "", 1).unwrap();
+    record_command(&conn, "b", "terminal", "", 2).unwrap();
+    assert_eq!(list_commands(&conn, 1).unwrap().len(), 1);
+  }
+}

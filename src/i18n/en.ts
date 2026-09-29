@@ -449,8 +449,10 @@ const en = {
   termLineNumbers: 'Line numbers',
   termCmdHistory: 'History',
   termCmdHistoryTitle:
-    'Commands run in this terminal, newest first. Picking one puts it on the input line without running it.',
-  termCmdHistoryEmpty: 'No commands yet in this terminal',
+    'Commands run in this terminal, plus the saved history of every terminal. ↑/↓ walk the list, Enter puts one on the input line WITHOUT running it, Esc closes. Ctrl+Shift+H opens it for the focused terminal.',
+  termCmdHistoryEmpty: 'No commands yet',
+  termCmdHistoryCurrent: 'This terminal',
+  termCmdHistoryGlobal: 'All terminals',
   // Same as above. There is no “General” settings pane any more — the
   // wrapped-line marker is picked on the Terminal pane.
   termLineNumbersTitle:

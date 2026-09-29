@@ -116,6 +116,8 @@ import {
   listTunnels,
   startTunnel,
   removeTunnel,
+  recordCommandHistory,
+  listCommandHistory,
 } from './commands'
 import type {
   AppVersion,
@@ -132,6 +134,7 @@ import type {
   DockerProbe,
   DockerAnalysisTarget,
   SessionSummary,
+  CommandHistoryEntry,
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
@@ -500,45 +503,89 @@ function PaneAppearanceToggle({
   )
 }
 
-/** The pane's command-history dropdown: a status-bar button that opens a list of
- *  what has been run in that shell, newest first. Picking one puts it on the input
- *  line through the paste pipeline (inserted, NOT executed) — the same route the
- *  command list uses, so bracketed paste / quoted-insert keep working. */
+/** One row of the history dropdown. `from` is the host / terminal a global entry
+ *  came from, shown so a cross-tab pick is not a guess. */
+interface HistoryRow {
+  command: string
+  scope: 'tab' | 'global'
+  from: string
+}
+
+/** The pane's command-history dropdown: a status-bar button listing what has been
+ *  run here (session) and, below it, what has been run in any terminal (persisted).
+ *  Picking a row puts it on the input line through the paste pipeline — inserted,
+ *  NOT executed — the same route the command list uses, so bracketed paste and
+ *  quoted-insert keep working. ↑/↓ walk it while it is open; plain ↑/↓ stay with
+ *  the shell, whose own readline / PSReadLine recall must not be hijacked. */
 function PaneCommandHistory({
-  items,
+  tabItems,
+  globalItems,
   open,
   onOpenChange,
   onPick,
   label,
   title,
   emptyLabel,
+  tabLabel,
+  globalLabel,
 }: {
-  items: string[]
+  tabItems: string[]
+  globalItems: CommandHistoryEntry[]
   open: boolean
   onOpenChange: (open: boolean) => void
   onPick: (command: string) => void
   label: string
   title: string
   emptyLabel: string
+  tabLabel: string
+  globalLabel: string
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const rowRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const [active, setActive] = useState(0)
+
+  const rows: HistoryRow[] = [
+    ...tabItems.map((command) => ({ command, scope: 'tab' as const, from: '' })),
+    // A command already listed for this terminal appears once.
+    ...globalItems
+      .filter((e) => !tabItems.includes(e.command))
+      .map((e) => ({ command: e.command, scope: 'global' as const, from: e.host || e.tabType })),
+  ]
+
   useEffect(() => {
     if (!open) return
+    setActive(0)
+    listRef.current?.focus()
     // Capture phase: xterm takes focus on its own mousedown, so listening after it
     // would miss the click that lands outside the list.
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) onOpenChange(false)
     }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onOpenChange(false)
-    }
     document.addEventListener('mousedown', onDown, true)
-    document.addEventListener('keydown', onKey, true)
-    return () => {
-      document.removeEventListener('mousedown', onDown, true)
-      document.removeEventListener('keydown', onKey, true)
-    }
+    return () => document.removeEventListener('mousedown', onDown, true)
   }, [open, onOpenChange])
+
+  useEffect(() => {
+    if (open) rowRefs.current[active]?.scrollIntoView({ block: 'nearest' })
+  }, [active, open])
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActive((a) => Math.min(a + 1, rows.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActive((a) => Math.max(a - 1, 0))
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      const row = rows[active]
+      if (row) onPick(row.command)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onOpenChange(false)
+    }
+  }
 
   return (
     <div className="tsb-history" ref={rootRef}>
@@ -555,25 +602,41 @@ function PaneCommandHistory({
         {label}
       </button>
       {open && (
-        <div className="tsb-history-list" role="listbox">
-          {items.length === 0 ? (
-            <div className="tsb-history-empty">{emptyLabel}</div>
-          ) : (
-            items.map((cmd) => (
+        <div
+          className="tsb-history-list"
+          ref={listRef}
+          role="listbox"
+          tabIndex={-1}
+          onKeyDown={onKeyDown}
+        >
+          {rows.length === 0 && <div className="tsb-history-empty">{emptyLabel}</div>}
+          {rows.map((row, i) => (
+            <React.Fragment key={`${row.scope}:${row.command}`}>
+              {(i === 0 || rows[i - 1].scope !== row.scope) && (
+                <div className="tsb-history-group">
+                  {row.scope === 'tab' ? tabLabel : globalLabel}
+                </div>
+              )}
               <button
-                key={cmd}
                 type="button"
                 role="option"
-                aria-selected={false}
+                aria-selected={i === active}
+                data-active={i === active || undefined}
+                ref={(el) => {
+                  rowRefs.current[i] = el
+                }}
                 className="tsb-history-item"
-                title={cmd}
+                title={row.from ? `${row.command} — ${row.from}` : row.command}
+                // Keep the list focused so the arrows keep working; the pick below
+                // hands focus back to the terminal.
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => onPick(cmd)}
+                onClick={() => onPick(row.command)}
               >
-                {cmd}
+                <span className="tsb-history-cmd">{row.command}</span>
+                {row.from && <span className="tsb-history-from">{row.from}</span>}
               </button>
-            ))
-          )}
+            </React.Fragment>
+          ))}
         </div>
       )}
     </div>
@@ -1542,16 +1605,49 @@ export default function App() {
   // Which pane's history dropdown is open — one at a time, and only its own button
   // closes it (see `PaneCommandHistory`).
   const [historyOpenLeaf, setHistoryOpenLeaf] = useState<string | null>(null)
+  // The persisted, cross-tab history (SQLite `command_history`), loaded once at
+  // boot and then updated optimistically as commands are recorded. The ref is what
+  // `rememberCommand` reads — it runs inside the terminal's callback and must not
+  // see a stale closure.
+  const [globalCmdHistory, setGlobalCmdHistory] = useState<CommandHistoryEntry[]>([])
+  const globalCmdHistoryRef = useRef<CommandHistoryEntry[]>([])
 
-  const rememberCommand = useCallback((tabId: number, command: string) => {
-    const cmd = command.trim()
-    if (!cmd) return
-    setCmdHistoryByTab((prev) => {
-      // Re-running a command moves it to the top rather than adding a duplicate —
-      // the list is a picker, and two identical rows are noise.
-      const rest = (prev[tabId] ?? []).filter((c) => c !== cmd)
-      return { ...prev, [tabId]: [cmd, ...rest].slice(0, 50) }
-    })
+  const rememberCommand = useCallback(
+    (tabId: number, command: string, tabType: string, host: string) => {
+      const cmd = command.trim()
+      if (!cmd) return
+      setCmdHistoryByTab((prev) => {
+        // Re-running a command moves it to the top rather than adding a duplicate —
+        // the list is a picker, and two identical rows are noise.
+        const rest = (prev[tabId] ?? []).filter((c) => c !== cmd)
+        return { ...prev, [tabId]: [cmd, ...rest].slice(0, 50) }
+      })
+      // Same rule in the persisted list: refresh the entry, never append a copy.
+      const next = [
+        { command: cmd, tabType, host, usedAtMs: Date.now() },
+        ...globalCmdHistoryRef.current.filter((e) => e.command !== cmd),
+      ].slice(0, 300)
+      globalCmdHistoryRef.current = next
+      setGlobalCmdHistory(next)
+      void recordCommandHistory(cmd, tabType, host).catch((err) =>
+        console.error('record_command_history failed:', err),
+      )
+    },
+    [],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    listCommandHistory()
+      .then((rows) => {
+        if (cancelled) return
+        globalCmdHistoryRef.current = rows
+        setGlobalCmdHistory(rows)
+      })
+      .catch((err) => console.error('list_command_history failed:', err))
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -2577,6 +2673,21 @@ export default function App() {
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [])
+
+  // Ctrl+Shift+H opens the focused pane's command-history dropdown. Plain ↑/↓ are
+  // deliberately NOT bound: they belong to the shell's own recall (readline /
+  // PSReadLine / cmd), and hijacking them would take that away.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'H' || e.key === 'h')) {
+        if (!focusedLeafTabId) return
+        e.preventDefault()
+        setHistoryOpenLeaf((prev) => (prev === focusedLeafId ? null : focusedLeafId))
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [focusedLeafId, focusedLeafTabId])
 
   // Ctrl+K toggles the command palette — the shell's single "go somewhere / do
   // something" entry point, which is why the titlebar carries only its trigger.
@@ -4966,7 +5077,9 @@ export default function App() {
               onSizeChange={(cols, rows) => {
                 if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
               }}
-              onCommandSubmitted={(command) => rememberCommand(tab.tabId, command)}
+              onCommandSubmitted={(command) =>
+                rememberCommand(tab.tabId, command, tab.tabType ?? '', tab.host ?? '')
+              }
               onAskAi={(selectedText) => {
                 handleOpenAiChat(selectedText)
               }}
@@ -6591,7 +6704,8 @@ export default function App() {
               <div className="tsb-right">
                 {leaf.tabId != null && (
                   <PaneCommandHistory
-                    items={cmdHistoryByTab[leaf.tabId] ?? []}
+                    tabItems={cmdHistoryByTab[leaf.tabId] ?? []}
+                    globalItems={globalCmdHistory}
                     open={historyOpenLeaf === leaf.id}
                     onOpenChange={(open) => setHistoryOpenLeaf(open ? leaf.id : null)}
                     onPick={(cmd) => {
@@ -6602,6 +6716,8 @@ export default function App() {
                     label={`⌃ ${t('termCmdHistory')}`}
                     title={t('termCmdHistoryTitle')}
                     emptyLabel={t('termCmdHistoryEmpty')}
+                    tabLabel={t('termCmdHistoryCurrent')}
+                    globalLabel={t('termCmdHistoryGlobal')}
                   />
                 )}
                 {leaf.tabId != null && (

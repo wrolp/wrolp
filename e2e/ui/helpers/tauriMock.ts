@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import type { CommandHistoryEntry } from '../../../src/types'
 
 /**
  * Minimal shape of a `ConnectionConfig` as far as the UI renders it
@@ -55,6 +56,8 @@ export interface TauriMockOptions {
   fileContent?: Record<string, unknown>
   /** Value returned by `list_docker_containers` (the sidebar Docker section). */
   dockerContainers?: unknown[]
+  /** Rows returned by `list_command_history` (the pane's 历史 dropdown). */
+  commandHistory?: CommandHistoryEntry[]
   /**
    * Shape returned by `probe_local_docker`. Omitted, the mock reports "no Docker on this
    * machine at all", which keeps the 「本机 Docker」 group hidden — specs that do not care
@@ -257,6 +260,12 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_hidden_builtin_templates':
           case 'list_ai_models':
             return []
+          // The persisted command history. The backend answers newest-first with
+          // the newest 300, so a spec that cares about order supplies its own rows.
+          case 'list_command_history':
+            return opts.commandHistory ?? []
+          case 'record_command_history':
+            return null
           // The transfer rows of the net tools. A `null` here used to be fine
           // because the panel only rendered inside a modal no spec opened; as a
           // rail mode it is reachable, and the panels read `rows.length` — so

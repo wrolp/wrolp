@@ -91,3 +91,18 @@ CREATE TABLE IF NOT EXISTS ai_prompt_templates (
 CREATE TABLE IF NOT EXISTS ai_hidden_builtin_templates (
   key TEXT PRIMARY KEY
 );
+
+-- Commands the user submitted, for the terminal pane's 历史 dropdown. The
+-- per-terminal list is session state in the frontend; this table is the cross-tab,
+-- cross-restart one. Re-running a command refreshes its row (UNIQUE on the text)
+-- instead of adding a duplicate, and the table is trimmed to the newest rows.
+CREATE TABLE IF NOT EXISTS command_history (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  command    TEXT NOT NULL UNIQUE,
+  tab_type   TEXT NOT NULL DEFAULT '',
+  host       TEXT NOT NULL DEFAULT '',
+  used_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_command_history_used
+  ON command_history (used_at_ms DESC);

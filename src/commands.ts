@@ -6,6 +6,7 @@ import type {
   SessionEventDto,
   CommandSetDto,
   CommandSnippetDto,
+  CommandHistoryEntry,
   GlobalVariable,
   AiPromptTemplate,
   FileContent,
@@ -595,6 +596,21 @@ export async function exportSessionCast(
 
 export async function commitCommand(tabId: number, command: string): Promise<boolean> {
   return await invoke<boolean>('commit_command', { tabId, command })
+}
+
+/** Add a submitted command to the persisted (cross-tab) history. Re-running it
+ *  moves it to the top; the backend keeps the newest 300. */
+export async function recordCommandHistory(
+  command: string,
+  tabType?: string,
+  host?: string,
+): Promise<void> {
+  await invoke('record_command_history', { command, tabType, host })
+}
+
+/** The persisted history, newest first. */
+export async function listCommandHistory(limit?: number): Promise<CommandHistoryEntry[]> {
+  return await invoke<CommandHistoryEntry[]>('list_command_history', { limit })
 }
 
 export async function readFileContent(

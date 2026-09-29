@@ -392,6 +392,12 @@
     z-index: 2100;
     user-select: none;
 
+    // The list owns the keyboard while it is open (↑/↓/Enter/Esc), so it takes
+    // focus — but a ring around a popover would read as a second window.
+    &:focus-visible {
+      outline: none;
+    }
+
     &::-webkit-scrollbar {
       width: 6px;
     }
@@ -406,9 +412,20 @@
     }
   }
 
+  .tsb-history-group {
+    padding: 4px 8px 2px;
+    color: $text-secondary;
+    font-size: var(--fs-xs);
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+  }
+
   .tsb-history-item {
     // `text-primary` on the panel's own fill: the row declares both, so the
     // contrast gate sees it (a dim token here would not survive).
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
     color: $text-primary;
     background: transparent;
     border: 0;
@@ -422,10 +439,28 @@
     cursor: pointer;
 
     &:hover,
-    &:focus-visible {
+    &:focus-visible,
+    // The keyboard-selected row (↑/↓). Same fill as hover so the two agree.
+    &[data-active] {
       background: $bg-hover;
       outline: none;
     }
+  }
+
+  .tsb-history-cmd {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // Where a cross-terminal entry was run — secondary, not dim: it is the only
+  // thing telling the user the command did not come from this shell.
+  .tsb-history-from {
+    flex: 0 0 auto;
+    color: $text-secondary;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.85;
   }
 
   .tsb-history-empty {

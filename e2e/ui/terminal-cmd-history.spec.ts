@@ -75,6 +75,17 @@ test('the dropdown lists what was run, newest first and without duplicates', asy
   await button(page).click()
   // Re-running `docker ps` moves it to the top instead of repeating it.
   await expect(items(page)).toHaveText(['docker ps', 'ls'])
+
+  // And each submission reached the persisted store, with where it came from
+  // (`TabInfo.host` carries the port, which is what the row shows).
+  const recorded = (await invokedCalls(page))
+    .filter((c) => c.cmd === 'record_command_history')
+    .map((c) => `${c.args.command}|${c.args.tabType}|${c.args.host}`)
+  expect(recorded).toEqual([
+    'docker ps|terminal|demo.local:22',
+    'ls|terminal|demo.local:22',
+    'docker ps|terminal|demo.local:22',
+  ])
 })
 
 test('picking an entry inserts it on the input line without running it', async ({ page }) => {
@@ -90,6 +101,54 @@ test('picking an entry inserts it on the input line without running it', async (
   const at = bytes.lastIndexOf('git status')
   expect(at).toBeGreaterThan(-1)
   expect(bytes.slice(at).filter((b) => b.includes('\r'))).toEqual([])
+})
+
+test('the saved history of every terminal shows below this terminal’s own', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    pollOutputChunks: [[PROMPT]],
+    commandHistory: [
+      { command: 'df -h', tabType: 'terminal', host: 'other.example', usedAtMs: 10 },
+      // Already run here, so it must appear once — in the top section.
+      { command: 'git status', tabType: 'terminal', host: 'other.example', usedAtMs: 20 },
+    ],
+  })
+  await page.goto('/')
+  await page.locator('.connection-item').first().click()
+  await expect(page.locator('.xterm-rows')).toContainText(PROMPT)
+  await installEcho(page)
+  await page.locator('.xterm-screen').click()
+  await run(page, 'git status')
+
+  await button(page).click()
+  await expect(page.locator('.tsb-history-group')).toHaveText(['This terminal', 'All terminals'])
+  await expect(items(page)).toHaveText(['git status', 'df -hother.example'])
+})
+
+test('the arrows walk the list and Enter picks, so the mouse stays optional', async ({ page }) => {
+  await openTerminal(page)
+  await run(page, 'ls -la')
+  await run(page, 'git status')
+
+  await button(page).click()
+  await expect(items(page).first()).toHaveAttribute('data-active', 'true')
+
+  await page.keyboard.press('ArrowDown')
+  await expect(items(page).first()).not.toHaveAttribute('data-active')
+  await expect(items(page).nth(1)).toHaveAttribute('data-active', 'true')
+
+  await page.keyboard.press('Enter')
+  const bytes = await sent(page)
+  expect(bytes.lastIndexOf('ls -la')).toBeGreaterThan(-1)
+  await expect(button(page)).toHaveAttribute('aria-expanded', 'false')
+})
+
+test('Ctrl+Shift+H opens the focused pane’s list', async ({ page }) => {
+  await openTerminal(page)
+  await run(page, 'uptime')
+  await page.keyboard.press('Control+Shift+h')
+  await expect(button(page)).toHaveAttribute('aria-expanded', 'true')
+  await expect(items(page)).toHaveText(['uptime'])
 })
 
 test('an untouched terminal says so, and clicking away closes the list', async ({ page }) => {

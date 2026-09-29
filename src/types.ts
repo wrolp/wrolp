@@ -231,6 +231,17 @@ export interface CommandSnippetDto {
   updatedAt: string
 }
 
+/** One entry of the persisted command history (the terminal pane's 历史
+ *  dropdown). Mirrors `db::CommandHistoryDto`, which keeps the newest 300. */
+export interface CommandHistoryEntry {
+  command: string
+  /** Where it was run: `terminal` / `localShell` / `serial` / `telnet`. */
+  tabType: string
+  /** Host or local-terminal label; empty when the session has no host. */
+  host: string
+  usedAtMs: number
+}
+
 /** A single global variable shared by all command-list snippets. Commands
  *  reference it as `${name}`. A non-empty `defaultValue` is substituted
  *  directly at send time; an empty one prompts the user to fill it in. */

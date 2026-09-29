@@ -426,8 +426,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   termLineNumbers: '行号',
   termCmdHistory: '历史',
   termCmdHistoryTitle:
-    '当前终端里执行过的命令，最近用的在最前。点一条只会把它放到输入行，不会自动执行。',
-  termCmdHistoryEmpty: '这个终端还没有执行过命令',
+    '当前终端执行过的命令，加上所有终端的已保存历史。↑/↓ 在列表里移动，回车把选中的命令放到输入行、不会自动执行，Esc 关闭。Ctrl+Shift+H 直接为聚焦的终端打开。',
+  termCmdHistoryEmpty: '还没有执行过命令',
+  termCmdHistoryCurrent: '当前终端',
+  termCmdHistoryGlobal: '全部终端',
   // 同上：这是开关自己的 tooltip。另外设置页早已不再有「通用」一栏，折行标记
   // 现在就在「终端」页里，所以路径也一并改掉。
   termLineNumbersTitle:
