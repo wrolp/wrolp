@@ -391,7 +391,10 @@
 
 .welcome-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  // `min(240px, 100%)`: a bare 240px floor would force three 240px tracks plus
+  // gaps to overflow a narrow window — the clipped third card. This keeps the
+  // floor while letting the whole row shrink below it.
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: 12px;
   width: 100%;
   max-width: 880px;
@@ -470,7 +473,13 @@
 }
 
 .wl-sub {
-  flex-shrink: 0;
+  // Shrinkable with an ellipsis, not `flex-shrink: 0`: the address is one long
+  // unbreakable token, and refusing to shrink made the card's min-content — and
+  // through it the whole welcome grid — wider than a narrow window.
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: $text-dim;
   font-family: $font-mono;
   font-size: var(--fs-xs);

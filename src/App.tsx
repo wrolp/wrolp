@@ -7566,6 +7566,11 @@ export default function App() {
                       display: 'flex',
                       flex: 1,
                       minHeight: 0,
+                      // `min-width: 0`: without it this flex item's automatic
+                      // minimum is the welcome page's min-content, and a narrow
+                      // window then clips the grid's right column instead of
+                      // letting it reflow.
+                      minWidth: 0,
                       flexDirection: 'column',
                     }}
                   >
