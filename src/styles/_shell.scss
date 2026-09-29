@@ -314,7 +314,9 @@
   padding: 1px 6px;
   border-radius: 999px;
   background: $bg-hover;
-  color: $text-muted;
+  // `--text-muted` was 4.36/4.31:1 on this hover fill (dark/light) — under AA for
+  // a label that is the only thing naming the row's state.
+  color: $text-secondary;
   font-size: var(--fs-xs);
 }
 
@@ -326,7 +328,9 @@
   padding: 0 12px;
   border-top: 1px solid $border;
   background: $bg-secondary;
-  color: $text-dim;
+  // Same reason as `.pal-state`: `--text-dim` on this surface is 3.22/2.78, and
+  // the foot holds the only keyboard hints in the palette.
+  color: $text-muted;
   font-size: var(--fs-xs);
 }
 

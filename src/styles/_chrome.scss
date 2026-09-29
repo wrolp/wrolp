@@ -159,7 +159,10 @@
 }
 
 // The palette trigger: a sunken input-like strip that never looks like text the
-// user typed into, hence `--text-dim` rather than `--text-secondary`.
+// user typed into. That read is carried by the sunken fill and the border, not by
+// the ink — `--text-dim` was only 3.38/3.04:1 on this strip (dark/light), so the
+// resting colour is `--text-muted` (5.50 / 5.03), and hovering still steps up to
+// `--text-secondary`.
 .cmd-trigger {
   display: flex;
   align-items: center;
@@ -170,7 +173,7 @@
   border: 1px solid $border;
   border-radius: var(--r-2);
   background: $bg-input;
-  color: $text-dim;
+  color: $text-muted;
   font-size: var(--fs-sm);
   cursor: pointer;
   transition:
