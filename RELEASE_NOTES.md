@@ -4,6 +4,55 @@
 
 ---
 
+## v0.0.9 — 2026-09-29
+
+Rebuilds the app shell around an activity rail, a single mode column and a Ctrl+K command palette, and completes the UI redesign — a reskin on new design tokens, a full appearance pane, settings split into one pane per theme, `cd` path suggestions in the terminal, a markdown preview in the editor, and Docker support for a local daemon.
+
+### Features
+
+- **New app shell** — the stacked sidebar sections become an activity rail on the left edge: one mode at a time (hosts, files, transfers, containers, net tools, …) parked in the mode column instead of several panels open at once
+- **Ctrl+K command palette** — one entry point for connections, commands, files, the dual-pane view, network scan and settings
+- **Welcome page** — with no tab open the main area now shows the ways back in: new SSH connection, local terminal, saved hosts, file transfer, network tools and the command list
+- **Dual-pane file view** (Ctrl+Shift+F) — two panes side by side for moving files between places
+- **App-wide transfer queue** — transfers no longer live inside the file panel; they are one queue shared with the drawer, so a transfer outlives the panel that started it
+- **Net tools docked** — the FTP / HTTP / TFTP tools are a mode in the mode column instead of a floating window
+- **Three-column titlebar and a status bar** — workspace selector, tab strip and window controls share one band; the bar at the bottom reports connection state, session details and updates
+- **Appearance settings** — accent colour picker, UI font size, density (compact / comfortable), motion (follow system / on / off), focus-visible ring and shape-based status indicators; display preferences apply instantly and are shared with the AI bridge
+- **Settings split into one pane per theme** — what used to be a single long "General" scroll is now Appearance / Terminal / Data / Docker / AI / About
+- **`cd` suggestions** — while the input line reads `cd <partial path>`, a dropdown under the caret lists that path's real subdirectories (read through the session itself — SFTP, local FS, docker exec, WSL); ↑↓ / Tab / Enter complete the name, and Enter inserts without running it
+- **Terminal line numbers** — an opt-in gutter on the left of the terminal, switchable per pane from the pane status bar or the context menu, with the global default in Settings → Terminal and a choice of wrapped-line continuation marker. It takes real width (the remote end sees a resize), and the labels blank out while a full-screen app owns the screen
+- **Tail room** — one viewport of scrollable blank space below the last line, so the last line can be scrolled to the top of the view; per-pane and global toggles, off by default
+- **Local command output highlighting** — a local shell's command output is highlighted like a remote one (ConPTY input-line repaints are now recognised), `ls` / `dir` listings are coloured by kind while keeping the shell's own colours, and a local prompt stays highlighted
+- **Markdown preview in the editor** — split preview for `.md` files, plus sticky-scroll and tail-room / word-wrap toggles, and a "scroll the tail to the top of the view" action
+- **Files know where they came from** — the editor toolbar and the tab tooltip name the terminal a file was opened from
+- **Docker: local daemon** — the Docker group follows the focused terminal, so a local daemon and a remote host can be used side by side; "Enter Shell" works on local containers too, each running in its own PTY
+- **Docker log viewer** — line numbers, and a copy action in the right-click menu that keeps the selection
+- **Command list: custom groups** — groups start collapsed and expand as you search; snippets can carry a description and be linked to one another
+- **Floating windows resize from every edge and corner** — including the command list, whose handles are now all grabbable
+
+### Fixes
+
+- Version numbers with a trailing `%` are no longer split, and the port / date rules no longer misfire on versions and `file:line`
+- A held `cwd` prefix no longer hides what you type
+- `clear` uses the shell's native clear for local shells
+- Keyboard focus stays in the terminal / editor instead of drifting to the shell chrome
+- Light theme: accent text is clamped to AA contrast, and the chat input no longer paints a focus colour
+- Docker: the "All" filter no longer collapses the panel, and the log viewer remounts per tab so it shows the right container's logs
+- Saving a file refreshes only that file's directory
+- Closing a file tab keeps the pane's view in sync
+- The welcome page's card grid reflows in a narrow window instead of clipping its right column
+- Dock seams (sidebar, drawer, inspector) light up on hover and stay lit while being dragged — each seam has its own drag class, so resizing the inspector no longer lights the sidebar's divider
+- Setting hints that still pointed at "Settings → General" now name the pane they actually live on
+
+### Internal
+
+- ESLint configuration added
+- The Playwright suite reports frontend coverage
+- AI, analysis and command text sizes derive from the `--fs-*` UI font-size tokens
+- Per-section collapse switches dropped from the mode column; README updated for the new shell and the MIT license
+
+---
+
 ## v0.0.8 — 2026-09-13
 
 Adds a light theme with a decoupled terminal palette, configurable terminal output highlighting, multi-line paste protection, WSL local terminals and an AI appearance bridge — plus a long list of terminal rendering and SSH stability fixes.
