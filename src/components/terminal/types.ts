@@ -74,6 +74,10 @@ export interface TerminalComponentProps {
   /** Set the line numbers from the terminal's own context menu. */
   onSetLineNumbers?: (on: boolean) => void
   onSizeChange?: (cols: number, rows: number) => void
+  /** A command the user submitted (Enter on a non-empty line). The pane owns the
+   *  command history it shows in its status-bar dropdown, so this is reported up
+   *  rather than kept here — a floating/docked re-mount must not lose it. */
+  onCommandSubmitted?: (command: string) => void
   onAskAi?: (selectedText: string) => void
   /** Save the selected text as a command snippet (floating command list). */
   onAddCommandSnippet?: (text: string) => void

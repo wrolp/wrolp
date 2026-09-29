@@ -220,6 +220,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   lineNumbersOverride,
   onSetLineNumbers,
   onSizeChange,
+  onCommandSubmitted,
   onAskAi,
   onAddCommandSnippet,
   onOpenFile,
@@ -246,6 +247,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const connectConfigRef = useRef(connectConfig)
   const onStatusChangeRef = useRef(onStatusChange)
   const onSizeChangeRef = useRef(onSizeChange)
+  const onCommandSubmittedRef = useRef(onCommandSubmitted)
   const onOpenFileRef = useRef(onOpenFile)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // rAF retry counter for the initial fit-wait loop (capped to avoid a 60 fps
@@ -1590,6 +1592,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     localDistroRef.current = localDistro
     onStatusChangeRef.current = onStatusChange
     onSizeChangeRef.current = onSizeChange
+    onCommandSubmittedRef.current = onCommandSubmitted
     onOpenFileRef.current = onOpenFile
   })
 
@@ -2366,6 +2369,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             // show a *relative* cwd, so we keep the real (absolute) cwd here for `ls`
             // link resolution. SSH is seeded from $HOME on the first `cd`.
             if (command) {
+              // Feed the pane's command-history dropdown (the pane owns the list,
+              // so a float-out / dock-back re-mount keeps it).
+              onCommandSubmittedRef.current?.(command)
               // Session-boundary commands switch the shell context: entering a
               // nested session (docker exec shell / interactive ssh) or leaving
               // one (exit/logout) makes the tracked cwd stale — it describes the

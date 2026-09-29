@@ -447,6 +447,10 @@ const en = {
   termTailRoomHelp:
     'New terminals start with it off; click “Tail room” in a terminal pane’s status bar to turn it on for that one.',
   termLineNumbers: 'Line numbers',
+  termCmdHistory: 'History',
+  termCmdHistoryTitle:
+    'Commands run in this terminal, newest first. Picking one puts it on the input line without running it.',
+  termCmdHistoryEmpty: 'No commands yet in this terminal',
   // Same as above. There is no “General” settings pane any more — the
   // wrapped-line marker is picked on the Terminal pane.
   termLineNumbersTitle:

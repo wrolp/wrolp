@@ -364,6 +364,77 @@
     }
   }
 
+  // Command-history dropdown. The list opens upward from the foot, so it stays
+  // inside the pane (which clips with `overflow: hidden`) — no portal needed.
+  .tsb-history {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .tsb-history-list {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 6px);
+    display: flex;
+    flex-direction: column;
+    min-width: 220px;
+    // Capped in vh as well as px: a short pane clips its own foot.
+    max-width: min(560px, 90vw);
+    max-height: min(240px, 40vh);
+    overflow-y: auto;
+    padding: 2px 0;
+    background: rgba($bg-secondary, 0.96);
+    border: 1px solid rgba($border, 0.8);
+    border-radius: var(--r-1);
+    box-shadow: 0 4px 14px var(--shadow-1);
+    color: $text-primary;
+    font-size: var(--fs-xs);
+    z-index: 2100;
+    user-select: none;
+
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-thumb);
+      border-radius: var(--r-pill);
+    }
+  }
+
+  .tsb-history-item {
+    // `text-primary` on the panel's own fill: the row declares both, so the
+    // contrast gate sees it (a dim token here would not survive).
+    color: $text-primary;
+    background: transparent;
+    border: 0;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: var(--fs-xs);
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      background: $bg-hover;
+      outline: none;
+    }
+  }
+
+  .tsb-history-empty {
+    // The one row that is not actionable, so it may sit a step down — on its own
+    // declared fill, which keeps the gate able to grade it.
+    padding: 4px 8px;
+    color: var(--text-secondary);
+  }
+
   .tsb-dot {
     width: 8px;
     height: 8px;

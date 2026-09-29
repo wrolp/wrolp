@@ -424,6 +424,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
     '在最后一行下方留出一个视口高度的可滚动空白：滚到底时最后一行能停在视口顶部。点一下即为当前终端单独开启 / 关闭。',
   termTailRoomHelp: '新终端默认关闭；想单独开启某个终端，就点它底部状态栏里的「末尾留白」。',
   termLineNumbers: '行号',
+  termCmdHistory: '历史',
+  termCmdHistoryTitle:
+    '当前终端里执行过的命令，最近用的在最前。点一条只会把它放到输入行，不会自动执行。',
+  termCmdHistoryEmpty: '这个终端还没有执行过命令',
   // 同上：这是开关自己的 tooltip。另外设置页早已不再有「通用」一栏，折行标记
   // 现在就在「终端」页里，所以路径也一并改掉。
   termLineNumbersTitle:

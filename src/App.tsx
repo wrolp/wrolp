@@ -500,6 +500,86 @@ function PaneAppearanceToggle({
   )
 }
 
+/** The pane's command-history dropdown: a status-bar button that opens a list of
+ *  what has been run in that shell, newest first. Picking one puts it on the input
+ *  line through the paste pipeline (inserted, NOT executed) — the same route the
+ *  command list uses, so bracketed paste / quoted-insert keep working. */
+function PaneCommandHistory({
+  items,
+  open,
+  onOpenChange,
+  onPick,
+  label,
+  title,
+  emptyLabel,
+}: {
+  items: string[]
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onPick: (command: string) => void
+  label: string
+  title: string
+  emptyLabel: string
+}) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    // Capture phase: xterm takes focus on its own mousedown, so listening after it
+    // would miss the click that lands outside the list.
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) onOpenChange(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onOpenChange(false)
+    }
+    document.addEventListener('mousedown', onDown, true)
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown, true)
+      document.removeEventListener('keydown', onKey, true)
+    }
+  }, [open, onOpenChange])
+
+  return (
+    <div className="tsb-history" ref={rootRef}>
+      <button
+        type="button"
+        className="tsb-toggle"
+        data-setting="terminal.commandHistory"
+        aria-expanded={open}
+        title={title}
+        // Keep xterm focused: the point is to pick a command and carry on typing.
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => onOpenChange(!open)}
+      >
+        {label}
+      </button>
+      {open && (
+        <div className="tsb-history-list" role="listbox">
+          {items.length === 0 ? (
+            <div className="tsb-history-empty">{emptyLabel}</div>
+          ) : (
+            items.map((cmd) => (
+              <button
+                key={cmd}
+                type="button"
+                role="option"
+                aria-selected={false}
+                className="tsb-history-item"
+                title={cmd}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onPick(cmd)}
+              >
+                {cmd}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Settings → Terminal: the global default of one of the terminal's display behaviours
  *  (tail room / line numbers). The per-terminal switches are in the pane status bar;
  *  both go through the appearance registry so the AI bridge and every open terminal
@@ -1454,6 +1534,25 @@ export default function App() {
   // Line numbers (行号) per pane: same override model as the tail room — the pane's
   // status bar owns the switch, `terminal.lineNumbers` is the global default (OFF).
   const [lineNumbersByPane, setLineNumbersByPane] = useState<Record<string, boolean>>({})
+
+  // Commands the user has submitted, newest first, per TAB. The terminal reports
+  // each submission (it knows the line only at Enter); the pane's status bar shows
+  // the list. Keyed by tab, not leaf, so floating a pane out and back keeps it.
+  const [cmdHistoryByTab, setCmdHistoryByTab] = useState<Record<number, string[]>>({})
+  // Which pane's history dropdown is open — one at a time, and only its own button
+  // closes it (see `PaneCommandHistory`).
+  const [historyOpenLeaf, setHistoryOpenLeaf] = useState<string | null>(null)
+
+  const rememberCommand = useCallback((tabId: number, command: string) => {
+    const cmd = command.trim()
+    if (!cmd) return
+    setCmdHistoryByTab((prev) => {
+      // Re-running a command moves it to the top rather than adding a duplicate —
+      // the list is a picker, and two identical rows are noise.
+      const rest = (prev[tabId] ?? []).filter((c) => c !== cmd)
+      return { ...prev, [tabId]: [cmd, ...rest].slice(0, 50) }
+    })
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Terminal split layout (Phase 2). The tree is ephemeral (tabIds are
@@ -4867,6 +4966,7 @@ export default function App() {
               onSizeChange={(cols, rows) => {
                 if (leafId) setTermSizes((prev) => ({ ...prev, [leafId]: { cols, rows } }))
               }}
+              onCommandSubmitted={(command) => rememberCommand(tab.tabId, command)}
               onAskAi={(selectedText) => {
                 handleOpenAiChat(selectedText)
               }}
@@ -6489,6 +6589,21 @@ export default function App() {
                 />
               </div>
               <div className="tsb-right">
+                {leaf.tabId != null && (
+                  <PaneCommandHistory
+                    items={cmdHistoryByTab[leaf.tabId] ?? []}
+                    open={historyOpenLeaf === leaf.id}
+                    onOpenChange={(open) => setHistoryOpenLeaf(open ? leaf.id : null)}
+                    onPick={(cmd) => {
+                      pasteToTerminal(leaf.tabId as number, cmd)
+                      focusTerminal(leaf.tabId as number)
+                      setHistoryOpenLeaf(null)
+                    }}
+                    label={`⌃ ${t('termCmdHistory')}`}
+                    title={t('termCmdHistoryTitle')}
+                    emptyLabel={t('termCmdHistoryEmpty')}
+                  />
+                )}
                 {leaf.tabId != null && (
                   <PaneAppearanceToggle
                     settingKey="terminal.tailRoom"
