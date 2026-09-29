@@ -439,13 +439,18 @@ const en = {
   maxScrollbackLines: 'Max Scrollback Lines',
   appliesToNewTabs: 'Applies to new tabs.',
   termTailRoom: 'Tail room',
+  // Tooltip on the switch itself (the pane status-bar button and the context-menu
+  // item), so it must not point at "the switch in the pane status bar" — that is
+  // the control being hovered.
   termTailRoomTitle:
-    'Leave one viewport of scrollable blank space below the last line, so the last line can be scrolled to the top of the view. The switch lives in the pane status bar at the bottom of the terminal.',
+    'Leave one viewport of scrollable blank space below the last line, so the last line can be scrolled to the top of the view. Click to switch it for this terminal only.',
   termTailRoomHelp:
     'New terminals start with it off; click “Tail room” in a terminal pane’s status bar to turn it on for that one.',
   termLineNumbers: 'Line numbers',
+  // Same as above. There is no “General” settings pane any more — the
+  // wrapped-line marker is picked on the Terminal pane.
   termLineNumbersTitle:
-    'Show a line-number gutter on the left of the terminal (it takes real width, so the terminal gets fewer columns and the other end sees a resize). A wrapped line numbers its first row only — its continuation rows carry the wrapped-line marker (pick the marker in Settings → General → Terminal). The labels go blank while a full-screen app (vim / less / top) owns the screen. The switch lives in the pane status bar at the bottom.',
+    'Show a line-number gutter on the left of the terminal (it takes real width, so the terminal gets fewer columns and the other end sees a resize). A wrapped line numbers its first row only — its continuation rows carry the wrapped-line marker (pick it on the Terminal settings pane). The labels go blank while a full-screen app (vim / less / top) owns the screen. Click to switch it for this terminal only.',
   termLineNumbersHelp:
     'New terminals start with it off; click “Line numbers” in a terminal pane’s status bar to turn it on for that one.',
   termContinuationSymbol: 'Wrapped-line marker',
@@ -485,6 +490,11 @@ const en = {
     'Wrolp Terminal — an SSH terminal and server-ops tool. Build and repository information:',
   openConfigDir: 'Open config folder',
   language: 'Language',
+  // Help for the language select itself. It used to read `settingsAppearance`
+  // (“Application appearance and update preferences”) — a whole-page blurb from
+  // before the settings split into panes, which said nothing about languages.
+  uiLanguageHelp:
+    'Interface language — applies immediately. Text arriving from the remote end is unaffected.',
   // Settings: terminal output highlight (pattern highlighting)
   highlightOutput: 'Terminal Output Highlight',
   highlightOutputDesc:
@@ -1120,7 +1130,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   pasteDialogContinuation:
     'Insert will add or fix a trailing `\\` on {count} line(s) so the block runs as a single command after Enter; "execute line by line" sends it unchanged.',
 
-  // Settings → General: AI appearance / system-config access
+  // Settings → AI: AI appearance / system-config access (the “General” pane is gone)
   aiAppearanceTitle: 'AI appearance & settings',
   aiAppearanceDesc:
     'Let the AI assistant read and change display settings (theme, terminal font & colours, highlight scheme, language). Changes apply immediately and can be undone. The AI can never touch credentials, API keys or the data directory.',

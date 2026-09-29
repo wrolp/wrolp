@@ -310,7 +310,7 @@ function PaneTabsStrip({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** Settings → General card for the multi-line paste guard (see B20). */
+/** Settings → Terminal card for the multi-line paste guard (see B20). */
 function PasteGuardSettingsCard({
   cfg,
   onSave,
@@ -426,7 +426,7 @@ interface PendingTerminalClose {
   dirtyKeys: string[]
 }
 
-/** Settings → General card: confirm before closing a terminal with open files. */
+/** Settings → Terminal card: confirm before closing a terminal with open files. */
 function CloseGuardSettingsCard({
   enabled,
   onToggle,
@@ -461,7 +461,7 @@ function CloseGuardSettingsCard({
 /** Per-terminal switch for the pane's status bar (tail room / line numbers). The
  *  effective value is "pane override ?? global setting"; clicking pins the opposite for
  *  this pane only. `settingKey` is also the `data-setting` the e2e specs locate the
- *  switch by. The global defaults live in Settings → General (`TerminalToggleSetting`). */
+ *  switch by. The global defaults live in Settings → Terminal (`TerminalToggleSetting`). */
 function PaneAppearanceToggle({
   settingKey,
   label,
@@ -500,7 +500,7 @@ function PaneAppearanceToggle({
   )
 }
 
-/** Settings → General: the global default of one of the terminal's display behaviours
+/** Settings → Terminal: the global default of one of the terminal's display behaviours
  *  (tail room / line numbers). The per-terminal switches are in the pane status bar;
  *  both go through the appearance registry so the AI bridge and every open terminal
  *  share one read/write/subscribe path. */
@@ -536,7 +536,7 @@ function TerminalToggleSetting({
   )
 }
 
-/** Settings → General: what the line-number gutter draws on a wrapped line's
+/** Settings → Terminal: what the line-number gutter draws on a wrapped line's
  *  continuation rows (`terminal.continuationSymbol`, an id — the glyphs live in
  *  `components/terminal/lineNumbers.ts`). Same registry path as the toggles above, so
  *  the AI bridge can set it too (e.g. `{"terminal.continuationSymbol": "arrow"}`). */
@@ -587,7 +587,7 @@ function TerminalContinuationSetting() {
 }
 
 /**
- * Settings → General → 外观 (UI redesign P4). Everything on this card already worked —
+ * Settings → Appearance. Everything on this card already worked —
  * `themeStore` has applied an accent and a density since P0 — but nothing let a *user*
  * reach them, so the only way to change an accent was to ask the AI.
  *
@@ -791,7 +791,7 @@ function AppearanceSettingsCard({
   )
 }
 
-/** Settings → General card: let the AI read/change display + system settings.
+/** Settings → AI card: let the AI read/change display + system settings.
  *  See task/plans/AI-UI-CONFIG-PLAN.md. */
 function AiAppearanceSettingsCard() {
   const { t } = useI18n()
@@ -922,7 +922,7 @@ function AiAppearanceSettingsCard() {
   )
 }
 
-/** Settings → General card for terminal output category highlighting. */
+/** Settings → Terminal card for terminal output category highlighting. */
 function HighlightSettingsCard({
   cfg,
   onSave,
@@ -4991,7 +4991,7 @@ export default function App() {
                                 </option>
                               ))}
                             </select>
-                            <span className="settings-help">{t('settingsAppearance')}</span>
+                            <span className="settings-help">{t('uiLanguageHelp')}</span>
                           </div>
                         </div>
                       </div>

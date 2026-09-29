@@ -418,12 +418,16 @@ const zh: Partial<Record<TranslationKey, string>> = {
   maxScrollbackLines: '最大回滚行数',
   appliesToNewTabs: '适用于新标签页。',
   termTailRoom: '末尾留白',
+  // 这段是开关自己的 tooltip（终端 pane 底部状态栏的按钮、以及右键菜单项），
+  // 所以不再写「开关在…状态栏里」——它指的就是正在悬停的这颗按钮。
   termTailRoomTitle:
-    '在最后一行下方留出一个视口高度的可滚动空白：滚到底时最后一行能停在视口顶部。开关在终端 pane 底部的状态栏里，点一下即可单独开启。',
+    '在最后一行下方留出一个视口高度的可滚动空白：滚到底时最后一行能停在视口顶部。点一下即为当前终端单独开启 / 关闭。',
   termTailRoomHelp: '新终端默认关闭；想单独开启某个终端，就点它底部状态栏里的「末尾留白」。',
   termLineNumbers: '行号',
+  // 同上：这是开关自己的 tooltip。另外设置页早已不再有「通用」一栏，折行标记
+  // 现在就在「终端」页里，所以路径也一并改掉。
   termLineNumbersTitle:
-    '在终端左侧显示行号列（真实占位，终端的列数会相应减少，远端会收到一次窗口变化）。折行只给逻辑行的首行编号，续行行显示折行标记（标记样式见设置 → 通用 → 终端）；全屏程序（vim / less / top）接管屏幕时行号留空。开关在终端 pane 底部的状态栏里，点一下即可单独开启。',
+    '在终端左侧显示行号列（真实占位，终端的列数会相应减少，远端会收到一次窗口变化）。折行只给逻辑行的首行编号，续行行显示折行标记（标记样式在设置 → 终端里改）；全屏程序（vim / less / top）接管屏幕时行号留空。点一下即为当前终端单独开启 / 关闭。',
   termLineNumbersHelp: '新终端默认关闭；想单独开启某个终端，就点它底部状态栏里的「行号」。',
   termContinuationSymbol: '折行续行标记',
   termContinuationReturn: '回车符（↵）',
@@ -459,6 +463,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aboutDesc: 'Wrolp Terminal — 面向运维的 SSH 终端与服务器管理工具。构建与仓库信息：',
   openConfigDir: '打开配置目录',
   language: '语言',
+  // 语言下拉自己的说明。之前这里挂的是 `settingsAppearance`（「应用外观与更新偏好设置」）
+  // —— 那是设置页还没拆成多个 pane 时的整页描述，放在语言这一行下面讲不通。
+  uiLanguageHelp: '界面文案的语言，切换后立即生效；不影响终端内远端输出的内容。',
   // Settings: terminal output highlight (pattern highlighting)
   highlightOutput: '终端输出高亮',
   highlightOutputDesc: '为终端输出中的 IP、URL、邮箱、数字、日期、路径等上色。',
@@ -1066,7 +1073,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   pasteDialogContinuation:
     '「插入不执行」会在 {count} 行的行尾补上或修正续行符 `\\`，使整块内容按回车后作为一条命令提交；选「逐行执行」则不改动内容。',
 
-  // 设置 → 通用：AI 修改外观 / 系统配置
+  // 设置 → AI：AI 修改外观 / 系统配置（设置页已无「通用」一栏）
   aiAppearanceTitle: 'AI 外观与系统配置',
   aiAppearanceDesc:
     '允许 AI 助手读取并修改显示类设置（主题、终端字体与配色、输出高亮方案、语言）。修改即时生效且可撤销。AI 永远不会接触凭据、API Key 或数据目录。',

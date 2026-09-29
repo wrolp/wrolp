@@ -352,7 +352,7 @@ const DEFS: SettingDef[] = [
     values: ['return', 'arrow', 'dash', 'none'],
     group: 'terminal',
     default: 'arrow',
-    // Only meaningful while `terminal.lineNumbers` is on (see Settings → General).
+    // Only meaningful while `terminal.lineNumbers` is on (see Settings → Terminal).
     // Stored as an id rather than the glyph itself so the AI-facing contract stays
     // plain ASCII: "return" (↵), "arrow" (↪), "dash" (-), "none" (blank).
     // ↪ by default (user's choice): ↵ reads as "Enter was pressed here", which is not
