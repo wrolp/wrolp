@@ -219,22 +219,16 @@
     white-space: nowrap;
   }
 
-  // Section headers double as the collapse control, which is the affordance the
-  // chevron shows; dimming them to `--text-dim` made them read as disabled.
+  // A section head is a label row: which panel owns the mode column is the rail's
+  // decision, so there is no fold switch left here to look interactive.
   &.sec {
     background: transparent;
     border-bottom-color: transparent;
-    cursor: pointer;
     // Same voice as the connection groups' header (`_chrome.scss`), which these
     // sit next to in the same column: secondary, not muted, and relative tracking
     // so the pair keeps its air when 界面字号 moves.
     color: $text-secondary;
     letter-spacing: 0.05em;
-
-    &:hover {
-      background: $bg-hover;
-      color: $text-primary;
-    }
 
     // The section voice is scoped to the title, *not* to the bar. A header also
     // carries hostnames, counts and toggle labels, and `text-transform: uppercase`
@@ -250,30 +244,14 @@
       // in a 260px nav column those compete for the same row. Without this the
       // title is the flex item that gives up first, and "FILES" disappears while
       // "web-01 (10.0.1.11:22)" stays — the label goes and the metadata survives.
-      flex-shrink: 0;
-    }
-
-    // The whole bar is the click target, but a div cannot carry `aria-expanded`,
-    // and the chevron span that used to be the only control was mouse-only. So
-    // the label+chevron are a real button covering the accessible part of the
-    // hit area, and the bar's own `onClick` widens it for the mouse.
-    //
-    // Do not add `min-width: 0` back. A flex item's *automatic* minimum size is
-    // what keeps this button at least as wide as its title, and `min-width: 0`
-    // opts out of it: with the opt-out a long host label in `.cnt` squeezed the
-    // toggle until the section title disappeared — "DOCKER" came out as "DOC…".
-    // `0` shrink says the same thing the other way round.
-    .panel-head-toggle {
-      display: flex;
-      align-items: center;
-      gap: var(--sp-1);
-      flex: 1 0 auto;
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: inherit;
-      font: inherit;
-      cursor: pointer;
+      //
+      // `0 0 auto` rather than the base `flex: 1`: a growing item with a zero
+      // basis may end up narrower than its own text, and with `min-width: 0`
+      // inherited from `.panel-title` nothing stops it — "DOCKER" clipped to
+      // "DOC…". The automatic right margin is what still pushes the metadata
+      // and controls over to the far edge, which growing used to do.
+      flex: 0 0 auto;
+      margin-right: auto;
     }
 
     // The count reads as metadata about the label, not as a second label, so it

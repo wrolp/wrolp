@@ -20,9 +20,17 @@ body.resize-v * {
 // A column's edge is a horizontal resize too, but the two-headed arrow reads as
 // "move something sideways" while the barred one says "this seam's width is what
 // changes" — that was the argument for giving the terminal↔inspector seam its own
-// class, and it was reversed on 2026-09-27: the inspector now uses `resize-h` like
-// the sidebar's divider. Only the right-docked drawer's seam still asks for the
-// barred glyph, so if that one is ever reverted too this class goes with it.
+// class, and it was reversed on 2026-09-27: the inspector asks for the plain
+// arrow like the sidebar's divider. It still gets its own class rather than
+// borrowing `resize-h`, because the seam *highlights* key off these classes and
+// sharing it lit the sidebar's divider while the inspector was being dragged.
+// Only the right-docked drawer's seam still asks for the barred glyph, so if that
+// one is ever reverted too this class goes with it.
+body.resize-inspector,
+body.resize-inspector * {
+  cursor: ew-resize !important;
+}
+
 body.resize-col,
 body.resize-col * {
   cursor: col-resize !important;

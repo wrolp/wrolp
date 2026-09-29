@@ -1,13 +1,11 @@
 import { test, expect } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
-import { expandSection } from './helpers/sections'
-import { selectRailMode } from './helpers/sections'
+import { selectRailMode, sectionHead } from './helpers/sections'
 
-// B49: clicking 「All」 in the Docker head collapsed the whole panel, so the filter could
-// never actually be used. The head *is* the collapse switch (`onClick={onToggleExpanded}`),
-// the label sits inside it, and unlike the refresh button next to it the label never held
-// its own click — so ticking the box bubbled up and folded the section away. The
-// checkbox's `onChange` was never involved.
+// B49 originally: clicking 「All」 in the Docker head collapsed the whole panel, because the
+// head *was* the collapse switch (`onClick={onToggleExpanded}`) and the label never held its
+// own click. The head is no longer clickable at all, so the bug has no gesture left to
+// happen in; what stays worth pinning is that the filter still drives the list.
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
 const PROMPT = 'root@demo:~# '
@@ -29,7 +27,7 @@ const WORKER = {
 const dockerRow = (page: import('@playwright/test').Page, name: string) =>
   page.locator('.docker-item').filter({ hasText: name })
 
-test('「All」 filters the list without collapsing the panel (B49)', async ({ page }) => {
+test('「All」 filters the list and leaves it on screen (B49)', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await installTauriMock(page, {
     connections: [DEMO_CONN],
@@ -39,30 +37,21 @@ test('「All」 filters the list without collapsing the panel (B49)', async ({ p
   await page.goto('/')
   await page.locator('.connection-item').first().click()
   await selectRailMode(page, 'containers')
-  await expandSection(page, 'Docker')
 
-  const head = page
-    .locator('.panel-head.sec')
-    .filter({ has: page.locator('.panel-title', { hasText: /^Docker$/ }) })
-  const toggle = head.locator('.panel-head-toggle')
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  const head = sectionHead(page, 'Docker')
   // Stopped containers are hidden until 「All」 says otherwise.
   await expect(dockerRow(page, API.name)).toBeVisible()
   await expect(dockerRow(page, WORKER.name)).toHaveCount(0)
 
   // Click the label — the exact gesture that used to fold the section away.
   await head.locator('.docker-filter-toggle').click()
-  await expect(toggle, 'the panel must stay open').toHaveAttribute('aria-expanded', 'true')
   await expect(head.locator('.docker-filter-toggle input')).toBeChecked()
   await expect(dockerRow(page, WORKER.name)).toBeVisible()
+  await expect(dockerRow(page, API.name)).toBeVisible()
 
   // And the box itself, which is the smaller target a user aims at.
   await head.locator('.docker-filter-toggle input').click()
-  await expect(toggle, 'the panel must stay open').toHaveAttribute('aria-expanded', 'true')
   await expect(head.locator('.docker-filter-toggle input')).not.toBeChecked()
   await expect(dockerRow(page, WORKER.name)).toHaveCount(0)
-
-  // The head is still a collapse switch for the click that means it.
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(dockerRow(page, API.name)).toBeVisible()
 })

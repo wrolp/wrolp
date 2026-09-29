@@ -18,8 +18,6 @@ interface DockerPanelProps {
    * *shape*, so a caller may pass a fresh object literal each render.
    */
   host: DockerHostRef
-  expanded?: boolean
-  onToggleExpanded?: () => void
   /** Currently-opened container name (its filesystem is shown in the Files panel). */
   activeContainer?: string | null
   /** Absent for a read-only list. */
@@ -56,8 +54,6 @@ interface DockerPanelProps {
  */
 export const DockerPanel: React.FC<DockerPanelProps> = ({
   host,
-  expanded = true,
-  onToggleExpanded,
   activeContainer,
   onOpenContainer,
   onEnterShell,
@@ -225,103 +221,76 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
 
   return (
     <div className="docker-panel">
-      <div className="panel-head sec" onClick={onToggleExpanded}>
-        <button
-          type="button"
-          className="panel-head-toggle"
-          aria-expanded={expanded}
-          title={expanded ? t('collapse') : t('expand')}
-        >
-          <span className={`collapse-chevron${expanded ? ' expanded' : ''}`} />
-          <span className="panel-title">{t('docker')}</span>
-        </button>
+      {/* A plain label row now: the rail decides whether this panel is in the
+          column at all, so a fold switch here could only hide it from itself. */}
+      <div className="panel-head sec">
+        <span className="panel-title">{t('docker')}</span>
         {/* One metadata run, count first: the host label is the part that has to
             give when the column is narrow, and a truncated count would read as a
             truncated list. */}
         <span className="cnt" title={serverLabel}>
           {serverLabel ? `${visible.length} · ${serverLabel}` : visible.length}
         </span>
-        {expanded && (
-          <>
-            <label
-              className="docker-filter-toggle"
-              title={t('showAllContainersHint')}
-              // The head is the collapse switch, so every control inside it has to hold
-              // its own click in — the refresh button beside this already does (B49).
-              onClick={(e) => e.stopPropagation()}
-            >
-              <input
-                type="checkbox"
-                checked={showAll}
-                onChange={(e) => setShowAll(e.target.checked)}
-              />
-              <span className="docker-filter-toggle-text">{t('showAllContainers')}</span>
-            </label>
-            <button
-              type="button"
-              className="icon-btn"
-              title={t('refresh')}
-              aria-label={t('refresh')}
-              onClick={(e) => {
-                e.stopPropagation()
-                load()
-              }}
-              disabled={loading}
-            >
-              <Icon name="refresh" size={13} />
-            </button>
-          </>
-        )}
+        <label className="docker-filter-toggle" title={t('showAllContainersHint')}>
+          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+          <span className="docker-filter-toggle-text">{t('showAllContainers')}</span>
+        </label>
+        <button
+          type="button"
+          className="icon-btn"
+          title={t('refresh')}
+          aria-label={t('refresh')}
+          onClick={() => load()}
+          disabled={loading}
+        >
+          <Icon name="refresh" size={13} />
+        </button>
       </div>
-      {expanded && (
-        <div className="docker-list">
-          {error && <div className="file-error">{error}</div>}
-          {loading && <div className="file-empty">{t('loading')}</div>}
-          {!loading && !error && visible.length === 0 && (
-            <div className="file-empty">
-              {showAll ? t('noContainers') : t('noRunningContainers')}
-            </div>
-          )}
-          {visible.map((c) => {
-            const isRunning = c.state === 'running'
-            return (
-              <div
-                key={c.id}
-                className={`docker-item${activeContainer === c.name ? ' active' : ''}${isRunning ? '' : ' stopped'}`}
-                onClick={() => {
-                  if (isRunning) onOpenContainer?.(c)
-                }}
-                onContextMenu={(e) => handleContextMenu(e, c)}
-                title={`${c.name}\n${c.image}\n${c.status}${
-                  isRunning ? '\n\n' + t('rightClickShell') : '\n\n' + t('rightClickStart')
-                }${
-                  isRunning && onOpenContainer
-                    ? `\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}`
-                    : ''
-                }`}
-              >
-                <span className="docker-icon">
-                  <Icon name="container" />
-                </span>
-                <div className="docker-info">
-                  <div className="docker-name">{c.name}</div>
-                  <div className="docker-image">{c.image}</div>
-                </div>
-                {c.id && (
-                  <span
-                    className="docker-id"
-                    title={`${t('containerId')}: ${c.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {c.id.slice(0, 12)}
-                  </span>
-                )}
-                <span className={`docker-state ${c.state}`}>{c.state}</span>
+      <div className="docker-list">
+        {error && <div className="file-error">{error}</div>}
+        {loading && <div className="file-empty">{t('loading')}</div>}
+        {!loading && !error && visible.length === 0 && (
+          <div className="file-empty">{showAll ? t('noContainers') : t('noRunningContainers')}</div>
+        )}
+        {visible.map((c) => {
+          const isRunning = c.state === 'running'
+          return (
+            <div
+              key={c.id}
+              className={`docker-item${activeContainer === c.name ? ' active' : ''}${isRunning ? '' : ' stopped'}`}
+              onClick={() => {
+                if (isRunning) onOpenContainer?.(c)
+              }}
+              onContextMenu={(e) => handleContextMenu(e, c)}
+              title={`${c.name}\n${c.image}\n${c.status}${
+                isRunning ? '\n\n' + t('rightClickShell') : '\n\n' + t('rightClickStart')
+              }${
+                isRunning && onOpenContainer
+                  ? `\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}`
+                  : ''
+              }`}
+            >
+              <span className="docker-icon">
+                <Icon name="container" />
+              </span>
+              <div className="docker-info">
+                <div className="docker-name">{c.name}</div>
+                <div className="docker-image">{c.image}</div>
               </div>
-            )
-          })}
-        </div>
-      )}
+              {c.id && (
+                <span
+                  className="docker-id"
+                  title={`${t('containerId')}: ${c.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {c.id.slice(0, 12)}
+                </span>
+              )}
+              <span className={`docker-state ${c.state}`}>{c.state}</span>
+            </div>
+          )
+        })}
+      </div>
 
       {/* Context menu */}
       {ctxMenu && (

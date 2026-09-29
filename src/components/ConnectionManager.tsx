@@ -46,8 +46,6 @@ interface ConnectionManagerProps {
   onSplitRight: (config: ConnectionConfig) => void
   onSplitDown: (config: ConnectionConfig) => void
   sidebarWidth: number
-  expanded?: boolean
-  onToggleExpanded?: () => void
   localTerminals?: LocalTerminalEntry[]
   onOpenLocalTerminal?: (entry: LocalTerminalEntry) => void
   onOpenLocalSplit?: (entry: LocalTerminalEntry, direction: 'row' | 'column') => void
@@ -109,8 +107,6 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onSplitRight,
   onSplitDown,
   sidebarWidth,
-  expanded = true,
-  onToggleExpanded,
   localTerminals = [],
   onOpenLocalTerminal,
   onOpenLocalSplit,
@@ -520,256 +516,238 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   return (
     <>
       <div className="sidebar">
-        <div className="panel-head sec" onClick={onToggleExpanded}>
+        {/* The rail already answers "which panel is this column showing", so the
+            head is a label row with the list's two verbs on it — no fold switch. */}
+        <div className="panel-head sec">
+          <span className="panel-title">{t('connections')}</span>
+          <span className="cnt">{shownCount}</span>
           <button
             type="button"
-            className="panel-head-toggle"
-            aria-expanded={expanded}
-            title={expanded ? t('collapse') : t('expand')}
+            className="icon-btn"
+            onClick={onScanNetwork}
+            title={t('scanNetwork')}
+            aria-label={t('scanNetwork')}
           >
-            <span className={`collapse-chevron${expanded ? ' expanded' : ''}`} />
-            <span className="panel-title">{t('connections')}</span>
+            <Icon name="search" size={13} />
           </button>
-          <span className="cnt">{shownCount}</span>
-          {expanded && (
-            <>
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onScanNetwork()
-                }}
-                title={t('scanNetwork')}
-                aria-label={t('scanNetwork')}
-              >
-                <Icon name="search" size={13} />
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setEditing(null)
-                  setShowModal(true)
-                }}
-                title={t('newConnection')}
-                aria-label={t('newConnection')}
-              >
-                <Icon name="plus" size={13} />
-              </button>
-            </>
-          )}
-        </div>
-        {expanded && (
-          <div
-            className="sidebar-list-wrapper"
-            onMouseEnter={onMouseEnter}
-            onMouseLeave={onMouseLeave}
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => {
+              setEditing(null)
+              setShowModal(true)
+            }}
+            title={t('newConnection')}
+            aria-label={t('newConnection')}
           >
-            <div className="sidebar-list" ref={listRef} onScroll={onScroll}>
-              <LocalTerminalsSection
-                entries={localTerminals}
-                filter={filter}
-                onOpen={onOpenLocalTerminal}
-                onOpenSplit={onOpenLocalSplit}
-                onOpenInFileManager={onOpenLocalDir}
-                onChanged={onLocalTerminalsChanged}
-              />
-              {searching && grouped.length === 0 ? (
-                // Distinct from "no connections yet": the list is not empty, the
-                // query just found nothing in it, and the typed text is echoed
-                // back so a stray paste is obvious at a glance.
-                <div className="empty-state">
-                  <div>
-                    <Icon name="search" />
-                  </div>
-                  <div>{t('navNoMatches', { query: filter })}</div>
+            <Icon name="plus" size={13} />
+          </button>
+        </div>
+        <div
+          className="sidebar-list-wrapper"
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
+        >
+          <div className="sidebar-list" ref={listRef} onScroll={onScroll}>
+            <LocalTerminalsSection
+              entries={localTerminals}
+              filter={filter}
+              onOpen={onOpenLocalTerminal}
+              onOpenSplit={onOpenLocalSplit}
+              onOpenInFileManager={onOpenLocalDir}
+              onChanged={onLocalTerminalsChanged}
+            />
+            {searching && grouped.length === 0 ? (
+              // Distinct from "no connections yet": the list is not empty, the
+              // query just found nothing in it, and the typed text is echoed
+              // back so a stray paste is obvious at a glance.
+              <div className="empty-state">
+                <div>
+                  <Icon name="search" />
                 </div>
-              ) : connections.length === 0 ? (
-                <div className="empty-state">
-                  <div>
-                    <Icon name="desktop" />
-                  </div>
-                  <div>{t('noConnectionsYet')}</div>
-                  <div style={{ fontSize: '12px', marginTop: '8px' }}>
-                    {t('addSshConnectionHint')}
-                  </div>
+                <div>{t('navNoMatches', { query: filter })}</div>
+              </div>
+            ) : connections.length === 0 ? (
+              <div className="empty-state">
+                <div>
+                  <Icon name="desktop" />
                 </div>
-              ) : grouped.length === 1 && grouped[0][0] === UNGROUPED ? (
-                // No groups — render flat list
-                grouped[0][1].map((conn) => (
-                  <React.Fragment key={conn.id}>
-                    <ConnectionItem
-                      conn={conn}
-                      onSelect={onSelectConnection}
+                <div>{t('noConnectionsYet')}</div>
+                <div style={{ fontSize: '12px', marginTop: '8px' }}>
+                  {t('addSshConnectionHint')}
+                </div>
+              </div>
+            ) : grouped.length === 1 && grouped[0][0] === UNGROUPED ? (
+              // No groups — render flat list
+              grouped[0][1].map((conn) => (
+                <React.Fragment key={conn.id}>
+                  <ConnectionItem
+                    conn={conn}
+                    onSelect={onSelectConnection}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setContextMenu({ x: e.clientX, y: e.clientY, conn })
+                    }}
+                    onDragStart={(e, c) => {
+                      dragDataRef.current = { type: 'connection', id: c.id, group: groupOf(c) }
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragOver={(e, c) => {
+                      e.preventDefault()
+                      const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                      setDragOverTarget({ key: `conn:${c.id}`, position: pos })
+                    }}
+                    onDragLeave={() => setDragOverTarget(null)}
+                    onDrop={(e, c) => {
+                      e.preventDefault()
+                      const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                      handleDrop('connection', c.id, groupOf(c), pos)
+                    }}
+                    onDragEnd={() => {
+                      dragDataRef.current = null
+                      setDragOverTarget(null)
+                    }}
+                    isDragOver={
+                      dragOverTarget?.key === `conn:${conn.id}` ? dragOverTarget.position : null
+                    }
+                    onEdit={(c) => handleEdit(c)}
+                    onDelete={(c) => handleDelete(c)}
+                  />
+                  {renderTunnels(conn)}
+                </React.Fragment>
+              ))
+            ) : (
+              // Grouped rendering
+              grouped.map(([key, conns]) => {
+                const isUngrouped = key === UNGROUPED
+                const collapsed = !searching && collapsedGroups.includes(key)
+                const isGroupDragOver = dragOverTarget?.key === `group:${key}`
+                return (
+                  <div key={key} className="conn-group">
+                    <div
+                      className={`conn-group-header${isGroupDragOver ? ' drag-over' : ''}`}
+                      onClick={() => toggleGroup(key)}
                       onContextMenu={(e) => {
+                        if (isUngrouped) return
                         e.preventDefault()
-                        setContextMenu({ x: e.clientX, y: e.clientY, conn })
+                        e.stopPropagation()
+                        setGroupContextMenu({ x: e.clientX, y: e.clientY, group: key })
                       }}
-                      onDragStart={(e, c) => {
-                        dragDataRef.current = { type: 'connection', id: c.id, group: groupOf(c) }
+                      draggable={!isUngrouped}
+                      onDragStart={(e) => {
+                        if (isUngrouped) return
+                        dragDataRef.current = { type: 'group', group: key }
                         e.dataTransfer.effectAllowed = 'move'
                       }}
-                      onDragOver={(e, c) => {
+                      onDragOver={(e) => {
                         e.preventDefault()
-                        const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                        setDragOverTarget({ key: `conn:${c.id}`, position: pos })
+                        // Only highlight if dragging a connection (to move into this group)
+                        // or dragging a group (to reorder)
+                        if (dragDataRef.current) {
+                          const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                          setDragOverTarget({ key: `group:${key}`, position: pos })
+                        }
                       }}
-                      onDragLeave={() => setDragOverTarget(null)}
-                      onDrop={(e, c) => {
+                      onDragLeave={() => {
+                        if (dragOverTarget?.key === `group:${key}`) setDragOverTarget(null)
+                      }}
+                      onDrop={(e) => {
                         e.preventDefault()
-                        const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                        handleDrop('connection', c.id, groupOf(c), pos)
+                        if (!dragDataRef.current) return
+                        const drag = dragDataRef.current
+                        if (drag.type === 'connection') {
+                          // Move connection into this group (end of group)
+                          handleDrop('group', undefined, key, 'after')
+                        } else if (drag.type === 'group') {
+                          // Reorder groups
+                          const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                          handleDrop('group', undefined, key, pos)
+                        }
                       }}
                       onDragEnd={() => {
                         dragDataRef.current = null
                         setDragOverTarget(null)
                       }}
-                      isDragOver={
-                        dragOverTarget?.key === `conn:${conn.id}` ? dragOverTarget.position : null
-                      }
-                      onEdit={(c) => handleEdit(c)}
-                      onDelete={(c) => handleDelete(c)}
-                    />
-                    {renderTunnels(conn)}
-                  </React.Fragment>
-                ))
-              ) : (
-                // Grouped rendering
-                grouped.map(([key, conns]) => {
-                  const isUngrouped = key === UNGROUPED
-                  const collapsed = !searching && collapsedGroups.includes(key)
-                  const isGroupDragOver = dragOverTarget?.key === `group:${key}`
-                  return (
-                    <div key={key} className="conn-group">
-                      <div
-                        className={`conn-group-header${isGroupDragOver ? ' drag-over' : ''}`}
-                        onClick={() => toggleGroup(key)}
-                        onContextMenu={(e) => {
-                          if (isUngrouped) return
-                          e.preventDefault()
+                    >
+                      <span className={`collapse-chevron${collapsed ? '' : ' expanded'}`} />
+                      <span className="conn-group-name">{isUngrouped ? t('ungrouped') : key}</span>
+                      <span className="conn-group-count">{conns.length}</span>
+                      <button
+                        className="conn-group-add"
+                        title={t('addConnectionTo', {
+                          group: isUngrouped ? t('ungrouped') : key,
+                        })}
+                        onClick={(e) => {
                           e.stopPropagation()
-                          setGroupContextMenu({ x: e.clientX, y: e.clientY, group: key })
-                        }}
-                        draggable={!isUngrouped}
-                        onDragStart={(e) => {
-                          if (isUngrouped) return
-                          dragDataRef.current = { type: 'group', group: key }
-                          e.dataTransfer.effectAllowed = 'move'
-                        }}
-                        onDragOver={(e) => {
-                          e.preventDefault()
-                          // Only highlight if dragging a connection (to move into this group)
-                          // or dragging a group (to reorder)
-                          if (dragDataRef.current) {
-                            const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                            setDragOverTarget({ key: `group:${key}`, position: pos })
-                          }
-                        }}
-                        onDragLeave={() => {
-                          if (dragOverTarget?.key === `group:${key}`) setDragOverTarget(null)
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          if (!dragDataRef.current) return
-                          const drag = dragDataRef.current
-                          if (drag.type === 'connection') {
-                            // Move connection into this group (end of group)
-                            handleDrop('group', undefined, key, 'after')
-                          } else if (drag.type === 'group') {
-                            // Reorder groups
-                            const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                            handleDrop('group', undefined, key, pos)
-                          }
-                        }}
-                        onDragEnd={() => {
-                          dragDataRef.current = null
-                          setDragOverTarget(null)
+                          setEditing(null)
+                          setDefaultGroup(isUngrouped ? '' : key)
+                          setShowModal(true)
                         }}
                       >
-                        <span className={`collapse-chevron${collapsed ? '' : ' expanded'}`} />
-                        <span className="conn-group-name">
-                          {isUngrouped ? t('ungrouped') : key}
-                        </span>
-                        <span className="conn-group-count">{conns.length}</span>
-                        <button
-                          className="conn-group-add"
-                          title={t('addConnectionTo', {
-                            group: isUngrouped ? t('ungrouped') : key,
-                          })}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditing(null)
-                            setDefaultGroup(isUngrouped ? '' : key)
-                            setShowModal(true)
-                          }}
-                        >
-                          +
-                        </button>
-                      </div>
-                      {!collapsed &&
-                        conns.map((conn) => (
-                          <React.Fragment key={conn.id}>
-                            <ConnectionItem
-                              conn={conn}
-                              indent
-                              onSelect={onSelectConnection}
-                              onContextMenu={(e) => {
-                                e.preventDefault()
-                                setContextMenu({ x: e.clientX, y: e.clientY, conn })
-                              }}
-                              onDragStart={(e, c) => {
-                                dragDataRef.current = {
-                                  type: 'connection',
-                                  id: c.id,
-                                  group: groupOf(c),
-                                }
-                                e.dataTransfer.effectAllowed = 'move'
-                              }}
-                              onDragOver={(e, c) => {
-                                e.preventDefault()
-                                const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                                setDragOverTarget({ key: `conn:${c.id}`, position: pos })
-                              }}
-                              onDragLeave={() => setDragOverTarget(null)}
-                              onDrop={(e, c) => {
-                                e.preventDefault()
-                                const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
-                                handleDrop('connection', c.id, groupOf(c), pos)
-                              }}
-                              onDragEnd={() => {
-                                dragDataRef.current = null
-                                setDragOverTarget(null)
-                              }}
-                              isDragOver={
-                                dragOverTarget?.key === `conn:${conn.id}`
-                                  ? dragOverTarget.position
-                                  : null
-                              }
-                              onEdit={(c) => handleEdit(c)}
-                              onDelete={(c) => handleDelete(c)}
-                            />
-                            {renderTunnels(conn)}
-                          </React.Fragment>
-                        ))}
+                        +
+                      </button>
                     </div>
-                  )
-                })
-              )}
-            </div>
-
-            {thumbHeight > 0 && (
-              <div className={`sidebar-scrollbar${showThumb ? ' show' : ''}`}>
-                <div
-                  className="sidebar-scrollbar-thumb"
-                  style={{ height: thumbHeight, top: thumbTop }}
-                  onMouseDown={onThumbMouseDown}
-                />
-              </div>
+                    {!collapsed &&
+                      conns.map((conn) => (
+                        <React.Fragment key={conn.id}>
+                          <ConnectionItem
+                            conn={conn}
+                            indent
+                            onSelect={onSelectConnection}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              setContextMenu({ x: e.clientX, y: e.clientY, conn })
+                            }}
+                            onDragStart={(e, c) => {
+                              dragDataRef.current = {
+                                type: 'connection',
+                                id: c.id,
+                                group: groupOf(c),
+                              }
+                              e.dataTransfer.effectAllowed = 'move'
+                            }}
+                            onDragOver={(e, c) => {
+                              e.preventDefault()
+                              const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                              setDragOverTarget({ key: `conn:${c.id}`, position: pos })
+                            }}
+                            onDragLeave={() => setDragOverTarget(null)}
+                            onDrop={(e, c) => {
+                              e.preventDefault()
+                              const pos = computeDropPosition(e, e.currentTarget as HTMLElement)
+                              handleDrop('connection', c.id, groupOf(c), pos)
+                            }}
+                            onDragEnd={() => {
+                              dragDataRef.current = null
+                              setDragOverTarget(null)
+                            }}
+                            isDragOver={
+                              dragOverTarget?.key === `conn:${conn.id}`
+                                ? dragOverTarget.position
+                                : null
+                            }
+                            onEdit={(c) => handleEdit(c)}
+                            onDelete={(c) => handleDelete(c)}
+                          />
+                          {renderTunnels(conn)}
+                        </React.Fragment>
+                      ))}
+                  </div>
+                )
+              })
             )}
           </div>
-        )}
+
+          {thumbHeight > 0 && (
+            <div className={`sidebar-scrollbar${showThumb ? ' show' : ''}`}>
+              <div
+                className="sidebar-scrollbar-thumb"
+                style={{ height: thumbHeight, top: thumbTop }}
+                onMouseDown={onThumbMouseDown}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       {showModal && (

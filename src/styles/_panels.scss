@@ -306,13 +306,18 @@
     width: 5px;
     // The plain double-headed arrow, not `col-resize`: the bar between the arrowheads
     // is what the user asked to have removed here (2026-09-27, reversing the earlier
-    // call). `body.resize-h` below has to match, or the glyph changes mid-drag.
+    // call). `body.resize-inspector` in `_base.scss` has to match, or the glyph
+    // changes mid-drag — and it is a class of its own so that lighting this seam
+    // does not light the sidebar's divider, which keys off `resize-h`.
     cursor: ew-resize;
     z-index: 10;
 
     // The highlight is *not* the strip: 5px is the hit area, and painting all of it
     // in the accent laid a stripe over the seam instead of making the seam light up.
-    // Half as wide, centred so it stays put when the column docks left instead.
+    // Half as wide, centred so it stays put when the column docks left instead —
+    // and faded out at the column's top and bottom like the outer `.panel-divider`
+    // seams, so it has no hard stop where the column ends. `opacity` is what
+    // animates: a gradient has nothing to interpolate towards.
     &::after {
       content: '';
       position: absolute;
@@ -321,10 +326,17 @@
       left: 50%;
       width: 2.5px;
       margin-left: -1.25px;
+      background: linear-gradient(180deg, rgba($accent, 0) 0%, $accent 50%, rgba($accent, 0) 100%);
+      opacity: 0;
+      transition: opacity var(--d-1) var(--e-out);
     }
 
-    &:hover::after {
-      background: $accent;
+    // Hover, plus the body class the drag handler sets: 5px is a narrow target
+    // and a drag outruns it constantly, so without this the seam would go dark
+    // mid-gesture.
+    &:hover::after,
+    body.resize-inspector &::after {
+      opacity: 1;
     }
   }
 

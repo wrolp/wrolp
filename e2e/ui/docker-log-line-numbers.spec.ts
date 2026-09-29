@@ -1,6 +1,5 @@
 import { test, expect, type Page, type Locator } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
-import { expandSection } from './helpers/sections'
 import { selectRailMode } from './helpers/sections'
 
 // Line numbers in the Docker log tab. The tab renders coloured HTML into one <pre>, so a
@@ -49,7 +48,6 @@ async function openLogViewer(page: Page, log = LOG): Promise<Locator> {
   await page.goto('/')
   await page.locator('.connection-item').first().click()
   await selectRailMode(page, 'containers')
-  await expandSection(page, 'Docker')
   const item = page.locator('.docker-item').first()
   await expect(item).toBeVisible()
   await item.click({ button: 'right' })

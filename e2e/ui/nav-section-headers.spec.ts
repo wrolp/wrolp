@@ -1,6 +1,6 @@
 import { test, expect } from './helpers/fixtures'
 import { installTauriMock, type MockConnection } from './helpers/tauriMock'
-import { expandSection, selectRailMode } from './helpers/sections'
+import { selectRailMode, sectionHead } from './helpers/sections'
 
 // P2-3b: the nav sections on one header primitive.
 //
@@ -47,14 +47,9 @@ const truncated = (page: import('@playwright/test').Page, selector: string) =>
       .map((el) => el.textContent ?? ''),
   )
 
-/**
- * A section by its title. `hasText` is not enough: the Files header carries a
- * "Docker" mode button, so filtering the bars by that word matched two of them.
- */
-const section = (page: import('@playwright/test').Page, title: string) =>
-  page
-    .locator('.panel-head.sec')
-    .filter({ has: page.locator('.panel-title', { hasText: new RegExp(`^${title}$`) }) })
+// A section head by its title (`sectionHead` from the helpers): `hasText` is not
+// enough, because the Files header carries a "Docker" mode button and filtering
+// the bars by that word matched two of them.
 
 test('every section keeps its title at the default column width', async ({ page }) => {
   await boot(page)
@@ -71,7 +66,6 @@ test('every section keeps its title at the default column width', async ({ page 
   expect(await truncated(page, '.panel-head.sec .panel-title')).toEqual([])
 
   await selectRailMode(page, 'containers')
-  await expandSection(page, 'Docker')
   await expect(page.locator('.panel-head.sec .panel-title')).toHaveText(['Docker'])
   expect(await truncated(page, '.panel-head.sec .panel-title')).toEqual([])
 
@@ -90,37 +84,28 @@ test('the mode switch never truncates a mode name', async ({ page }) => {
   await expect(page.locator('.file-panel .toolbar .file-toolbar button')).toHaveCount(6)
 })
 
-test('the bar itself collapses the section, not just the chevron', async ({ page }) => {
+// The head used to be the section's collapse switch, with the title inside a
+// `.panel-head-toggle` button that carried `aria-expanded`. One panel per mode
+// left nothing to fold, so what is left to assert is that the bar is inert: it
+// is a label row, and clicking it cannot take the list away.
+test('the header bar is a label, not a fold switch', async ({ page }) => {
   await boot(page)
-  // Docker ships collapsed (it renders for local shells too, where it is always
-  // empty), so a spec that measures its rows has to open it.
   await selectRailMode(page, 'containers')
-  await expandSection(page, 'Docker')
 
-  const docker = section(page, 'Docker')
-  const toggle = docker.locator('.panel-head-toggle')
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-
-  // A click anywhere on the bar — here, the metadata — is the affordance the
-  // chevron shows. The toggle button is what keyboard readers reach.
-  await docker.locator('.cnt').click({ position: { x: 2, y: 2 } })
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
-  await expect(page.locator('.docker-item')).toHaveCount(0)
+  const docker = sectionHead(page, 'Docker')
+  await expect(docker.locator('.panel-head-toggle')).toHaveCount(0)
 
   await docker.locator('.cnt').click({ position: { x: 2, y: 2 } })
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
   await expect(page.locator('.docker-item')).toHaveCount(1)
 })
 
-test('a control inside a header does not also toggle it', async ({ page }) => {
+test('a control inside a header does its own job', async ({ page }) => {
   await boot(page)
   await selectRailMode(page, 'files')
 
-  const files = section(page, 'Files')
-  const toggle = files.locator('.panel-head-toggle')
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-
-  // Switching to the container filesystem is a selection, not a collapse.
+  const files = sectionHead(page, 'Files')
+  // Switching to the container filesystem is a selection, and it leaves the
+  // panel's own rows (the mode picker form) on screen.
   await files.locator('.file-mode-switch button').nth(2).click()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('.file-panel .toolbar')).toBeVisible()
 })

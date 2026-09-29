@@ -12,33 +12,68 @@
 // dropped the moment the pointer slid off the seam mid-drag — which it does
 // constantly, since a drag outruns the 4px. The `body.resize-*` classes are what
 // the drag handlers set (see `App.tsx`), so they keep it lit for the gesture.
+//
+// The 4px is the *grab* zone, not the light: what lights up is a `::after`
+// covering the whole track with a gradient that fades out at the two ENDS of the
+// seam (top/bottom on a vertical one, left/right on a horizontal one), so the
+// highlight falls off into the layout instead of ending on a hard edge — the
+// card is flush with the tab-bar strip now, and a hard-edged stripe of accent
+// sat right on top of its border. Narrowing the element itself would re-break
+// drags — see above.
 .panel-divider,
 .panel-divider-v {
+  position: relative;
   width: 4px;
   cursor: ew-resize;
   background: transparent;
   flex-shrink: 0;
-  transition: background var(--d-1) var(--e-out);
   z-index: 10;
 
-  &:hover,
-  body.resize-h &,
-  body.resize-col & {
-    background: $accent;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    // Accent in the middle, gone at both ends of the *length* — a vertical seam
+    // fades top and bottom. `opacity` is what animates: a gradient has nothing
+    // to interpolate towards, so transitioning `background` would snap on and
+    // off instead of fading.
+    background: linear-gradient(180deg, rgba($accent, 0) 0%, $accent 50%, rgba($accent, 0) 100%);
+    opacity: 0;
+    transition: opacity var(--d-1) var(--e-out);
+  }
+
+  // `resize-h` is the sidebar's seam and `resize-col` the right-docked drawer's
+  // (see the handlers in `App.tsx`) — one class per seam, so dragging one never
+  // lights another. The inspector's column has its own: `resize-inspector`.
+  &:hover::after,
+  body.resize-h &::after,
+  body.resize-col &::after {
+    opacity: 1;
   }
 }
 
 .panel-divider-h {
+  position: relative;
   height: 4px;
   cursor: ns-resize;
   background: transparent;
   flex-shrink: 0;
-  transition: background var(--d-1) var(--e-out);
   z-index: 10;
 
-  &:hover,
-  body.resize-v & {
-    background: $accent;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    // The horizontal seam runs left-to-right, so it fades at its two ends —
+    // left and right.
+    background: linear-gradient(90deg, rgba($accent, 0) 0%, $accent 50%, rgba($accent, 0) 100%);
+    opacity: 0;
+    transition: opacity var(--d-1) var(--e-out);
+  }
+
+  &:hover::after,
+  body.resize-v &::after {
+    opacity: 1;
   }
 }
 
@@ -207,9 +242,12 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  // 6px, the same inset the tab bar uses, so the pane cards line up vertically with
-  // the tabs above them — the thing that makes the two read as one column.
-  padding: 6px;
+  // Left/right are flush so the pane card's side borders continue the edges of
+  // the tab-bar strip above (which is itself full-bleed) — an inset here read
+  // as the terminal drifting right of the bar. Top/bottom keep 6px: the top gap
+  // stops the card's top border doubling with the tab-bar's bottom border, and
+  // the bottom gap lets the rounded foot breathe.
+  padding: 6px 0;
   overflow: hidden;
 }
 
@@ -1464,10 +1502,10 @@
   z-index: 2;
 
   // No visible bar at rest: the split is communicated purely by the gap between
-  // the panes. On hover/drag a crisp 1px accent line is drawn down the centre,
-  // with a soft blurred glow beside it (the glow is what makes the splitter read
-  // while interacting, without any resting weight). `pointer-events: none` so
-  // this purely-visual layer never affects the hit zone.
+  // the panes. On hover/drag the seam lights up with the same gradient the outer
+  // `.panel-divider` seams use — accent through the middle of its length, gone at
+  // both ends (top/bottom on a row split, left/right on a column split).
+  // `pointer-events: none` so this purely-visual layer never affects the hit zone.
   //
   // The hit zone stays the bare track — deliberately NO negative offsets: an
   // earlier version widened it into the neighbouring panes, which stole the
@@ -1476,9 +1514,9 @@
   &::after {
     content: '';
     position: absolute;
+    inset: 0;
     pointer-events: none;
     opacity: 0;
-    background: $accent;
     transition: opacity var(--d-1) ease;
   }
 
@@ -1495,14 +1533,10 @@
   width: 4px;
   cursor: ew-resize !important;
 
-  // 1px line down the middle; the box-shadow is the blurred halo beside it.
+  // Vertical seam: fades at the top and bottom, so the highlight has no hard
+  // stop where it meets the panes above/below the split.
   &::after {
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    width: 1px;
-    transform: translateX(-50%);
-    box-shadow: 0 0 6px 1px rgba($accent, 0.7);
+    background: linear-gradient(180deg, rgba($accent, 0) 0%, $accent 50%, rgba($accent, 0) 100%);
   }
 }
 
@@ -1511,14 +1545,9 @@
   height: 4px;
   cursor: ns-resize !important;
 
-  // 1px line across the middle; the box-shadow is the blurred halo beside it.
+  // Horizontal seam: fades at the left and right ends.
   &::after {
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 1px;
-    transform: translateY(-50%);
-    box-shadow: 0 0 6px 1px rgba($accent, 0.7);
+    background: linear-gradient(90deg, rgba($accent, 0) 0%, $accent 50%, rgba($accent, 0) 100%);
   }
 }
 
@@ -1714,10 +1743,10 @@ body.resizing-v .term-scrollbar-thumb {
   height: 100%;
   min-height: 0;
   min-width: 0;
-  // Air on both sides of the text. It goes here rather than on
-  // `.terminal-wrapper` so the pane card keeps its 6px alignment with the tab
-  // bar above it; the global `box-sizing: border-box` makes the padding eat into
-  // the 100% width, so FitAddon just reports two fewer columns.
+  // Air on both sides of the text — pure text inset, it lives here rather than
+  // on `.terminal-wrapper` because the card's own side borders are flush with
+  // the tab-bar strip. The global `box-sizing: border-box` makes the padding
+  // eat into the 100% width, so FitAddon just reports two fewer columns.
   padding: 0 4px;
 }
 

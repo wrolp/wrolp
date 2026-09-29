@@ -97,8 +97,6 @@ interface FilePanelProps {
    */
   hasSession?: boolean
   defaultPath?: string
-  expanded?: boolean
-  onToggleExpanded?: () => void
   syncEnabled?: boolean
   /**
    * Current working directory of the associated terminal tab, reported by the
@@ -304,8 +302,6 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     isConnected,
     hasSession = true,
     defaultPath = '.',
-    expanded = true,
-    onToggleExpanded,
     syncEnabled = false,
     onToggleSync,
     remoteCwd = null,
@@ -809,7 +805,6 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // directory, which is wrong as soon as the shell has `cd`'d anywhere else.
   useEffect(() => {
     if (!syncEnabled || !isConnected || sessionTabId == null) return
-    if (!expanded) return
     let active = true
     const poll = async () => {
       if (!active || document.hidden) return
@@ -833,7 +828,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     const interval = setInterval(poll, 5000)
     // Resume promptly when the panel/window becomes visible again.
     const onVisible = () => {
-      if (!document.hidden && active && expanded) void poll()
+      if (!document.hidden && active) void poll()
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => {
@@ -841,7 +836,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [syncEnabled, isConnected, sessionTabId, loadRootDir, expanded, remoteCwd])
+  }, [syncEnabled, isConnected, sessionTabId, loadRootDir, remoteCwd])
 
   // Transfer progress is applied by the app-wide queue (src/lib/transferQueue.ts):
   // the rows outlived this panel in v8-P4, so the listener had to as well.
@@ -1858,17 +1853,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* header */}
-      <div className="panel-head sec" onClick={onToggleExpanded}>
-        <button
-          type="button"
-          className="panel-head-toggle"
-          aria-expanded={expanded}
-          title={expanded ? t('collapse') : t('expand')}
-        >
-          <span className={`collapse-chevron${expanded ? ' expanded' : ''}`} />
-          <span className="panel-title">{t('files')}</span>
-        </button>
+      {/* header — a label row, not a fold switch: the rail already decides
+          whether this panel owns the mode column. */}
+      <div className="panel-head sec">
+        <span className="panel-title">{t('files')}</span>
         {/* Which filesystem this is. The path bar below only says `~ (home)`, so
             with two sessions open this is the one line that names the host. */}
         <span className="cnt" title={serverLabel ?? targetLabel(target)}>
@@ -1888,10 +1876,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                   type="button"
                   className={fileMode === 'ssh' ? 'active' : ''}
                   title={t('localSshSession')}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleModeClick('ssh')
-                  }}
+                  onClick={() => handleModeClick('ssh')}
                 >
                   {t('modeSsh')}
                 </button>
@@ -1899,10 +1884,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                   type="button"
                   className={fileMode === 'jump' ? 'active' : ''}
                   title={t('proxyJumpRemote')}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleModeClick('jump')
-                  }}
+                  onClick={() => handleModeClick('jump')}
                 >
                   {t('modeJump')}
                 </button>
@@ -1912,10 +1894,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               type="button"
               className={fileMode === 'docker' ? 'active' : ''}
               title={t('dockerContainer')}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleModeClick('docker')
-              }}
+              onClick={() => handleModeClick('docker')}
             >
               {t('modeDocker')}
             </button>
@@ -1924,112 +1903,110 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       </div>
 
       {/* Everything you can *do* to the view sits on its own row under the header. */}
-      {expanded && (
-        <div className="toolbar">
-          <div className="file-toolbar">
-            {onToggleSync && sessionTabId != null && (
-              <button
-                type="button"
-                className="icon-btn"
-                data-on={syncEnabled}
-                title={syncEnabled ? t('disableShellSync') : t('enableShellSync')}
-                aria-pressed={syncEnabled}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onToggleSync()
-                }}
-              >
-                <Icon name="link" />
-              </button>
-            )}
-            {sessionTabId != null &&
-              (sftpUser ? (
-                <>
-                  <span className="file-sftp-user" title={t('sftpAs', { user: sftpUser })}>
-                    <Icon name="lock" />
-                    {sftpUser}
-                  </span>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    title={t('restoreOriginalUser')}
-                    aria-label={t('restoreOriginalUser')}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleRevertUser()
-                    }}
-                  >
-                    <Icon name="undo" />
-                  </button>
-                </>
-              ) : (
+      <div className="toolbar">
+        <div className="file-toolbar">
+          {onToggleSync && sessionTabId != null && (
+            <button
+              type="button"
+              className="icon-btn"
+              data-on={syncEnabled}
+              title={syncEnabled ? t('disableShellSync') : t('enableShellSync')}
+              aria-pressed={syncEnabled}
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleSync()
+              }}
+            >
+              <Icon name="link" />
+            </button>
+          )}
+          {sessionTabId != null &&
+            (sftpUser ? (
+              <>
+                <span className="file-sftp-user" title={t('sftpAs', { user: sftpUser })}>
+                  <Icon name="lock" />
+                  {sftpUser}
+                </span>
                 <button
                   type="button"
                   className="icon-btn"
-                  title={t('switchSftpUser')}
-                  aria-label={t('switchSftpUser')}
-                  aria-expanded={showSwitchUser}
+                  title={t('restoreOriginalUser')}
+                  aria-label={t('restoreOriginalUser')}
                   onClick={(e) => {
                     e.stopPropagation()
-                    setShowSwitchUser(!showSwitchUser)
+                    handleRevertUser()
                   }}
                 >
-                  <Icon name="user" />
+                  <Icon name="undo" />
                 </button>
-              ))}
-            <button
-              type="button"
-              className="icon-btn"
-              title={t('uploadFile')}
-              aria-label={t('uploadFile')}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleUpload()
-              }}
-            >
-              <Icon name="upload" />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title={t('uploadFolder')}
-              aria-label={t('uploadFolder')}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleUploadFolder()
-              }}
-            >
-              <Icon name="folderUp" />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title={t('newItem')}
-              aria-label={t('newItem')}
-              onClick={(e) => {
-                e.stopPropagation()
-                const r = e.currentTarget.getBoundingClientRect()
-                setContextMenu({ x: r.left, y: r.bottom + 4, node: null })
-              }}
-            >
-              <Icon name="plus" />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title={t('refresh')}
-              aria-label={t('refresh')}
-              disabled={loading}
-              onClick={(e) => {
-                e.stopPropagation()
-                refresh()
-              }}
-            >
-              <Icon name="refresh" />
-            </button>
-          </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="icon-btn"
+                title={t('switchSftpUser')}
+                aria-label={t('switchSftpUser')}
+                aria-expanded={showSwitchUser}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowSwitchUser(!showSwitchUser)
+                }}
+              >
+                <Icon name="user" />
+              </button>
+            ))}
+          <button
+            type="button"
+            className="icon-btn"
+            title={t('uploadFile')}
+            aria-label={t('uploadFile')}
+            onClick={(e) => {
+              e.stopPropagation()
+              handleUpload()
+            }}
+          >
+            <Icon name="upload" />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title={t('uploadFolder')}
+            aria-label={t('uploadFolder')}
+            onClick={(e) => {
+              e.stopPropagation()
+              handleUploadFolder()
+            }}
+          >
+            <Icon name="folderUp" />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title={t('newItem')}
+            aria-label={t('newItem')}
+            onClick={(e) => {
+              e.stopPropagation()
+              const r = e.currentTarget.getBoundingClientRect()
+              setContextMenu({ x: r.left, y: r.bottom + 4, node: null })
+            }}
+          >
+            <Icon name="plus" />
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            title={t('refresh')}
+            aria-label={t('refresh')}
+            disabled={loading}
+            onClick={(e) => {
+              e.stopPropagation()
+              refresh()
+            }}
+          >
+            <Icon name="refresh" />
+          </button>
         </div>
-      )}
+      </div>
 
       {fileToast && (
         <div
@@ -2043,7 +2020,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         </div>
       )}
 
-      {expanded && showTree && (
+      {showTree && (
         <>
           <div className="file-path-bar">
             <div className="file-path-jump-wrap">
@@ -2318,7 +2295,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {/* Jump (ProxyJump remote) connection form — shown in `jump` mode before a
           target is chosen. The connected host acts as the jump proxy. */}
-      {expanded && showJumpForm && (
+      {showJumpForm && (
         <div className="file-jump-form">
           <div className="file-jump-title">{t('connectViaProxyJump')}</div>
           <label>
@@ -2417,7 +2394,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
       {/* Docker container picker — shown in `docker` mode before a container is
           chosen. */}
-      {expanded && showDockerPicker && (
+      {showDockerPicker && (
         <div className="file-docker-picker">
           <div className="file-docker-head">
             <span>{t('dockerContainers')}</span>

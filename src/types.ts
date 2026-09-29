@@ -822,10 +822,14 @@ export type DockPos = 'bottom' | 'right'
  */
 export type InspectorTab = 'analysis' | 'docker' | 'ai' | 'network'
 
+/**
+ * One nav section's persisted state. It used to carry a `collapsed` flag and a
+ * pixel `height` because every section shared the column and each needed its own
+ * fold switch; the activity rail mounts one section at a time, so nothing here
+ * has to be remembered except whether it is shown at all.
+ */
 export interface SectionLayout {
   visible: boolean
-  collapsed: boolean
-  height?: number
 }
 
 /**
@@ -877,16 +881,12 @@ export const defaultLayout: WorkspaceLayout = {
     // "never dragged" test still recognises the default.
     width: 264,
     sections: {
-      // Connections is the entry point, so it opens. Files opens too: its
-      // section is not rendered at all until a session is connected
-      // (`showFilePanel` in App.tsx), so it can never be the empty placeholder
-      // a first run would have to look at — collapsed, it just hides the panel
-      // the user connected for. Docker is the one that can legitimately be
-      // empty, because it renders for any focused tab, including local shells
-      // that have no daemon to query, so it starts closed.
-      connections: { visible: true, collapsed: false, height: 200 },
-      files: { visible: true, collapsed: false },
-      docker: { visible: true, collapsed: true, height: 220 },
+      // Every section is on; whether it *renders* still depends on the panel
+      // itself having something to show (`showFilePanel`, `dockerHost`), and the
+      // rail decides which one owns the column.
+      connections: { visible: true },
+      files: { visible: true },
+      docker: { visible: true },
     },
   },
   bottomPanel: {

@@ -1,6 +1,5 @@
 import { test, expect } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
-import { expandSection } from './helpers/sections'
 import { selectRailMode } from './helpers/sections'
 
 // Regression for BUGS.md B35 — "打开docker日志, 已经打开一个再打开一个, 显示的还是之前
@@ -40,9 +39,8 @@ const CONTAINER_ITEM = (page: import('@playwright/test').Page, name: string) =>
 
 /** Right-click a container in the sidebar and pick "View Logs". */
 async function viewLogs(page: import('@playwright/test').Page, name: string) {
-  // The Docker section ships collapsed, so open it before reaching for a row.
+  // The container list only exists while the Containers mode owns the column.
   await selectRailMode(page, 'containers')
-  await expandSection(page, 'Docker')
   const item = CONTAINER_ITEM(page, name)
   await expect(item).toBeVisible()
   await item.click({ button: 'right' })

@@ -59,11 +59,44 @@
     height: auto;
   }
 
+  // The docked chat's seam. Same treatment the outer `.panel-divider` seams get:
+  // the highlight fades out at the handle's two ends instead of ending on a hard
+  // edge. Which two ends depends on the dock side — a top/bottom dock gets a
+  // horizontal handle (`is-horizontal`), so it fades left/right; a left/right
+  // dock gets a vertical one (`is-vertical`), so it fades top/bottom.
+  // `opacity` animates, a `background` transition on a gradient would snap.
   .ai-dock-resize {
     background: transparent;
 
-    &:hover {
-      background: rgba(76, 175, 80, 0.5);
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity var(--d-1) var(--e-out);
+      pointer-events: none;
+    }
+
+    &:hover::after {
+      opacity: 1;
+    }
+
+    &.is-horizontal::after {
+      background: linear-gradient(
+        90deg,
+        rgba(76, 175, 80, 0) 0%,
+        rgba(76, 175, 80, 0.5) 50%,
+        rgba(76, 175, 80, 0) 100%
+      );
+    }
+
+    &.is-vertical::after {
+      background: linear-gradient(
+        180deg,
+        rgba(76, 175, 80, 0) 0%,
+        rgba(76, 175, 80, 0.5) 50%,
+        rgba(76, 175, 80, 0) 100%
+      );
     }
   }
 

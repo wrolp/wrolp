@@ -1,6 +1,5 @@
 import { test, expect } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
-import { expandSection } from './helpers/sections'
 import { selectRailMode } from './helpers/sections'
 import { parseAnsiToHtml, stripInvisible } from '../../src/ansi'
 
@@ -117,10 +116,9 @@ test('Analyze Container converts the log escapes instead of printing them', asyn
   await page.goto('/')
   await page.locator('.connection-item').first().click()
 
-  // The sidebar Docker section lists the container; its context menu is how the
-  // analysis report is opened. The section ships collapsed, so open it first.
+  // The container list lives in its own rail mode; its context menu is how the
+  // analysis report is opened.
   await selectRailMode(page, 'containers')
-  await expandSection(page, 'Docker')
   const item = page.locator('.docker-item').first()
   await expect(item).toBeVisible()
   await item.click({ button: 'right' })

@@ -256,7 +256,7 @@ export function CommandPalette({
             title={t('close')}
             aria-label={t('close')}
           >
-            <kbd className="pal-kbd">ESC</kbd>
+            <Icon name="x" size={16} />
           </button>
         </div>
 

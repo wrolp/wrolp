@@ -168,17 +168,38 @@
   font-size: var(--fs-lg);
   outline: none;
 
+  // The palette opens with Ctrl+K and moves focus straight into this input, so
+  // the global `:focus-visible` ring in `_a11y.scss` is drawn on every single
+  // open — and it is redundant here: the input is the dialog's only focusable
+  // stop on open, the caret plus the row highlight already say where focus is.
+  // `(0,2,0)` outranks the global `(0,1,0)`, so no `!important`.
+  &:focus-visible {
+    outline: none;
+  }
+
   &::placeholder {
     color: $text-dim;
   }
 }
 
 .pal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
+  border-radius: var(--r-1);
   background: transparent;
+  color: $text-dim;
   cursor: pointer;
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
 }
 
 .pal-kbd {

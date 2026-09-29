@@ -1385,9 +1385,6 @@ export default function App() {
   // Derived values so the rest of the render can keep using the familiar names.
   const sidebarWidth = layout.sidebar.width
   const showSidebar = layout.sidebar.visible
-  const connectionsExpanded = !layout.sidebar.sections.connections.collapsed
-  const filesExpanded = !layout.sidebar.sections.files.collapsed
-  const dockerExpanded = !layout.sidebar.sections.docker.collapsed
   // The rail's own buttons toggle: clicking the mode that is already showing
   // folds the column away (VS Code activity-bar behaviour). Other entry points
   // — the titlebar globe, the welcome card — always mean "show me this panel",
@@ -1760,16 +1757,6 @@ export default function App() {
           : { kind: 'docker', jumpTabId: host.jumpTabId, container: container.name },
     )
     setFileMode('docker')
-    updateLayout((l) => ({
-      ...l,
-      sidebar: {
-        ...l.sidebar,
-        sections: {
-          ...l.sidebar.sections,
-          files: { ...l.sidebar.sections.files, collapsed: false },
-        },
-      },
-    }))
   }, [])
 
   // Trigger Docker container analysis (opens the report in the inspector's
@@ -4515,11 +4502,14 @@ export default function App() {
       const handleMouseUp = () => {
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
-        document.body.classList.remove('resize-h')
+        // Its own class, not `resize-h`: that one is the sidebar's seam, and the
+        // seam highlights key off it — sharing it lit the sidebar's divider
+        // whenever this drag was in flight.
+        document.body.classList.remove('resize-inspector')
         document.body.style.userSelect = ''
         win.setResizable(true).catch(() => {})
       }
-      document.body.classList.add('resize-h')
+      document.body.classList.add('resize-inspector')
       document.body.style.userSelect = 'none'
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
@@ -6745,7 +6735,10 @@ export default function App() {
                     />
                   </div>
                   <div
-                    className="ai-dock-resize"
+                    // The gradient highlight has to know which way the seam runs
+                    // (see `.ai-dock-resize` in `_ai.scss`): `isVertical` means
+                    // the dock is top/bottom, which gets a horizontal handle.
+                    className={`ai-dock-resize ${isVertical ? 'is-horizontal' : 'is-vertical'}`}
                     onMouseDown={startDockResize}
                     style={resizeHandleStyle}
                   />
@@ -7074,9 +7067,10 @@ export default function App() {
     </div>
   )
 
-  // Mode-panel body — reused for left or right placement. v8's activity rail owns
+  // Mode-panel body — reused for left or right placement. The activity rail owns
   // this column, so exactly ONE panel is mounted at a time; the old sidebar
-  // stacked all of them and each kept its own collapsed/expanded state.
+  // stacked all of them, each with its own collapse switch to make room for the
+  // others. One panel per mode is why that switch has nothing left to do.
   const modePanelBody = (() => {
     // Show the Files panel only when the focused pane's connection is connected.
     // In a split, focusedLeafTabId points at the focused pane's session, so the
@@ -7100,13 +7094,11 @@ export default function App() {
     return (
       <>
         {railMode === 'hosts' && layout.sidebar.sections.connections.visible && (
-          <div
-            className="collapsible-section"
-            // Alone in the mode column it always takes the whole column. It used
-            // to split the column with the Files panel below it, which is why a
-            // stored pixel height existed at all.
-            style={connectionsExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
-          >
+          // The mode column mounts exactly one panel, so this soaks up whatever
+          // height the filter row above it leaves — the modes that have one are
+          // the only reason it is not `flex: 1` on the panel itself. It used to
+          // share the column with other sections, each with its own pixel height.
+          <div className="collapsible-section" style={{ flex: 1, overflow: 'hidden' }}>
             <ConnectionManager
               connections={connections}
               onConnect={(_config, _tabId) => {
@@ -7141,22 +7133,6 @@ export default function App() {
               }
               onOpenLocalDir={handleOpenLocalDir}
               onLocalTerminalsChanged={reloadLocalTerminals}
-              expanded={connectionsExpanded}
-              onToggleExpanded={() =>
-                updateLayout((l) => ({
-                  ...l,
-                  sidebar: {
-                    ...l.sidebar,
-                    sections: {
-                      ...l.sidebar.sections,
-                      connections: {
-                        ...l.sidebar.sections.connections,
-                        collapsed: !l.sidebar.sections.connections.collapsed,
-                      },
-                    },
-                  },
-                }))
-              }
               collapsedGroups={collapsedGroups}
               onCollapsedGroupsChange={handleCollapsedGroupsChange}
               filter={navFilter}
@@ -7171,10 +7147,7 @@ export default function App() {
         {railMode === 'files' && showFilePanel && layout.sidebar.sections.files.visible && (
           <>
             {/* Files section (session, or a jump/docker target) */}
-            <div
-              className="collapsible-section"
-              style={filesExpanded ? { flex: 1, overflow: 'hidden' } : { flexShrink: 0 }}
-            >
+            <div className="collapsible-section" style={{ flex: 1, overflow: 'hidden' }}>
               {(() => {
                 // Server label shown in the file panel header: the SSH
                 // connection of the focused tab (host:port), or a docker
@@ -7244,22 +7217,6 @@ export default function App() {
                     fileMode={fileMode}
                     onFileModeChange={setFileMode}
                     onSelectTarget={setFileTarget}
-                    expanded={filesExpanded}
-                    onToggleExpanded={() =>
-                      updateLayout((l) => ({
-                        ...l,
-                        sidebar: {
-                          ...l.sidebar,
-                          sections: {
-                            ...l.sidebar.sections,
-                            files: {
-                              ...l.sidebar.sections.files,
-                              collapsed: !l.sidebar.sections.files.collapsed,
-                            },
-                          },
-                        },
-                      }))
-                    }
                     syncEnabled={syncEnabled}
                     remoteCwd={cwdByTab[ftabId] ?? null}
                     onToggleSync={() => {
@@ -7292,16 +7249,7 @@ export default function App() {
             const isLocal = host.kind === 'local'
             return (
               <>
-                <div
-                  className="collapsible-section"
-                  style={
-                    dockerExpanded
-                      ? // Alone in the mode column it takes the whole column; the
-                        // fixed height only applies when it shared the old sidebar.
-                        { flex: 1, overflow: 'hidden' }
-                      : { flexShrink: 0 }
-                  }
-                >
+                <div className="collapsible-section" style={{ flex: 1, overflow: 'hidden' }}>
                   <DockerPanel
                     host={host}
                     refreshSignal={dockerRefreshKey}
@@ -7321,22 +7269,6 @@ export default function App() {
                                 : `${dc.name} (${dc.host}:${dc.port})`
                               : dt?.connectionName
                           })()
-                    }
-                    expanded={dockerExpanded}
-                    onToggleExpanded={() =>
-                      updateLayout((l) => ({
-                        ...l,
-                        sidebar: {
-                          ...l.sidebar,
-                          sections: {
-                            ...l.sidebar.sections,
-                            docker: {
-                              ...l.sidebar.sections.docker,
-                              collapsed: !l.sidebar.sections.docker.collapsed,
-                            },
-                          },
-                        },
-                      }))
                     }
                     activeContainer={
                       isLocal
@@ -7508,8 +7440,8 @@ export default function App() {
           >
             <div className="terminal-main">
               {/* Tab bar */}
-            <div className="tab-bar">
-              {tabs
+              <div className="tab-bar">
+                {tabs
                   .filter((tab) => !tab.embedded)
                   .map((tab, idx) => {
                     // A file tab's unsaved marker comes from the buffer it points
