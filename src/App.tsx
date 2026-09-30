@@ -8266,10 +8266,8 @@ export default function App() {
       {toast && (
         <div
           className={`toast toast-${toast.kind}`}
-          onClick={() => setToast(null)}
           onMouseEnter={() => setToastHeldFor(toast.text)}
           onMouseLeave={() => setToastHeldFor(null)}
-          title={t('close')}
         >
           {toast.kind === 'progress' ? (
             <span className="toast-spinner" />
@@ -8279,15 +8277,19 @@ export default function App() {
             <span className="toast-icon">{toast.kind === 'success' ? '✓' : '✕'}</span>
           )}
           <span className="toast-text">{toast.text}</span>
-          <span
+          {/* Only the ✕ dismisses. The whole strip used to be a click target, which
+              meant a message you were reading closed itself the moment you
+              mis-clicked inside it — and it left no keyboard-reachable way to
+              dismiss at all. */}
+          <button
+            type="button"
             className="toast-close"
-            onClick={(e) => {
-              e.stopPropagation()
-              setToast(null)
-            }}
+            onClick={() => setToast(null)}
+            aria-label={t('close')}
+            title={t('close')}
           >
             ✕
-          </span>
+          </button>
         </div>
       )}
 

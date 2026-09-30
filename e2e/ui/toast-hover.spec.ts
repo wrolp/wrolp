@@ -27,6 +27,30 @@ async function raiseError(page: Page) {
   await expect(page.locator('.toast')).toContainText('Serial sessions do not support')
 }
 
+test('only the ✕ dismisses — the message body is not a click target', async ({ page }) => {
+  await raiseError(page)
+  const toast = page.locator('.toast')
+  const box = await toast.boundingBox()
+  // Click in the middle of the strip (the text), not on the ✕.
+  await page.mouse.click(box!.x + box!.width * 0.4, box!.y + box!.height / 2)
+  await expect(toast).toBeVisible()
+  await page.waitForTimeout(400)
+  await expect(toast).toBeVisible()
+
+  await toast.locator('.toast-close').click()
+  await expect(toast).toHaveCount(0)
+})
+
+test('the ✕ is a real button, so the keyboard can reach it', async ({ page }) => {
+  await raiseError(page)
+  const close = page.locator('.toast-close')
+  await expect(close).toHaveRole('button')
+  await expect(close).toHaveAccessibleName('Close')
+  await close.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.toast')).toHaveCount(0)
+})
+
 test('the message stays while the pointer is on it, then goes', async ({ page }) => {
   await raiseError(page)
   const toast = page.locator('.toast')

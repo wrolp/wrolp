@@ -66,7 +66,14 @@
     line-height: 1.4;
   }
 
+  // A real <button>, because it is the only way to dismiss — so it has to be
+  // reachable by keyboard. The UA chrome comes back off: the strip's own surface,
+  // border and padding are the design, not a control inside a control.
   .toast-close {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
     font-size: var(--fs-sm);
     color: color-mix(in srgb, var(--toast-fg) 60%, transparent);
     cursor: pointer;
