@@ -64,6 +64,14 @@ export type IconName =
   // 会话（`record` is the *recording* dot, a different meaning).
   | 'server'
   | 'history'
+  // The terminal's right-click menu, which used to mark its entries with emoji
+  // (`#`, ⌫, , 🔤). Emoji are full-colour glyphs that ignore the theme and whose
+  // weight does not match the 2px stroke of everything else, so the menu needed
+  // these four drawn.
+  | 'hash'
+  | 'backspace'
+  | 'eraser'
+  | 'selection'
   // Shell flavours for local-terminal entries. All five are a terminal window
   // carrying a distinguishing mark, so they stay recognisable as terminals while
   // still telling cmd / PowerShell / bash / WSL / Git Bash apart at 14px.
@@ -179,7 +187,9 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   // lucide: play (stroke triangle, like the design's media row)
-  play: <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />,
+  play: (
+    <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />
+  ),
   // lucide: pause
   pause: (
     <>
@@ -490,6 +500,36 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M12 7v5l4 2" />
     </>
   ),
+  // lucide: hash — the line-number gutter's `#`, which was a bare text glyph.
+  hash: (
+    <>
+      <line x1="4" x2="20" y1="9" y2="9" />
+      <line x1="4" x2="20" y1="15" y2="15" />
+      <line x1="10" x2="8" y1="3" y2="21" />
+      <line x1="16" x2="14" y1="3" y2="21" />
+    </>
+  ),
+  // lucide: backspace — erase the typed input line, distinct from `eraser` below
+  // (which clears the whole screen).
+  backspace: (
+    <>
+      <path d="M20 5H9.5a2 2 0 0 0-1.4.6L3 12l5.1 6.4A2 2 0 0 0 9.5 19H20a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z" />
+      <line x1="18" x2="12" y1="9" y2="15" />
+      <line x1="12" x2="18" y1="9" y2="15" />
+    </>
+  ),
+  // lucide: eraser — 清屏. A broom would be the literal picture, but its stroke
+  // detail disappears at 16px; the rubber reads at menu size.
+  eraser: (
+    <>
+      <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+      <path d="M22 21H7" />
+      <path d="m5 11 9 9" />
+    </>
+  ),
+  // A dashed frame is the universal "everything inside is selected" mark, which is
+  // what 全选 means here; `🔤` was standing in for it with a full-colour glyph.
+  selection: <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="4 3" />,
 }
 
 export function Icon({

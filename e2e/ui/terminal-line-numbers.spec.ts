@@ -492,4 +492,28 @@ test.describe('line number gutter (UI)', () => {
     await expect.poll(async () => (await geom(page)).gutterDisplay).toBe('block')
     expect((await geom(page)).mode).toBe('on')
   })
+
+  test('every entry of the terminal menu carries a drawn icon', async ({ page }) => {
+    // The menu used to mark half its entries with emoji, which are full-colour
+    // glyphs: they ignore the theme, and their weight does not match the 2px
+    // stroke of the icons the rest of the app draws with.
+    await openTerminal(page)
+    const box = await page.locator('.term-pane-term').boundingBox()
+    if (!box) throw new Error('terminal pane is not visible')
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' })
+    await expect(page.locator('.context-menu')).toBeVisible()
+    const items = page.locator('.context-menu-item')
+    expect(await items.count()).toBeGreaterThan(6)
+    for (const item of await items.all()) {
+      expect(await item.locator('svg').count(), await item.innerText()).toBe(1)
+    }
+    // And they are all the same size, so the column of glyphs reads as one set.
+    const sizes = await items.evaluateAll((els) =>
+      els.map((el) => {
+        const svg = el.querySelector('svg')
+        return svg ? `${svg.getAttribute('width')}x${svg.getAttribute('height')}` : ''
+      }),
+    )
+    expect(new Set(sizes).size).toBe(1)
+  })
 })

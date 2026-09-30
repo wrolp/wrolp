@@ -4197,37 +4197,25 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
    */
   const refreshGhost = () => {
     const st = ghostRef.current
-    if (!st) return
-    const live = ghostLive()
-    // Not a shell input line under the caret any more (an application took the
-    // screen, a pager prompt arrived).
-    if (live === null) {
+    const term = termRef.current
+    if (!st || !term) return
+    const buffer = term.buffer.active
+    // The tail belongs to one row of the buffer. Once the caret has left it, the
+    // line it was matched against is gone — output scrolled the view, or the shell
+    // printed a fresh prompt — and a fixed overlay holding the old coordinate would
+    // read as a glyph stranded on an unrelated row.
+    if (buffer.baseY + buffer.cursorY !== st.row) {
       closeGhost()
       return
     }
-    // What the row actually holds. Mid-flush the caret can sit past the text the
-    // shell has written so far, and the cells in between are blanks that say nothing
-    // about which line this is — trimming them is what makes the comparison below
-    // mean "is this still our line", not "does it match byte for byte right now".
-    const shown = live.replace(/\s+$/, '')
-    if (st.line.startsWith(shown)) {
-      // The screen is behind our line, or exactly on it. Behind is normal mid-echo;
-      // an EMPTY line is not — the prompt the user was typing on is gone (output
-      // arrived, or the shell printed a fresh one), and a tail held over from it
-      // would be painted over unrelated rows.
-      if (shown.length === 0 && st.line.length > 0) {
-        closeGhost()
-        return
-      }
-      evaluateGhost(st.line, ghostAheadCells(st.line, live))
-      return
-    }
-    // The screen shows MORE than we believe, i.e. a repaint queued before the last
-    // edit (a deletion whose echo has not landed). Hold the placement: moving to
-    // that caret would slide the tail out, and retiring it would blink the tail off
-    // on every partial flush. Anything else — an unrelated line under the caret —
-    // is the tail's cue to go.
-    if (!shown.startsWith(st.line)) closeGhost()
+    const live = ghostLive()
+    // Nothing is inferred from a content mismatch: on the same row, a write that is
+    // still landing (the shell's echo, or our own input recolor rewriting the line
+    // in place) can leave the row briefly reading as neither a prefix nor an
+    // extension of our line. Retiring the tail there is what made a completion
+    // vanish a moment after appearing. Only a keystroke judges the line again.
+    if (live === null || !st.line.startsWith(live.replace(/\s+$/, ''))) return
+    evaluateGhost(st.line, ghostAheadCells(st.line, live))
   }
 
   /**
@@ -4360,9 +4348,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         moveGhostActive(-1)
         return true
       case 'Enter':
-        // Insert the picked command and let the user look at it before running it.
-        // A bare Enter with no pick has no business being swallowed either, but the
-        // list is open here, so this is the pick.
+        // Only a pick from the open list. A grey tail on its own is an offer, not a
+        // decision: pressing Enter with just the tail showing must submit what the
+        // user typed, not insert the suggestion and swallow the key.
+        if (!st.open) return false
         acceptGhost(st.active)
         return true
       case 'Escape':
@@ -4622,51 +4611,50 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             onClick={ctxMenu.pending ? handleClearInput : undefined}
             title={t('clearInputLine')}
           >
-            ⌫ {t('clearInputLine')}
+            <Icon name="backspace" /> {t('clearInputLine')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleSelectAll}>
-            🔤 {t('selectAll')}
+            <Icon name="selection" /> {t('selectAll')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleClear}>
-            🧹 {t('clear')}
+            <Icon name="eraser" /> {t('clear')}
           </div>
           <div
             className="context-menu-item"
             onClick={handleToggleTailRoom}
             title={t('termTailRoomTitle')}
           >
-            ⬓ {t('termTailRoom')} {t(tailRoomOn ? 'on' : 'off')}
+            <Icon name="panelBottom" /> {t('termTailRoom')} {t(tailRoomOn ? 'on' : 'off')}
           </div>
           <div
             className="context-menu-item"
             onClick={handleToggleLineNumbers}
             title={t('termLineNumbersTitle')}
           >
-            # {t('termLineNumbers')} {t(lineNumbersOn ? 'on' : 'off')}
+            <Icon name="hash" /> {t('termLineNumbers')} {t(lineNumbersOn ? 'on' : 'off')}
           </div>
           <div
             className="context-menu-item"
             onClick={handleToggleCdSuggest}
             title={t('termCdSuggestTitle')}
           >
-            📁 {t('termCdSuggest')} {t(cdSuggestGlobal ? 'on' : 'off')}
+            <Icon name="folder" /> {t('termCdSuggest')} {t(cdSuggestGlobal ? 'on' : 'off')}
           </div>
           <div
             className="context-menu-item"
             onClick={handleToggleGhostSuggest}
             title={t('termGhostSuggestTitle')}
           >
-            <Icon name="terminal" size={12} /> {t('termGhostSuggest')}{' '}
-            {t(ghostSuggestGlobal ? 'on' : 'off')}
+            <Icon name="terminal" /> {t('termGhostSuggest')} {t(ghostSuggestGlobal ? 'on' : 'off')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleAskAi}>
-            🤖 {t('aiChatAskAi')}
+            <Icon name="sparkles" /> {t('aiChatAskAi')}
           </div>
           <div className="context-menu-item" onClick={handleAddSnippet}>
-            <Icon name="plus" size={12} /> {t('addToCommandList')}
+            <Icon name="plus" /> {t('addToCommandList')}
           </div>
         </div>
       )}

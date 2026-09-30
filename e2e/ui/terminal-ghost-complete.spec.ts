@@ -43,6 +43,10 @@ const rows = (page: Page) => page.locator('.term-ghost-suggest-row')
 const sentInput = async (page: Page) =>
   (await invokedCalls(page)).filter((c) => c.cmd === 'send_input').map((c) => String(c.args.data))
 
+/** The rendered HTML of the row holding `needle` — for "was this line coloured". */
+const rowHtml = (page: Page, needle: string) =>
+  page.locator('.xterm-rows > div', { hasText: needle }).last().innerHTML()
+
 /** The last row that holds any text — the input line, however many blank rows sit under it. */
 const renderedLine = (page: Page) =>
   page.evaluate(() => {
@@ -442,6 +446,58 @@ test('output that scrolls the view takes a standing tail with it', async ({ page
 
   // Either gone, or still hugging the text it belongs to — never stranded.
   await expect(ghost(page)).toHaveText('')
+})
+
+test('Enter submits what was typed, never the standing suggestion', async ({ page }) => {
+  // A grey tail is an offer, not a decision. With the candidate list closed, Enter
+  // belongs to the shell: swallowing it to insert the completion turned "run this"
+  // into "type more", and the command never reached the shell at all.
+  await openTerminal(page)
+  await page.keyboard.type('git s', { delay: 40 })
+  await expect(ghost(page)).toHaveText('tatus -sb')
+
+  await page.keyboard.press('Enter')
+  const bytes = await sentInput(page)
+  expect(bytes).toContain('\r')
+  expect(bytes[bytes.length - 1]).toBe('\r')
+  // The suggestion stayed out of the submitted line.
+  expect(bytes).not.toContain('tatus -sb')
+  await expect(page.locator('.xterm-rows')).toContainText(`${PROMPT}git s`)
+  await expect(ghost(page)).toHaveText('')
+})
+
+test('a write that lands on the same row cannot retire the tail', async ({ page }) => {
+  // The refresh may only give up when the caret leaves the row the tail was placed
+  // on. Inferring "the line is gone" from the row's *content* is wrong: a write that
+  // rewrites the input line in place (the shell's own redraw, our input recolor) can
+  // leave the row reading as neither a prefix nor an extension of what we matched,
+  // and the completion then appears for a beat and disappears.
+  await openTerminal(page)
+  await page.keyboard.type('git s', { delay: 40 })
+  await expect(ghost(page)).toHaveText('tatus -sb')
+
+  await page.evaluate(() => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+        }
+      }
+    ).__TAURI_INTERNALS__
+    const orig = internals.invoke.bind(internals)
+    internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
+      const res = await orig(cmd, args)
+      if (cmd === 'poll_output') {
+        // The first byte of an in-place rewrite: the caret drops to column 0 while
+        // the row still holds the whole line, so there is content to the right of it
+        // and the input line cannot be read at all this instant.
+        return [...(res as string[]), '\r']
+      }
+      return res
+    }
+  })
+  await page.waitForTimeout(400)
+  await expect(ghost(page)).toHaveText('tatus -sb')
 })
 
 test('a tail left standing while the user pauses stays where the text ended up', async ({
