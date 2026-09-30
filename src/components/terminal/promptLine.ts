@@ -303,6 +303,44 @@ export function getPendingInputText(term: Terminal): string | null {
   return command
 }
 
+/**
+ * What the user has typed, taken as far as the caret itself — for anything that
+ * hangs a suggestion off the caret (the ghost command completion).
+ *
+ * `getInputLineAtCursorEnd` cannot serve that job: it compares the caret column
+ * against a line read back through `translateToString(true)`, which right-trims,
+ * so a trailing space (`git `, `cd `) makes the caret look mid-line and the answer
+ * is `null`. A trailing space is exactly where a completion has the most to say,
+ * so this reads the caret column directly and only asks the complementary
+ * question — is there any non-blank content to the RIGHT of the caret, which would
+ * be what the tail tries to paint over.
+ *
+ * `null` for the same reasons the other reader is: program output, a pager prompt,
+ * an application-owned screen, or no prompt marker on the row. A command wrapped
+ * over several rows also answers `null` (its continuation rows carry no prompt), so
+ * the completion is single-row only — like the live-line recolor.
+ */
+export function getInputTextBeforeCaret(term: Terminal): string | null {
+  const buffer = term.buffer.active
+  const line = buffer.getLine(buffer.baseY + buffer.cursorY)
+  if (!line) return null
+  if (isApplicationScreen(term)) return null
+  const row = line.translateToString(false)
+  if (isPagerPrompt(row)) return null
+  // Nothing but blanks may sit to the right of the caret, or the caret is mid-word
+  // and a tail there would be a lie.
+  if (stripAnsi(row.slice(buffer.cursorX)).trim() !== '') return null
+  const toCaret = stripAnsi(row.slice(0, buffer.cursorX))
+  const { prompt } = splitPromptCommand(toCaret)
+  if (!prompt) return null
+  // Cut at the prompt's own length instead of taking `splitPromptCommand`'s second
+  // half: that one `trimEnd()`s, so a line ending in a space would read back
+  // shorter than it is — and the caller's not-yet-echoed-lag bookkeeping clears
+  // itself only when the line it read really ends with what it sent, which a
+  // trimmed line never does.
+  return toCaret.slice(prompt.length)
+}
+
 // Capture commands submitted by the user. A single Enter commits the current
 // terminal-buffer line (which holds tab-completed text); a multi-line paste
 // commits each pasted line directly.

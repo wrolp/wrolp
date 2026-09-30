@@ -1,4 +1,5 @@
 import type { TargetRef } from '../../types'
+import type { GhostCandidate } from './ghostComplete'
 
 /** Props for the terminal component, isolated so other modules can reference
  *  the type without importing the whole terminal component. */
@@ -78,6 +79,11 @@ export interface TerminalComponentProps {
    *  command history it shows in its status-bar dropdown, so this is reported up
    *  rather than kept here — a floating/docked re-mount must not lose it. */
   onCommandSubmitted?: (command: string) => void
+  /** Commands the ghost completion may offer: this terminal's history, the
+   *  persisted history and the commands the user added, already merged and in
+   *  preference order (see `ghostComplete.ts`). Owned by the app because the
+   *  snippet/set libraries are app-level state a pane must not re-fetch. */
+  commandPool?: GhostCandidate[]
   onAskAi?: (selectedText: string) => void
   /** Save the selected text as a command snippet (floating command list). */
   onAddCommandSnippet?: (text: string) => void

@@ -799,6 +799,17 @@
     color: $text-secondary;
   }
 
+  // The protocol tiles carry their abbreviation rather than a glyph: three letters
+  // read at a glance down the column, where a link icon looked the same on every row.
+  // Monospace and 9px so SSH / TEL / COM are all exactly as wide, and the column of
+  // tiles stays visually square. (`.conn-item-icon` keeps its shell glyphs.)
+  .conn-icon {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+
   // `.proto-*` comes from `ConnectionConfig.kind`; the local entries key off the
   // shell flavour instead (see `.shell-icon-*` further down). The glyph is the hue's
   // own `-soft-40` variant, which is what that family exists for: a status colour is

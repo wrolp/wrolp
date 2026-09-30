@@ -476,6 +476,23 @@ const en = {
   cdSuggestHint: '↑↓ pick · Tab drill in · Enter complete · Esc close',
   cdSuggestMore: '{n} more — keep typing to narrow',
   cdSuggestLoading: 'Listing…',
+  // Ghost command completion (→ applies the nearest part of the grey tail, End the
+  // rest, Tab opens the list).
+  termGhostSuggest: 'Command completion',
+  termGhostSuggestTitle:
+    'While you type, the likeliest command continues the line in grey after the caret — inferred from what has been run here, the persisted history and the commands you added (the command list and the command sets). → types the nearest part of the tail, End the rest; Tab opens the candidate list, where ↑↓ pick and Enter/Tab/click puts the whole command on the input line. Inserted, never run. Esc closes the list, and a Tab after that reaches the shell’s own completion.',
+  termGhostSuggestHelp:
+    'On by default; the terminal’s right-click menu toggles it too. Serial consoles are left out — they have no line editor to complete into.',
+  termGhostAccept: 'Right arrow applies',
+  termGhostAcceptWord: 'the nearest part (End = whole command)',
+  termGhostAcceptAll: 'the whole command (End = nearest part)',
+  termGhostAcceptHelp:
+    'A part is one space-separated word: `git status -sb` typed as `git s` takes `tatus`, then ` -sb`, then nothing — so a walk stops where a completion goes wrong. A pick from the candidate list always puts the whole command on the line.',
+  ghostSuggest: 'Command candidates',
+  ghostSuggestHint: '→ next part · End whole · Enter/Tab insert · ↑↓ pick · Esc close',
+  ghostSrcHistory: 'history',
+  ghostSrcSnippet: 'command list',
+  ghostSrcSet: 'command set',
   maxFileOpenSize: 'Max File Open Size (MB)',
   maxFileOpenSizeDesc: 'Files larger than this cannot be opened in the editor.',
   updates: 'Updates',

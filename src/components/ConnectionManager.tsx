@@ -1389,13 +1389,16 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
       onDragEnd={onDragEnd}
     >
       {/* The tile's hue is this row's only "what kind of connection" cue, and `kind`
-          comes from persisted JSON, so the class is mapped rather than interpolated. */}
+          comes from persisted JSON, so the class is mapped rather than interpolated.
+          The letters are the protocol abbreviations themselves — identical in both
+          locales — and they replace a generic link glyph that made an SSH row and a
+          serial row indistinguishable at a glance. */}
       <span
         className={`conn-icon proto-${
           conn.kind === 'telnet' || conn.kind === 'serial' ? conn.kind : 'ssh'
         }`}
       >
-        <Icon name="link" />
+        {conn.kind === 'telnet' ? 'TEL' : conn.kind === 'serial' ? 'COM' : 'SSH'}
       </span>
       <div className="conn-info">
         <div className="conn-name">{conn.name}</div>

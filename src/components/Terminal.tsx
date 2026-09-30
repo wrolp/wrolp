@@ -147,6 +147,7 @@ import {
   commitSubmittedCommands,
   isPagerPrompt,
   isApplicationScreen,
+  getInputTextBeforeCaret,
   CURSOR_REPOSITION,
   VERTICAL_MOVE,
 } from './terminal/promptLine'
@@ -170,6 +171,9 @@ import {
 import { KeyInterceptRouter } from './terminal/keyIntercept'
 import { CdSuggestPanel } from './terminal/CdSuggestPanel'
 import type { CdSuggestAnchor } from './terminal/CdSuggestPanel'
+import { GhostSuggestPanel } from './terminal/GhostSuggestPanel'
+import type { GhostAcceptMode, GhostCandidate } from './terminal/ghostComplete'
+import { ghostRemainder, matchGhost, planGhostAccept } from './terminal/ghostComplete'
 import type { TerminalComponentProps } from './terminal/types'
 
 export {
@@ -179,11 +183,11 @@ export {
   markInputEcho,
 } from './terminal/registry'
 
-/** Give the line-number gutter the terminal's own font, so its `1ch` column matches the
- *  terminal cells and the labels look like part of the terminal. Called on mount and
- *  whenever the appearance registry pushes a font change (never per frame — it reads
- *  localStorage). */
-function applyGutterFont(el: HTMLElement | null): void {
+/** Give an HTML overlay that sits on the grid (the line-number gutter, the ghost
+ *  completion) the terminal's own font, so its metrics match the terminal cells and
+ *  it looks like part of the terminal. Called on mount and whenever the appearance
+ *  registry pushes a font change (never per frame — it reads localStorage). */
+function applyTerminalFont(el: HTMLElement | null): void {
   if (!el) return
   const a = getTerminalAppearance()
   el.style.fontFamily = a.fontFamily
@@ -205,6 +209,23 @@ interface CdSuggestState {
   anchor: CdSuggestAnchor
 }
 
+/** Live state of the ghost command completion. */
+interface GhostState {
+  /** The projected input line the candidates were matched against. */
+  line: string
+  /** Ranked matches, best first — the first one is what the grey tail shows. */
+  items: GhostCandidate[]
+  /** Highlighted row; also which one → applies. */
+  active: number
+  /** Tab opened the candidate list. While it is closed the completion takes no
+   *  key at all, so a plain history search with ↑ is never disturbed. */
+  open: boolean
+  anchor: CdSuggestAnchor & { maxW: number }
+  /** Absolute buffer row the caret was on when the tail was placed — the accept
+   *  carries it over so a half-flushed repaint cannot be mistaken for a new line. */
+  row: number
+}
+
 export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
   isActive,
@@ -221,6 +242,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   onSetLineNumbers,
   onSizeChange,
   onCommandSubmitted,
+  commandPool,
   onAskAi,
   onAddCommandSnippet,
   onOpenFile,
@@ -1780,8 +1802,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       setTailRoomGlobal(readSetting('terminal.tailRoom')?.value === true)
       setLnGlobal(a.lineNumbers)
       setCdSuggestGlobal(readSetting('terminal.cdSuggest')?.value === true)
+      setGhostSuggestGlobal(readSetting('terminal.ghostSuggest')?.value === true)
+      setGhostAcceptMode(readSetting('terminal.ghostAccept')?.value === 'all' ? 'all' : 'word')
       setLnSymbol(continuationGlyph(a.continuationSymbol))
-      applyGutterFont(gutterRef.current)
+      applyTerminalFont(gutterRef.current)
+      applyTerminalFont(ghostTextRef.current)
       fitAddon.fit()
     })
     // Register this instance so external callers (reconnect, "send to terminal")
@@ -2171,7 +2196,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // by themselves. Only the labels are ours to keep in step: xterm repaints its rows on
     // every scroll and every write, so `onRender` (and `onResize` for the row count) is
     // the only signal that knows which buffer line sits on which screen row.
-    applyGutterFont(gutterRef.current)
+    applyTerminalFont(gutterRef.current)
     const syncGutter = () => {
       const root = rootRef.current
       const rows = gutterRowsRef.current
@@ -2328,6 +2353,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // written back (it lags by one keystroke — plan §4.1). Must run before any
       // early return below, or a keystroke could go unjudged.
       cdEvalRef.current(data)
+      // Ghost command completion: same projection, same reason, same rule about
+      // running before the early returns — the grey tail has to follow the caret
+      // key for key, not one key behind it.
+      ghostEvalRef.current(data)
       // Capture the full command line (with tab-completed text) when the user
       // submits it, before the remote echo changes the buffer row.
       if (data.includes('\r') || data.includes('\n')) {
@@ -2522,6 +2551,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           .catch((err) => console.error('send_input error:', err))
       }
     })
+
+    // A ghost tail is a fixed overlay placed from the caret at keystroke time. When
+    // output moves the text with no keystroke behind it — an accept's own echo, a
+    // prompt printed by the shell, anything arriving on a poll — the overlay would
+    // stay at its old viewport coordinate and read as a glyph stranded mid-screen.
+    // One refresh per parsed write batch is enough: the batch is applied by then.
+    const ghostWriteDisposable = term.onWriteParsed(() => ghostWriteRef.current())
 
     // Focus on click
     const handleClick = () => {
@@ -2870,6 +2906,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       bufferChangeDisposable.dispose()
       tailRoomRenderDisposable.dispose()
       lnResizeDisposable.dispose()
+      ghostWriteDisposable.dispose()
       unsubTheme()
       unsubAppearance()
       if (linkTooltipShowTimer.current) clearTimeout(linkTooltipShowTimer.current)
@@ -3656,12 +3693,42 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }
 
-  /** The caret cell, in viewport px — same anchor the `ls` hover card uses. */
-  const cdAnchor = (): CdSuggestAnchor | null => {
+  /**
+   * The cell the caret is standing on — or would stand on `aheadCells` further
+   * right — in viewport px, plus how much room is left before the overlay would
+   * run past the terminal's right edge. `CdSuggestPanel` ignores both extras; the
+   * ghost tail needs them, since it grows to the right from a caret that may
+   * already be near the margin.
+   *
+   * `aheadCells` is what has been sent but not echoed yet. A keystroke reaches
+   * `onData` before the shell's answer reaches the buffer, so the caret the buffer
+   * reports is still behind the text the user sees coming — anchoring on it
+   * directly would paint the first tail character on top of the character they
+   * just typed. One cell of the tail over one glyph is exactly what that looked
+   * like. Once the echo lands the lag empties, and the anchor converges onto the
+   * real caret.
+   */
+  const caretAnchor = (
+    aheadCells = 0,
+  ): (CdSuggestAnchor & { maxW: number; row: number }) | null => {
     const term = termRef.current
     if (!term) return null
     const buffer = term.buffer.active
-    return computeLinkAnchor(term, buffer.baseY + buffer.cursorY, buffer.cursorX)
+    const col = buffer.cursorX + aheadCells
+    // A negative shift is a deletion whose repaint has not landed yet: the caret is
+    // still one cell past the text. Below column 0 there is nothing left to hang a
+    // tail on, and the wrap arithmetic would read it as a row above.
+    if (col < 0) return null
+    // Past the last column the line wraps, so the tail belongs on the next row.
+    const row = buffer.cursorY + Math.floor(col / term.cols)
+    const pos = computeLinkAnchor(term, buffer.baseY + row, col % term.cols)
+    if (!pos) return null
+    const right = term.element?.getBoundingClientRect().right
+    return {
+      ...pos,
+      row: buffer.baseY + row,
+      maxW: right === undefined ? 0 : Math.max(0, right - pos.x - 4),
+    }
   }
 
   const sameCdItems = (a: readonly CdCandidate[], b: readonly CdCandidate[]) =>
@@ -3683,7 +3750,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       closeCdSuggest()
       return
     }
-    const anchor = cdAnchor()
+    const anchor = caretAnchor()
     if (!anchor) {
       closeCdSuggest()
       return
@@ -3705,7 +3772,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   }
 
   /** Send bytes the shell will echo back, without going through `onData`. */
-  const injectCdInput = (bytes: string) => {
+  const injectToInputLine = (bytes: string) => {
     if (!bytes) return
     sendRawToSession(bytes)
     // Bypassing `onData` means the "awaiting echo" gate was never raised; do it
@@ -3864,7 +3931,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // the whole quoted command — `planCdAccept` decides, `cdSuggest.ts` owns the
     // quoting rules shared with the `ls` click-to-open.
     if (item.append === null) {
-      injectCdInput(planCdAccept(item, cdShellKind()))
+      injectToInputLine(planCdAccept(item, cdShellKind()))
       // The line is now a complete command, not a prefix we can keep filtering:
       // re-read from the buffer from here on.
       cdLagRef.current = ''
@@ -3872,14 +3939,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       return
     }
     if (mode === 'enter' || mode === 'click') {
-      injectCdInput(item.append)
+      injectToInputLine(item.append)
       cdLagRef.current = applyKeystroke(cdLagRef.current, item.append) ?? ''
       closeCdSuggest()
       return
     }
     const sep = st.base && /^[A-Za-z]:[\\/]/.test(st.base) ? '\\' : '/'
     const drill = `${item.append}${sep}`
-    injectCdInput(drill)
+    injectToInputLine(drill)
     cdLagRef.current = applyKeystroke(cdLagRef.current, drill) ?? ''
     evaluateCdSuggest(`${st.line}${drill}`, true)
   }
@@ -3925,10 +3992,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const router = cdKeyRouterRef.current ?? new KeyInterceptRouter()
     cdKeyRouterRef.current = router
     router.attach(term)
-    return router.register({
+    const offCd = router.register({
       id: 'cd-suggest',
       handle: (ev) => cdKeyRef.current(ev),
     })
+    // Registered second on purpose: rules are asked in order, and a `cd <path>`
+    // line belongs to the directory dropdown, not to the completion.
+    const offGhost = router.register({
+      id: 'ghost-complete',
+      handle: (ev) => ghostKeyRef.current(ev),
+    })
+    return () => {
+      offCd()
+      offGhost()
+    }
   }, [termCreated])
 
   // Scrolling moves the row the panel hangs from; so does a resize, and a click
@@ -3936,10 +4013,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const close = () => cdCloseRef.current()
+    const close = () => {
+      cdCloseRef.current()
+      ghostCloseRef.current()
+    }
     const onDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null
-      if (target?.closest('.term-cd-suggest')) return
+      // A click on either panel's own rows is the point of the panel, not a
+      // dismissal — both stay open under it.
+      if (target?.closest('.term-cd-suggest') || target?.closest('.term-ghost-suggest')) return
       close()
     }
     el.addEventListener('wheel', close, { passive: true })
@@ -3957,6 +4039,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     cdCacheRef.current.clear()
     closeCdSuggest()
+    closeGhost()
   }, [isLocal, localShellType, dockerContainer, reconnectTrigger])
 
   const handleToggleCdSuggest = useCallback(() => {
@@ -3970,6 +4053,351 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     termRef.current?.focus()
   }, [cdSuggestGlobal])
+
+  // ---- ghost command completion --------------------------------------------
+  // What has been typed stays on the line and the likeliest continuation appears
+  // after the caret in grey; → types the nearest part of it (a whole word, so a
+  // multi-word command is walked a press at a time) and End the rest. Tab opens the
+  // alternatives as a list under the caret, where ↑/↓ pick and Enter/Tab/click puts
+  // the whole command on the line. Nothing is ever *run*: every accept is bytes the
+  // user could have typed themselves, so the shell's line editor stays
+  // authoritative (same rule the `cd` dropdown follows).
+  //
+  // Candidates are this terminal's history, the persisted history and the commands
+  // the user added — see `ghostComplete.ts`. The remote `$PATH` index from
+  // task/plans/SSH-COMMAND-INDEX-COMPLETION-PLAN.md is not part of it: nothing here
+  // executes anything on the far side.
+  const [ghostSuggestGlobal, setGhostSuggestGlobal] = useState(
+    () => readSetting('terminal.ghostSuggest')?.value === true,
+  )
+  const ghostSuggestEnabled = ghostSuggestGlobal && !isSerial
+  // A serial console has no shell line editor to complete into — Telnet does, so it
+  // stays eligible (unlike `cd`, which needs a filesystem).
+  // What a plain → takes from a multi-word suggestion: the nearest space-separated
+  // part (default, so `→ → →` walks `git status -sb`) or the whole tail at once.
+  // `End` always takes the other half, so both are reachable either way.
+  const [ghostAcceptMode, setGhostAcceptMode] = useState<GhostAcceptMode>(() =>
+    readSetting('terminal.ghostAccept')?.value === 'all' ? 'all' : 'word',
+  )
+  // Read by the once-registered key rule, which must not see the mode from the
+  // render it was created in.
+  const ghostAcceptModeRef = useRef<GhostAcceptMode>(ghostAcceptMode)
+  ghostAcceptModeRef.current = ghostAcceptMode
+  const ghostRef = useRef<GhostState | null>(null)
+  const [ghostView, setGhostView] = useState<GhostState | null>(null)
+  /**
+   * The input line as the completion last understood it — which is usually one or
+   * several characters ahead of the screen, because a keystroke reaches `onData`
+   * before its echo comes back and an accept injects bytes without a keystroke at
+   * all.
+   *
+   * This replaces carrying a "not yet echoed" string around: the tail is only ever
+   * right if it was never reconciled, and an accept appending its own bytes to it
+   * duplicated characters the shell had already shown (`python s` + `sip_…` came
+   * back as `python ssip_…`), which matched nothing and dropped the tail. A whole
+   * line can be checked against the buffer; a loose tail cannot.
+   */
+  const ghostLineRef = useRef<string | null>(null)
+  /** The buffer row `ghostLineRef` was read on — see `ghostBaseLine`. */
+  const ghostRowRef = useRef(-1)
+  const ghostEvalRef = useRef<(data: string) => void>(() => {})
+  // Keeps a standing tail from being left over an unrelated row when output moves
+  // the text without a keystroke (see `refreshGhost`).
+  const ghostWriteRef = useRef<() => void>(() => {})
+  const ghostKeyRef = useRef<(ev: KeyboardEvent) => boolean>(() => false)
+  const ghostCloseRef = useRef<() => void>(() => {})
+  const ghostTextRef = useRef<HTMLDivElement | null>(null)
+  // The pool is app-level state (the snippet/set libraries are not the pane's);
+  // read through a ref because `onData` and the key rule are registered once.
+  const commandPoolRef = useRef(commandPool)
+  commandPoolRef.current = commandPool
+
+  /** Take the tail and the list down. */
+  const closeGhost = () => {
+    if (ghostRef.current) {
+      ghostRef.current = null
+      setGhostView(null)
+    }
+  }
+
+  /** The grey tail of the highlighted row — the whole point of the overlay. */
+  const ghostTail = (st: GhostState) =>
+    ghostRemainder(st.line, st.items[st.active]?.command ?? '') ?? ''
+
+  /**
+   * Re-match the projected input line. Called on every keystroke, so a stale
+   * answer can never outlive one key: the list narrows as the user types and
+   * disappears the moment nothing matches.
+   */
+  const evaluateGhost = (line: string | null, aheadCells = 0) => {
+    // While the `cd` dropdown owns the line its candidates are the story; two
+    // panels hanging off the same caret would both claim ↓/↑.
+    if (!ghostSuggestEnabled || !line || cdRef.current) {
+      closeGhost()
+      return
+    }
+    const items = matchGhost(commandPoolRef.current ?? [], line)
+    if (!items.length) {
+      closeGhost()
+      return
+    }
+    const anchor = caretAnchor(aheadCells)
+    if (!anchor) {
+      closeGhost()
+      return
+    }
+    const prev = ghostRef.current
+    const sameSet =
+      !!prev &&
+      prev.items.length === items.length &&
+      prev.items.every((it, i) => it.command === items[i].command)
+    const next: GhostState = {
+      line,
+      items,
+      anchor,
+      row: anchor.row,
+      open: !!prev?.open,
+      // Hold the highlight while the filter narrows under the same rows; a
+      // different set means the user typed past it, so start from the top again.
+      active: sameSet && prev ? Math.min(prev.active, items.length - 1) : 0,
+    }
+    ghostRef.current = next
+    setGhostView(next)
+  }
+
+  /** What the caret's row holds to the left of the caret, or null off an input line. */
+  const ghostLive = (): string | null => {
+    const term = termRef.current
+    return term ? getInputTextBeforeCaret(term) : null
+  }
+
+  /**
+   * How far right of the caret the tail belongs: how many characters the projected
+   * line has that the screen does not show yet. Negative on a deletion whose
+   * repaint has not landed — the caret is then one cell too far right, not one too
+   * few.
+   *
+   * Measured off the buffer rather than off any bookkeeping of our own, because
+   * ConPTY flushes a row in pieces: the caret the screen reports and the line we
+   * believe the user is on are the only two facts, and their difference is exactly
+   * what has not landed yet.
+   */
+  const ghostAheadCells = (line: string, live: string | null): number =>
+    live === null ? 0 : line.length - live.length
+
+  /**
+   * Re-place or retire the tail after the screen moved under it.
+   *
+   * The tail is a fixed overlay positioned from the caret at the instant of a
+   * keystroke, so anything that moves the text without one leaves it painted over
+   * an unrelated row — which is what a lone grey glyph stranded mid-screen looks
+   * like. Called once per parsed write batch (every poll, and nothing finer): by
+   * then the whole batch is applied, so the caret the buffer reports is final and
+   * `ghostLive` answers honestly rather than mid-repaint.
+   */
+  const refreshGhost = () => {
+    const st = ghostRef.current
+    if (!st) return
+    const live = ghostLive()
+    // Not a shell input line under the caret any more (an application took the
+    // screen, a pager prompt arrived).
+    if (live === null) {
+      closeGhost()
+      return
+    }
+    // What the row actually holds. Mid-flush the caret can sit past the text the
+    // shell has written so far, and the cells in between are blanks that say nothing
+    // about which line this is — trimming them is what makes the comparison below
+    // mean "is this still our line", not "does it match byte for byte right now".
+    const shown = live.replace(/\s+$/, '')
+    if (st.line.startsWith(shown)) {
+      // The screen is behind our line, or exactly on it. Behind is normal mid-echo;
+      // an EMPTY line is not — the prompt the user was typing on is gone (output
+      // arrived, or the shell printed a fresh one), and a tail held over from it
+      // would be painted over unrelated rows.
+      if (shown.length === 0 && st.line.length > 0) {
+        closeGhost()
+        return
+      }
+      evaluateGhost(st.line, ghostAheadCells(st.line, live))
+      return
+    }
+    // The screen shows MORE than we believe, i.e. a repaint queued before the last
+    // edit (a deletion whose echo has not landed). Hold the placement: moving to
+    // that caret would slide the tail out, and retiring it would blink the tail off
+    // on every partial flush. Anything else — an unrelated line under the caret —
+    // is the tail's cue to go.
+    if (!shown.startsWith(st.line)) closeGhost()
+  }
+
+  /**
+   * The line the keystroke edits: our own projection while the screen still agrees
+   * with it, the screen as soon as it doesn't. Falling back to the buffer is what
+   * keeps a cursor move or an unexpected repaint from being applied on top of a
+   * line that no longer exists.
+   *
+   * A `null` read is the awkward case. It means either "this is not a shell input
+   * line" (an application owns the screen) or "the row is half repainted" — ConPTY
+   * writes the new text before it moves the caret over it, and in between there is
+   * content to the right of the caret. The two are told apart by the row: while the
+   * caret is still on the one the projection was made on, the line stands.
+   */
+  const ghostBaseLine = (live: string | null): string | null => {
+    const mine = ghostLineRef.current
+    if (live !== null) return mine !== null && mine.startsWith(live) ? mine : live
+    const term = termRef.current
+    if (mine === null || !term || isApplicationScreen(term)) return null
+    const buffer = term.buffer.active
+    return buffer.baseY + buffer.cursorY === ghostRowRef.current ? mine : null
+  }
+
+  /** One keystroke: judge the line as it will read once the shell echoes it. */
+  const handleGhostKeystroke = (data: string) => {
+    // Read up to the caret rather than "the line, if the caret is at its end": a
+    // trailing space has to count as typed text, or `git ` — the moment a
+    // completion is most useful — would read back as nothing.
+    const live = ghostLive()
+    // A submitted line is gone, and the buffer still shows it until the next echo
+    // lands — so close here rather than projecting onto a line that no longer
+    // exists.
+    if (/^[\r\n]+$/.test(data)) {
+      ghostLineRef.current = null
+      ghostRowRef.current = -1
+      evaluateGhost(null)
+      return
+    }
+    const base = ghostBaseLine(live)
+    const edited = base === null ? null : applyKeystroke(base, data)
+    // `applyKeystroke` answers null for a keystroke that edits in place (a cursor
+    // move, ^A, ^W): the screen is the only honest answer then.
+    const line = edited ?? live
+    ghostLineRef.current = line
+    const term = termRef.current
+    ghostRowRef.current = term ? term.buffer.active.baseY + term.buffer.active.cursorY : -1
+    if (line === null) evaluateGhost(null)
+    else evaluateGhost(line, ghostAheadCells(line, live))
+  }
+
+  /**
+   * Put a candidate on the input line, without running it.
+   *
+   * `word` types only the nearest space-separated part of the tail, so repeated
+   * presses walk a multi-word command; `all` types the whole thing. After a
+   * partial accept the tail is recomputed rather than dropped — otherwise the
+   * second press would just move the caret and the walk would stop at word two.
+   */
+  const acceptGhost = (index: number, mode: GhostAcceptMode = 'all') => {
+    const st = ghostRef.current
+    const item = st?.items[index]
+    if (!st || !item) return
+    // Where the caret is before the injected bytes reach the screen: the anchor and
+    // the tail are both measured against it, so read it once and reuse it.
+    const live = ghostLive()
+    const bytes = planGhostAccept(st.line, item.command, cdShellKind(), mode)
+    injectToInputLine(bytes)
+    // What the line now holds: the whole command when it was rewritten (a case
+    // mismatch cleared it first), the prefix plus the part typed otherwise —
+    // which is the same string either way.
+    const taken = ghostRemainder(st.line, item.command) === null ? item.command : st.line + bytes
+    // The accept knows the line exactly, so that is what it records — nothing to
+    // accumulate and nothing to reconcile later. The row is the one the tail was
+    // already placed on.
+    ghostLineRef.current = taken
+    ghostRowRef.current = st.row
+    evaluateGhost(taken, ghostAheadCells(taken, live))
+  }
+
+  /** The other half of a press: `word` walks, `all` finishes. */
+  const otherGhostMode = (mode: GhostAcceptMode): GhostAcceptMode =>
+    mode === 'word' ? 'all' : 'word'
+
+  const moveGhostActive = (delta: number) => {
+    const st = ghostRef.current
+    if (!st) return
+    const next = { ...st, active: Math.min(Math.max(st.active + delta, 0), st.items.length - 1) }
+    ghostRef.current = next
+    setGhostView(next)
+  }
+
+  const openGhostList = () => {
+    const st = ghostRef.current
+    if (!st || st.open) return
+    const next = { ...st, open: true }
+    ghostRef.current = next
+    setGhostView(next)
+  }
+
+  /** Keys the completion owns — every one of them only while something is showing. */
+  const interceptGhostKey = (ev: KeyboardEvent): boolean => {
+    const st = ghostRef.current
+    if (!st || ev.ctrlKey || ev.metaKey || ev.altKey) return false
+    // What the plain → does; `End` always takes the other half, so both are
+    // reachable however the setting is configured.
+    const near = ghostAcceptModeRef.current
+    switch (ev.key) {
+      case 'ArrowRight':
+        // Ours because a tail is only ever drawn with the caret at the end of a
+        // live input line; anywhere else the key reaches the shell untouched. And
+        // a case-different candidate has no tail to show, so it never takes the
+        // key either — nothing visible means nothing for the user to expect.
+        if (!ghostTail(st)) return false
+        acceptGhost(st.active, near)
+        return true
+      case 'End':
+        if (!ghostTail(st)) return false
+        acceptGhost(st.active, otherGhostMode(near))
+        return true
+      case 'Tab':
+        if (st.open) acceptGhost(st.active)
+        else openGhostList()
+        return true
+      case 'ArrowDown':
+        if (!st.open) return false
+        moveGhostActive(1)
+        return true
+      case 'ArrowUp':
+        if (!st.open) return false
+        moveGhostActive(-1)
+        return true
+      case 'Enter':
+        // Insert the picked command and let the user look at it before running it.
+        // A bare Enter with no pick has no business being swallowed either, but the
+        // list is open here, so this is the pick.
+        acceptGhost(st.active)
+        return true
+      case 'Escape':
+        // Swallowed on purpose: a bare Esc reaching readline is a META prefix.
+        closeGhost()
+        return true
+      default:
+        return false
+    }
+  }
+
+  // Keep the once-registered listeners pointing at the current closures.
+  useEffect(() => {
+    ghostEvalRef.current = handleGhostKeystroke
+    ghostWriteRef.current = refreshGhost
+    ghostKeyRef.current = interceptGhostKey
+    ghostCloseRef.current = closeGhost
+  })
+
+  // The tail element is always mounted (hidden when there is nothing to show) so
+  // its font is set once here and re-set when the appearance registry changes,
+  // exactly like the gutter's — never per keystroke, since that reads localStorage.
+  useEffect(() => {
+    applyTerminalFont(ghostTextRef.current)
+  }, [])
+
+  const handleToggleGhostSuggest = useCallback(() => {
+    setCtxMenu(null)
+    try {
+      applySettingChanges({ 'terminal.ghostSuggest': !ghostSuggestGlobal }, 'user')
+    } catch {
+      /* an unknown key must never break the menu */
+    }
+    termRef.current?.focus()
+  }, [ghostSuggestGlobal])
 
   const handleAskAi = useCallback(() => {
     setCtxMenu(null)
@@ -4143,6 +4571,39 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           }}
         />
       )}
+      {/* The grey tail after the caret. Mounted whether or not there is a
+          suggestion, so its font is applied once (see `applyTerminalFont`) instead
+          of on the keystroke that first shows one. */}
+      <div
+        className="term-ghost"
+        ref={ghostTextRef}
+        aria-hidden="true"
+        style={{
+          left: ghostView?.anchor.x ?? 0,
+          top: ghostView?.anchor.y ?? 0,
+          maxWidth: ghostView?.anchor.maxW ?? 0,
+          lineHeight: `${ghostView?.anchor.cellH ?? 0}px`,
+          visibility: ghostView ? 'visible' : 'hidden',
+        }}
+      >
+        {ghostView ? ghostTail(ghostView) : ''}
+      </div>
+      {ghostView?.open && (
+        <GhostSuggestPanel
+          items={ghostView.items}
+          typed={ghostView.line}
+          activeIndex={ghostView.active}
+          anchor={ghostView.anchor}
+          onPick={acceptGhost}
+          onHover={(i) => {
+            const st = ghostRef.current
+            if (!st || st.active === i) return
+            const next = { ...st, active: i }
+            ghostRef.current = next
+            setGhostView(next)
+          }}
+        />
+      )}
       {ctxMenu && (
         <div
           ref={ctxMenuRef}
@@ -4191,6 +4652,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             title={t('termCdSuggestTitle')}
           >
             📁 {t('termCdSuggest')} {t(cdSuggestGlobal ? 'on' : 'off')}
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={handleToggleGhostSuggest}
+            title={t('termGhostSuggestTitle')}
+          >
+            <Icon name="terminal" size={12} /> {t('termGhostSuggest')}{' '}
+            {t(ghostSuggestGlobal ? 'on' : 'off')}
           </div>
           <div className="context-menu-divider" />
           <div className="context-menu-item" onClick={handleAskAi}>

@@ -19,6 +19,7 @@ import {
   pasteToTerminal,
 } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
+import { buildGhostPool, type GhostCandidate } from './components/terminal/ghostComplete'
 import { BottomPanel } from './components/BottomPanel'
 import { SessionListPanel } from './components/SessionListPanel'
 import { WelcomePage } from './components/WelcomePage'
@@ -47,6 +48,8 @@ import type {
   FloatingItem,
   FloatingKind,
   DockSide,
+  CommandSetDto,
+  CommandSnippetDto,
 } from './types'
 import {
   defaultLayout,
@@ -118,6 +121,8 @@ import {
   removeTunnel,
   recordCommandHistory,
   listCommandHistory,
+  listCommandSets,
+  listCommandSnippets,
 } from './commands'
 import type {
   AppVersion,
@@ -730,8 +735,58 @@ function TerminalContinuationSetting() {
 }
 
 /**
- * Settings → Appearance. Everything on this card already worked —
- * `themeStore` has applied an accent and a density since P0 — but nothing let a *user*
+ * Settings → Terminal: how far one → takes from a ghost suggestion.
+ *
+ * The same two-value shape as the continuation symbol, and for the same reason —
+ * the alternative is not a preference to be guessed at. Walking a command a word at
+ * a time is what makes a wrong completion cheap to stop, which is why it is the
+ * default; one press for the whole tail is what people expect from a Warp-style
+ * ghost, so it stays a choice rather than a behaviour change.
+ */
+function TerminalGhostAcceptSetting() {
+  const { t } = useI18n()
+  const read = () => String(readSetting('terminal.ghostAccept')?.value || 'word')
+  const [value, setValue] = useState(read)
+  useEffect(() => subscribeAppSettings(() => setValue(read)), [])
+  const options: Array<[string, string]> = [
+    ['word', t('termGhostAcceptWord')],
+    ['all', t('termGhostAcceptAll')],
+  ]
+  return (
+    <>
+      <div
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
+        <label
+          htmlFor="term-ghost-accept"
+          className="settings-label"
+          style={{ whiteSpace: 'nowrap' }}
+        >
+          {t('termGhostAccept')}
+        </label>
+        <select
+          id="term-ghost-accept"
+          className="settings-input"
+          data-setting="terminal.ghostAccept"
+          value={value}
+          style={{ width: 220 }}
+          onChange={(e) => applySettingChanges({ 'terminal.ghostAccept': e.target.value }, 'user')}
+        >
+          {options.map(([id, label]) => (
+            <option key={id} value={id}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <span className="settings-help">{t('termGhostAcceptHelp')}</span>
+    </>
+  )
+}
+
+/**
+ * Settings → Appearance. Everything on this card already worked — * `themeStore` has applied an accent and a density since P0 — but nothing let a *user*
  * reach them, so the only way to change an accent was to ask the AI.
  *
  * Writes go through the appearance registry rather than the store setters directly:
@@ -1455,33 +1510,11 @@ export default function App() {
   // Commands the rail's session list extracted for the command-set tab — same
   // hand-over, since the list no longer lives inside the drawer.
   const [prefillCommands, setPrefillCommands] = useState<string[] | null>(null)
-  // Which panel the activity rail has parked in the mode column. It is window
-  // chrome rather than workspace geometry, so it is stored next to the other
-  // display preferences instead of in the persisted `layout`.
-  const [railMode, setRailMode] = useState<RailMode>(() => {
-    try {
-      const saved = localStorage.getItem('wrolp-rail-mode')
-      if (
-        saved === 'hosts' ||
-        saved === 'files' ||
-        saved === 'containers' ||
-        saved === 'sessions' ||
-        saved === 'nettools'
-      )
-        return saved
-    } catch {
-      /* ignore */
-    }
-    return 'hosts'
-  })
-  const changeRailMode = useCallback((mode: RailMode) => {
-    setRailMode(mode)
-    try {
-      localStorage.setItem('wrolp-rail-mode', mode)
-    } catch {
-      /* ignore */
-    }
-  }, [])
+  // Which panel the activity rail has parked in the mode column. Always starts
+  // on hosts: the rail is where you pick a connection, so resuming whatever
+  // panel a previous session happened to leave open cost a step on every launch.
+  const [railMode, setRailMode] = useState<RailMode>('hosts')
+  const changeRailMode = useCallback((mode: RailMode) => setRailMode(mode), [])
   const [connections, setConnections] = useState<ConnectionConfig[]>([])
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('default')
@@ -1649,6 +1682,62 @@ export default function App() {
       cancelled = true
     }
   }, [])
+
+  // ---------------------------------------------------------------------------
+  // Ghost command completion's library side.
+  // ---------------------------------------------------------------------------
+  // The commands the user ADDED (the floating command list and the command sets),
+  // which are the completion's other half next to the two histories above. They
+  // live in SQLite and are edited from their own panels, so the app holds them
+  // once and hands each terminal a ready pool rather than letting every pane
+  // re-read the tables per keystroke.
+  const [cmdLibrary, setCmdLibrary] = useState<{
+    snippets: CommandSnippetDto[]
+    sets: CommandSetDto[]
+  }>({ snippets: [], sets: [] })
+
+  const loadCmdLibrary = useCallback(() => {
+    Promise.all([listCommandSnippets(), listCommandSets()])
+      .then(([snippets, sets]) => setCmdLibrary({ snippets, sets }))
+      .catch((err) => console.error('list_command_snippets/sets failed:', err))
+  }, [])
+
+  useEffect(() => {
+    loadCmdLibrary()
+  }, [loadCmdLibrary])
+
+  // Re-read when an editing surface closes. A save made inside the command list or
+  // the drawer is invisible to this component until then, and offering a command
+  // the user just deleted is worth more than the one local read it costs.
+  const libraryEditorWasOpenRef = useRef(false)
+  useEffect(() => {
+    const open = commandListOpen || bottomPanelExpanded
+    if (libraryEditorWasOpenRef.current && !open) loadCmdLibrary()
+    libraryEditorWasOpenRef.current = open
+  }, [bottomPanelExpanded, commandListOpen, loadCmdLibrary])
+
+  // One pool per (tab, connection) pair, rebuilt only when the histories or the
+  // library change. Returning the same array from render to render matters more
+  // than it looks: a terminal reads it through a ref per keystroke, so a new
+  // identity per render would be a new array per poll for every pane.
+  const commandPoolFor = useMemo(() => {
+    const cache = new Map<string, GhostCandidate[]>()
+    return (tabId: number, connectionId?: string | null): GhostCandidate[] => {
+      const key = `${tabId}|${connectionId ?? ''}`
+      let pool = cache.get(key)
+      if (!pool) {
+        pool = buildGhostPool({
+          snippets: cmdLibrary.snippets,
+          sets: cmdLibrary.sets,
+          tabHistory: cmdHistoryByTab[tabId] ?? [],
+          globalHistory: globalCmdHistory,
+          connectionId,
+        })
+        cache.set(key, pool)
+      }
+      return pool
+    }
+  }, [cmdHistoryByTab, cmdLibrary, globalCmdHistory])
 
   // ---------------------------------------------------------------------------
   // Terminal split layout (Phase 2). The tree is ephemeral (tabIds are
@@ -5080,6 +5169,7 @@ export default function App() {
               onCommandSubmitted={(command) =>
                 rememberCommand(tab.tabId, command, tab.tabType ?? '', tab.host ?? '')
               }
+              commandPool={commandPoolFor(tab.tabId, tab.connectionId)}
               onAskAi={(selectedText) => {
                 handleOpenAiChat(selectedText)
               }}
@@ -5272,6 +5362,14 @@ export default function App() {
                             label={t('termCdSuggest')}
                             help={t('termCdSuggestHelp')}
                           />
+
+                          <TerminalToggleSetting
+                            settingKey="terminal.ghostSuggest"
+                            label={t('termGhostSuggest')}
+                            help={t('termGhostSuggestHelp')}
+                          />
+
+                          <TerminalGhostAcceptSetting />
 
                           <TerminalContinuationSetting />
                         </div>

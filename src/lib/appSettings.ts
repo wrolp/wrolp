@@ -127,6 +127,8 @@ export const TERMINAL_APPEARANCE_KEYS = {
   lineNumbers: 'wrolp-terminal-line-numbers',
   continuationSymbol: 'wrolp-terminal-continuation-symbol',
   cdSuggest: 'wrolp-terminal-cd-suggest',
+  ghostSuggest: 'wrolp-terminal-ghost-suggest',
+  ghostAccept: 'wrolp-terminal-ghost-accept',
 } as const
 
 export type TerminalCursorStyle = 'block' | 'underline' | 'bar'
@@ -345,6 +347,35 @@ const DEFS: SettingDef[] = [
     storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.cdSuggest },
     describe:
       'Show a dropdown of real subdirectories under the caret while typing `cd <partial path>` (terminal right-click menu also toggles it).',
+  },
+  {
+    key: 'terminal.ghostSuggest',
+    kind: 'boolean',
+    group: 'terminal',
+    default: true,
+    // ON by default like `terminal.cdSuggest`: it only ever appears once something
+    // matches, and the two keys it takes (→ to apply the tail, Tab to open the list)
+    // are its whole purpose — behind a switch nobody finds, nobody uses them. The
+    // terminal's right-click menu and the pane's status bar both toggle it, and
+    // Esc before Tab hands the key back to the shell.
+    storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.ghostSuggest },
+    describe:
+      'Complete the command you are typing from the terminal history and the commands you added: a grey tail after the caret (→ applies it), Tab for the candidate list. Nothing is run — a pick only lands on the input line.',
+  },
+  {
+    key: 'terminal.ghostAccept',
+    kind: 'enum',
+    values: ['word', 'all'],
+    group: 'terminal',
+    default: 'word',
+    // How far one → takes from a multi-word suggestion. `word` (the default) types
+    // the nearest space-separated part, so `git status -sb` is walked a press at a
+    // time and a mistaken word stops the walk where it is wrong; `all` finishes the
+    // command in one press. `End` always takes the other half, so both actions stay
+    // reachable however this is set, and a list pick is always `all`.
+    storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.ghostAccept },
+    describe:
+      'What the right arrow applies from a ghost command suggestion: "word" the nearest space-separated part (End applies the whole tail), or "all" the whole tail at once (End applies just the next part).',
   },
   {
     key: 'terminal.continuationSymbol',

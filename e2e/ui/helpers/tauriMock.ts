@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { CommandHistoryEntry } from '../../../src/types'
+import type { CommandHistoryEntry, CommandSetDto } from '../../../src/types'
 
 /**
  * Minimal shape of a `ConnectionConfig` as far as the UI renders it
@@ -58,6 +58,9 @@ export interface TauriMockOptions {
   dockerContainers?: unknown[]
   /** Rows returned by `list_command_history` (the pane's 历史 dropdown). */
   commandHistory?: CommandHistoryEntry[]
+  /** Rows returned by `list_command_sets` (a command set's commands are also ghost
+   *  completion candidates, so a spec that cares about the pool states them). */
+  commandSets?: CommandSetDto[]
   /**
    * Shape returned by `probe_local_docker`. Omitted, the mock reports "no Docker on this
    * machine at all", which keeps the 「本机 Docker」 group hidden — specs that do not care
@@ -254,7 +257,6 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_local_drives':
           case 'list_tunnels':
           case 'list_sessions':
-          case 'list_command_sets':
           case 'list_global_variables':
           case 'list_ai_prompt_templates':
           case 'list_hidden_builtin_templates':
@@ -266,6 +268,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return opts.commandHistory ?? []
           case 'record_command_history':
             return null
+          // Command sets, as the ghost completion sees them. `[]` is the real
+          // answer for a fresh install, so specs that do not opt in are unaffected.
+          case 'list_command_sets':
+            return opts.commandSets ?? []
           // The transfer rows of the net tools. A `null` here used to be fine
           // because the panel only rendered inside a modal no spec opened; as a
           // rail mode it is reachable, and the panels read `rows.length` — so
