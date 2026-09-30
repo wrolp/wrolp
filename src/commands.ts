@@ -613,6 +613,11 @@ export async function listCommandHistory(limit?: number): Promise<CommandHistory
   return await invoke<CommandHistoryEntry[]>('list_command_history', { limit })
 }
 
+/** Forget one command from the persisted history. `true` when a row was removed. */
+export async function deleteCommandHistory(command: string): Promise<boolean> {
+  return await invoke<boolean>('delete_command_history', { command })
+}
+
 export async function readFileContent(
   tabId: number,
   path: string,

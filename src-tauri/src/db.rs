@@ -1153,6 +1153,18 @@ pub fn list_commands(conn: &Connection, limit: i64) -> Result<Vec<CommandHistory
   Ok(rows)
 }
 
+/// Drop one command from the persisted history. The text is `UNIQUE`, so this
+/// removes the entry rather than one of its uses; it reports whether a row was
+/// there at all, which is what the UI needs to keep its own list honest.
+pub fn delete_command(conn: &Connection, command: &str) -> Result<usize, String> {
+  conn
+    .execute(
+      "DELETE FROM command_history WHERE command = ?1",
+      params![command],
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod command_history_tests {
   use super::*;
@@ -1174,11 +1186,33 @@ mod command_history_tests {
 
     let list = list_commands(&conn, 10).unwrap();
     assert_eq!(
-        vec![("ls", "terminal", "demo.local"), ("pwd", "localShell", "cmd")],
-        list.iter()
-          .map(|e| (e.command.as_str(), e.tab_type.as_str(), e.host.as_str()))
-          .collect::<Vec<_>>()
-      );
+      vec![
+        ("ls", "terminal", "demo.local"),
+        ("pwd", "localShell", "cmd")
+      ],
+      list
+        .iter()
+        .map(|e| (e.command.as_str(), e.tab_type.as_str(), e.host.as_str()))
+        .collect::<Vec<_>>()
+    );
+  }
+
+  #[test]
+  fn deleting_a_command_removes_it_and_only_it() {
+    let conn = conn_with_schema();
+    record_command(&conn, "ls", "terminal", "demo.local", 1).unwrap();
+    record_command(&conn, "pwd", "terminal", "demo.local", 2).unwrap();
+
+    assert_eq!(delete_command(&conn, "ls").unwrap(), 1);
+    let list = list_commands(&conn, 10).unwrap();
+    assert_eq!(
+      vec!["pwd"],
+      list.iter().map(|e| e.command.as_str()).collect::<Vec<_>>()
+    );
+
+    // Deleting something that is not there is not an error — the UI may have a
+    // stale row of its own, and the end state is the same.
+    assert_eq!(delete_command(&conn, "ls").unwrap(), 0);
   }
 
   #[test]
@@ -1189,7 +1223,10 @@ mod command_history_tests {
     }
     let list = list_commands(&conn, COMMAND_HISTORY_KEEP + 25).unwrap();
     assert_eq!(list.len() as i64, COMMAND_HISTORY_KEEP);
-    assert_eq!(list.first().unwrap().command, format!("cmd-{}", COMMAND_HISTORY_KEEP + 24));
+    assert_eq!(
+      list.first().unwrap().command,
+      format!("cmd-{}", COMMAND_HISTORY_KEEP + 24)
+    );
   }
 
   #[test]

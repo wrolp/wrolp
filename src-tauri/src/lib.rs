@@ -305,6 +305,7 @@ pub fn run() {
       commands::commit_command,
       commands::record_command_history,
       commands::list_command_history,
+      commands::delete_command_history,
       commands::list_command_sets,
       commands::save_command_set,
       commands::delete_command_set,

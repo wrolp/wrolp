@@ -453,6 +453,7 @@ const en = {
   termCmdHistoryEmpty: 'No commands yet',
   termCmdHistoryCurrent: 'This terminal',
   termCmdHistoryGlobal: 'All terminals',
+  termCmdHistoryDelete: 'Forget this command',
   // Same as above. There is no “General” settings pane any more — the
   // wrapped-line marker is picked on the Terminal pane.
   termLineNumbersTitle:

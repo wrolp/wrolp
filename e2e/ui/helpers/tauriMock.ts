@@ -268,6 +268,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return opts.commandHistory ?? []
           case 'record_command_history':
             return null
+          // Forgetting one entry. The spec asserts the row is gone from the UI, so
+          // the answer only has to be the honest shape.
+          case 'delete_command_history':
+            return true
           // Command sets, as the ghost completion sees them. `[]` is the real
           // answer for a fresh install, so specs that do not opt in are unaffected.
           case 'list_command_sets':

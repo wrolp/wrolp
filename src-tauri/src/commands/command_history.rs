@@ -45,3 +45,25 @@ pub async fn list_command_history(
   let conn = state.db.lock().map_err(|e| e.to_string())?;
   db::list_commands(&conn, limit.unwrap_or(db::COMMAND_HISTORY_KEEP))
 }
+
+/// Forget one command from the persisted history. Returns whether a row was
+/// actually removed, so a UI that still held a stale entry learns the truth.
+#[tauri::command]
+pub async fn delete_command_history(
+  state: tauri::State<'_, AppState>,
+  command: String,
+) -> Result<bool, String> {
+  let command = command.trim().to_string();
+  if command.is_empty() {
+    return Ok(false);
+  }
+  let conn = state.db.clone();
+  // Same reason as the record path: the write takes the shared database mutex, so
+  // it must not run on the async runtime `poll_output` lives on.
+  tokio::task::spawn_blocking(move || {
+    let conn = conn.lock().map_err(|e| e.to_string())?;
+    Ok(db::delete_command(&conn, &command)? > 0)
+  })
+  .await
+  .map_err(|e| e.to_string())?
+}

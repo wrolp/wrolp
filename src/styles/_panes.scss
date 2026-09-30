@@ -413,6 +413,10 @@
   }
 
   .tsb-history-group {
+    // Never let the column squash its rows: this list is a flex column with a
+    // `max-height`, and a shrinking child compresses every row to a sliver — half
+    // a line of text, and no scrollbar, because nothing overflows.
+    flex: 0 0 auto;
     padding: 4px 8px 2px;
     color: $text-secondary;
     font-size: var(--fs-xs);
@@ -426,20 +430,17 @@
     display: flex;
     align-items: baseline;
     gap: 8px;
+    flex: 0 0 auto;
     color: $text-primary;
     background: transparent;
-    border: 0;
-    padding: 4px 8px;
-    font-family: inherit;
+    padding: 0 8px;
     font-size: var(--fs-xs);
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
 
     &:hover,
-    &:focus-visible,
+    &:focus-within,
     // The keyboard-selected row (↑/↓). Same fill as hover so the two agree.
     &[data-active] {
       background: $bg-hover;
@@ -447,11 +448,20 @@
     }
   }
 
+  // The command itself is the row's primary action, so Enter on the highlighted
+  // row puts it on the input line.
   .tsb-history-cmd {
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    padding: 4px 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
   }
 
   // Where a cross-terminal entry was run — secondary, not dim: it is the only
@@ -461,6 +471,26 @@
     color: $text-secondary;
     font-variant-numeric: tabular-nums;
     opacity: 0.85;
+  }
+
+  // Always present rather than hover-only: the list is opened with the mouse and
+  // read with the keyboard alike, and a control that appears only under the
+  // pointer cannot be found by the latter.
+  .tsb-history-del {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 2px;
+    border: 0;
+    background: none;
+    color: $text-secondary;
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      color: $text-primary;
+      outline: none;
+    }
   }
 
   .tsb-history-empty {

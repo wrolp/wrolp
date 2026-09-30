@@ -121,6 +121,7 @@ import {
   removeTunnel,
   recordCommandHistory,
   listCommandHistory,
+  deleteCommandHistory,
   listCommandSets,
   listCommandSnippets,
 } from './commands'
@@ -521,29 +522,35 @@ interface HistoryRow {
  *  Picking a row puts it on the input line through the paste pipeline — inserted,
  *  NOT executed — the same route the command list uses, so bracketed paste and
  *  quoted-insert keep working. ↑/↓ walk it while it is open; plain ↑/↓ stay with
- *  the shell, whose own readline / PSReadLine recall must not be hijacked. */
+ *  the shell, whose own readline / PSReadLine recall must not be hijacked.
+ *  Each row can also be forgotten (its ✕, or Delete on the highlighted row), which
+ *  drops it from this terminal's list and from the persisted table. */
 function PaneCommandHistory({
   tabItems,
   globalItems,
   open,
   onOpenChange,
   onPick,
+  onForget,
   label,
   title,
   emptyLabel,
   tabLabel,
   globalLabel,
+  deleteLabel,
 }: {
   tabItems: string[]
   globalItems: CommandHistoryEntry[]
   open: boolean
   onOpenChange: (open: boolean) => void
   onPick: (command: string) => void
+  onForget: (command: string) => void
   label: string
   title: string
   emptyLabel: string
   tabLabel: string
   globalLabel: string
+  deleteLabel: string
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -586,6 +593,11 @@ function PaneCommandHistory({
       e.preventDefault()
       const row = rows[active]
       if (row) onPick(row.command)
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      // Forget the highlighted row without reaching for the mouse.
+      e.preventDefault()
+      const row = rows[active]
+      if (row) onForget(row.command)
     } else if (e.key === 'Escape') {
       e.preventDefault()
       onOpenChange(false)
@@ -622,24 +634,39 @@ function PaneCommandHistory({
                   {row.scope === 'tab' ? tabLabel : globalLabel}
                 </div>
               )}
-              <button
-                type="button"
+              {/* A div, not a button: a row now carries two actions (use it / forget
+                  it) and a button cannot contain another. */}
+              <div
                 role="option"
                 aria-selected={i === active}
                 data-active={i === active || undefined}
-                ref={(el) => {
-                  rowRefs.current[i] = el
-                }}
                 className="tsb-history-item"
-                title={row.from ? `${row.command} — ${row.from}` : row.command}
                 // Keep the list focused so the arrows keep working; the pick below
                 // hands focus back to the terminal.
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => onPick(row.command)}
               >
-                <span className="tsb-history-cmd">{row.command}</span>
+                <button
+                  type="button"
+                  className="tsb-history-cmd"
+                  ref={(el) => {
+                    rowRefs.current[i] = el
+                  }}
+                  title={row.from ? `${row.command} — ${row.from}` : row.command}
+                  onClick={() => onPick(row.command)}
+                >
+                  {row.command}
+                </button>
                 {row.from && <span className="tsb-history-from">{row.from}</span>}
-              </button>
+                <button
+                  type="button"
+                  className="tsb-history-del"
+                  aria-label={`${deleteLabel}: ${row.command}`}
+                  title={deleteLabel}
+                  onClick={() => onForget(row.command)}
+                >
+                  <Icon name="x" size={11} />
+                </button>
+              </div>
             </React.Fragment>
           ))}
         </div>
@@ -1668,6 +1695,28 @@ export default function App() {
     },
     [],
   )
+
+  // Forget one command: out of this terminal's list, out of the persisted list, and
+  // out of the table. A command run here is usually also in the persisted list, so
+  // all three go — otherwise it would reappear on the next reload, which reads as
+  // the delete not working.
+  const forgetCommand = useCallback((tabId: number, command: string) => {
+    const cmd = command.trim()
+    if (!cmd) return
+    setCmdHistoryByTab((prev) => {
+      const here = prev[tabId]
+      if (!here) return prev
+      const rest = here.filter((c) => c !== cmd)
+      if (rest.length === here.length) return prev
+      return { ...prev, [tabId]: rest }
+    })
+    const next = globalCmdHistoryRef.current.filter((e) => e.command !== cmd)
+    globalCmdHistoryRef.current = next
+    setGlobalCmdHistory(next)
+    void deleteCommandHistory(cmd).catch((err) =>
+      console.error('delete_command_history failed:', err),
+    )
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -6819,11 +6868,13 @@ export default function App() {
                       focusTerminal(leaf.tabId as number)
                       setHistoryOpenLeaf(null)
                     }}
+                    onForget={(cmd) => forgetCommand(leaf.tabId as number, cmd)}
                     label={`⌃ ${t('termCmdHistory')}`}
                     title={t('termCmdHistoryTitle')}
                     emptyLabel={t('termCmdHistoryEmpty')}
                     tabLabel={t('termCmdHistoryCurrent')}
                     globalLabel={t('termCmdHistoryGlobal')}
+                    deleteLabel={t('termCmdHistoryDelete')}
                   />
                 )}
                 {leaf.tabId != null && (

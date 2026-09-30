@@ -430,6 +430,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   termCmdHistoryEmpty: '还没有执行过命令',
   termCmdHistoryCurrent: '当前终端',
   termCmdHistoryGlobal: '全部终端',
+  termCmdHistoryDelete: '删除这条历史命令',
   // 同上：这是开关自己的 tooltip。另外设置页早已不再有「通用」一栏，折行标记
   // 现在就在「终端」页里，所以路径也一并改掉。
   termLineNumbersTitle:
