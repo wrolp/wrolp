@@ -218,7 +218,12 @@ export function highlightCurrentCommandLine(term: Terminal) {
   while (chainTopRow > 0 && buffer.getLine(chainTopRow - 1)?.isWrapped) {
     chainTopRow -= 1
   }
-  const logicalLen = prompt.length + command.length
+  // Everything after the prompt INCLUDING any trailing space. `splitPromptCommand`
+  // trims those off, and rewriting the shorter text before clearing to end of line
+  // deleted the space the user had just typed between two words (`echo hi` came
+  // back as `echohi`).
+  const typed = plain.slice(prompt.length)
+  const logicalLen = prompt.length + typed.length
   const firstRow = logicalTopRow({
     lastRow,
     chainTopRow,
@@ -235,16 +240,27 @@ export function highlightCurrentCommandLine(term: Terminal) {
   // loss is the syntax coloring of a wrapped command.
   if (!canRecolorInPlace({ rowOffset, logicalLen, cols, cursorX: buffer.cursorX })) return
 
-  const coloredCmd = colorizeCommand(command)
+  const coloredCmd = colorizeCommand(typed)
   // Selection can stick to buffer coordinates and repaint newly typed text with
   // the selection background — drop it before rewriting.
   term.clearSelection()
+
+  // Where the user's caret was, and where this rewrite is going to leave it: the
+  // rewrite types the whole command, so it ends up after the last character.
+  const caretCol = buffer.cursorX
+  const endCol = prompt.length + typed.length
 
   // In-place recolor: move to just past the prompt, reset SGR so the prompt's
   // style doesn't leak, and rewrite the colored command. Clear the tail in case
   // the command just shrank (backspace).
   term.write(`\r\x1b[${prompt.length}C\x1b[0m` + coloredCmd)
   term.write(`\x1b[0m\x1b[K`)
+  // Put the caret back, or editing in the middle of a line would jump it to the
+  // end on every echo — the recolor must be invisible, including to the caret.
+  // `endCol < cols` because at exactly the last column the write wraps onto the
+  // next row, where a back-move would land in the wrong place; the shell's own
+  // next redraw fixes the caret there.
+  if (caretCol < endCol && endCol < cols) term.write(`\x1b[${endCol - caretCol}D`)
 }
 
 // Return the current input line only when the cursor sits at its END (so a

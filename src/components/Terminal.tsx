@@ -668,14 +668,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     if (!expectingEchoRef.current) return
     if (tableCaptureRef.current || captureRef.current || lsCaptureRef.current || aiMarkRef.current)
       return
-    const at = getInputLineAtCursorEnd(term)
-    if (!at) {
-      // Cursor isn't at the end of a line — not the live input line. Stop waiting
-      // for an echo (it went somewhere else, e.g. a continuation prompt).
+    // Anywhere on the live input line counts, not only at its end: ← into the
+    // middle of a command and typing there used to leave the whole line uncolored
+    // (and disarmed the echo-await, so the next keystroke stayed plain too).
+    // `highlightCurrentCommandLine` puts the caret back where it was after painting.
+    const pending = getPendingInputText(term)
+    if (pending === null) {
+      // Not a live input line — program output, a pager or a TUI. Stop waiting for
+      // an echo (it went somewhere else, e.g. a continuation prompt).
       expectingEchoRef.current = false
       return
     }
-    if (!at.command) {
+    if (!pending) {
       // Only a bare prompt is currently on screen (the echoed keystroke hasn't
       // arrived yet). Don't recolor yet and, crucially, DON'T reset expectingEcho:
       // the 100ms interval poll can fire before the echo and would otherwise

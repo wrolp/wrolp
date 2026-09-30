@@ -130,6 +130,79 @@ test('typing on the prompt after a command completes highlights live', async ({ 
   expect(await row.innerHTML()).toContain('xterm-fg-13')
 })
 
+test('typing in the middle of the line highlights, and the caret stays put', async ({ page }) => {
+  // ← into a command and typing there used to leave the whole line uncolored: the
+  // recolor ran only while the caret sat at the end of the line, and it also
+  // disarmed the echo-await, so the next keystroke stayed plain. Painting the line
+  // means rewriting it, so the caret has to be put back where the user left it.
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    pollOutputChunks: [[PROMPT]],
+  })
+  await page.goto('/')
+  await page.evaluate((p) => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+        }
+      }
+    ).__TAURI_INTERNALS__
+    const orig = internals.invoke.bind(internals)
+    const outbox: string[] = []
+    let line = ''
+    let caret = 0
+    internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
+      if (cmd === 'send_input') {
+        const d = String(args.data ?? '')
+        if (d === '\x1b[D') {
+          // readline moves its own caret; the redraw is a plain cursor-left.
+          caret = Math.max(0, caret - 1)
+          outbox.push('\x1b[D')
+        } else if (d === '\x7f') {
+          line = line.slice(0, Math.max(0, caret - 1)) + line.slice(caret)
+          caret = Math.max(0, caret - 1)
+          outbox.push(`\r${p}${line}\x1b[K`)
+        } else {
+          const visible = d.replace(/[\x00-\x1f\x7f]/g, '')
+          if (visible) {
+            line = line.slice(0, caret) + visible + line.slice(caret)
+            caret += visible.length
+            // Redraw the line, then walk the caret back to where it belongs.
+            const back = line.length - caret
+            outbox.push(`\r${p}${line}\x1b[K${back ? `\x1b[${back}D` : ''}`)
+          }
+        }
+      }
+      const res = await orig(cmd, args)
+      if (cmd === 'poll_output')
+        return outbox.length ? [...(res as string[]), ...outbox.splice(0)] : (res as string[])
+      return res
+    }
+  }, PROMPT)
+  await page.locator('.connection-item').first().click()
+  await expect(page.locator('.xterm-rows')).toContainText(PROMPT)
+  await page.locator('.xterm-screen').click()
+
+  await page.keyboard.type('git status', { delay: 60 })
+  await page.waitForTimeout(400)
+  // Three steps back, so the caret sits between `git sta` and `tus`.
+  await page.keyboard.press('ArrowLeft')
+  await page.keyboard.press('ArrowLeft')
+  await page.keyboard.press('ArrowLeft')
+  await page.waitForTimeout(400)
+  await page.keyboard.type('X', { delay: 60 })
+  await page.waitForTimeout(700)
+
+  const row = page.locator('.xterm-rows > div', { hasText: `${PROMPT}git staXtus` }).last()
+  const html = await row.innerHTML()
+  expect(html, 'the line must be syntax-coloured').toContain('xterm-fg')
+  // The recolor rewrote the line; the caret has to be back on the character the
+  // user was editing in front of, not parked at the end.
+  const cursor = await row.locator('.xterm-cursor').first().innerText()
+  expect(cursor.trim() === '' ? ' ' : cursor.trim()).toBe('t')
+})
+
 test('a second one-click send appends ` && ` and the echo survives the recolor', async ({
   page,
 }) => {
