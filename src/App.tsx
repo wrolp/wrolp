@@ -2483,12 +2483,20 @@ export default function App() {
     kind: 'success' | 'error' | 'progress' | 'info'
     text: string
   } | null>(null)
+  // Which message the pointer is over. Keyed by the text rather than a boolean so
+  // the NEXT toast can never be born already-held — a stale `true` would leave it
+  // on screen forever, since nothing would ever clear the flag again.
+  const [toastHeldFor, setToastHeldFor] = useState<string | null>(null)
+  const toastHeld = toast !== null && toastHeldFor === toast.text
   useEffect(() => {
-    if (toast && toast.kind !== 'progress') {
+    // Hovering holds it: an error you are still reading must not vanish mid-read.
+    // Leaving starts the window again from the top rather than resuming whatever
+    // was left, which is what makes the message readable at all.
+    if (toast && toast.kind !== 'progress' && !toastHeld) {
       const id = setTimeout(() => setToast(null), 3000)
       return () => clearTimeout(id)
     }
-  }, [toast])
+  }, [toast, toastHeld])
 
   // AI appearance/settings bridge — answers `ai-ui-tool-request` events even
   // while the AI chat panel is closed. MUST stay at this top level (installing
@@ -8259,6 +8267,8 @@ export default function App() {
         <div
           className={`toast toast-${toast.kind}`}
           onClick={() => setToast(null)}
+          onMouseEnter={() => setToastHeldFor(toast.text)}
+          onMouseLeave={() => setToastHeldFor(null)}
           title={t('close')}
         >
           {toast.kind === 'progress' ? (

@@ -256,7 +256,7 @@ impl ConnectionConfig {
       startup_dir: p.startup_dir.clone(),
       workspace_id: p.workspace_id.clone(),
       tunnels: p.tunnels.clone(),
-      kind: p.kind.clone(),
+      kind: p.kind.clone().or_else(|| inferred_kind(p)),
       port_name: p.port_name.clone(),
       baud_rate: p.baud_rate,
       data_bits: p.data_bits,
@@ -266,6 +266,34 @@ impl ConnectionConfig {
       auto_login: p.auto_login,
     })
   }
+}
+
+/// Recover a connection's kind from the fields only that kind ever writes.
+///
+/// A record saved before `kind` existed — or rewritten by an older build — comes
+/// back without it, and the plain default then treats a serial bench as an SSH
+/// host: `COM3` is handed to russh as a hostname and the connect fails. `portName`
+/// and the framing fields are written only by the serial editor, and `autoLogin`
+/// only by the Telnet one (`ConnectionModal` sets the rest to `undefined` for the
+/// other kinds), so their presence is evidence rather than a guess.
+///
+/// Port 23 is deliberately NOT used to infer Telnet: an SSH server on 23 is
+/// unusual but real, and guessing there would silently downgrade a working
+/// connection to plaintext.
+fn inferred_kind(p: &PersistedConnection) -> Option<String> {
+  let serial = p.port_name.as_deref().is_some_and(|s| !s.trim().is_empty())
+    || p.baud_rate.is_some()
+    || p.data_bits.is_some()
+    || p.stop_bits.is_some()
+    || p.parity.is_some()
+    || p.flow_control.is_some();
+  if serial {
+    return Some("serial".to_string());
+  }
+  if p.auto_login == Some(true) {
+    return Some("telnet".to_string());
+  }
+  None
 }
 
 /// Serialize connections + workspace metadata to disk (v2 envelope).
@@ -1086,4 +1114,93 @@ fn load_connections_content(
 
   let default_ws = default_workspace();
   (Vec::new(), vec![default_ws], "default".to_string())
+}
+
+#[cfg(test)]
+mod kind_inference_tests {
+  use super::{ConnectionConfig, PersistedConnection};
+
+  fn base() -> PersistedConnection {
+    PersistedConnection {
+      id: "c1".into(),
+      name: "n".into(),
+      host: "h".into(),
+      port: 22,
+      username: "root".into(),
+      password_enc: None,
+      key_path: None,
+      passphrase_enc: None,
+      description: None,
+      group: None,
+      startup_dir: None,
+      workspace_id: None,
+      tunnels: vec![],
+      kind: None,
+      port_name: None,
+      baud_rate: None,
+      data_bits: None,
+      stop_bits: None,
+      parity: None,
+      flow_control: None,
+      auto_login: None,
+    }
+  }
+
+  /// The load path, not the helper: a record read off disk must come back with the
+  /// kind the connect path can act on.
+  fn loaded(mut p: PersistedConnection) -> Option<String> {
+    // A secret blob would need the vault, and these cases are not about secrets.
+    p.password_enc = None;
+    ConnectionConfig::from_persisted(&p)
+      .ok()
+      .and_then(|c| c.kind)
+  }
+
+  #[test]
+  fn a_port_name_or_framing_field_recovers_a_serial_connection() {
+    let mut p = base();
+    p.host = "COM3".into();
+    p.port_name = Some("COM3".into());
+    assert_eq!(loaded(p).as_deref(), Some("serial"));
+
+    // The framing fields alone are enough: only the serial editor writes them.
+    let mut p = base();
+    p.baud_rate = Some(115200);
+    assert_eq!(loaded(p).as_deref(), Some("serial"));
+
+    // A blank port name is not evidence of anything.
+    let mut p = base();
+    p.port_name = Some("  ".into());
+    assert_eq!(loaded(p), None);
+  }
+
+  #[test]
+  fn auto_login_recovers_a_telnet_connection_but_nothing_else_does() {
+    let mut p = base();
+    p.auto_login = Some(true);
+    assert_eq!(loaded(p).as_deref(), Some("telnet"));
+
+    // `autoLogin: false` is what the other editors leave behind too, so it must not
+    // be read as Telnet; nor may port 23, which an SSH server can sit on.
+    let mut p = base();
+    p.auto_login = Some(false);
+    p.port = 23;
+    assert_eq!(loaded(p), None);
+  }
+
+  #[test]
+  fn a_stored_kind_is_never_overwritten_by_the_inference() {
+    // The evidence is only for records that predate `kind`; a saved kind wins, so a
+    // connection deliberately set to SSH with stale serial fields left behind stays
+    // SSH rather than being flipped back on every load.
+    let mut p = base();
+    p.kind = Some("ssh".into());
+    p.port_name = Some("COM3".into());
+    assert_eq!(loaded(p).as_deref(), Some("ssh"));
+  }
+
+  #[test]
+  fn a_plain_record_stays_undifferentiated() {
+    assert_eq!(loaded(base()), None);
+  }
 }
