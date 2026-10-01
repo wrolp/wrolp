@@ -2,28 +2,27 @@
 //
 // The user types, and the tail of the likeliest command appears in grey after the
 // caret (→ applies it); Tab opens the rest of the matches as a list. Candidates
-// come from the three pools the app already owns: what has been run in this
-// terminal, what has been run anywhere (the persisted history), and what the user
-// added themselves (command snippets and command sets).
+// come from the pools the app owns: what has been run in this terminal, what has
+// been run anywhere (the persisted history), what the user added themselves
+// (command snippets and command sets), and — since the device index landed — what
+// is actually installed on the machine the tab is talking to.
 //
-// This is §2.C of task/plans/SSH-COMMAND-INDEX-COMPLETION-PLAN.md restricted to
-// those local pools — the plan's remote `$PATH` index (its P0/P1, device
-// fingerprints and a `compgen` enumeration) is NOT part of it, so nothing here
-// runs a command on the far side.
+// This is §2.C of task/plans/SSH-COMMAND-INDEX-COMPLETION-PLAN.md. The index rows
+// are read from SQLite by the caller; nothing in here runs a command anywhere.
 //
 // Nothing in here touches xterm, React or IPC, so `e2e/ui/ghost-complete.spec.ts`
 // can exercise every branch directly.
 //
 // NOTE: the `./cdSuggest.ts` import carries an explicit extension on purpose —
 // Node's type-stripping resolver cannot follow extensionless TS specifiers
-// (see the same note in that file). `import type` is erased before resolution, so
-// the type-only imports below do not need it.
+// (see the same note in that file). `type` imports are erased before resolution, so
+// they do not need it.
 
 import type { CommandHistoryEntry, CommandSetDto, CommandSnippetDto } from '../../types'
 import { clearLineBytes, type CdShellKind } from './cdSuggest.ts'
 
 /** Where a candidate came from. Decides its rank and the badge on its row. */
-export type GhostSource = 'history' | 'snippet' | 'set'
+export type GhostSource = 'history' | 'snippet' | 'set' | 'index'
 
 export interface GhostCandidate {
   /** The whole command line a pick leaves on the input line. */
@@ -39,8 +38,13 @@ export const GHOST_MAX_ROWS = 8
 /**
  * A curated command outranks an incidental one: the library is what the user said
  * they meant to run, the history is only what happened to be run here (plan §2.B).
+ *
+ * The device index sits below all of them at 0. It is the only source that can
+ * name a binary the user has never run — which is exactly why it is worth having —
+ * but a machine has thousands of those, so it must never win a contest it did not
+ * enter.
  */
-const SOURCE_WEIGHT: Record<GhostSource, number> = { snippet: 3, set: 2, history: 1 }
+const SOURCE_WEIGHT: Record<GhostSource, number> = { snippet: 3, set: 2, history: 1, index: 0 }
 
 /**
  * A candidate must land on the input line as one line. A snippet may hold several
@@ -61,6 +65,12 @@ export interface GhostPoolInput {
   globalHistory: readonly CommandHistoryEntry[]
   /** Scope for the two libraries: a `null` entry is general and always applies. */
   connectionId?: string | null
+  /**
+   * The device's installed commands, as collected by the index (plan §2.B). Plain
+   * command names — they complete the *first* word of a line, which is the only
+   * place a name means anything; `git stat` will never be offered `gitk`.
+   */
+  hostIndex?: readonly string[]
 }
 
 /**
@@ -92,6 +102,9 @@ export function buildGhostPool(input: GhostPoolInput): GhostCandidate[] {
   }
   for (const command of input.tabHistory) push(command, 'history', '')
   for (const entry of input.globalHistory) push(entry.command, 'history', '')
+  // Last, so a name that is also in the history keeps its history rank and badge;
+  // the index is only ever supposed to reach things the other pools do not know.
+  for (const command of input.hostIndex ?? []) push(command, 'index', '')
   return rows
 }
 

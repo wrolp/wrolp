@@ -11,7 +11,7 @@
  * through `poll_output` the way a PTY would.
  */
 import { test, expect, type Page } from './helpers/fixtures'
-import { installTauriMock, invokedCalls } from './helpers/tauriMock'
+import { installTauriMock, invokedCalls, emitTauriEvent } from './helpers/tauriMock'
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
 const PROMPT = '[root@sip ~]# '
@@ -641,4 +641,45 @@ test('the switch in Settings takes the whole feature away', async ({ page }) => 
 
   await page.keyboard.press('Tab')
   expect(await sentInput(page)).toContain('\t')
+})
+
+test('a command installed on the device is offered even though it was never run', async ({
+  page,
+}) => {
+  // The whole reason the index exists: a fresh session has no history, and the box
+  // has `journalctl` on it. Nothing in the local pools could suggest this one.
+  await openTerminal(page, {
+    hostCommands: [
+      { command: 'journalctl', sources: 'path' },
+      { command: 'jobs', sources: 'builtin' },
+    ],
+  })
+  const tabId = Number((await invokedCalls(page)).find((c) => c.cmd === 'connect')!.args.tabId)
+  await emitTauriEvent(page, 'host-identified', {
+    tabId,
+    fingerprint: 'SHA256:journalctljournalctljournalctljournalcn',
+    kind: 'ssh',
+    host: 'demo.local',
+    port: 22,
+    username: 'root',
+    isNew: false,
+    changed: false,
+    previousFingerprint: null,
+  })
+  // The read that follows the identity event is what warms the pool; asserting it
+  // keeps "the ghost never appeared" from being mistaken for "the event was lost".
+  await expect
+    .poll(async () => {
+      const cmds = (await invokedCalls(page)).map((c) => c.cmd)
+      return cmds.filter((c) => c === 'list_host_commands').length
+    })
+    .toBeGreaterThanOrEqual(1)
+
+  await page.keyboard.type('journal', { delay: 60 })
+  await expect(ghost(page)).toContainText('ctl')
+
+  // → types it; the command only lands on the line, and is never run.
+  await page.keyboard.press('ArrowRight')
+  await expect(page.locator('.xterm-rows')).toContainText(`${PROMPT}journalctl`)
+  expect(await sentInput(page)).not.toContain('\r')
 })

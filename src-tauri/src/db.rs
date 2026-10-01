@@ -991,6 +991,30 @@ pub struct DbStats {
   pub legacy_events: i64,
   /// `PRAGMA auto_vacuum`: 0 none, 1 full, 2 incremental.
   pub auto_vacuum: i64,
+  /// Total rows in the device command index (`host_commands`).
+  pub host_commands: i64,
+  /// How many devices that spans — the per-device cap is 5 000, so this is what
+  /// makes the total interpretable.
+  pub host_command_devices: i64,
+  /// Bytes those rows occupy on disk, table plus its auto-index, measured through
+  /// the `dbstat` virtual table. 0 when the build lacks it (see `table_bytes`).
+  pub host_command_bytes: u64,
+}
+
+/// On-disk bytes of one table, indexes included, via `dbstat`.
+///
+/// `dbstat` is a build option rather than a guarantee, so an error here answers 0
+/// instead of failing the whole stats read: the numbers on the Settings page are an
+/// explanation of the file, not a reason to stop showing it.
+fn table_bytes(conn: &Connection, table: &str) -> u64 {
+  conn
+    .query_row(
+      "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat WHERE name = ?1 OR name LIKE ?2",
+      params![table, format!("sqlite_autoindex_{}_%", table)],
+      |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+    .max(0) as u64
 }
 
 /// Read a single integer PRAGMA; 0 when the pragma is unavailable.
@@ -1057,6 +1081,18 @@ pub fn db_stats(conn: &Connection, db_path: &Path) -> Result<DbStats, String> {
       row.get::<_, i64>(0)
     })
     .map_err(|e| e.to_string())?;
+  let host_commands = conn
+    .query_row("SELECT COUNT(*) FROM host_commands", [], |row| {
+      row.get::<_, i64>(0)
+    })
+    .map_err(|e| e.to_string())?;
+  let host_command_devices = conn
+    .query_row(
+      "SELECT COUNT(DISTINCT fingerprint) FROM host_commands",
+      [],
+      |row| row.get::<_, i64>(0),
+    )
+    .map_err(|e| e.to_string())?;
   Ok(DbStats {
     path: db_path.to_string_lossy().to_string(),
     db_bytes: file_len(db_path),
@@ -1068,6 +1104,9 @@ pub fn db_stats(conn: &Connection, db_path: &Path) -> Result<DbStats, String> {
     sessions,
     legacy_events,
     auto_vacuum: pragma_i64(conn, "auto_vacuum"),
+    host_commands,
+    host_command_devices,
+    host_command_bytes: table_bytes(conn, "host_commands"),
   })
 }
 
@@ -1163,6 +1202,478 @@ pub fn delete_command(conn: &Connection, command: &str) -> Result<usize, String>
       params![command],
     )
     .map_err(|e| e.to_string())
+}
+
+// ==================== Device identity (hosts) ====================
+
+/// One recorded device. `fingerprint` is a `SHA256:…` host key hash for SSH, or a
+/// `local:<hostname>` style fallback for the session kinds that have no host key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostDto {
+  pub fingerprint: String,
+  pub kind: String,
+  pub host: String,
+  pub port: i64,
+  pub username: String,
+  pub first_seen: i64,
+  pub last_seen: i64,
+}
+
+/// Record that a device was seen, returning whether its row is new.
+///
+/// Reconnecting refreshes `last_seen` and the address we last used to reach it,
+/// but never `first_seen` — "since when do we know this box" is the part the UI
+/// shows, and it must not reset because the machine moved to a new port.
+pub fn record_host(
+  conn: &Connection,
+  fingerprint: &str,
+  kind: &str,
+  host: &str,
+  port: i64,
+  username: &str,
+  now_ms: i64,
+) -> Result<bool, String> {
+  let existed = conn
+    .query_row(
+      "SELECT 1 FROM hosts WHERE fingerprint = ?1",
+      params![fingerprint],
+      |_| Ok(()),
+    )
+    .is_ok();
+  conn
+    .execute(
+      "INSERT INTO hosts (fingerprint, kind, host, port, username, first_seen, last_seen) \
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6) \
+       ON CONFLICT(fingerprint) DO UPDATE SET \
+         kind = ?2, host = ?3, port = ?4, username = ?5, last_seen = ?6",
+      params![fingerprint, kind, host, port, username, now_ms],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(!existed)
+}
+
+/// Link a saved connection to the device it just reached. Both directions are
+/// many-to-one over time: one connection can meet several keys (a rebuilt host),
+/// one device can be reached by several connections (different users or ports).
+pub fn link_connection_host(
+  conn: &Connection,
+  connection_id: &str,
+  fingerprint: &str,
+  now_ms: i64,
+) -> Result<(), String> {
+  conn
+    .execute(
+      "INSERT INTO connection_hosts (connection_id, fingerprint, last_seen) \
+       VALUES (?1, ?2, ?3) \
+       ON CONFLICT(connection_id, fingerprint) DO UPDATE SET last_seen = ?3",
+      params![connection_id, fingerprint, now_ms],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// The fingerprint this connection was seen with most recently, if ever — the
+/// thing a TOFU check compares against. Call it *before* linking the new one, or
+/// it agrees with itself and never reports a change.
+pub fn previous_fingerprint(
+  conn: &Connection,
+  connection_id: &str,
+) -> Result<Option<String>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT fingerprint FROM connection_hosts WHERE connection_id = ?1 \
+       ORDER BY last_seen DESC LIMIT 1",
+    )
+    .map_err(|e| e.to_string())?;
+  let row = stmt
+    .query_map(params![connection_id], |r| r.get::<_, String>(0))
+    .map_err(|e| e.to_string())?
+    .next()
+    .transpose()
+    .map_err(|e| e.to_string())?;
+  Ok(row)
+}
+
+/// All devices, most recently seen first.
+pub fn list_hosts(conn: &Connection) -> Result<Vec<HostDto>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT fingerprint, kind, host, port, username, first_seen, last_seen \
+       FROM hosts ORDER BY last_seen DESC",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map([], |row| {
+      Ok(HostDto {
+        fingerprint: row.get(0)?,
+        kind: row.get(1)?,
+        host: row.get(2)?,
+        port: row.get(3)?,
+        username: row.get(4)?,
+        first_seen: row.get(5)?,
+        last_seen: row.get(6)?,
+      })
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+/// Which saved connections have reached this device, oldest link first.
+pub fn host_connections(conn: &Connection, fingerprint: &str) -> Result<Vec<String>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT connection_id FROM connection_hosts WHERE fingerprint = ?1 \
+       ORDER BY last_seen ASC, connection_id ASC",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map(params![fingerprint], |row| row.get::<_, String>(0))
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+/// One indexed command of a device, with its source set.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostCommandDto {
+  pub command: String,
+  pub sources: String,
+}
+
+/// Store a device's freshly collected index, replacing whatever it had before.
+///
+/// Wholesale rather than incremental: the collection is one script run, so a row
+/// missing from it means the command is gone from the machine (uninstalled, or a
+/// PATH change) and keeping it would suggest a completion that fails.
+pub fn replace_host_commands(
+  conn: &mut Connection,
+  fingerprint: &str,
+  rows: &[(String, String)],
+  now_ms: i64,
+) -> Result<usize, String> {
+  let tx = conn.transaction().map_err(|e| e.to_string())?;
+  tx.execute(
+    "DELETE FROM host_commands WHERE fingerprint = ?1",
+    params![fingerprint],
+  )
+  .map_err(|e| e.to_string())?;
+  // Collecting — automatically or via the button — is the device being (re)learned,
+  // so the "cleared" marker that suppresses auto-collection is spent.
+  tx.execute(
+    "UPDATE hosts SET commands_cleared_at = 0 WHERE fingerprint = ?1",
+    params![fingerprint],
+  )
+  .map_err(|e| e.to_string())?;
+  for (command, sources) in rows {
+    tx.execute(
+      "INSERT INTO host_commands (fingerprint, command, sources, collected_at) \
+       VALUES (?1, ?2, ?3, ?4) \
+       ON CONFLICT(fingerprint, command) DO UPDATE SET sources = ?3, collected_at = ?4",
+      params![fingerprint, command, sources, now_ms],
+    )
+    .map_err(|e| e.to_string())?;
+  }
+  tx.commit().map_err(|e| e.to_string())?;
+  Ok(rows.len())
+}
+
+/// A device's index, ordered so the strongest sources come first and a prefix
+/// scan reads contiguously (`git`, `github`, `gitk` group together).
+pub fn list_host_commands(
+  conn: &Connection,
+  fingerprint: &str,
+) -> Result<Vec<HostCommandDto>, String> {
+  let mut stmt = conn
+    .prepare("SELECT command, sources FROM host_commands WHERE fingerprint = ?1 ORDER BY command")
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map(params![fingerprint], |row| {
+      Ok(HostCommandDto {
+        command: row.get(0)?,
+        sources: row.get(1)?,
+      })
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+/// `(rows, newest collected_at)` for a device, or `None` when it was never
+/// collected. This is the staleness gate behind decision ③ — it must not cost a
+/// full read of a 5 000-row index on every connection.
+pub fn host_index_info(conn: &Connection, fingerprint: &str) -> Result<Option<(i64, i64)>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT COUNT(*), COALESCE(MAX(collected_at), 0) FROM host_commands WHERE fingerprint = ?1",
+    )
+    .map_err(|e| e.to_string())?;
+  let (rows, collected_at): (i64, i64) = match stmt.query_map(params![fingerprint], |row| {
+    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+  }) {
+    Ok(mut mapped) => match mapped.next() {
+      Some(Ok(v)) => v,
+      Some(Err(e)) => return Err(e.to_string()),
+      None => (0, 0),
+    },
+    Err(e) => return Err(e.to_string()),
+  };
+  if rows == 0 {
+    Ok(None)
+  } else {
+    Ok(Some((rows, collected_at)))
+  }
+}
+
+/// Drop a device's index (privacy exit; the device row itself stays).
+/// Drop one device's command index, and hold automatic collection off until
+/// something re-learns it. The device row itself stays — clearing what the box can
+/// run is not the same as forgetting the box exists, and the fingerprint is what
+/// the connection history and the status chip read.
+///
+/// `now_ms` stamps the marker so a later `collected_at` (a manual refresh) wins the
+/// comparison in `needs_collection`, which is how the button resumes auto-collection.
+pub fn clear_host_commands(
+  conn: &Connection,
+  fingerprint: &str,
+  now_ms: i64,
+) -> Result<usize, String> {
+  let removed = conn
+    .execute(
+      "DELETE FROM host_commands WHERE fingerprint = ?1",
+      params![fingerprint],
+    )
+    .map_err(|e| e.to_string())?;
+  conn
+    .execute(
+      "UPDATE hosts SET commands_cleared_at = ?2 WHERE fingerprint = ?1",
+      params![fingerprint, now_ms],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(removed)
+}
+
+/// When this device's index was last cleared (0 = never, or the device is unknown).
+pub fn host_commands_cleared_at(conn: &Connection, fingerprint: &str) -> Result<i64, String> {
+  Ok(
+    conn
+      .query_row(
+        "SELECT commands_cleared_at FROM hosts WHERE fingerprint = ?1",
+        params![fingerprint],
+        |row| row.get::<_, i64>(0),
+      )
+      .unwrap_or(0),
+  )
+}
+
+#[cfg(test)]
+mod host_identity_tests {
+  use super::*;
+
+  fn conn_with_schema() -> Connection {
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    conn
+      .execute_batch(include_str!("schema.sql"))
+      .expect("create schema");
+    conn
+  }
+
+  #[test]
+  fn reconnecting_refreshes_instead_of_adding_rows() {
+    let conn = conn_with_schema();
+    let fresh = record_host(&conn, "SHA256:aaa", "ssh", "h1", 22, "u", 1000).unwrap();
+    assert!(fresh, "the first sighting of a device is new");
+    record_host(&conn, "SHA256:aaa", "ssh", "h1", 22, "u", 2000).unwrap();
+
+    let hosts = list_hosts(&conn).unwrap();
+    assert_eq!(
+      hosts.len(),
+      1,
+      "a reconnect must not add a second device row"
+    );
+    assert_eq!(
+      hosts[0].first_seen, 1000,
+      "first_seen keeps the original sighting"
+    );
+    assert_eq!(
+      hosts[0].last_seen, 2000,
+      "last_seen moves to the newest sighting"
+    );
+  }
+
+  #[test]
+  fn two_connections_to_one_device_share_the_host_row() {
+    let conn = conn_with_schema();
+    record_host(&conn, "SHA256:aaa", "ssh", "h1", 22, "u", 1000).unwrap();
+    link_connection_host(&conn, "c1", "SHA256:aaa", 1000).unwrap();
+    // Same box, different user/port means a different saved connection, but the
+    // host key is identical, so it is still one device.
+    record_host(&conn, "SHA256:aaa", "ssh", "h1", 2222, "other", 1100).unwrap();
+    link_connection_host(&conn, "c2", "SHA256:aaa", 1100).unwrap();
+
+    assert_eq!(list_hosts(&conn).unwrap().len(), 1);
+    assert_eq!(
+      host_connections(&conn, "SHA256:aaa").unwrap(),
+      vec!["c1".to_string(), "c2".to_string()],
+      "the device knows both connections reached it"
+    );
+  }
+
+  #[test]
+  fn previous_fingerprint_is_the_newest_link() {
+    let conn = conn_with_schema();
+    assert_eq!(
+      previous_fingerprint(&conn, "c1").unwrap(),
+      None,
+      "a connection never seen before has nothing to compare against"
+    );
+    record_host(&conn, "SHA256:old", "ssh", "h1", 22, "u", 1000).unwrap();
+    link_connection_host(&conn, "c1", "SHA256:old", 1000).unwrap();
+    assert_eq!(
+      previous_fingerprint(&conn, "c1").unwrap().as_deref(),
+      Some("SHA256:old")
+    );
+
+    // A rebuilt host presents a new key; after that link the newest row is the
+    // new key, which is what the next connection compares against.
+    record_host(&conn, "SHA256:new", "ssh", "h1", 22, "u", 2000).unwrap();
+    link_connection_host(&conn, "c1", "SHA256:new", 2000).unwrap();
+    assert_eq!(
+      previous_fingerprint(&conn, "c1").unwrap().as_deref(),
+      Some("SHA256:new"),
+      "the comparison target is the last key this connection actually saw"
+    );
+  }
+
+  #[test]
+  fn an_index_round_trips_with_its_age() {
+    let mut conn = conn_with_schema();
+    assert_eq!(host_index_info(&conn, "SHA256:aaa").unwrap(), None);
+    let rows = vec![
+      ("git".to_string(), "path,builtin".to_string()),
+      ("gzip".to_string(), "path".to_string()),
+    ];
+    assert_eq!(
+      replace_host_commands(&mut conn, "SHA256:aaa", &rows, 1000).unwrap(),
+      2
+    );
+    assert_eq!(
+      host_index_info(&conn, "SHA256:aaa").unwrap(),
+      Some((2, 1000))
+    );
+    let listed = list_host_commands(&conn, "SHA256:aaa").unwrap();
+    assert_eq!(
+      listed
+        .iter()
+        .map(|c| (c.command.as_str(), c.sources.as_str()))
+        .collect::<Vec<_>>(),
+      vec![("git", "path,builtin"), ("gzip", "path")]
+    );
+  }
+
+  #[test]
+  fn a_refresh_replaces_the_index_rather_than_adding_to_it() {
+    // A command that disappears from the collection is a command that disappeared
+    // from the machine; keeping it would keep offering a completion that fails.
+    let mut conn = conn_with_schema();
+    record_host(&conn, "SHA256:aaa", "ssh", "h", 22, "u", 1000).unwrap();
+    let before = vec![
+      ("docker".to_string(), "path".to_string()),
+      ("kubectl".to_string(), "path".to_string()),
+    ];
+    replace_host_commands(&mut conn, "SHA256:aaa", &before, 1000).unwrap();
+    let after = vec![("docker".to_string(), "path".to_string())];
+    replace_host_commands(&mut conn, "SHA256:aaa", &after, 2000).unwrap();
+
+    assert_eq!(
+      host_index_info(&conn, "SHA256:aaa").unwrap(),
+      Some((1, 2000))
+    );
+    assert_eq!(clear_host_commands(&conn, "SHA256:aaa", 3000).unwrap(), 1);
+    assert_eq!(host_index_info(&conn, "SHA256:aaa").unwrap(), None);
+    assert_eq!(
+      host_commands_cleared_at(&conn, "SHA256:aaa").unwrap(),
+      3000,
+      "the clear has to be remembered, or the next connect quietly relearns it all"
+    );
+    assert!(
+      list_host_commands(&conn, "SHA256:aaa").unwrap().is_empty(),
+      "clearing empties the device's list, not just its count"
+    );
+    assert!(
+      list_hosts(&conn)
+        .unwrap()
+        .iter()
+        .any(|h| h.fingerprint == "SHA256:aaa"),
+      "clearing the index must leave the device itself recorded"
+    );
+
+    // A later collection — the manual button — is the deliberate way back in, and
+    // it spends the marker so the weekly auto-refresh resumes from there.
+    assert_eq!(host_commands_cleared_at(&conn, "SHA256:bbb").unwrap(), 0);
+    record_host(&conn, "SHA256:bbb", "ssh", "h", 22, "u", 1000).unwrap();
+    replace_host_commands(&mut conn, "SHA256:bbb", &after, 4000).unwrap();
+    clear_host_commands(&conn, "SHA256:bbb", 5000).unwrap();
+    replace_host_commands(&mut conn, "SHA256:bbb", &after, 6000).unwrap();
+    assert_eq!(host_commands_cleared_at(&conn, "SHA256:bbb").unwrap(), 0);
+  }
+
+  #[test]
+  fn the_index_reports_its_rows_devices_and_bytes_in_the_db_stats() {
+    let mut conn = conn_with_schema();
+    record_host(&conn, "SHA256:aaa", "ssh", "h", 22, "u", 1000).unwrap();
+    record_host(&conn, "SHA256:bbb", "ssh", "h2", 22, "u", 1000).unwrap();
+    let many: Vec<(String, String)> = (0..200)
+      .map(|i| (format!("cmd{i}"), "path".to_string()))
+      .collect();
+    replace_host_commands(&mut conn, "SHA256:aaa", &many, 1000).unwrap();
+    replace_host_commands(
+      &mut conn,
+      "SHA256:bbb",
+      &[("ls".to_string(), "path".to_string())],
+      1000,
+    )
+    .unwrap();
+
+    let stats = db_stats(&conn, std::path::Path::new("wrolp.test.db")).unwrap();
+    assert_eq!(stats.host_commands, 201);
+    assert_eq!(stats.host_command_devices, 2);
+    // The point of measuring through `dbstat`: the number is the pages the rows
+    // actually occupy, so a user can see the index is kilobytes rather than guess
+    // from a row count. 0 would mean the measurement silently failed.
+    assert!(
+      stats.host_command_bytes > 0,
+      "dbstat gave no size for a table with 201 rows: {stats:?}"
+    );
+  }
+
+  #[test]
+  fn one_device_index_is_not_another_devices() {
+    let mut conn = conn_with_schema();
+    replace_host_commands(
+      &mut conn,
+      "SHA256:aaa",
+      &[("apt".to_string(), "path".to_string())],
+      1000,
+    )
+    .unwrap();
+    replace_host_commands(
+      &mut conn,
+      "SHA256:bbb",
+      &[("dnf".to_string(), "path".to_string())],
+      1000,
+    )
+    .unwrap();
+
+    let b = list_host_commands(&conn, "SHA256:bbb").unwrap();
+    assert_eq!(b.len(), 1);
+    assert_eq!(b[0].command, "dnf", "the boxes' packages must not mix");
+  }
 }
 
 #[cfg(test)]

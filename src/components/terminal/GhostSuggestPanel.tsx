@@ -39,6 +39,7 @@ export function GhostSuggestPanel({
     history: t('ghostSrcHistory'),
     snippet: t('ghostSrcSnippet'),
     set: t('ghostSrcSet'),
+    index: t('ghostSrcIndex'),
   }
 
   useLayoutEffect(() => {

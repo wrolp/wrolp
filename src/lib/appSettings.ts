@@ -56,7 +56,9 @@ import {
 // ---------------------------------------------------------------------------
 
 export type SettingKind = 'enum' | 'color' | 'number' | 'boolean' | 'string'
-export type SettingGroup = 'theme' | 'terminal' | 'highlight' | 'ui'
+/// `security` is a group but deliberately not a *writable* one — see
+/// `SETTING_GROUPS`, which lists what the AI appearance bridge may change.
+export type SettingGroup = 'theme' | 'terminal' | 'highlight' | 'ui' | 'security'
 
 interface SettingStorage {
   kind: 'localStorage' | 'memory'
@@ -433,6 +435,20 @@ const DEFS: SettingDef[] = [
     write: (v) => setLang(v as Lang),
     describe: 'Interface language.',
   },
+
+  // ---- security ----------------------------------------------------------
+  {
+    key: 'security.strictHostKey',
+    kind: 'boolean',
+    group: 'security',
+    default: false,
+    // Off by default. Turning it on means an unrecognized key change stops the
+    // connection, and a false positive (rebuilt lab box, re-imaged CI host) is
+    // the kind of thing that must never happen to someone who did not ask for it.
+    storage: { kind: 'localStorage', key: 'wrolp-strict-host-key' },
+    describe:
+      'Refuse an SSH connection when the server presents a different host key than the one recorded for that connection. Off means a change is only reported.',
+  },
 ]
 
 const BY_KEY = new Map(DEFS.map((d) => [d.key, d]))
@@ -445,6 +461,11 @@ export function getSettingDef(key: string): SettingDef | undefined {
   return BY_KEY.get(key)
 }
 
+/// The groups the AI appearance bridge may write. `security` is missing on
+/// purpose: an assistant that could turn strict host key checking off would hold
+/// the one switch that decides whether a server identity change stops you. Keep
+/// it out of this list and `sanitizeAiAppearanceConfig` can never accept it back,
+/// whatever is in localStorage.
 export const SETTING_GROUPS: readonly SettingGroup[] = ['theme', 'terminal', 'highlight', 'ui']
 
 // ---------------------------------------------------------------------------

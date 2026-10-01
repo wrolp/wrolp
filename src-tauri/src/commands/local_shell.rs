@@ -619,6 +619,8 @@ pub async fn open_local_shell(
   };
   let shell_for_history = shell_spec.clone();
   let cwd_for_resolve = cwd.clone();
+  // `distro` moves into the resolver below; the device identity needs it after.
+  let distro_for_identity = distro.clone();
 
   // Resolving a preset can block: `gitbash` queries the registry when the well-known
   // install paths are missing. An unresolved shell is an error rather than a silent
@@ -639,7 +641,49 @@ pub async fn open_local_shell(
   // handing it to CreateProcess as the Windows process cwd would fail.
   let pty_cwd = if is_wsl { None } else { cwd.clone() };
 
+  // `spawn_local_pty` takes the handle; the device record below still needs one.
+  let app_for_identity = app.clone();
   spawn_local_pty(app, &state, tab_id, program, args, pty_cwd, cols, rows).await?;
+
+  // Device identity (plan §2.A). A local shell has no host key, so the machine is
+  // the identity — and a WSL distro counts as its own device, because it has its
+  // own filesystem, `$PATH` and package set, which is exactly what the command
+  // index is keyed on. A WSL entry without an explicit distro runs the system
+  // default; `wsl:default` stays self-consistent (the index is collected in that
+  // same shell) but cannot be matched against a named-distro entry.
+  let (seen, index_distro) = if is_wsl {
+    let distro = distro_for_identity.unwrap_or_else(|| "default".to_string());
+    (
+      crate::host_identity::DeviceSeen::fallback("wsl", &distro, distro.clone(), 0, String::new()),
+      Some(distro),
+    )
+  } else {
+    let name = crate::host_identity::local_machine_name();
+    (
+      crate::host_identity::DeviceSeen::fallback("local", &name, name.clone(), 0, String::new()),
+      None,
+    )
+  };
+  crate::host_identity::record_and_announce(&app_for_identity, tab_id, None, &seen).await;
+
+  // Command index for this device (decision ⑤: local and WSL are indexed too —
+  // both answer "what can I run here", which is exactly what completion needs).
+  // `index_distro` is what `wsl.exe -d` needs; a plain local shell has none.
+  {
+    let app_for_index = app_for_identity.clone();
+    let fingerprint = seen.fingerprint.clone();
+    let kind = seen.kind;
+    tauri::async_runtime::spawn(async move {
+      crate::host_commands::maybe_collect(
+        &app_for_index,
+        tab_id,
+        &fingerprint,
+        kind,
+        index_distro.as_deref(),
+      )
+      .await;
+    });
+  }
 
   // Remember cwd in history (start of list, de-duplicated)
   if let Some(ref dir) = cwd {

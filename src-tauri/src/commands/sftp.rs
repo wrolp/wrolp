@@ -54,6 +54,9 @@ pub async fn poll_working_dir(
       app_handle: app.clone(),
       tab_id,
       is_sftp: true,
+      // No device record here: this per-operation SFTP connection reuses the host
+      // the interactive session already identified (see `SshHandler::host_key`).
+      host_key: None,
       shell_channel_id: None,
       sftp_close_notify: None,
       utf8_tail_out: Vec::new(),

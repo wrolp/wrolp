@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { CommandHistoryEntry, CommandSetDto } from '../../../src/types'
+import type { CommandHistoryEntry, CommandSetDto, HostCommandDto } from '../../../src/types'
 
 /**
  * Minimal shape of a `ConnectionConfig` as far as the UI renders it
@@ -58,6 +58,10 @@ export interface TauriMockOptions {
   dockerContainers?: unknown[]
   /** Rows returned by `list_command_history` (the pane's 历史 dropdown). */
   commandHistory?: CommandHistoryEntry[]
+  /** Rows returned by `list_host_commands` (the device command index). */
+  hostCommands?: HostCommandDto[]
+  /** What `collect_host_commands` reports back as the indexed count. */
+  hostCommandCount?: number
   /** Rows returned by `list_command_sets` (a command set's commands are also ghost
    *  completion candidates, so a spec that cares about the pool states them). */
   commandSets?: CommandSetDto[]
@@ -138,6 +142,11 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
       ...(s as Record<string, unknown>),
     }))
     const pollChunks: string[][] = (opts.pollOutputChunks ?? []).map((c) => [...c])
+    // Stateful device-command index, so `clear_host_commands` -> re-read really
+    // does come back empty rather than replaying the seeded rows.
+    let hostIndex: Array<Record<string, unknown>> = (opts.hostCommands ?? []).map((r) => ({
+      ...r,
+    }))
     // Every invoke is recorded here so tests can assert backend interactions
     // (e.g. "connect was called", "poll_output stopped after connection-closed").
     const invoked: Array<{ cmd: string; args: Record<string, unknown> }> = []
@@ -272,6 +281,18 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           // the answer only has to be the honest shape.
           case 'delete_command_history':
             return true
+          // The device command index, from the stateful store above: `[]` is the
+          // honest answer for a device nobody has collected yet, and clearing empties
+          // it for good rather than replaying the seeded rows.
+          case 'list_host_commands':
+            return hostIndex
+          case 'collect_host_commands':
+            return opts.hostCommandCount ?? hostIndex.length
+          case 'clear_host_commands': {
+            const removed = hostIndex.length
+            hostIndex = []
+            return removed
+          }
           // Command sets, as the ghost completion sees them. `[]` is the real
           // answer for a fresh install, so specs that do not opt in are unaffected.
           case 'list_command_sets':
@@ -398,6 +419,11 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
               sessions: 0,
               legacyEvents: 0,
               autoVacuum: 2,
+              // The device index reads from the same stateful store as
+              // `list_host_commands`, so a spec that clears it sees the number drop.
+              hostCommands: hostIndex.length,
+              hostCommandDevices: hostIndex.length > 0 ? 1 : 0,
+              hostCommandBytes: hostIndex.length * 128,
             }
           case 'vacuum_database':
             return { beforeBytes: 65536, afterBytes: 65536, freedBytes: 0 }

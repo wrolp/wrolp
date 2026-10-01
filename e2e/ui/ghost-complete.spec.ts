@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import type { CommandSetDto, CommandSnippetDto } from '../../src/types'
+import type { CommandHistoryEntry, CommandSetDto, CommandSnippetDto } from '../../src/types'
 import {
   GHOST_MAX_ROWS,
   buildGhostPool,
@@ -41,6 +41,9 @@ const set = (name: string, commands: string[], connectionId: string | null = nul
     createdAt: '',
     updatedAt: '',
   }) satisfies CommandSetDto
+
+const history = (command: string) =>
+  ({ command, tabType: 'terminal', host: 'demo.local', usedAtMs: 1 }) satisfies CommandHistoryEntry
 
 test('the pool merges the histories and the library, newest and curated first', () => {
   const pool = buildGhostPool({
@@ -186,4 +189,73 @@ test('a word accept takes one space-separated part, blanks travelling with what 
   // A case mismatch falls back to rewriting the whole line in both modes: part of a
   // command cannot be appended to a prefix whose casing is wrong.
   expect(planGhostAccept('GIT s', 'git status', 'posix', 'word')).toBe('\x01\x0bgit status')
+})
+
+test('the device index reaches the pool last and outranks nothing', () => {
+  const pool = buildGhostPool({
+    snippets: [snippet('kubectl get pods')],
+    sets: [set('ops', ['docker compose up'])],
+    tabHistory: ['git status'],
+    globalHistory: [history('git commit')],
+    hostIndex: ['git', 'gitk', 'github', 'du', ''],
+  })
+  const sources = Object.fromEntries(pool.map((c) => [c.command, c.source]))
+  expect(sources).toEqual({
+    'kubectl get pods': 'snippet',
+    'docker compose up': 'set',
+    'git status': 'history',
+    'git commit': 'history',
+    git: 'index',
+    gitk: 'index',
+    github: 'index',
+    du: 'index',
+  })
+
+  // Ranked below everything else, so an installed binary never beats a command the
+  // user actually meant. Among themselves the index keeps the DB's order.
+  const matches = matchGhost(pool, 'gi')
+  expect(matches.map((m) => m.command)).toEqual([
+    'git status',
+    'git commit',
+    'git',
+    'gitk',
+    'github',
+  ])
+})
+
+test('index names only complete the first word of a line', () => {
+  // The index holds command names, not lines. Once the line has moved past the
+  // first word, a name that merely shares its spelling must not be offered:
+  // `git stat` + `gitk` would leave `gitk stat` on the line.
+  const pool = buildGhostPool({
+    snippets: [],
+    sets: [],
+    tabHistory: [],
+    globalHistory: [],
+    hostIndex: ['du', 'git-credential', 'gitk'],
+  })
+  // Order among equal-weight candidates is pool order, which for the index is the
+  // DB's `ORDER BY command` — so the array below is written the way a read arrives.
+  expect(matchGhost(pool, 'git').map((m) => m.command)).toEqual(['git-credential', 'gitk'])
+  // Once the line is past its first word, a name that merely shares the spelling is
+  // no candidate at all: completing `git stat` with `gitk` would leave `gitk stat`.
+  expect(matchGhost(pool, 'git stat')).toEqual([])
+  expect(matchGhost(pool, 'd').map((m) => m.command)).toEqual(['du'])
+})
+
+test('a command in both the history and the index keeps its history rank', () => {
+  // Dedupe must favour the higher-weight source, or a run command would be
+  // re-badged as "on this device" and drop behind its own siblings.
+  const pool = buildGhostPool({
+    snippets: [],
+    sets: [],
+    tabHistory: ['docker ps'],
+    globalHistory: [],
+    hostIndex: ['docker', 'docker-compose', 'docker'],
+  })
+  expect(pool.map((c) => `${c.command}:${c.source}`)).toEqual([
+    'docker ps:history',
+    'docker:index',
+    'docker-compose:index',
+  ])
 })

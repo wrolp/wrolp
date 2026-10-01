@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { readSetting } from './lib/appSettings'
 import type {
   ConnectionConfig,
   FileEntry,
@@ -7,6 +8,7 @@ import type {
   CommandSetDto,
   CommandSnippetDto,
   CommandHistoryEntry,
+  HostCommandDto,
   GlobalVariable,
   AiPromptTemplate,
   FileContent,
@@ -190,7 +192,18 @@ export async function connect(
   rows: number,
   reuseExisting: boolean = true,
 ): Promise<{ status: string }> {
-  return await invoke<{ status: string }>('connect', { config, tabId, cols, rows, reuseExisting })
+  // Read here rather than at the two call sites: strict host key checking is a
+  // property of *connecting*, and a reconnect path that forgot to pass it would
+  // silently connect without the guard the user turned on.
+  const strictHostKey = readSetting('security.strictHostKey')?.value === true
+  return await invoke<{ status: string }>('connect', {
+    config,
+    tabId,
+    cols,
+    rows,
+    reuseExisting,
+    strictHostKey,
+  })
 }
 
 export async function disconnect(tabId: number): Promise<boolean> {
@@ -616,6 +629,41 @@ export async function listCommandHistory(limit?: number): Promise<CommandHistory
 /** Forget one command from the persisted history. `true` when a row was removed. */
 export async function deleteCommandHistory(command: string): Promise<boolean> {
   return await invoke<boolean>('delete_command_history', { command })
+}
+
+/**
+ * Collect the command index for the device behind one terminal, replacing what it
+ * had. Returns the number of commands indexed. `kind` / `distro` come from the tab
+ * (`device.kind`, `localShellDistro`): only WSL and a native local shell need them,
+ * and getting them wrong would index the wrong machine.
+ */
+export async function collectHostCommands(args: {
+  tabId: number
+  fingerprint: string
+  kind: string
+  distro?: string
+}): Promise<number> {
+  return await invoke<number>('collect_host_commands', {
+    tabId: args.tabId,
+    fingerprint: args.fingerprint,
+    kind: args.kind,
+    distro: args.distro ?? null,
+  })
+}
+
+/** A device's indexed commands, or empty when it was never collected. */
+export async function listHostCommands(fingerprint: string): Promise<HostCommandDto[]> {
+  return await invoke<HostCommandDto[]>('list_host_commands', { fingerprint })
+}
+
+/**
+ * Forget a device's command index. The device row itself stays — its fingerprint is
+ * what the status chip and the connection history read — and automatic collection is
+ * held off afterwards, so reconnecting does not silently relearn it. Returns the
+ * number of rows removed.
+ */
+export async function clearHostCommands(fingerprint: string): Promise<number> {
+  return await invoke<number>('clear_host_commands', { fingerprint })
 }
 
 export async function readFileContent(

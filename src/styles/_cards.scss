@@ -320,6 +320,21 @@
   }
 }
 
+// A read-out sitting in a settings row next to its action button — a count, a
+// timestamp, "not collected yet". The colour is the one `.settings-inline-btn`
+// beside it already uses, i.e. the same ink-on-card pairing the surface is built
+// from. Note the contrast gate does NOT grade this rule on its own (it resolves no
+// background for it), so changing it means re-checking by hand — measured with
+// `contrastRatio`: 6.11:1 on the light card, 4.98:1 on the light theme's darkest
+// surface, 6.32:1 on the dark card. All above AA.
+.settings-inline-value {
+  flex: 0 1 auto;
+  color: $text-secondary;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
 .ai-settings-card {
   .settings-card-icon {
     background: linear-gradient(135deg, $accent, var(--accent-l14));

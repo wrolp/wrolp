@@ -1,5 +1,6 @@
 import type { TabInfo } from '../types'
 import { useI18n } from '../i18n'
+import { shortFingerprint } from '../lib/deviceId'
 import { Icon } from './Icon'
 
 export type UpdateState = 'idle' | 'checking' | 'downloading' | 'installing'
@@ -70,6 +71,17 @@ export function StatusBar({
             {target.host && target.host !== target.connectionName && (
               <span className="status-item mono dim">
                 <span>{target.host}</span>
+              </span>
+            )}
+            {/* Which machine, by its host key rather than by its address: an address
+                can be reused or moved, the key is the thing that says "same box". */}
+            {target.device && (
+              <span
+                className="status-item mono dim"
+                title={`${target.device.fingerprint}\n${target.device.kind}`}
+              >
+                <Icon name="shield" size={12} />
+                <span>{shortFingerprint(target.device.fingerprint)}</span>
               </span>
             )}
           </>

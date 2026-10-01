@@ -400,12 +400,41 @@ impl From<String> for SshError {
   }
 }
 
+/// What the handshake revealed about the server's identity.
+#[derive(Debug, Clone)]
+pub struct HostKeySeen {
+  /// `SHA256:<base64>` of the server host key.
+  pub fingerprint: String,
+  /// True when this connection was previously recorded with a different key —
+  /// a rebuilt machine, or something in the middle.
+  pub changed: bool,
+}
+
+/// Host-key observation for one interactive SSH connection
+/// (`SSH-COMMAND-INDEX-COMPLETION-PLAN` §2.A, decision ②).
+///
+/// russh moves the handler into its session task and never gives it back, so the
+/// fingerprint learned during the handshake has to leave through a slot the caller
+/// created first. `previous` is the key this connection last presented; with
+/// `enforce` a mismatch aborts the handshake, otherwise it is only reported.
+/// Recording and warning never break a working connection unless the user turned
+/// enforcement on — that is the whole point of observing fingerprints first.
+pub struct HostKeyWatch {
+  pub slot: Arc<StdMutex<Option<HostKeySeen>>>,
+  pub previous: Option<String>,
+  pub enforce: bool,
+}
+
 /// SSH handler — moved here to avoid circular deps with commands.rs
 pub struct SshHandler {
   pub app_handle: tauri::AppHandle,
   pub tab_id: u32,
   /// When true, suppress terminal output (used for SFTP-only sessions)
   pub is_sftp: bool,
+  /// Host-key observation for this connection; `None` on the auxiliary handlers
+  /// (per-operation SFTP, ProxyJump) that reuse a host an interactive session has
+  /// already identified. See `HostKeyWatch`.
+  pub host_key: Option<HostKeyWatch>,
   /// Channel id of the interactive PTY shell. Only output from this channel is
   /// shown in the terminal; auxiliary channels (docker exec, ProxyJump) opened
   /// on the same connection are suppressed. Set on the first channel-open

@@ -264,6 +264,40 @@ export interface AiPromptTemplate {
 
 export type AuthType = 'password' | 'key'
 
+/**
+ * The device a session reached, as recorded by the backend
+ * (`src-tauri/src/host_identity.rs`). Mirrors the `host-identified` event payload.
+ *
+ * Identity is the machine, not the saved connection: `fingerprint` is the SHA256
+ * of the server's host key for SSH, or a `kind:detail` fallback id for the session
+ * kinds that have no host key.
+ */
+export interface DeviceIdentity {
+  fingerprint: string
+  kind: 'ssh' | 'local' | 'wsl' | 'serial' | 'telnet'
+  host: string
+  port: number
+  username: string
+  /** First time this device has ever been recorded. */
+  isNew: boolean
+  /** This connection was previously recorded with a *different* host key. */
+  changed: boolean
+  /** The key that was on record, when there was one — so a change warning can
+   *  show both sides of the comparison. */
+  previousFingerprint?: string | null
+}
+
+/**
+ * One command a device has installed, from the collected index
+ * (`src-tauri/src/host_commands.rs`). `sources` is a comma set of `path` /
+ * `builtin` / `alias` — a name that is both (shell `cd`, and a `/usr/bin/cd`)
+ * arrives as one row with both.
+ */
+export interface HostCommandDto {
+  command: string
+  sources: string
+}
+
 export interface TabInfo {
   tabId: number
   connectionId?: string
@@ -272,6 +306,12 @@ export interface TabInfo {
   status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'suspect' | 'settings'
   errorMessage?: string
   tabType: 'terminal' | 'settings' | 'dockerLog' | 'localShell' | 'serial' | 'telnet' | 'fileEditor'
+  /**
+   * Which machine this tab is actually talking to, from the backend's
+   * `host-identified` event. Absent until a session has completed a handshake —
+   * and absent forever for tabs that never connect (settings, file editors).
+   */
+  device?: DeviceIdentity
   // When true, this session was created by splitting a tab and is NOT shown as
   // its own entry in the top tab bar — it lives inside its parent workspace's
   // pane layout (see App.tsx `splitTrees`).
@@ -482,6 +522,13 @@ export interface DbStats {
   freePages: number
   /** Bytes a VACUUM would release right now. */
   reclaimableBytes: number
+  /** Total `host_commands` rows — the device command index. */
+  hostCommands: number
+  /** How many devices that spans (the per-device cap is 5 000). */
+  hostCommandDevices: number
+  /** On-disk bytes of that table, measured through SQLite's `dbstat`; 0 when the
+   *  build lacks the virtual table, which is why the row is hidden at 0. */
+  hostCommandBytes: number
   sessions: number
   /** Rows still in the legacy `session_events` table. */
   legacyEvents: number

@@ -72,6 +72,8 @@ export type IconName =
   | 'backspace'
   | 'eraser'
   | 'selection'
+  // The status bar's device chip: which machine, proven by its host key.
+  | 'shield'
   // Shell flavours for local-terminal entries. All five are a terminal window
   // carrying a distinguishing mark, so they stay recognisable as terminals while
   // still telling cmd / PowerShell / bash / WSL / Git Bash apart at 14px.
@@ -171,6 +173,10 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </>
+  ),
+  // lucide: shield
+  shield: (
+    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a.66.66 0 0 1-.67-.01C7.5 20.5 4 18 4 13V7a1 1 0 0 1 1-1c2-.5 5-1.5 7-1.5s5 1 7 1.5a1 1 0 0 1 1 1z" />
   ),
   // lucide: undo-2
   undo: (

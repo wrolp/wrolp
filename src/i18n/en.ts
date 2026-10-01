@@ -385,6 +385,8 @@ const en = {
     'Scrollback, recording, keepalive, and how output and pastes are handled.',
   settingsPaneData: 'Data',
   settingsPaneDataDesc: 'Where settings, recordings and the database live, and how to trim them.',
+  settingsPaneSecurity: 'Security',
+  settingsPaneSecurityDesc: 'How far the app trusts the machine at the other end of a connection.',
   settingsPaneAboutDesc: 'The build this copy is, its repository, and checking for updates.',
   settingsPaneAiDesc:
     'OpenAI-compatible chat with built-in tools. Configure multiple endpoints and pick one to use.',
@@ -434,6 +436,12 @@ const en = {
     'Error and warning dots change silhouette as well as colour, so state stays readable without colour vision.',
   windowOpacityLightDisabled:
     'The window stays opaque in the light theme (translucency lets the desktop through and looks dirty).',
+  // Device identity (host key fingerprint)
+  strictHostKeyLabel: 'Strict host key checking',
+  strictHostKeyHelp:
+    'Refuse an SSH connection when the server presents a different host key than the one recorded for that connection. Off means a change is only reported. A rebuilt or re-imaged machine legitimately presents a new key.',
+  hostKeyChangedToast:
+    'Host key for {host} changed.\nOn record: {previous}\nNow: {fingerprint}\n\nEither this machine was rebuilt, or something is intercepting the connection. Settings → Security can refuse such a connection outright.',
   windowOpacity: 'Window Opacity',
   currentPercent: 'Current: {val}%',
   maxScrollbackLines: 'Max Scrollback Lines',
@@ -494,6 +502,23 @@ const en = {
   ghostSrcHistory: 'history',
   ghostSrcSnippet: 'command list',
   ghostSrcSet: 'command set',
+  ghostSrcIndex: 'on this device',
+  // Device command index (SSH-COMMAND-INDEX-COMPLETION-PLAN §2.B)
+  hostIndexLabel: 'Device command index',
+  hostIndexHelp:
+    'The commands installed on the machine this terminal is connected to, collected once per device and refreshed weekly. They are the lowest-ranked suggestions — anything you have run before or saved outranks them.',
+  hostIndexCount: '{count} commands indexed',
+  hostIndexNone: 'Not collected yet',
+  hostIndexRefresh: 'Refresh now',
+  hostIndexRefreshing: 'Collecting…',
+  hostIndexRefreshed: 'Indexed {count} commands on this device.',
+  hostIndexEmpty:
+    'This device returned no readable command list, so nothing was stored. Shells without compgen may only offer their PATH directory.',
+  hostIndexNoDevice: 'This terminal has not identified its device yet — connect it first.',
+  hostIndexClear: 'Forget this device',
+  hostIndexCleared:
+    'Removed {count} indexed commands. Reconnects will not re-collect it until you refresh.',
+  dbHostIndexValue: 'Device command index: {count} commands over {devices} devices ({size})',
   maxFileOpenSize: 'Max File Open Size (MB)',
   maxFileOpenSizeDesc: 'Files larger than this cannot be opened in the editor.',
   updates: 'Updates',

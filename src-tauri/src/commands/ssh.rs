@@ -7,8 +7,44 @@ impl Handler for SshHandler {
 
   async fn check_server_key(
     &mut self,
-    _server_public_key: &PublicKeyOrCertificate,
+    server_public_key: &PublicKeyOrCertificate,
   ) -> Result<bool, Self::Error> {
+    // Only the interactive connection observes device identity; auxiliary
+    // handlers (per-operation SFTP, ProxyJump) pass through untouched.
+    let Some(watch) = self.host_key.as_ref() else {
+      return Ok(true);
+    };
+    // `SHA256:<unpadded base64>` — the exact form OpenSSH prints, so a user can
+    // verify it against `ssh-keyscan <host> | ssh-keygen -lf -`.
+    let fingerprint = server_public_key
+      .public_key()
+      .fingerprint(HashAlg::Sha256)
+      .to_string();
+
+    match crate::host_identity::judge_host_key(
+      &fingerprint,
+      watch.previous.as_deref(),
+      watch.enforce,
+    ) {
+      // Refusing happens here because russh treats `Ok(false)` as a fatal
+      // `UnknownKey` — the only hook available before the session is established.
+      crate::host_identity::KeyVerdict::Reject { previous } => {
+        self.emit(&format!(
+          "\u{1b}[31mHost key changed: expected {}, server presented {}.\r\n\
+           Connection refused by strict host key checking (Settings → Security).\u{1b}[0m\r\n",
+          previous, fingerprint
+        ));
+        return Ok(false);
+      }
+      crate::host_identity::KeyVerdict::Proceed { changed } => {
+        if let Ok(mut slot) = watch.slot.lock() {
+          *slot = Some(HostKeySeen {
+            fingerprint,
+            changed,
+          });
+        }
+      }
+    }
     Ok(true)
   }
 
@@ -287,10 +323,29 @@ pub async fn connect(
   cols: u32,
   rows: u32,
   reuse_existing: bool,
+  // Decision ② of the device-identity plan: when true, a host key that differs
+  // from the one this connection was recorded with aborts the handshake. The
+  // frontend passes the `security.strictHostKey` setting; absent means off, so
+  // recording a fingerprint can never break a connection on its own.
+  strict_host_key: Option<bool>,
 ) -> Result<ConnectResult, String> {
   let host = config.host.clone();
   let port = config.port;
   let username = config.username.clone();
+
+  // Read *before* spawning: the handshake records the new key, and comparing
+  // against a value read afterwards would always agree with itself.
+  let previous_fingerprint = {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::previous_fingerprint(&conn, &config.id)
+      .map_err(|e| {
+        // A broken identity lookup must not stop a connection that used to work.
+        eprintln!("[connect] previous fingerprint lookup failed: {}", e);
+        e
+      })
+      .ok()
+      .flatten()
+  };
 
   eprintln!(
     "[connect] tab={} host={}:{} user={}",
@@ -395,10 +450,18 @@ pub async fn connect(
       };
 
       // 1. Establish SSH connection
+      // The handshake writes the server's fingerprint into this slot; russh keeps
+      // the handler to itself, so this is the only way to get it back.
+      let host_key_slot: Arc<StdMutex<Option<HostKeySeen>>> = Arc::new(StdMutex::new(None));
       let handler = SshHandler {
         app_handle: app_handle.clone(),
         tab_id: tid,
         is_sftp: false,
+        host_key: Some(HostKeyWatch {
+          slot: host_key_slot.clone(),
+          previous: previous_fingerprint.clone(),
+          enforce: strict_host_key == Some(true),
+        }),
         shell_channel_id: None,
         sftp_close_notify: None,
         utf8_tail_out: Vec::new(),
@@ -440,6 +503,29 @@ pub async fn connect(
             return;
           }
         };
+
+      // Device identity (plan §2.A). Recorded straight after the handshake, not
+      // after authentication: a wrong password still means we met this machine,
+      // and the fingerprint is the thing the command index hangs off.
+      if let Some(seen) = host_key_slot.lock().ok().and_then(|g| g.clone()) {
+        crate::host_identity::record_and_announce(
+          &app_handle,
+          tid,
+          Some(&cfg.id),
+          &crate::host_identity::DeviceSeen {
+            fingerprint: seen.fingerprint,
+            kind: "ssh",
+            host: cfg.host.clone(),
+            port: cfg.port as i64,
+            username: cfg.username.clone(),
+            changed: seen.changed,
+            previous: previous_fingerprint.clone(),
+          },
+        )
+        .await;
+      } else {
+        eprintln!("[host_identity] no fingerprint captured for tab={tid}");
+      }
 
       // 2. Authenticate
       if let Some(ref pw) = cfg.password {
@@ -559,6 +645,22 @@ pub async fn connect(
         "[russh] shell started for tab={} (B21 r3: pty read half draining)",
         tid
       );
+
+      // Device command index (plan §2.B, decision ③): collect on the first
+      // sighting of a device and then at most weekly — never on every connect, so
+      // a slow box costs nothing after the first time. Spent from here rather than
+      // right after the handshake because the enumeration is an `exec` on the
+      // session handle, which is only reachable once it is stored below.
+      let index_fingerprint = host_key_slot
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.fingerprint.clone()));
+      if let Some(fp) = index_fingerprint {
+        let app_for_index = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+          crate::host_commands::maybe_collect(&app_for_index, tid, &fp, "ssh", None).await;
+        });
+      }
 
       // Store channel Arc (for resize) and the shared session handle (for
       // ProxyJump / docker exec on secondary targets, and the keepalive probe)

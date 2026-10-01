@@ -41,7 +41,10 @@ export interface AiAppearanceConfig {
 
 const DEFAULT_CONFIG: AiAppearanceConfig = {
   enabled: true,
-  groups: { theme: true, terminal: true, highlight: true, ui: true },
+  // `security` is false and unreachable: it is not in `SETTING_GROUPS`, so the
+  // sanitizer below ignores any stored value for it. The AI must not be able to
+  // switch off strict host key checking.
+  groups: { theme: true, terminal: true, highlight: true, ui: true, security: false },
   requireConfirm: false,
 }
 
@@ -138,7 +141,10 @@ function groupsOf(keys: string[]): SettingGroup[] {
 }
 
 /** Pure-ish handler (exported for tests): never throws, always returns JSON-able. */
-export async function handleUiToolRequest(op: string, args: Record<string, unknown>): Promise<UiToolOutcome> {
+export async function handleUiToolRequest(
+  op: string,
+  args: Record<string, unknown>,
+): Promise<UiToolOutcome> {
   const cfg = getAiAppearanceConfig()
 
   if (op === 'get') {
@@ -157,9 +163,10 @@ export async function handleUiToolRequest(op: string, args: Record<string, unkno
     let changes: Record<string, unknown>
     if (op === 'reset') {
       // Reset the requested keys (or every registered key) to their defaults.
-      const keys = Array.isArray(args.keys) && args.keys.length > 0
-        ? args.keys.map(String)
-        : listSettingDefs().map((d) => d.key)
+      const keys =
+        Array.isArray(args.keys) && args.keys.length > 0
+          ? args.keys.map(String)
+          : listSettingDefs().map((d) => d.key)
       changes = {}
       const defs = new Map(listSettingDefs().map((d) => [d.key, d]))
       for (const k of keys) {

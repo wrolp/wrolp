@@ -40,6 +40,7 @@ import type { FileTreeHandle } from './components/FilePanel'
 import type {
   ConnectionConfig,
   TabInfo,
+  DeviceIdentity,
   TargetRef,
   ContainerInfo,
   WorkspaceLayout,
@@ -122,6 +123,9 @@ import {
   recordCommandHistory,
   listCommandHistory,
   deleteCommandHistory,
+  listHostCommands,
+  collectHostCommands,
+  clearHostCommands,
   listCommandSets,
   listCommandSnippets,
 } from './commands'
@@ -1451,7 +1455,7 @@ function HighlightSettingsCard({
 // nav button and the pane header, so the two can never name a pane differently.
 // What used to be one 「General」 scroll — where a 370-line card mixed window opacity
 // with the data root and the updater — is now one pane per theme.
-type SettingsPane = 'appearance' | 'terminal' | 'data' | 'docker' | 'ai' | 'about'
+type SettingsPane = 'appearance' | 'terminal' | 'security' | 'data' | 'docker' | 'ai' | 'about'
 const SETTINGS_PANES: {
   key: SettingsPane
   icon: IconName
@@ -1469,6 +1473,12 @@ const SETTINGS_PANES: {
     icon: 'terminal',
     title: 'settingsPaneTerminal',
     desc: 'settingsPaneTerminalDesc',
+  },
+  {
+    key: 'security',
+    icon: 'lock',
+    title: 'settingsPaneSecurity',
+    desc: 'settingsPaneSecurityDesc',
   },
   { key: 'data', icon: 'folder', title: 'settingsPaneData', desc: 'settingsPaneDataDesc' },
   // The nav entry is the short region name; the card inside still leads with the longer
@@ -1765,14 +1775,52 @@ export default function App() {
     libraryEditorWasOpenRef.current = open
   }, [bottomPanelExpanded, commandListOpen, loadCmdLibrary])
 
-  // One pool per (tab, connection) pair, rebuilt only when the histories or the
-  // library change. Returning the same array from render to render matters more
-  // than it looks: a terminal reads it through a ref per keystroke, so a new
-  // identity per render would be a new array per poll for every pane.
+  // The device command index (plan §2.B), keyed by fingerprint because that is the
+  // unit it is collected at: two tabs onto one machine share one index, and two
+  // saved connections onto one box do too. Read once per device and kept in memory
+  // — the pool is consulted on every keystroke, so it must not hit SQLite.
+  const [hostIndexByDevice, setHostIndexByDevice] = useState<Record<string, string[]>>({})
+
+  const loadHostIndex = useCallback((fingerprint: string) => {
+    listHostCommands(fingerprint)
+      .then((rows) =>
+        setHostIndexByDevice((prev) => ({
+          ...prev,
+          [fingerprint]: rows.map((r) => r.command),
+        })),
+      )
+      // A device with no index is the normal case before its first collection, not
+      // an error worth telling anyone about.
+      .catch((err) => console.error('list_host_commands failed:', err))
+  }, [])
+
+  // Re-read a device's list whenever the backend finishes a collection (its own
+  // auto-collect after a first connect, or the settings card's refresh button).
+  useEffect(() => {
+    const unlisten = listen<{ fingerprint: string }>('host-commands-updated', (event) => {
+      loadHostIndex(event.payload.fingerprint)
+    })
+    return () => {
+      unlisten.then((fn) => fn())
+    }
+  }, [loadHostIndex])
+
+  // One pool per (tab, connection, device) triple, rebuilt only when the histories,
+  // the library or the device index change. Returning the same array from render to
+  // render matters more than it looks: a terminal reads it through a ref per
+  // keystroke, so a new identity per render would be a new array per poll for every
+  // pane.
+  //
+  // The device is part of the key because two tabs on one machine share one index —
+  // and two tabs on *different* machines must not share theirs.
   const commandPoolFor = useMemo(() => {
     const cache = new Map<string, GhostCandidate[]>()
-    return (tabId: number, connectionId?: string | null): GhostCandidate[] => {
-      const key = `${tabId}|${connectionId ?? ''}`
+    return (
+      tabId: number,
+      connectionId?: string | null,
+      fingerprint?: string,
+    ): GhostCandidate[] => {
+      const key = `${tabId}|${connectionId ?? ''}|${fingerprint ?? ''}`
       let pool = cache.get(key)
       if (!pool) {
         pool = buildGhostPool({
@@ -1781,12 +1829,16 @@ export default function App() {
           tabHistory: cmdHistoryByTab[tabId] ?? [],
           globalHistory: globalCmdHistory,
           connectionId,
+          hostIndex: fingerprint ? (hostIndexByDevice[fingerprint] ?? []) : [],
         })
         cache.set(key, pool)
       }
       return pool
     }
-  }, [cmdHistoryByTab, cmdLibrary, globalCmdHistory])
+    // A fresh index for one device invalidates only the pools that name it, but the
+    // cache is cheap to rebuild and keyed per tab, so dropping it wholesale on any
+    // change is simpler than tracking which entries held which device.
+  }, [cmdHistoryByTab, cmdLibrary, globalCmdHistory, hostIndexByDevice])
 
   // ---------------------------------------------------------------------------
   // Terminal split layout (Phase 2). The tree is ephemeral (tabIds are
@@ -2547,6 +2599,66 @@ export default function App() {
     }
   }, [toast, toastHeld])
 
+  // Manual "collect now" for the settings card, bypassing the weekly gate: someone
+  // who just installed a package wants it in the list this second, not after the
+  // next connection. Lives down here because it reports through the toast above.
+  const [hostIndexBusy, setHostIndexBusy] = useState(false)
+  const refreshHostIndex = useCallback(
+    async (tab: TabInfo) => {
+      const device = tab.device
+      if (!device) {
+        setToast({ kind: 'error', text: t('hostIndexNoDevice') })
+        return
+      }
+      setHostIndexBusy(true)
+      try {
+        const count = await collectHostCommands({
+          tabId: tab.tabId,
+          fingerprint: device.fingerprint,
+          kind: device.kind,
+          distro: tab.localShellDistro,
+        })
+        // An empty result says so out loud: the alternative is the count staying
+        // where it was, which reads as the button doing nothing.
+        setToast({
+          kind: count > 0 ? 'success' : 'error',
+          text: count > 0 ? t('hostIndexRefreshed', { count: String(count) }) : t('hostIndexEmpty'),
+        })
+        loadHostIndex(device.fingerprint)
+      } catch (err) {
+        const message = typeof err === 'string' ? err : ((err as Error)?.message ?? String(err))
+        setToast({ kind: 'error', text: message })
+        console.error('collect_host_commands failed:', err)
+      } finally {
+        setHostIndexBusy(false)
+      }
+    },
+    [loadHostIndex, setToast, t],
+  )
+
+  // Forget this device's index (the privacy exit). Deliberately unconfirmed and
+  // undoable in practice: it is derived data, and the 刷新 button above re-collects
+  // it in one click — a dialog on a one-click recovery would cost more attention
+  // than the action itself.
+  const [hostIndexClearing, setHostIndexClearing] = useState(false)
+  const clearHostIndex = useCallback(
+    async (fingerprint: string) => {
+      setHostIndexClearing(true)
+      try {
+        const removed = await clearHostCommands(fingerprint)
+        setToast({ kind: 'success', text: t('hostIndexCleared', { count: String(removed) }) })
+        loadHostIndex(fingerprint)
+      } catch (err) {
+        const message = typeof err === 'string' ? err : ((err as Error)?.message ?? String(err))
+        setToast({ kind: 'error', text: message })
+        console.error('clear_host_commands failed:', err)
+      } finally {
+        setHostIndexClearing(false)
+      }
+    },
+    [loadHostIndex, setToast, t],
+  )
+
   // AI appearance/settings bridge — answers `ai-ui-tool-request` events even
   // while the AI chat panel is closed. MUST stay at this top level (installing
   // it inside AiChatPanel would leave requests unanswered once the panel
@@ -2790,6 +2902,38 @@ export default function App() {
       unlistenOk.then((fn) => fn())
     }
   }, [])
+
+  // Device identity (SSH-COMMAND-INDEX-COMPLETION-PLAN §2.A): the backend reports
+  // which machine each tab reached as soon as the handshake completes. Kept on the
+  // tab so closing it drops the identity with no extra bookkeeping.
+  //
+  // A changed key is the one case that speaks up. It is either a rebuilt machine
+  // (mundane) or someone between you and it (not), and the two look identical from
+  // here — so the warning shows both fingerprints and points at the switch that
+  // turns this from a notice into a refusal.
+  useEffect(() => {
+    const unlisten = listen<DeviceIdentity & { tabId: number }>('host-identified', (event) => {
+      const { tabId, ...device } = event.payload
+      setTabs((prev) => prev.map((t) => (t.tabId === tabId ? { ...t, device } : t)))
+      // The backend collects a device's commands right after this event; reading
+      // the (still empty) list now costs one query and means the pool is warm by
+      // the time the update event arrives.
+      loadHostIndex(device.fingerprint)
+      if (device.changed) {
+        setToast({
+          kind: 'error',
+          text: t('hostKeyChangedToast', {
+            host: device.host || device.fingerprint,
+            previous: device.previousFingerprint ?? '',
+            fingerprint: device.fingerprint,
+          }),
+        })
+      }
+    })
+    return () => {
+      unlisten.then((fn) => fn())
+    }
+  }, [setToast, t, loadHostIndex])
 
   // Enter key retry on disconnected/error tabs
   const handleReconnectRef = useRef<((tabId: number) => void) | null>(null)
@@ -4957,6 +5101,30 @@ export default function App() {
   }, [tabs, splitTrees])
   tabToLeafRef.current = allTabToLeaf
   const activeTerminalTab = tabs.find((t) => t.tabId === activeTabId)
+  // Which tab the device-index card describes. While Settings is open the active
+  // tab *is* the settings tab, so reading the active tab there would always answer
+  // "no device" at exactly the moment the user is looking for the number — the card
+  // has to remember the terminal it was opened from.
+  const [indexSubjectTabId, setIndexSubjectTabId] = useState<number | null>(null)
+  useEffect(() => {
+    const tab = tabs.find((t) => t.tabId === activeTabId)
+    if (tab && tab.tabType !== 'settings' && tab.tabType !== 'fileEditor') {
+      setIndexSubjectTabId(tab.tabId)
+    }
+  }, [tabs, activeTabId])
+  const indexSubjectTab = tabs.find((t) => t.tabId === indexSubjectTabId)
+  const hostIndexCount = indexSubjectTab?.device
+    ? (hostIndexByDevice[indexSubjectTab.device.fingerprint]?.length ?? 0)
+    : 0
+
+  // What the settings card says about that tab. Three states, because "no device
+  // yet", "device with no index" and "indexed" need different next actions.
+  const hostIndexSummary = !indexSubjectTab?.device
+    ? t('hostIndexNoDevice')
+    : hostIndexCount > 0
+      ? t('hostIndexCount', { count: String(hostIndexCount) })
+      : t('hostIndexNone')
+
   const settingsActive = activeTerminalTab?.tabType === 'settings'
   const settingsOverlayRef = useRef<HTMLDivElement>(null)
 
@@ -5226,7 +5394,7 @@ export default function App() {
               onCommandSubmitted={(command) =>
                 rememberCommand(tab.tabId, command, tab.tabType ?? '', tab.host ?? '')
               }
-              commandPool={commandPoolFor(tab.tabId, tab.connectionId)}
+              commandPool={commandPoolFor(tab.tabId, tab.connectionId, tab.device?.fingerprint)}
               onAskAi={(selectedText) => {
                 handleOpenAiChat(selectedText)
               }}
@@ -5429,6 +5597,55 @@ export default function App() {
                           <TerminalGhostAcceptSetting />
 
                           <TerminalContinuationSetting />
+                        </div>
+                      </div>
+
+                      {/* The device index, in the terminal pane because that is the
+                          only thing it feeds — completion. It reads the tab the user
+                          is looking at, since "which machine" has no answer without
+                          one. */}
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <div className="settings-field">
+                            <span className="settings-label">{t('hostIndexLabel')}</span>
+                            <span className="settings-inline-value">{hostIndexSummary}</span>
+                            <button
+                              type="button"
+                              className="settings-inline-btn"
+                              disabled={!indexSubjectTab?.device || hostIndexBusy}
+                              onClick={() => indexSubjectTab && refreshHostIndex(indexSubjectTab)}
+                            >
+                              {hostIndexBusy ? t('hostIndexRefreshing') : t('hostIndexRefresh')}
+                            </button>
+                            {hostIndexCount > 0 && (
+                              <button
+                                type="button"
+                                className="settings-inline-btn danger"
+                                disabled={hostIndexClearing}
+                                onClick={() =>
+                                  indexSubjectTab?.device &&
+                                  clearHostIndex(indexSubjectTab.device.fingerprint)
+                                }
+                              >
+                                {t('hostIndexClear')}
+                              </button>
+                            )}
+                            <span className="settings-help">{t('hostIndexHelp')}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {settingsActiveTab === 'security' && (
+                    <>
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <TerminalToggleSetting
+                            settingKey="security.strictHostKey"
+                            label={t('strictHostKeyLabel')}
+                            help={t('strictHostKeyHelp')}
+                          />
                         </div>
                       </div>
                     </>
@@ -5673,6 +5890,19 @@ export default function App() {
                                 >
                                   {t('dbReclaimable', {
                                     size: formatBytes(dbStats.reclaimableBytes),
+                                  })}
+                                </span>
+                              )}
+                              {/* The device command index, sized separately: it is
+                                  the only table that grows by itself (one collection
+                                  per device), so "why is the file bigger" needs its
+                                  own number rather than the total. */}
+                              {dbStats && dbStats.hostCommands > 0 && (
+                                <span className="settings-help" style={{ margin: 0 }}>
+                                  {t('dbHostIndexValue', {
+                                    count: String(dbStats.hostCommands),
+                                    devices: String(dbStats.hostCommandDevices),
+                                    size: formatBytes(dbStats.hostCommandBytes),
                                   })}
                                 </span>
                               )}

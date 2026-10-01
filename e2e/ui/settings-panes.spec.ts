@@ -22,7 +22,10 @@ const header = (page: Page) => page.locator('.settings-pane-header h3')
 const field = (page: Page, id: string) => page.locator(`#${id}`)
 
 // About sits last, and it absorbed the updater.
-const PANES = ['Appearance', 'Terminal', 'Data', 'Docker', 'AI Assistant', 'About']
+// Security is third: the panes run interface → how it behaves → what it trusts →
+// what it stores, and a host key policy belongs with neither the terminal nor the
+// disk, so it gets its own entry rather than hiding inside one of them.
+const PANES = ['Appearance', 'Terminal', 'Security', 'Data', 'Docker', 'AI Assistant', 'About']
 
 test('the sidebar lists one entry per pane, in order', async ({ page }) => {
   await openSettings(page)

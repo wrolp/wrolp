@@ -371,6 +371,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   settingsPaneTerminalDesc: '回滚缓冲、录制、keepalive，以及输出高亮与粘贴处理方式。',
   settingsPaneData: '数据',
   settingsPaneDataDesc: '设置、录制与数据库在磁盘上的位置，以及空间回收。',
+  settingsPaneSecurity: '安全',
+  settingsPaneSecurityDesc: '对连接另一端那台机器，信任到什么程度。',
   settingsPaneAboutDesc: '当前构建的版本与仓库信息，以及检查更新。',
   settingsPaneAiDesc: '内置工具链的 OpenAI 兼容对话；可配置多个端点并选用其一。',
   settingsAppearance: '应用外观与更新偏好设置。',
@@ -413,6 +415,12 @@ const zh: Partial<Record<TranslationKey, string>> = {
   statusShapesLabel: '用形状区分状态',
   statusShapesHelp: '错误与警告指示点同时改变轮廓与颜色，色觉受阻时也能读出状态。',
   windowOpacityLightDisabled: '浅色主题下窗口保持不透明（半透明会透出桌面，观感发脏）。',
+  // 设备身份（host key 指纹）
+  strictHostKeyLabel: '严格校验主机密钥',
+  strictHostKeyHelp:
+    '当服务器出示的 host key 与该连接记录过的不一致时拒绝连接。关闭时只提示、不断连。重装或重做系统的机器本来就会换密钥。',
+  hostKeyChangedToast:
+    '{host} 的 host key 已变更。\n记录中的：{previous}\n本次的：{fingerprint}\n\n要么这台机器被重装过，要么连接被中途截获。设置 → 安全 里可以直接拒绝这类连接。',
   windowOpacity: '窗口透明度',
   currentPercent: '当前：{val}%',
   maxScrollbackLines: '最大回滚行数',
@@ -467,6 +475,22 @@ const zh: Partial<Record<TranslationKey, string>> = {
   ghostSrcHistory: '历史',
   ghostSrcSnippet: '命令列表',
   ghostSrcSet: '命令集',
+  ghostSrcIndex: '本机命令',
+  // 设备命令索引（SSH-COMMAND-INDEX-COMPLETION-PLAN §2.B）
+  hostIndexLabel: '设备命令索引',
+  hostIndexHelp:
+    '采集这个终端所连机器上装了哪些命令：每台设备首次连接采一次，之后每周刷新一次。它的优先级最低——你运行过的或自己收藏的命令都排在它前面。',
+  hostIndexCount: '已索引 {count} 条命令',
+  hostIndexNone: '尚未采集',
+  hostIndexRefresh: '立即刷新',
+  hostIndexRefreshing: '正在采集…',
+  hostIndexRefreshed: '该设备已索引 {count} 条命令。',
+  hostIndexEmpty:
+    '这台设备没有返回可读的命令列表，未写入索引。没有 compgen 的 shell 只能列出 PATH 目录里的内容。',
+  hostIndexNoDevice: '该终端还没有识别出设备——请先完成连接。',
+  hostIndexClear: '清除该设备索引',
+  hostIndexCleared: '已移除 {count} 条索引命令。之后重新连接不会自动再采，除非你点「立即刷新」。',
+  dbHostIndexValue: '设备命令索引：{devices} 台设备共 {count} 条，占 {size}',
   maxFileOpenSize: '可打开文件最大大小（MB）',
   maxFileOpenSizeDesc: '超过此大小的文件将无法在内置编辑器中打开。',
   updates: '更新',

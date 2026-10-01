@@ -12,6 +12,8 @@ mod docker_fs;
 mod docker_host;
 mod ftp_fs;
 mod host_analysis;
+mod host_commands;
+mod host_identity;
 mod local_fs;
 mod rec_file;
 mod remote_fs;
@@ -306,6 +308,9 @@ pub fn run() {
       commands::record_command_history,
       commands::list_command_history,
       commands::delete_command_history,
+      commands::collect_host_commands,
+      commands::list_host_commands,
+      commands::clear_host_commands,
       commands::list_command_sets,
       commands::save_command_set,
       commands::delete_command_set,

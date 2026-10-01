@@ -506,6 +506,22 @@ pub async fn connect_telnet(
     }
   }
 
+  // Device identity: Telnet has no host key, so `host:port` is the identity
+  // (plan §2.A). No command index for Telnet (decision ⑤).
+  crate::host_identity::record_and_announce(
+    &app,
+    tab_id,
+    Some(&cfg.id),
+    &crate::host_identity::DeviceSeen::fallback(
+      "telnet",
+      &addr,
+      host.clone(),
+      port as i64,
+      cfg.username.clone(),
+    ),
+  )
+  .await;
+
   let session_id = state.next_session_id.fetch_add(1, Ordering::SeqCst);
   let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
   let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Vec<u8>>();

@@ -227,6 +227,24 @@ pub async fn connect_serial(
     );
   }
 
+  // Device identity for a port: no host key exists, so the port name is the
+  // identity (plan §2.A). Recorded even though serial gets no command index
+  // (decision ⑤) — "which device was this run on" is answered by the same table
+  // for every session kind.
+  crate::host_identity::record_and_announce(
+    &app,
+    tab_id,
+    Some(&cfg.id),
+    &crate::host_identity::DeviceSeen::fallback(
+      "serial",
+      &cfg.port_name,
+      cfg.port_name.clone(),
+      0,
+      String::new(),
+    ),
+  )
+  .await;
+
   // Inform the user which port/settings we connected with.
   {
     let parity_ch = match parity {

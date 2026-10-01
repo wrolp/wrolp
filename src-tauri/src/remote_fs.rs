@@ -134,6 +134,8 @@ pub async fn open_session_sftp(
     app_handle: app.clone(),
     tab_id,
     is_sftp: true,
+    // Auxiliary handler: no device record, no enforcement (see `SshHandler::host_key`).
+    host_key: None,
     shell_channel_id: None,
     sftp_close_notify: Some(sftp_close.clone()),
     utf8_tail_out: Vec::new(),
@@ -190,6 +192,8 @@ pub async fn open_jump_sftp(
     app_handle: app.clone(),
     tab_id,
     is_sftp: true,
+    // Auxiliary handler: no device record, no enforcement (see `SshHandler::host_key`).
+    host_key: None,
     shell_channel_id: None,
     sftp_close_notify: Some(sftp_close.clone()),
     utf8_tail_out: Vec::new(),

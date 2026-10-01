@@ -11,9 +11,9 @@
 #[allow(unused_imports)]
 pub(crate) use super::ssh_session::{
   ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
-  DirUploadSummary, FileEntry, LocalShell, LocalShellDir, LocalTerminalEntry, SerialSession,
-  SshError, SshHandler, SshSession, SwitchedUser, TargetRef, TelnetSession, TransferControl,
-  TunnelInfo, UploadSession,
+  DirUploadSummary, FileEntry, HostKeySeen, HostKeyWatch, LocalShell, LocalShellDir,
+  LocalTerminalEntry, SerialSession, SshError, SshHandler, SshSession, SwitchedUser, TargetRef,
+  TelnetSession, TransferControl, TunnelInfo, UploadSession,
 };
 #[allow(unused_imports)]
 pub(crate) use crate::db::{
@@ -31,6 +31,10 @@ pub(crate) use russh::client::{self, Handler};
 pub(crate) use russh::keys::key::PrivateKeyWithHashAlg;
 #[allow(unused_imports)]
 pub(crate) use russh::keys::load_secret_key;
+/// Hash algorithm for the host-key fingerprint the device identity is keyed on
+/// (`SHA256:<base64>`, the same string `ssh-keygen -lf` prints).
+#[allow(unused_imports)]
+pub(crate) use russh::keys::HashAlg;
 #[allow(unused_imports)]
 pub(crate) use russh::keys::PublicKeyOrCertificate;
 #[allow(unused_imports)]
@@ -288,6 +292,7 @@ pub(crate) mod db_maintenance;
 pub(crate) mod docker;
 pub(crate) mod ftp;
 pub(crate) mod ftp_server;
+pub(crate) mod host_commands;
 pub(crate) mod http_server;
 pub(crate) mod local_shell;
 pub(crate) mod network_scan;
@@ -311,6 +316,7 @@ pub use db_maintenance::*;
 pub use docker::*;
 pub use ftp::*;
 pub use ftp_server::*;
+pub use host_commands::*;
 pub use http_server::*;
 pub use local_shell::*;
 pub use network_scan::*;
