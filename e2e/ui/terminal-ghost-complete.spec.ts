@@ -101,11 +101,19 @@ async function installEchoingShell(page: Page) {
     const pending: string[] = []
     internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
       if (cmd === 'send_input') {
-        const visible = String(args.data ?? '')
-          .replace(/\x1b\[20[01]~/g, '')
-          .replace(/\x16/g, '')
+        const data = String(args.data ?? '')
+        // What a terminal *consumes* rather than prints must not come back as text.
+        // Whole escape sequences first: dropping only the control byte would leave
+        // the `[C` of a cursor key sitting on the line as literal text, which is
+        // what made an arrow-key assertion depend on the mock rather than the app.
+        const visible = data
+          .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+          .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
           .replace(/[\x00-\x1f\x7f]/g, '')
-        pending.push(visible ? visible : '\r\n' + prompt)
+        if (visible) pending.push(visible)
+        // Enter (and only Enter) is what earns the fresh prompt; a cursor or
+        // editing key leaves the line exactly as it was.
+        else if (/[\r\n]/.test(data)) pending.push('\r\n' + prompt)
       }
       const res = await orig(cmd, args)
       if (cmd === 'poll_output') return [...(res as string[]), ...pending.splice(0)]
@@ -218,18 +226,18 @@ test('a list pick always puts the whole command on the line', async ({ page }) =
   // about a command, so it cannot land half of one.
   await openTerminal(page)
   await page.keyboard.type('git s', { delay: 60 })
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('Alt+/')
   await rows(page).first().click()
   const bytes = await sentInput(page)
   expect(bytes[bytes.length - 1]).toBe('tatus -sb')
   await expect(page.locator('.xterm-rows')).toContainText(`${PROMPT}git status -sb`)
 })
 
-test('Tab opens the list, ↓ picks, Enter inserts without running', async ({ page }) => {
+test('Alt+/ opens the list, ↓ picks, Enter inserts without running', async ({ page }) => {
   await openTerminal(page)
   await page.keyboard.type('git s', { delay: 60 })
 
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('Alt+/')
   // Each row carries where its command came from, so a pick is not a guess.
   await expect(rows(page)).toHaveText([
     'git status -sbcommand list · short status',
@@ -250,18 +258,108 @@ test('Tab opens the list, ↓ picks, Enter inserts without running', async ({ pa
   await expect(page.locator('.xterm-rows')).toContainText(`${PROMPT}git stash push -m wip`)
 })
 
-test('Esc closes the list and hands the next Tab back to the shell', async ({ page }) => {
+test('Tab is the shell’s even with the list open and a row highlighted', async ({ page }) => {
   await openTerminal(page)
   await page.keyboard.type('git s', { delay: 60 })
-  await page.keyboard.press('Tab')
+  await page.keyboard.press('Alt+/')
   await expect(rows(page)).toHaveCount(3)
+
+  // The strongest form of the rule: the panel is up, the highlight is on a row, and
+  // Tab still goes straight through — its meaning cannot depend on what our overlay
+  // happens to be showing at the moment the key is pressed reflexively.
+  await page.keyboard.press('Tab')
+  expect(await sentInput(page)).toContain('\t')
+  await expect(rows(page)).toHaveCount(3)
+  // And it is still a completion, not a submission: nothing was run.
+  expect((await sentInput(page)).filter((s) => s.includes('\r'))).toEqual([])
 
   await page.keyboard.press('Escape')
   await expect(rows(page)).toHaveCount(0)
+})
 
+/** 15 candidates: enough to blow past the 8-row cap on the first press. */
+const MANY_HISTORY = Array.from({ length: 12 }, (_, i) => ({
+  command: `job${i} --flag`,
+  tabType: 'terminal',
+  host: 'demo.local',
+  usedAtMs: 1000 - i,
+}))
+
+test('Alt+/ at an empty prompt lists what is available', async ({ page }) => {
+  await openTerminal(page, { commandHistory: MANY_HISTORY })
+  await page.keyboard.press('Alt+/')
+
+  // Eight rows on the first press, not the whole pool: the panel floats over a live
+  // terminal, and a 5 000-row device index would bury the text under it.
+  await expect(rows(page)).toHaveCount(8)
+  // Revealing costs no keystroke: the line is still just the prompt
+  // (`renderedLine` right-trims, hence the trimEnd) and nothing was typed.
+  expect(await renderedLine(page)).toBe(PROMPT.trimEnd())
+  expect((await sentInput(page)).filter((s) => s.includes('job'))).toEqual([])
+})
+
+test('Tab is never ours at an empty prompt — the shell keeps its own completion', async ({
+  page,
+}) => {
+  await openTerminal(page, { commandHistory: MANY_HISTORY })
+  // Twice, because the first press reaching the shell produces an echo: a rule that
+  // only checked "is there state" would start swallowing Tab from the second one on,
+  // which is exactly the native behaviour this must not touch.
   await page.keyboard.press('Tab')
-  // Nothing is on offer any more, so Tab is the shell's own completion again.
-  expect(await sentInput(page)).toContain('\t')
+  await page.keyboard.press('Tab')
+  // The pool is full of matches, and it makes no difference.
+  expect((await sentInput(page)).filter((s) => s === '\t')).toHaveLength(2)
+  await expect(rows(page)).toHaveCount(0)
+})
+
+test('a second Alt+/ lifts the cap and says how many are still hidden', async ({ page }) => {
+  const many = Array.from({ length: 210 }, (_, i) => ({
+    command: `unit${i}.service`,
+    tabType: 'terminal',
+    host: 'demo.local',
+    usedAtMs: 1000,
+  }))
+  await openTerminal(page, { commandHistory: many })
+  await page.keyboard.press('Alt+/')
+  await expect(rows(page)).toHaveCount(8)
+
+  await page.keyboard.press('Alt+/')
+  // 200 of 213: "all" is what fits to scroll through, and the remainder is named
+  // rather than left for the user to discover by accident.
+  await expect(rows(page)).toHaveCount(200)
+  await expect(page.locator('.term-ghost-suggest-hint')).toContainText('13 more not shown')
+  expect(await renderedLine(page)).toBe(PROMPT.trimEnd())
+
+  // A third press has nothing left to reveal, so it does not swallow the key either.
+  await page.keyboard.press('Alt+/')
+  await expect(rows(page)).toHaveCount(200)
+})
+
+test('the empty prompt offers no tail, so → stays the shell’s cursor key', async ({ page }) => {
+  await openTerminal(page, { commandHistory: MANY_HISTORY })
+  // The list is open — the only thing Alt+/ ever does — and there is still no grey
+  // tail, because a "remainder" of an empty line would be the whole command.
+  await page.keyboard.press('Alt+/')
+  await expect(rows(page).first()).toBeVisible()
+  await expect(ghost(page)).toBeHidden()
+
+  await page.keyboard.press('ArrowRight')
+  expect(await sentInput(page)).toContain('\x1b[C')
+  expect(await renderedLine(page)).toBe(PROMPT.trimEnd())
+})
+
+test('a prefix narrows the widened list again', async ({ page }) => {
+  await openTerminal(page, { commandHistory: MANY_HISTORY })
+  await page.keyboard.type('jo', { delay: 60 })
+  await page.keyboard.press('Alt+/')
+  await page.keyboard.press('Alt+/')
+  await expect(rows(page)).toHaveCount(12)
+  // Typing is the answer to "too many results", so the widened list must follow the
+  // prefix rather than stay a stale dump of everything. `job1` really does match
+  // three of the twelve (job1, job10, job11).
+  await page.keyboard.type('b1', { delay: 60 })
+  await expect(rows(page)).toHaveCount(3)
+  await expect(rows(page).first()).toContainText('job1 --flag')
 })
 
 /**
@@ -625,7 +723,10 @@ test('the list still offers a case-different command, and picking rewrites the l
     commandSets: [],
   })
   await page.keyboard.type('git l', { delay: 60 })
-  await page.keyboard.press('Tab')
+  // `Alt`+/ rather than `Tab`: a case-different candidate draws no tail, and with
+  // nothing on screen `Tab` belongs to the shell. The candidate is still worth
+  // listing — it just cannot be reached by the reflexive key.
+  await page.keyboard.press('Alt+/')
   await expect(rows(page)).toHaveText(['GIT LOGcommand list'])
   await page.keyboard.press('Enter')
   // Ctrl-A Ctrl-K clears the line in a POSIX shell first, then the library's own

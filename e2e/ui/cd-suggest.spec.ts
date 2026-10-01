@@ -122,7 +122,7 @@ test('Enter completes the highlighted name into the line and does NOT submit', a
   await expect(panel(page)).toHaveCount(0)
 })
 
-test('Tab completes and drills one level deeper', async ({ page }) => {
+test('→ completes and drills one level deeper, Enter only completes', async ({ page }) => {
   await connect(page)
 
   await type(page, 'cd ')
@@ -132,13 +132,36 @@ test('Tab completes and drills one level deeper', async ({ page }) => {
   // Row 0 is the synthetic `..`; walk down to `local`.
   await page.keyboard.press('ArrowDown')
 
-  await page.keyboard.press('Tab')
+  // `→` holds the drill that `Tab` used to do — Tab went back to the shell for good.
+  await page.keyboard.press('ArrowRight')
 
   await expect.poll(() => localSent(page)).toContain('local/')
   // Drilling bypasses the cache (a `cd` is not the only thing that can change a
   // directory's contents) and lists where we just moved to.
   await expect.poll(() => listed(page, '/var/www/local')).toBeGreaterThanOrEqual(1)
   await expect.poll(() => rowNames(page)).toEqual(['..', 'bin', 'lib'])
+
+  // `Enter` never drills: it completes and leaves the line for the user's own Enter.
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  expect(await localSent(page)).not.toContain('\r')
+})
+
+test('Tab reaches the shell even with the dropdown open and a row highlighted', async ({
+  page,
+}) => {
+  await connect(page)
+
+  await type(page, 'cd ')
+  await expect.poll(() => rowNames(page)).toEqual(['..', 'local', 'log', 'nginx'])
+  await page.keyboard.press('ArrowDown')
+
+  // The panel is up and the highlight is on `local`, and `Tab` still goes straight
+  // through: readline completes paths from the real filesystem, and a key pressed
+  // reflexively must not change meaning because of what an overlay is showing.
+  await page.keyboard.press('Tab')
+  await expect.poll(() => localSent(page)).toContain('\t')
+  expect(await localSent(page)).not.toContain('local/')
 })
 
 test('Esc closes the dropdown and never reaches the shell', async ({ page }) => {

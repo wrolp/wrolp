@@ -8,6 +8,9 @@ export interface GhostSuggestPanelProps {
   /** What is on the input line — every row starts with it, and it is drawn in the
    *  normal text colour so a row reads as "this prefix + that tail". */
   typed: string
+  /** Matches the current cap left out. The list is scrollable, not complete, and a
+   *  panel that looks finished when it is truncated teaches people to distrust it. */
+  hidden: number
   activeIndex: number
   anchor: CdSuggestAnchor
   onPick: (index: number) => void
@@ -15,7 +18,8 @@ export interface GhostSuggestPanelProps {
 }
 
 /**
- * The candidate list under the caret (Tab opens it). Presentational only: the
+ * The candidate list under the caret (`Alt`+`/` opens it; `Tab` is left to the
+ * shell). Presentational only: the
  * keystrokes stay Terminal.tsx's business, and the grey tail beside the caret is a
  * separate element (`term-ghost`) that must not disappear when this opens.
  *
@@ -28,6 +32,7 @@ export interface GhostSuggestPanelProps {
 export function GhostSuggestPanel({
   items,
   typed,
+  hidden,
   activeIndex,
   anchor,
   onPick,
@@ -98,7 +103,14 @@ export function GhostSuggestPanel({
           </div>
         ))}
       </div>
-      <div className="term-ghost-suggest-hint">{t('ghostSuggestHint')}</div>
+      <div className="term-ghost-suggest-hint">
+        {hidden > 0
+          ? t('ghostSuggestMore', {
+              count: String(hidden),
+              keys: t('ghostSuggestHint'),
+            })
+          : t('ghostSuggestHint')}
+      </div>
     </div>
   )
 }

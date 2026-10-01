@@ -1886,8 +1886,8 @@ body.resizing-v .term-scrollbar-thumb {
   user-select: none;
 }
 
-// The candidate list Tab opens. Same shape as `.term-cd-suggest`, whose placement
-// arithmetic it mirrors in `GhostSuggestPanel`.
+// The candidate list `Alt`+`/` opens (`Tab` is left to the shell). Same shape as
+// `.term-cd-suggest`, whose placement arithmetic it mirrors in `GhostSuggestPanel`.
 .term-ghost-suggest {
   position: fixed;
   display: flex;

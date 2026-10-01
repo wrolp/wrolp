@@ -452,17 +452,17 @@ const zh: Partial<Record<TranslationKey, string>> = {
   termContinuationHelp: '行号列里，折行的续行行显示什么（仅在开启行号时生效）。',
   termCdSuggest: '`cd` 目录建议',
   termCdSuggestTitle:
-    '当输入行是 `cd <部分路径>` 时，列出该路径下的真实子目录（经由会话自身读取 —— SFTP / 本地 FS / docker exec / WSL），用 ↑↓/Tab/Enter 补全目录名。Enter 只补全不执行，仍由你自己回车才真正执行。无文件系统的会话（Telnet、串口）不生效。',
+    '当输入行是 `cd <部分路径>` 时，列出该路径下的真实子目录（经由会话自身读取 —— SFTP / 本地 FS / docker exec / WSL），用 ↑↓ 选择、Enter 补全目录名。Enter 只补全不执行，仍由你自己回车才真正执行。不接管 Tab —— 那是 shell 自己的路径补全。无文件系统的会话（Telnet、串口）不生效。',
   termCdSuggestHelp: '默认开启；终端右键菜单同样可以开关。只有真正键入 `cd ` 之后才会列目录。',
   // `cd` 目录下拉面板的行文案
   cdSuggest: '子目录',
-  cdSuggestHint: '↑↓ 选择 · Tab 下钻 · Enter 补全 · Esc 关闭',
+  cdSuggestHint: '↑↓ 选择 · Enter 补全 · → 下钻一级 · Esc 关闭',
   cdSuggestMore: '还有 {n} 项，继续输入以缩小范围',
   cdSuggestLoading: '正在列目录…',
-  // 幽灵命令补全（→ 写入灰色尾巴最近的一段，End 写其余，Tab 打开候选列表）
+  // 幽灵命令补全（→ 写入灰色尾巴最近的一段，End 写其余，Alt+/ 打开候选列表；Tab 始终归 shell）
   termGhostSuggest: '命令补全',
   termGhostSuggestTitle:
-    '输入时用灰色尾巴在光标后面接出最可能的那条命令 —— 候选来自本终端执行过的命令、跨终端历史，以及你自己添加的命令（命令列表与命令集）。→ 写入尾巴最近的一段，End 写完其余；Tab 打开候选列表，↑↓ 选择，Enter/Tab/点击把整条命令放到输入行 —— 只插入，不执行。Esc 关闭列表，之后再按 Tab 就交回 shell 自己的补全。',
+    '输入时用灰色尾巴在光标后面接出最可能的那条命令 —— 候选来自本终端执行过的命令、跨终端历史、你自己添加的命令（命令列表与命令集），以及这台设备上装了哪些命令。→ 写入尾巴最近的一段，End 写完其余；Alt+/ 打开候选列表，↑↓ 选择，Enter/点击把整条命令放到输入行 —— 只插入，不执行。不接管 Tab，那是 shell 自己的补全。',
   termGhostSuggestHelp:
     '默认开启；终端右键菜单同样可以开关。串口会话不提供 —— 它没有可补全的行编辑器。',
   termGhostAccept: '右箭头应用',
@@ -471,7 +471,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   termGhostAcceptHelp:
     '一段就是空格分隔的一个词：`git s` 补 `git status -sb` 时，先取 `tatus`，再取 ` -sb`，之后就没有了 —— 补错的地方可以随时停住。从候选列表里选择则始终把整条命令放到输入行。',
   ghostSuggest: '命令候选',
-  ghostSuggestHint: '→ 下一段 · End 整条 · Enter/Tab 插入 · ↑↓ 选择 · Esc 关闭',
+  ghostSuggestHint: '→ 下一段 · End 整条 · ↑↓ 选择 · Enter 插入 · Alt+/ 列全部 · Esc 关闭',
+  ghostSuggestMore: '另有 {count} 条未显示——继续输入可缩小，再按 Alt+/ 看全部 · {keys}',
   ghostSrcHistory: '历史',
   ghostSrcSnippet: '命令列表',
   ghostSrcSet: '命令集',

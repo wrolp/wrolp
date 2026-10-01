@@ -356,13 +356,13 @@ const DEFS: SettingDef[] = [
     group: 'terminal',
     default: true,
     // ON by default like `terminal.cdSuggest`: it only ever appears once something
-    // matches, and the two keys it takes (→ to apply the tail, Tab to open the list)
-    // are its whole purpose — behind a switch nobody finds, nobody uses them. The
-    // terminal's right-click menu and the pane's status bar both toggle it, and
-    // Esc before Tab hands the key back to the shell.
+    // matches, and the keys it takes (→ to apply the tail, `Alt`+`/` to open the
+    // list) are its whole purpose — behind a switch nobody finds, nobody uses them.
+    // The terminal's right-click menu and the pane's status bar both toggle it, and
+    // `Tab` stays the shell's whatever this is showing.
     storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.ghostSuggest },
     describe:
-      'Complete the command you are typing from the terminal history and the commands you added: a grey tail after the caret (→ applies it), Tab for the candidate list. Nothing is run — a pick only lands on the input line.',
+      'Complete the command you are typing from the terminal history, the commands you added and what is installed on this device: a grey tail after the caret (→ applies it), Alt+/ for the candidate list. Nothing is run — a pick only lands on the input line, and Tab is left to the shell.',
   },
   {
     key: 'terminal.ghostAccept',

@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { CommandHistoryEntry, CommandSetDto, CommandSnippetDto } from '../../src/types'
 import {
+  GHOST_LIST_ALL_ROWS,
   GHOST_MAX_ROWS,
   buildGhostPool,
+  ghostMatches,
   ghostRemainder,
   ghostWordRemainder,
   matchGhost,
@@ -116,7 +118,16 @@ test('a candidate must extend what was typed, from its start', () => {
   expect(matchGhost(pool, 'git').map((c) => c.command)).not.toContain('git')
   // Case-insensitive reach, so `GIT l` still finds the library's `GIT LOG`.
   expect(matchGhost(pool, 'GIT l').map((c) => c.command)).toEqual(['GIT LOG'])
-  expect(matchGhost(pool, '')).toEqual([])
+  // An empty prefix used to answer `[]`; that was the contract before `Tab` grew a
+  // second job. At an empty prompt "everything that matches" is the whole pool —
+  // still ranked, and the caller never draws a tail for it (see `ghostTail`).
+  expect(matchGhost(pool, '').map((c) => c.command)).toEqual([
+    'git status -sb',
+    'git stash',
+    'status',
+    'git',
+    'GIT LOG',
+  ])
 })
 
 test('the exact-typed prefix wins, then the curated command', () => {
@@ -241,6 +252,41 @@ test('index names only complete the first word of a line', () => {
   // no candidate at all: completing `git stat` with `gitk` would leave `gitk stat`.
   expect(matchGhost(pool, 'git stat')).toEqual([])
   expect(matchGhost(pool, 'd').map((m) => m.command)).toEqual(['du'])
+})
+
+test('an empty prefix means "everything", ranked', () => {
+  const pool = buildGhostPool({
+    snippets: [snippet('git status -sb')],
+    sets: [set('ops', ['docker compose up'])],
+    tabHistory: ['ls -la'],
+    globalHistory: [history('df -h')],
+    hostIndex: ['zsh', 'awk'],
+  })
+  // `Tab` at an empty prompt is the "what do I have" gesture, so the whole pool is
+  // the candidate set — still ranked, so the curated and the run come before the
+  // merely installed.
+  expect(matchGhost(pool, '').map((c) => c.command)).toEqual([
+    'git status -sb',
+    'docker compose up',
+    'ls -la',
+    'df -h',
+    'zsh',
+    'awk',
+  ])
+  expect(matchGhost(pool, '', GHOST_LIST_ALL_ROWS).length).toBe(6)
+})
+
+test('the count left out is reported, not silently dropped', () => {
+  const pool = buildGhostPool({
+    snippets: [],
+    sets: [],
+    tabHistory: ['a1', 'a2', 'a3', 'a4'],
+    globalHistory: [],
+  })
+  const shown = ghostMatches(pool, 'a', 2)
+  expect(shown.items.map((c) => c.command)).toEqual(['a1', 'a2'])
+  expect(shown.hidden).toBe(2)
+  expect(ghostMatches(pool, 'a', GHOST_LIST_ALL_ROWS).hidden).toBe(0)
 })
 
 test('a command in both the history and the index keeps its history rank', () => {

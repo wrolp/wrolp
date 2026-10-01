@@ -1,7 +1,8 @@
 // Ghost command completion — the pure half.
 //
 // The user types, and the tail of the likeliest command appears in grey after the
-// caret (→ applies it); Tab opens the rest of the matches as a list. Candidates
+// caret (→ applies it); `Alt`+`/` opens the rest of the matches as a list. `Tab` is
+// never taken — it stays readline's own completion. Candidates
 // come from the pools the app owns: what has been run in this terminal, what has
 // been run anywhere (the persisted history), what the user added themselves
 // (command snippets and command sets), and — since the device index landed — what
@@ -34,6 +35,16 @@ export interface GhostCandidate {
 
 /** The highest number of candidates the list renders at once. */
 export const GHOST_MAX_ROWS = 8
+
+/**
+ * How many rows the list shows after a second `Alt`+`/` reveals everything.
+ *
+ * A device index can hold the full 5 000 names, and this panel is a floating
+ * overlay over a live terminal — so "all" is bounded by what a person can scroll
+ * through, with the remainder counted and named in the hint line rather than
+ * silently dropped. Typing more narrows it faster than scrolling ever would.
+ */
+export const GHOST_LIST_ALL_ROWS = 200
 
 /**
  * A curated command outranks an incidental one: the library is what the user said
@@ -114,13 +125,28 @@ export function buildGhostPool(input: GhostPoolInput): GhostCandidate[] {
  *
  * A candidate equal to the typed line is dropped — there is nothing left to add,
  * and offering it would paint grey over what is already there.
+ *
+ * An **empty** `typed` is not "nothing matches", it is "show me everything": that is
+ * what a second `Alt`+`/` asks for, and what `Alt`+`/` at an empty prompt asks for.
+ * The ranking still applies, so the curated and the run come before the installed.
  */
 export function matchGhost(
   pool: readonly GhostCandidate[],
   typed: string,
   limit = GHOST_MAX_ROWS,
 ): GhostCandidate[] {
-  if (!typed) return []
+  return ghostMatches(pool, typed, limit).items
+}
+
+/**
+ * `matchGhost` plus how many matches it left out, so the panel can say "还有 N 条"
+ * instead of letting a capped list look complete.
+ */
+export function ghostMatches(
+  pool: readonly GhostCandidate[],
+  typed: string,
+  limit: number,
+): { items: GhostCandidate[]; hidden: number } {
   const lower = typed.toLowerCase()
   const scored: { candidate: GhostCandidate; exact: boolean; weight: number }[] = []
   for (const candidate of pool) {
@@ -134,7 +160,10 @@ export function matchGhost(
     if (a.exact !== b.exact) return a.exact ? -1 : 1
     return b.weight - a.weight
   })
-  return scored.slice(0, limit).map((s) => s.candidate)
+  return {
+    items: scored.slice(0, limit).map((s) => s.candidate),
+    hidden: Math.max(0, scored.length - limit),
+  }
 }
 
 /** How far one accept goes. */

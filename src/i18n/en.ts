@@ -477,19 +477,19 @@ const en = {
     'What the line-number gutter shows on a wrapped line’s continuation rows (only applies while line numbers are on).',
   termCdSuggest: '`cd` suggestions',
   termCdSuggestTitle:
-    'While the input line reads `cd <partial path>`, list the real subdirectories of that path (read through the session itself — SFTP, local FS, docker exec, WSL) and let ↑↓/Tab/Enter complete the name. Enter inserts without running it, so the command still needs your own Enter. Off for sessions without a filesystem (Telnet, serial).',
+    'While the input line reads `cd <partial path>`, list the real subdirectories of that path (read through the session itself — SFTP, local FS, docker exec, WSL) and let ↑↓ pick, Enter complete the name. Enter inserts without running it, so the command still needs your own Enter. Tab is never taken — it stays the shell’s own path completion. Off for sessions without a filesystem (Telnet, serial).',
   termCdSuggestHelp:
     'On by default; the terminal’s right-click menu toggles it too. Nothing is listed until you actually type `cd `.',
   // Rows of the `cd` directory dropdown itself.
   cdSuggest: 'Subdirectories',
-  cdSuggestHint: '↑↓ pick · Tab drill in · Enter complete · Esc close',
+  cdSuggestHint: '↑↓ pick · Enter complete · → drill in · Esc close',
   cdSuggestMore: '{n} more — keep typing to narrow',
   cdSuggestLoading: 'Listing…',
   // Ghost command completion (→ applies the nearest part of the grey tail, End the
-  // rest, Tab opens the list).
+  // rest, Alt+/ opens the list; Tab always belongs to the shell).
   termGhostSuggest: 'Command completion',
   termGhostSuggestTitle:
-    'While you type, the likeliest command continues the line in grey after the caret — inferred from what has been run here, the persisted history and the commands you added (the command list and the command sets). → types the nearest part of the tail, End the rest; Tab opens the candidate list, where ↑↓ pick and Enter/Tab/click puts the whole command on the input line. Inserted, never run. Esc closes the list, and a Tab after that reaches the shell’s own completion.',
+    'While you type, the likeliest command continues the line in grey after the caret — inferred from what has been run here, the persisted history, the commands you added (the command list and the command sets) and what is installed on this device. → types the nearest part of the tail, End the rest; Alt+/ opens the candidate list, where ↑↓ pick and Enter/click puts the whole command on the input line. Inserted, never run. Tab is never taken — it stays the shell’s own completion.',
   termGhostSuggestHelp:
     'On by default; the terminal’s right-click menu toggles it too. Serial consoles are left out — they have no line editor to complete into.',
   termGhostAccept: 'Right arrow applies',
@@ -498,7 +498,9 @@ const en = {
   termGhostAcceptHelp:
     'A part is one space-separated word: `git status -sb` typed as `git s` takes `tatus`, then ` -sb`, then nothing — so a walk stops where a completion goes wrong. A pick from the candidate list always puts the whole command on the line.',
   ghostSuggest: 'Command candidates',
-  ghostSuggestHint: '→ next part · End whole · Enter/Tab insert · ↑↓ pick · Esc close',
+  ghostSuggestHint: '→ next part · End whole · ↑↓ pick · Enter insert · Alt+/ list all · Esc close',
+  ghostSuggestMore:
+    '{count} more not shown — keep typing to narrow, or Alt+/ for the full list · {keys}',
   ghostSrcHistory: 'history',
   ghostSrcSnippet: 'command list',
   ghostSrcSet: 'command set',

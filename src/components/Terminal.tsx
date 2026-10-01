@@ -173,7 +173,13 @@ import { CdSuggestPanel } from './terminal/CdSuggestPanel'
 import type { CdSuggestAnchor } from './terminal/CdSuggestPanel'
 import { GhostSuggestPanel } from './terminal/GhostSuggestPanel'
 import type { GhostAcceptMode, GhostCandidate } from './terminal/ghostComplete'
-import { ghostRemainder, matchGhost, planGhostAccept } from './terminal/ghostComplete'
+import {
+  ghostMatches,
+  ghostRemainder,
+  GHOST_LIST_ALL_ROWS,
+  GHOST_MAX_ROWS,
+  planGhostAccept,
+} from './terminal/ghostComplete'
 import type { TerminalComponentProps } from './terminal/types'
 
 export {
@@ -215,9 +221,13 @@ interface GhostState {
   line: string
   /** Ranked matches, best first — the first one is what the grey tail shows. */
   items: GhostCandidate[]
+  /** Matches the cap left out, so the panel can say "还有 N 条" honestly. */
+  hidden: number
+  /** How many rows the current cap allows: `Alt`+`/` widens it, typing narrows the set. */
+  limit: number
   /** Highlighted row; also which one → applies. */
   active: number
-  /** Tab opened the candidate list. While it is closed the completion takes no
+  /** `Alt`+`/` opened the candidate list. While it is closed the completion takes no
    *  key at all, so a plain history search with ↑ is never disturbed. */
   open: boolean
   anchor: CdSuggestAnchor & { maxW: number }
@@ -3923,10 +3933,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
    * Complete the highlighted candidate into the input line.
    *  `enter`/`click` — complete and close, WITHOUT submitting (decision ②): the
    *   user's next Enter runs `cd` through the existing cwd tracking.
-   *  `tab` — complete and drill one level deeper (decision ③), relisting with a
-   *   forced refresh since we are moving into a new directory.
+   *  `drill` — complete and descend one level (decision ③), relisting with a
+   *   forced refresh since we are moving into a new directory. `→` holds this now;
+   *   it used to be `Tab`, which went back to the shell for good.
    */
-  const acceptCdSuggest = (index: number, mode: 'enter' | 'tab' | 'click') => {
+  const acceptCdSuggest = (index: number, mode: 'enter' | 'drill' | 'click') => {
     const st = cdRef.current
     if (!st) return
     const item = st.items[index]
@@ -3966,9 +3977,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       case 'ArrowUp':
         moveCdActive(-1)
         return true
-      case 'Tab':
-        acceptCdSuggest(st.active, 'tab')
+      case 'ArrowRight': {
+        // Drill one level — the job `Tab` used to do, on the key that already means
+        // "apply what is offered" for the ghost completion (which stands down while
+        // this panel owns the line). Only with the caret at the end of the input
+        // line: mid-line, `→` has to move the cursor.
+        const term = termRef.current
+        if (!term || !getInputLineAtCursorEnd(term)) return false
+        acceptCdSuggest(st.active, 'drill')
         return true
+      }
+      // No `Tab` here: it is the shell's completion key, and readline knows the
+      // real filesystem — including the "Display all 162 possibilities? (y or n)"
+      // prompt this panel can only imitate worse. Picking a row is `Enter` or a
+      // click.
       case 'Enter':
         acceptCdSuggest(st.active, 'enter')
         return true
@@ -4061,9 +4083,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // ---- ghost command completion --------------------------------------------
   // What has been typed stays on the line and the likeliest continuation appears
   // after the caret in grey; → types the nearest part of it (a whole word, so a
-  // multi-word command is walked a press at a time) and End the rest. Tab opens the
-  // alternatives as a list under the caret, where ↑/↓ pick and Enter/Tab/click puts
-  // the whole command on the line. Nothing is ever *run*: every accept is bytes the
+  // multi-word command is walked a press at a time) and End the rest. `Alt`+`/` opens
+  // the alternatives as a list under the caret, where ↑/↓ pick and Enter/click puts
+  // the whole command on the line. `Tab` is never taken by this overlay — it stays
+  // the shell's own completion, including readline's "Display all N possibilities".
+  // Nothing is ever *run*: every accept is bytes the
   // user could have typed themselves, so the shell's line editor stays
   // authoritative (same rule the `cd` dropdown follows).
   //
@@ -4105,6 +4129,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   /** The buffer row `ghostLineRef` was read on — see `ghostBaseLine`. */
   const ghostRowRef = useRef(-1)
   const ghostEvalRef = useRef<(data: string) => void>(() => {})
+  // `Esc` means "not now", and an empty prompt now carries state on its own (so
+  // `Alt`+`/` can list from it), a repaint could hand the dismissed list straight
+  // back. Any keystroke re-arms it: the next line the user types is a fresh question.
+  const ghostDismissedRef = useRef(false)
   // Keeps a standing tail from being left over an unrelated row when output moves
   // the text without a keystroke (see `refreshGhost`).
   const ghostWriteRef = useRef<() => void>(() => {})
@@ -4124,9 +4152,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
   }
 
-  /** The grey tail of the highlighted row — the whole point of the overlay. */
+  /**
+   * The grey tail of the highlighted row — the whole point of the overlay.
+   *
+   * Never on an empty line: with nothing typed there is no "remainder", the whole
+   * command would be the tail, and `→` at a fresh prompt would insert a command the
+   * user never asked for. An empty line can still *list* (that is what `Alt`+`/` is
+   * for).
+   */
   const ghostTail = (st: GhostState) =>
-    ghostRemainder(st.line, st.items[st.active]?.command ?? '') ?? ''
+    st.line ? (ghostRemainder(st.line, st.items[st.active]?.command ?? '') ?? '') : ''
 
   /**
    * Re-match the projected input line. Called on every keystroke, so a stale
@@ -4136,12 +4171,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const evaluateGhost = (line: string | null, aheadCells = 0) => {
     // While the `cd` dropdown owns the line its candidates are the story; two
     // panels hanging off the same caret would both claim ↓/↑.
-    if (!ghostSuggestEnabled || !line || cdRef.current) {
+    // `line === ''` is kept alive on purpose (a fresh prompt is exactly where
+    // `Alt`+`/` should list what is available); `null` means "not an input line".
+    if (!ghostSuggestEnabled || line === null || cdRef.current) {
       closeGhost()
       return
     }
-    const items = matchGhost(commandPoolRef.current ?? [], line)
-    if (!items.length) {
+    const limit = ghostRef.current?.limit ?? GHOST_MAX_ROWS
+    const found = ghostMatches(commandPoolRef.current ?? [], line, limit)
+    if (!found.items.length) {
       closeGhost()
       return
     }
@@ -4153,17 +4191,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const prev = ghostRef.current
     const sameSet =
       !!prev &&
-      prev.items.length === items.length &&
-      prev.items.every((it, i) => it.command === items[i].command)
+      prev.items.length === found.items.length &&
+      prev.items.every((it, i) => it.command === found.items[i].command)
     const next: GhostState = {
       line,
-      items,
+      items: found.items,
+      hidden: found.hidden,
+      limit,
       anchor,
       row: anchor.row,
       open: !!prev?.open,
       // Hold the highlight while the filter narrows under the same rows; a
       // different set means the user typed past it, so start from the top again.
-      active: sameSet && prev ? Math.min(prev.active, items.length - 1) : 0,
+      active: sameSet && prev ? Math.min(prev.active, found.items.length - 1) : 0,
     }
     ghostRef.current = next
     setGhostView(next)
@@ -4245,6 +4285,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
   /** One keystroke: judge the line as it will read once the shell echoes it. */
   const handleGhostKeystroke = (data: string) => {
+    // Typing is a new question: it lifts an `Esc` dismissal, so a prompt the user
+    // cleared with Esc does not stay silent forever.
+    ghostDismissedRef.current = false
     // Read up to the caret rather than "the line, if the caret is at its end": a
     // trailing space has to count as typed text, or `git ` — the moment a
     // completion is most useful — would read back as nothing.
@@ -4311,18 +4354,71 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     setGhostView(next)
   }
 
-  const openGhostList = () => {
-    const st = ghostRef.current
-    if (!st || st.open) return
+  /**
+   * `Alt`+`/`: read the line off the screen right here.
+   *
+   * Keeping an idle prompt armed from `refreshGhost` cannot work — a prompt that
+   * nobody is typing at produces no write, so the state would still not exist when
+   * the key arrives. The key handler runs before xterm gets the key, so this is both
+   * the only reliable place and the honest one: the screen is asked what is under the
+   * caret, at the moment it matters.
+   */
+  const armGhostForList = (): GhostState | null => {
+    const term = termRef.current
+    if (!term || !ghostSuggestEnabled || ghostDismissedRef.current || cdRef.current) return null
+    if (isApplicationScreen(term)) return null
+    evaluateGhost(ghostLive())
+    return ghostRef.current
+  }
+
+  /**
+   * `Alt`+`/`: reveal more. Nothing showing → read the line and open; open → drop
+   * the 8-row cap. Answers whether the key was ours.
+   *
+   * This is the "list everything" gesture, and it is on `Alt`+`/` rather than `Tab`
+   * on purpose: `Tab` belongs to the shell. readline / PSReadLine / zsh / fish all
+   * complete filenames and their own arguments on it, and a completion that steals
+   * that key has replaced one feature with another — the same reasoning behind never
+   * taking a bare `↑`. Inserting from the list is `Enter`'s and click's job (and the
+   * plain tail is `→` / `End`), so this key only ever *shows*.
+   */
+  const openGhostList = (): boolean => {
+    const st = ghostRef.current ?? armGhostForList()
+    if (!st) return false
+    if (st.open) {
+      if (st.limit >= GHOST_LIST_ALL_ROWS) return false
+      const found = ghostMatches(commandPoolRef.current ?? [], st.line, GHOST_LIST_ALL_ROWS)
+      if (!found.items.length) return false
+      const widened = {
+        ...st,
+        items: found.items,
+        hidden: found.hidden,
+        limit: GHOST_LIST_ALL_ROWS,
+      }
+      ghostRef.current = widened
+      setGhostView(widened)
+      return true
+    }
     const next = { ...st, open: true }
     ghostRef.current = next
     setGhostView(next)
+    return true
   }
 
   /** Keys the completion owns — every one of them only while something is showing. */
   const interceptGhostKey = (ev: KeyboardEvent): boolean => {
+    // `Alt`+`/` is asked before the modifier guard: it is the whole point of the
+    // alt modifier here, and it never reaches the shell either way.
+    if (ev.altKey && !ev.ctrlKey && !ev.metaKey && ev.key === '/') return openGhostList()
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return false
     const st = ghostRef.current
-    if (!st || ev.ctrlKey || ev.metaKey || ev.altKey) return false
+    if (!st) return false
+    // No `Tab` in this list at all — not even with a tail standing or the panel
+    // open. It is the shell's completion key (readline's "Display all N
+    // possibilities" and its filename matching), and a reflexive key must not have
+    // its meaning depend on what our overlay happens to be showing. Opening the
+    // list is `Alt`+`/`, picking from it is `Enter` or a click, applying the tail is
+    // `→` / `End`.
     // What the plain → does; `End` always takes the other half, so both are
     // reachable however the setting is configured.
     const near = ghostAcceptModeRef.current
@@ -4338,10 +4434,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       case 'End':
         if (!ghostTail(st)) return false
         acceptGhost(st.active, otherGhostMode(near))
-        return true
-      case 'Tab':
-        if (st.open) acceptGhost(st.active)
-        else openGhostList()
         return true
       case 'ArrowDown':
         if (!st.open) return false
@@ -4359,7 +4451,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         acceptGhost(st.active)
         return true
       case 'Escape':
-        // Swallowed on purpose: a bare Esc reaching readline is a META prefix.
+        // Only while the list is on screen. A bare Esc reaching readline is a META
+        // prefix, but the completion's *reason* to own the key is to get the panel
+        // out of the way — with no panel there is nothing to dismiss, and an empty
+        // prompt now carries state (so `Alt`+`/` can list from it) without that
+        // meaning Esc is ours.
+        if (!st.open) return false
+        ghostDismissedRef.current = true
         closeGhost()
         return true
       default:
@@ -4585,6 +4683,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         <GhostSuggestPanel
           items={ghostView.items}
           typed={ghostView.line}
+          hidden={ghostView.hidden}
           activeIndex={ghostView.active}
           anchor={ghostView.anchor}
           onPick={acceptGhost}
