@@ -477,12 +477,13 @@ const en = {
     'What the line-number gutter shows on a wrapped line’s continuation rows (only applies while line numbers are on).',
   termCdSuggest: '`cd` suggestions',
   termCdSuggestTitle:
-    'While the input line reads `cd <partial path>`, list the real subdirectories of that path (read through the session itself — SFTP, local FS, docker exec, WSL) and let ↑↓ pick, Enter complete the name. Enter inserts without running it, so the command still needs your own Enter. Tab is never taken — it stays the shell’s own path completion. Off for sessions without a filesystem (Telnet, serial).',
+    'While the input line reads `cd <partial path>`, list the real subdirectories of that path (read through the session itself — SFTP, local FS, docker exec, WSL). The list opens with nothing selected: ↑↓ picks a row and Enter completes that name (inserted, not run — the command still needs your own Enter); with nothing selected Enter runs what you typed. Tab is never taken — it stays the shell’s own path completion. Off for sessions without a filesystem (Telnet, serial).',
   termCdSuggestHelp:
     'On by default; the terminal’s right-click menu toggles it too. Nothing is listed until you actually type `cd `.',
   // Rows of the `cd` directory dropdown itself.
   cdSuggest: 'Subdirectories',
   cdSuggestHint: '↑↓ pick · Enter complete · → drill in · Esc close',
+  cdSuggestHintIdle: '↑↓ pick · Enter runs what you typed · Esc close',
   cdSuggestMore: '{n} more — keep typing to narrow',
   cdSuggestLoading: 'Listing…',
   // Ghost command completion (→ applies the nearest part of the grey tail, End the

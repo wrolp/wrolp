@@ -82,13 +82,16 @@ export function CdSuggestPanel({
   }, [activeIndex, items.length])
 
   // An empty list only ever means "still listing": an empty RESULT closes the
-  // panel instead (plan §2 — nothing to act on).
+  // panel instead (plan §2 — nothing to act on). With nothing highlighted the hint
+  // has to spell out that Enter is not a pick, or it reads as a broken shortcut.
   const hint =
     omitted > 0
       ? t('cdSuggestMore', { n: String(omitted) })
       : items.length === 0 && loading
         ? t('cdSuggestLoading')
-        : t('cdSuggestHint')
+        : activeIndex < 0
+          ? t('cdSuggestHintIdle')
+          : t('cdSuggestHint')
 
   return (
     <div

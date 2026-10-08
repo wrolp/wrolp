@@ -452,11 +452,12 @@ const zh: Partial<Record<TranslationKey, string>> = {
   termContinuationHelp: '行号列里，折行的续行行显示什么（仅在开启行号时生效）。',
   termCdSuggest: '`cd` 目录建议',
   termCdSuggestTitle:
-    '当输入行是 `cd <部分路径>` 时，列出该路径下的真实子目录（经由会话自身读取 —— SFTP / 本地 FS / docker exec / WSL），用 ↑↓ 选择、Enter 补全目录名。Enter 只补全不执行，仍由你自己回车才真正执行。不接管 Tab —— 那是 shell 自己的路径补全。无文件系统的会话（Telnet、串口）不生效。',
+    '当输入行是 `cd <部分路径>` 时，列出该路径下的真实子目录（经由会话自身读取 —— SFTP / 本地 FS / docker exec / WSL）。列表默认不选中：↑↓ 选中某一项后，Enter 补全该目录名（只补全不执行）；未选中时回车直接执行你输入的命令。不接管 Tab —— 那是 shell 自己的路径补全。无文件系统的会话（Telnet、串口）不生效。',
   termCdSuggestHelp: '默认开启；终端右键菜单同样可以开关。只有真正键入 `cd ` 之后才会列目录。',
   // `cd` 目录下拉面板的行文案
   cdSuggest: '子目录',
   cdSuggestHint: '↑↓ 选择 · Enter 补全 · → 下钻一级 · Esc 关闭',
+  cdSuggestHintIdle: '↑↓ 选择 · Enter 直接执行输入 · Esc 关闭',
   cdSuggestMore: '还有 {n} 项，继续输入以缩小范围',
   cdSuggestLoading: '正在列目录…',
   // 幽灵命令补全（→ 写入灰色尾巴最近的一段，End 写其余，Alt+/ 打开候选列表；Tab 始终归 shell）

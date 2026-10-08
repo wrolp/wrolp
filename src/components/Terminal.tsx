@@ -209,6 +209,11 @@ interface CdSuggestState {
   /** Filter prefix (last path segment). */
   prefix: string
   items: CdCandidate[]
+  /**
+   * Highlighted row, or -1 for "the user has not picked anything yet". The panel
+   * opens with nothing highlighted, so a reflexive Enter runs the typed
+   * `cd <arg>` instead of silently taking row 0.
+   */
   active: number
   omitted: number
   loading: boolean
@@ -3821,7 +3826,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       omitted,
       loading,
       anchor,
-      active: keepActive && prev ? prev.active : 0,
+      // -1, not 0: the panel is an offer, not a decision. A fresh panel (and one
+      // whose items no longer line up with the old highlight) starts unselected —
+      // a preserved -1 means the user had not picked anything to begin with.
+      active: keepActive && prev ? prev.active : -1,
     }
     cdRef.current = next
     setCdView(next)
@@ -3963,10 +3971,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const moveCdActive = (delta: number) => {
     const st = cdRef.current
     if (!st || st.items.length === 0) return
-    const next: CdSuggestState = {
-      ...st,
-      active: (st.active + delta + st.items.length) % st.items.length,
-    }
+    // From "nothing selected", ↓ lands on the first row and ↑ on the last — the
+    // two ends a walk would start from. Once something is highlighted it wraps.
+    const active =
+      st.active < 0
+        ? delta > 0
+          ? 0
+          : st.items.length - 1
+        : (st.active + delta + st.items.length) % st.items.length
+    const next: CdSuggestState = { ...st, active }
     cdRef.current = next
     setCdView(next)
   }
@@ -4026,6 +4039,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // line: mid-line, `→` has to move the cursor.
         const term = termRef.current
         if (!term || !getInputLineAtCursorEnd(term)) return false
+        // Nothing picked ⇒ nothing to drill into; let `→` be the cursor key.
+        if (st.active < 0) return false
         acceptCdSuggest(st.active, 'drill')
         return true
       }
@@ -4034,6 +4049,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // prompt this panel can only imitate worse. Picking a row is `Enter` or a
       // click.
       case 'Enter':
+        // Only an explicit pick. While nothing is highlighted (the panel is just
+        // showing options) Enter must run the typed `cd <arg>` as written — not
+        // grab some row. Close the panel and let the key through.
+        if (st.active < 0) {
+          closeCdSuggest()
+          return false
+        }
         acceptCdSuggest(st.active, 'enter')
         return true
       case 'Escape':

@@ -75,6 +75,13 @@ const type = (page: Page, text: string) => page.keyboard.type(text, { delay: 60 
 const panel = (page: Page) => page.locator('.term-cd-suggest')
 const rowNames = (page: Page) =>
   panel(page).locator('.term-cd-suggest-row .term-cd-suggest-name').allTextContents()
+/** Name of the highlighted row, or '' while nothing is highlighted. */
+const activeName = async (page: Page) =>
+  (
+    await panel(page)
+      .locator('.term-cd-suggest-row.is-active .term-cd-suggest-name')
+      .allTextContents()
+  )[0] ?? ''
 
 test('`cd ` opens the dropdown on the space itself — directories only', async ({ page }) => {
   await connect(page)
@@ -86,6 +93,9 @@ test('`cd ` opens the dropdown on the space itself — directories only', async 
   // directories and files excluded, `..` as the synthetic parent row.
   await expect.poll(() => rowNames(page)).toEqual(['..', 'local', 'log', 'nginx'])
   await expect.poll(() => listed(page, '/var/www')).toBeGreaterThanOrEqual(1)
+  // The list is an offer, not a decision: it opens with NOTHING highlighted, so
+  // a reflexive Enter runs the typed `cd` instead of taking row 0.
+  expect(await activeName(page)).toBe('')
   // The panel must actually GROW to fit its rows — regression guard for the
   // maxHeight-stuck-at-the-loading-floor bug (user screenshot 2026-09-29: the
   // list never expanded past ~1.5 rows).
@@ -105,19 +115,38 @@ test('keeping to type narrows the list without relisting the directory', async (
   expect(await listed(page, '/var/www')).toBe(before)
 })
 
-test('Enter completes the highlighted name into the line and does NOT submit', async ({ page }) => {
+test('Enter without navigating runs the typed line, not the highlighted name', async ({ page }) => {
   await connect(page)
 
   await type(page, 'cd l')
   await expect.poll(() => rowNames(page)).toEqual(['local', 'log'])
+  expect(await activeName(page)).toBe('')
 
   await page.keyboard.press('Enter')
 
-  // Only the missing tail is sent (`cd l` + `local` ⇒ `ocal`): nothing is deleted,
-  // so the shell's own line editor keeps every byte it had echoed.
-  await expect.poll(() => localSent(page)).toContain('ocal')
-  // Decision ② — completing is not executing. No CR reached the shell, and the
-  // panel closed. The user's own Enter still runs `cd` through the usual path.
+  // The user never steered the highlight, so Enter runs what was typed. The first
+  // row's `local` is NOT appended into the line.
+  expect(await localSent(page)).not.toContain('ocal')
+  // The user's own Enter reaches the shell — `cd l` is executed, not completed.
+  await expect.poll(() => localSent(page)).toContain('\r')
+  await expect(panel(page)).toHaveCount(0)
+})
+
+test('Enter after picking a row completes that name instead of submitting', async ({ page }) => {
+  await connect(page)
+
+  await type(page, 'cd ')
+  await expect.poll(() => rowNames(page)).toEqual(['..', 'local', 'log', 'nginx'])
+  // Nothing is highlighted up front; ↓ twice walks onto `local` (row 0 is `..`).
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await expect.poll(() => activeName(page)).toBe('local')
+
+  await page.keyboard.press('Enter')
+
+  // The picked name is completed into the line and the key is consumed — the
+  // command still needs the user's own Enter to actually run.
+  await expect.poll(() => localSent(page)).toContain('local')
   expect(await localSent(page)).not.toContain('\r')
   await expect(panel(page)).toHaveCount(0)
 })
@@ -129,8 +158,11 @@ test('→ completes and drills one level deeper, Enter only completes', async ({
   // The panel is visible while it is still LISTING (items empty) — wait for the
   // real rows before walking the highlight, the same way a user would.
   await expect.poll(() => rowNames(page)).toEqual(['..', 'local', 'log', 'nginx'])
-  // Row 0 is the synthetic `..`; walk down to `local`.
+  // Nothing is highlighted yet; row 0 is the synthetic `..`, so ↓ twice reaches
+  // `local`.
   await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await expect.poll(() => activeName(page)).toBe('local')
 
   // `→` holds the drill that `Tab` used to do — Tab went back to the shell for good.
   await page.keyboard.press('ArrowRight')
@@ -141,8 +173,11 @@ test('→ completes and drills one level deeper, Enter only completes', async ({
   await expect.poll(() => listed(page, '/var/www/local')).toBeGreaterThanOrEqual(1)
   await expect.poll(() => rowNames(page)).toEqual(['..', 'bin', 'lib'])
 
-  // `Enter` never drills: it completes and leaves the line for the user's own Enter.
+  // `Enter` never drills: it completes and leaves the line for the user's own
+  // Enter. The fresh listing opens unhighlighted again, so ↓ twice lands on `bin`.
   await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await expect.poll(() => activeName(page)).toBe('bin')
   await page.keyboard.press('Enter')
   expect(await localSent(page)).not.toContain('\r')
 })
@@ -155,6 +190,8 @@ test('Tab reaches the shell even with the dropdown open and a row highlighted', 
   await type(page, 'cd ')
   await expect.poll(() => rowNames(page)).toEqual(['..', 'local', 'log', 'nginx'])
   await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await expect.poll(() => activeName(page)).toBe('local')
 
   // The panel is up and the highlight is on `local`, and `Tab` still goes straight
   // through: readline completes paths from the real filesystem, and a key pressed
