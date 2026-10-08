@@ -1625,31 +1625,35 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   /* ---- header actions ---- */
 
   // The directory actually on screen, which is not always what `currentPath`
-  // says: a local panel opened at "" only ever holds the empty string (the
-  // backend resolves it to the user's home), so the path is recovered from the
-  // listing itself — every entry of "" comes back absolute, and their parent is
-  // that directory. `onBrowseChange` above already does exactly this to name a
-  // transfer destination.
-  const browsePath =
-    currentPath.length > 0
-      ? normalizePath(currentPath)
-      : (() => {
-          const first = tree.find((n) => n.path.includes('/'))
-          return first ? normalizePath(getParentDir(first.path)) : ''
-        })()
+  // says. A session panel opens at "." and a local panel at "" — the backend
+  // resolves either to the user's home — yet every entry it lists comes back
+  // ABSOLUTE, so the parent of the first one IS that directory. Recovering it is
+  // what gives "up" a parent to offer: without it the panel opens on a path with
+  // no recoverable ancestry and the button is grey from the very first frame.
+  // `onBrowseChange` above already does this to name a transfer destination.
+  const browsePath = (() => {
+    const norm = normalizePath(currentPath)
+    // Already absolute — a POSIX path or a Windows `C:/…`; nothing to recover.
+    if (norm.startsWith('/') || /^[A-Za-z]:\//.test(norm)) return norm
+    const first = tree.find((n) => n.path.includes('/'))
+    return first ? normalizePath(getParentDir(first.path)) : norm
+  })()
 
-  // Where "up" leads, or `null` when there is nowhere to go: the panel's own
-  // root, "/" and home ("." — the shell resolves it), and a Windows drive root,
-  // whose parent is itself. Derived rather than computed inside the handler so
-  // the button can be dimmed for the same reasons it does nothing.
+  // Where "up" leads, or `null` when there is nowhere to go — a filesystem root:
+  // "/", home ("." — the shell resolves it) and a Windows drive root, whose parent
+  // is itself. Derived rather than computed inside the handler so the button is
+  // dimmed for exactly the reasons it does nothing.
+  //
+  // The panel's own root is deliberately NOT one of them. It used to be, which
+  // made this button permanently grey in the state the panel opens in (the root
+  // listing) and after every "Set as root" / home — it read as broken rather than
+  // as a boundary. `rootPath` keeps its own meaning: the "set as root" action, and
+  // the confirmation the path bar asks before *typing* a path outside it.
   const upTarget = (() => {
     if (!browsePath) return null
-    // Compare against the *displayed* path: a local panel's root is "" while it
-    // is really sitting in the user's home, and comparing those two strings is
-    // what left the local pane's up button permanently dead.
-    if (normalizePath(rootPath) === browsePath) return null
-    if (currentPath === '/' || currentPath === '.') return null
+    if (browsePath === '/' || browsePath === '.') return null
     const parent = normalizePath(getParentDir(browsePath))
+    // `getParentDir` returns a drive root unchanged, so this also covers "C:/".
     return parent === browsePath ? null : parent
   })()
 
