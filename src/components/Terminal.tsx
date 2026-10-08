@@ -132,8 +132,8 @@ import {
   parseDockerExecContainer,
   isNestedSessionExit,
 } from './terminal/lsCapture'
-import type { LsCaptureState, LsClickableEntry } from './terminal/lsCapture'
-import { resolveLsEntryPath } from './terminal/lsCapture'
+import type { LsCaptureState, LsClickableEntry, LsLinkCandidate } from './terminal/lsCapture'
+import { pickLsLinkEntry, resolveLsEntryPath } from './terminal/lsCapture'
 import { fixLowContrastSgr } from './terminal/sgrContrast'
 import { createCwdQueryStripper } from './terminal/cwdQuery'
 import type { CwdQueryStripper } from './terminal/cwdQuery'
@@ -974,8 +974,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const row = term ? resolveLsRow(term, startRow + entry.line, entry) : startRow + entry.line
       const clickable: LsClickableEntry = { ...entry, baseDirPromise }
       const arr = map.get(row)
-      if (arr) arr.push(clickable)
-      else map.set(row, [clickable])
+      if (arr) {
+        // Same row, same name, same column: `resolveLsRow` has placed this
+        // entry on a row an older listing already owns. Drop the older one —
+        // keeping both leaves two links over the same text, and the older is
+        // the one xterm picks.
+        const i = arr.findIndex((e) => e.name === entry.name && e.col === entry.col)
+        if (i >= 0) arr.splice(i, 1)
+        arr.push(clickable)
+      } else {
+        map.set(row, [clickable])
+      }
       // Colour by kind is already baked into these rows by `paintLsText`. What
       // stays off is a *background* decoration: xterm decorations only support
       // backgroundColor/foregroundColor (no underline), and a persistent
@@ -1855,10 +1864,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           callback([])
           return
         }
-        const allEntries: LsClickableEntry[] = []
-        for (const arr of entries.values()) allEntries.push(...arr)
+        // Candidates are grouped by the occurrence they matched, and only ONE
+        // link is built per occurrence — see `pickLsLinkEntry`. Emitting one link
+        // per entry let two listings of different directories that share a file
+        // name both link the same text, and xterm's `links.find(…)` then took the
+        // first: the older listing's entry, whose base dir is the other
+        // directory. That is the "clicked the file in the new listing, got the
+        // old listing's file" bug.
+        const occurrences = new Map<
+          string,
+          { idx: number; len: number; cands: LsLinkCandidate<LsClickableEntry>[] }
+        >()
         const links: ILink[] = []
-        const seen = new Set<LsClickableEntry>()
         const cols = term.cols
         if (cols <= 0) {
           callback([])
@@ -1924,45 +1941,66 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         }
         const logicalText = logicalChars.map((c) => c.ch).join('')
 
-        for (const entry of allEntries) {
-          if (entry.name.length === 0 || seen.has(entry)) continue
+        // Pass 1 — every entry that matches this line, grouped by the occurrence
+        // it matched (same start + same length is the same piece of text). `row`
+        // travels with it: it is a row of the entry's OWN listing, which is what
+        // tells two same-named entries from different listings apart.
+        let order = 0
+        for (const [row, arr] of entries) {
+          for (const entry of arr) {
+            order += 1
+            if (entry.name.length === 0) continue
 
-          // Find the occurrence of the name nearest to the parsed column.
-          // `entry.col` is a character offset in the (unwrapped) source text,
-          // which matches `logicalText` because both are derived from the same
-          // terminal output. Multiple matches are disambiguated by proximity.
-          let bestIdx = -1
-          let bestDist = Infinity
-          let searchPos = 0
-          while (true) {
-            const idx = logicalText.indexOf(entry.name, searchPos)
-            if (idx === -1) break
-            const dist = Math.abs(idx - entry.col)
-            if (dist < bestDist) {
-              bestDist = dist
-              bestIdx = idx
+            // Find the occurrence of the name nearest to the parsed column.
+            // `entry.col` is a character offset in the (unwrapped) source text,
+            // which matches `logicalText` because both are derived from the same
+            // terminal output. Multiple matches are disambiguated by proximity.
+            let bestIdx = -1
+            let bestDist = Infinity
+            let searchPos = 0
+            while (true) {
+              const idx = logicalText.indexOf(entry.name, searchPos)
+              if (idx === -1) break
+              const dist = Math.abs(idx - entry.col)
+              if (dist < bestDist) {
+                bestDist = dist
+                bestIdx = idx
+              }
+              searchPos = idx + 1
             }
-            searchPos = idx + 1
+            if (bestIdx === -1) continue
+            const len = entry.name.length
+
+            // Boundary check so `bar` doesn't match inside `foobar`.
+            const before = bestIdx > 0 ? logicalChars[bestIdx - 1].ch : undefined
+            if (before !== undefined && !/\s/.test(before)) continue
+            const afterChar =
+              bestIdx + len < logicalChars.length ? logicalChars[bestIdx + len].ch : undefined
+            const afterSlice = logicalChars
+              .slice(bestIdx + len, bestIdx + len + 4)
+              .map((c) => c.ch)
+              .join('')
+            const boundaryOk =
+              afterChar === undefined ||
+              /\s/.test(afterChar) ||
+              afterSlice === ' -> ' ||
+              /[@*=|/]/.test(afterChar)
+            if (!boundaryOk) continue
+
+            // Same start + same length is the same text, i.e. the same link —
+            // two entries landing in one group are two listings that both
+            // printed this name.
+            const key = `${bestIdx}:${len}`
+            const cand: LsLinkCandidate<LsClickableEntry> = { entry, row, order }
+            const occ = occurrences.get(key)
+            if (occ) occ.cands.push(cand)
+            else occurrences.set(key, { idx: bestIdx, len, cands: [cand] })
           }
-          if (bestIdx === -1) continue
-          const idx = bestIdx
-          const len = entry.name.length
+        }
 
-          // Boundary check so `bar` doesn't match inside `foobar`.
-          const before = idx > 0 ? logicalChars[idx - 1].ch : undefined
-          if (before !== undefined && !/\s/.test(before)) continue
-          const afterChar = idx + len < logicalChars.length ? logicalChars[idx + len].ch : undefined
-          const afterSlice = logicalChars
-            .slice(idx + len, idx + len + 4)
-            .map((c) => c.ch)
-            .join('')
-          const boundaryOk =
-            afterChar === undefined ||
-            /\s/.test(afterChar) ||
-            afterSlice === ' -> ' ||
-            /[@*=|/]/.test(afterChar)
-          if (!boundaryOk) continue
-
+        // Pass 2 — one link per occurrence, built from the entry this piece of
+        // text actually belongs to (see `pickLsLinkEntry`).
+        for (const { idx, len, cands } of occurrences.values()) {
           // Global column range of this occurrence (end is exclusive). The end is
           // the last character's own cell plus its width — NOT the next entry in
           // `logicalChars`, because that list skips empty cells and `ls` pads its
@@ -1987,11 +2025,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           const localEnd = linkEndGlobalCol - rowStartGlobalCol
           if (localStart < 0 || localEnd <= localStart || localStart >= cols) continue
 
-          seen.add(entry)
           // Top-left of the link text in buffer coordinates (for anchoring the
           // hover card above the entry name, independent of the mouse).
           const linkTopBufferRow = firstRow + occStartRow
           const linkLeftCol = startGlobalCol % cols
+          // Which listing this text belongs to. Several listings can print the
+          // same name, and each of their entries matched it above.
+          const picked = pickLsLinkEntry(cands, linkTopBufferRow)
+          if (!picked) continue
+          const entry = picked.entry
           links.push({
             range: {
               start: { x: localStart + 1, y: bufferLineNumber },

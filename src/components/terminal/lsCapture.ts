@@ -54,6 +54,50 @@ export interface LsClickableEntry extends LsEntry {
   baseDirPromise: Promise<string | null>
 }
 
+/**
+ * One candidate for a link the provider is about to build: an entry that
+ * matched the hovered line at the same place as at least one other entry.
+ */
+export interface LsLinkCandidate<T> {
+  entry: T
+  /** Absolute buffer row the entry is stored under — a row of ITS OWN listing. */
+  row: number
+  /** Insertion order: higher means captured later (a newer listing). */
+  order: number
+}
+
+/**
+ * Pick which entry a link is built from when several listings put the same name
+ * at the same spot on the hovered line.
+ *
+ * The provider matches entries against the *text* of the hovered row (so a link
+ * survives scrolling and row drift), which means two listings of two different
+ * directories both match when they contain a file of the same name. xterm takes
+ * the FIRST link whose range covers the cursor (`Linkifier`: `links.find(…)`), so
+ * emitting one link per entry handed the click to the listing that happened to
+ * be stored first — the older one — and opened the OTHER directory's file.
+ *
+ * The rule: the entry whose own row is nearest the row the name is rendered on
+ * is the listing actually under the cursor; a tie goes to the newer listing,
+ * because `resolveLsRow` can park a fresh entry on a row an older listing
+ * already owns, and what the user sees there is the newer listing.
+ */
+export function pickLsLinkEntry<T>(
+  cands: readonly LsLinkCandidate<T>[],
+  linkTopRow: number,
+): LsLinkCandidate<T> | null {
+  let best: LsLinkCandidate<T> | null = null
+  let bestDist = Infinity
+  for (const c of cands) {
+    const dist = Math.abs(c.row - linkTopRow)
+    if (best === null || dist < bestDist || (dist === bestDist && c.order > best.order)) {
+      best = c
+      bestDist = dist
+    }
+  }
+  return best
+}
+
 export function joinPath(base: string, name: string): string {
   if (!base) return name
   // Use the host's native separator so Windows local paths stay `C:\a\b`
