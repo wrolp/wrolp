@@ -1,5 +1,10 @@
 import type { Page } from '@playwright/test'
-import type { CommandHistoryEntry, CommandSetDto, HostCommandDto } from '../../../src/types'
+import type {
+  CommandHistoryEntry,
+  CommandSetDto,
+  HostCommandDto,
+  RecentConnectionEntry,
+} from '../../../src/types'
 
 /**
  * Minimal shape of a `ConnectionConfig` as far as the UI renders it
@@ -58,6 +63,12 @@ export interface TauriMockOptions {
   dockerContainers?: unknown[]
   /** Rows returned by `list_command_history` (the pane's 历史 dropdown). */
   commandHistory?: CommandHistoryEntry[]
+  /**
+   * Rows returned by `list_recent_connections` (the welcome page's host card).
+   * Omitted — the default — is the honest answer for a fresh install, which is
+   * what puts the card into its saved-hosts fallback.
+   */
+  recentConnections?: RecentConnectionEntry[]
   /** Rows returned by `list_host_commands` (the device command index). */
   hostCommands?: HostCommandDto[]
   /** What `collect_host_commands` reports back as the indexed count. */
@@ -280,6 +291,20 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           // Forgetting one entry. The spec asserts the row is gone from the UI, so
           // the answer only has to be the honest shape.
           case 'delete_command_history':
+            return true
+          // The welcome page's recency list. `[]` is the real answer for a fresh
+          // install, so specs that do not opt in land on the card's fallback
+          // rather than on an empty card. It needs a case at all: the component
+          // maps over the answer, and the `default: return null` below would throw.
+          case 'list_recent_connections':
+            return opts.recentConnections ?? []
+          // Fired from the connect transition; a spec asserts it was called (and
+          // with what) through `invokedCalls()`.
+          case 'record_connection_used':
+            return true
+          // The same write for a local shell — a spec asserts it was called with
+          // the entry id (or `__default__` for the built-in shortcut).
+          case 'record_local_terminal_used':
             return true
           // The device command index, from the stateful store above: `[]` is the
           // honest answer for a device nobody has collected yet, and clearing empties

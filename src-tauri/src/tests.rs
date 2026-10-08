@@ -10,7 +10,7 @@ use crate::db::{
   self, CommandOption, CommandOptionValue, CommandParam, CommandSetDto, CommandSnippetDto,
   GlobalVariable, RecordedEvent,
 };
-use crate::ssh_session::{ActiveRecording, AppState, ConnectionConfig};
+use crate::ssh_session::{ActiveRecording, AppState, ConnectionConfig, LocalTerminalEntry};
 use std::fs;
 use tauri::Manager;
 
@@ -66,6 +66,16 @@ fn conn(id: &str, name: &str) -> ConnectionConfig {
     flow_control: None,
     // Telnet field (unused by these tests).
     auto_login: None,
+  }
+}
+
+/// A saved local terminal entry, as the sidebar's 本地 section stores it.
+fn local(id: &str, name: &str) -> LocalTerminalEntry {
+  LocalTerminalEntry {
+    id: id.to_string(),
+    name: name.to_string(),
+    cwd: "/var/www".to_string(),
+    shell: "bash".to_string(),
   }
 }
 
@@ -139,6 +149,192 @@ async fn workspace_switch_filters_connections() {
     .await
     .expect_err("default workspace must be protected");
   assert!(err.contains("default"));
+}
+
+// ==================== Recently used connections (welcome page) ====================
+
+#[tokio::test]
+async fn recent_connections_follow_the_active_workspace() {
+  let app = build_test_app();
+
+  commands::save_connection(app.state(), conn("c1", "DefaultHost"))
+    .await
+    .expect("save in default");
+  commands::record_connection_used(app.state(), "c1".into())
+    .await
+    .expect("record c1");
+
+  let work = commands::create_workspace(app.state(), "Work".into())
+    .await
+    .expect("create ws");
+  commands::switch_workspace(app.state(), work)
+    .await
+    .expect("switch");
+  commands::save_connection(app.state(), conn("c2", "WorkHost"))
+    .await
+    .expect("save in Work");
+  commands::record_connection_used(app.state(), "c2".into())
+    .await
+    .expect("record c2");
+
+  let listed = commands::list_recent_connections(app.state(), None)
+    .await
+    .expect("list in Work");
+  assert_eq!(
+    vec!["c2"],
+    listed
+      .iter()
+      .map(|r| r.connection_id.as_str())
+      .collect::<Vec<_>>(),
+    "each workspace sees only its own recents"
+  );
+
+  commands::switch_workspace(app.state(), "default".into())
+    .await
+    .expect("switch back");
+  let listed = commands::list_recent_connections(app.state(), None)
+    .await
+    .expect("list in default");
+  assert_eq!(
+    vec!["c1"],
+    listed
+      .iter()
+      .map(|r| r.connection_id.as_str())
+      .collect::<Vec<_>>(),
+    "the default workspace keeps its own history"
+  );
+}
+
+#[tokio::test]
+async fn a_local_terminal_is_recorded_beside_the_hosts() {
+  let app = build_test_app();
+
+  commands::save_local_terminals(app.state(), vec![local("lt1", "Bash")])
+    .await
+    .expect("save local terminal");
+  assert!(
+    commands::record_local_terminal_used(app.state(), "lt1".into())
+      .await
+      .expect("record lt1")
+  );
+
+  // Namespaced, so a local entry can never shadow a connection of the same id,
+  // and tagged, so the caller knows which list to resolve it against.
+  let listed = commands::list_recent_connections(app.state(), None)
+    .await
+    .expect("list");
+  assert_eq!(listed.len(), 1);
+  assert_eq!(listed[0].connection_id, "local:lt1");
+  assert_eq!(listed[0].kind, "localTerminal");
+}
+
+#[tokio::test]
+async fn the_built_in_local_shell_is_recordable_without_an_entry() {
+  let app = build_test_app();
+
+  // The sidebar's always-present row has no saved entry — it is always openable,
+  // so it is always recordable.
+  assert!(
+    commands::record_local_terminal_used(app.state(), db::DEFAULT_LOCAL_ENTRY_ID.into())
+      .await
+      .expect("record default")
+  );
+  let listed = commands::list_recent_connections(app.state(), None)
+    .await
+    .expect("list");
+  assert_eq!(listed.len(), 1);
+}
+
+#[tokio::test]
+async fn a_local_terminal_deleted_since_drops_out_of_the_list() {
+  let app = build_test_app();
+
+  commands::save_local_terminals(app.state(), vec![local("lt1", "Bash")])
+    .await
+    .expect("save");
+  commands::record_local_terminal_used(app.state(), "lt1".into())
+    .await
+    .expect("record");
+  assert_eq!(
+    commands::list_recent_connections(app.state(), None)
+      .await
+      .expect("list")
+      .len(),
+    1
+  );
+
+  // Deleting the entry leaves an orphan row; the read filters it, exactly like a
+  // deleted connection's row.
+  commands::save_local_terminals(app.state(), vec![])
+    .await
+    .expect("delete");
+  assert!(
+    commands::list_recent_connections(app.state(), None)
+      .await
+      .expect("list")
+      .is_empty(),
+    "a local row whose entry is gone resolves to nothing"
+  );
+}
+
+#[tokio::test]
+async fn recording_an_unknown_local_terminal_is_refused() {
+  let app = build_test_app();
+
+  assert!(
+    !commands::record_local_terminal_used(app.state(), "gone".into())
+      .await
+      .expect("record")
+  );
+}
+
+#[tokio::test]
+async fn recording_an_unknown_connection_is_refused() {
+  let app = build_test_app();
+
+  // A tab can outlive the connection it was opened from, so the write arrives
+  // after the delete. It must not leave a row nothing can ever resolve.
+  assert!(
+    !commands::record_connection_used(app.state(), "gone".into())
+      .await
+      .expect("record")
+  );
+  assert!(
+    commands::list_recent_connections(app.state(), None)
+      .await
+      .expect("list")
+      .is_empty()
+  );
+}
+
+#[tokio::test]
+async fn deleting_a_connection_drops_its_recent_row() {
+  let app = build_test_app();
+
+  commands::save_connection(app.state(), conn("c1", "Doomed"))
+    .await
+    .expect("save");
+  commands::record_connection_used(app.state(), "c1".into())
+    .await
+    .expect("record");
+  assert_eq!(
+    commands::list_recent_connections(app.state(), None)
+      .await
+      .expect("list")
+      .len(),
+    1
+  );
+
+  commands::delete_connection(app.state(), "c1".into())
+    .await
+    .expect("delete");
+  assert!(
+    commands::list_recent_connections(app.state(), None)
+      .await
+      .expect("list")
+      .is_empty(),
+    "the recency row goes with the connection"
+  );
 }
 
 #[tokio::test]

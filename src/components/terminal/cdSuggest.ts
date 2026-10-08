@@ -234,6 +234,16 @@ export function applyKeystroke(line: string, data: string): string | null {
 }
 
 /**
+ * The part of `lag` the buffer has NOT caught up with yet — the tail of what was
+ * typed and sent but still has no echo on screen. Callers that need the line "as
+ * the user typed it" (the command history, for one) append this to `live`.
+ */
+export function unechoedTail(live: string | null, lag: string): string {
+  if (!lag || live === null) return ''
+  return live.endsWith(lag) ? '' : lag
+}
+
+/**
  * Project one keystroke onto the possibly-stale line read from the terminal.
  *
  * `live` is what the buffer currently shows and `lag` is what this component has
@@ -243,7 +253,7 @@ export function applyKeystroke(line: string, data: string): string | null {
  */
 export function projectInputLine(live: string | null, lag: string, data: string): CdProjection {
   if (live === null) return { line: null, lag: '' }
-  const pending = lag && live.endsWith(lag) ? '' : lag
+  const pending = unechoedTail(live, lag)
   const line = applyKeystroke(live + pending, data)
   const next = line === null ? '' : (applyKeystroke(pending, data) ?? '')
   return { line, lag: next }

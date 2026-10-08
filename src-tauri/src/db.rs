@@ -1204,6 +1204,124 @@ pub fn delete_command(conn: &Connection, command: &str) -> Result<usize, String>
     .map_err(|e| e.to_string())
 }
 
+// ==================== Recent connections (welcome page) ====================
+
+/// How many connections the recency list keeps. Older rows are dropped on write.
+pub const RECENT_CONNECTIONS_KEEP: i64 = 100;
+
+/// Ids in the recency table are namespaced: a saved connection and a local
+/// terminal entry are two independent id spaces (a local entry can even carry the
+/// same uuid as a connection), so local rows are prefixed rather than mixed in.
+pub const LOCAL_RECENT_PREFIX: &str = "local:";
+
+/// The built-in "open local shell" sidebar row. It has no persisted entry — it is
+/// whatever the default directory and system shell happen to be — but it is always
+/// openable, so it is always recordable.
+pub const DEFAULT_LOCAL_ENTRY_ID: &str = "__default__";
+
+/// The recency id a local terminal entry is stored under.
+pub fn local_recent_id(entry_id: &str) -> String {
+  format!("{LOCAL_RECENT_PREFIX}{entry_id}")
+}
+
+/// Which list a recency row resolves against: `connection` or `localTerminal`.
+pub fn recent_kind(connection_id: &str) -> &'static str {
+  if connection_id.starts_with(LOCAL_RECENT_PREFIX) {
+    "localTerminal"
+  } else {
+    "connection"
+  }
+}
+
+/// The local-terminal entry id behind a `local:` recency row, if that is what it is.
+pub fn local_recent_entry_id(connection_id: &str) -> Option<&str> {
+  connection_id.strip_prefix(LOCAL_RECENT_PREFIX)
+}
+
+/// One recent row: what was opened and when. Deliberately carries neither a name
+/// nor a workspace — the caller joins it against the live connection list (or the
+/// saved local terminals, for `localTerminal` rows), so a renamed connection shows
+/// its new details without another read, and one deleted or moved drops out on its
+/// own.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentConnectionDto {
+  pub connection_id: String,
+  pub used_at_ms: i64,
+  pub kind: String,
+}
+
+/// Record that something was just opened. Reconnecting refreshes the existing
+/// row (the `PRIMARY KEY`) so the list stays newest-first without duplicates, then
+/// trims to the newest [`RECENT_CONNECTIONS_KEEP`].
+///
+/// The id is either a saved connection's or [`local_recent_id`] of a local terminal
+/// entry — the table does not care which, only that the id is stable.
+pub fn record_connection_used(
+  conn: &Connection,
+  connection_id: &str,
+  used_at_ms: i64,
+) -> Result<(), String> {
+  conn
+    .execute(
+      "INSERT INTO connection_recents (connection_id, used_at_ms) \
+       VALUES (?1, ?2) \
+       ON CONFLICT(connection_id) DO UPDATE SET used_at_ms = ?2",
+      params![connection_id, used_at_ms],
+    )
+    .map_err(|e| e.to_string())?;
+  conn
+    .execute(
+      "DELETE FROM connection_recents WHERE connection_id NOT IN \
+       (SELECT connection_id FROM connection_recents ORDER BY used_at_ms DESC LIMIT ?1)",
+      params![RECENT_CONNECTIONS_KEEP],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Every recent connection, newest first.
+///
+/// No `limit` parameter on purpose: the caller has to drop rows whose connection
+/// is no longer in the active workspace *after* reading, so a SQL-level `LIMIT`
+/// would hand back fewer rows than asked for whenever the newest entries happen to
+/// belong to another workspace. The table is bounded by
+/// [`RECENT_CONNECTIONS_KEEP`], so reading all of it is cheap.
+pub fn list_recent(conn: &Connection) -> Result<Vec<RecentConnectionDto>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT connection_id, used_at_ms FROM connection_recents \
+       ORDER BY used_at_ms DESC",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map([], |row| {
+      let connection_id: String = row.get(0)?;
+      let kind = recent_kind(&connection_id).to_string();
+      Ok(RecentConnectionDto {
+        connection_id,
+        used_at_ms: row.get(1)?,
+        kind,
+      })
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+  Ok(rows)
+}
+
+/// Drop one connection's recency row, reporting whether a row was there. Called
+/// when the connection itself is deleted; the read filters orphans out anyway, so
+/// this is tidiness rather than correctness.
+pub fn forget_connection(conn: &Connection, connection_id: &str) -> Result<usize, String> {
+  conn
+    .execute(
+      "DELETE FROM connection_recents WHERE connection_id = ?1",
+      params![connection_id],
+    )
+    .map_err(|e| e.to_string())
+}
+
 // ==================== Device identity (hosts) ====================
 
 /// One recorded device. `fingerprint` is a `SHA256:…` host key hash for SSH, or a
@@ -1746,5 +1864,71 @@ mod command_history_tests {
     record_command(&conn, "a", "terminal", "", 1).unwrap();
     record_command(&conn, "b", "terminal", "", 2).unwrap();
     assert_eq!(list_commands(&conn, 1).unwrap().len(), 1);
+  }
+}
+
+#[cfg(test)]
+mod recent_connections_tests {
+  use super::*;
+
+  fn conn_with_schema() -> Connection {
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    conn
+      .execute_batch(include_str!("schema.sql"))
+      .expect("create schema");
+    conn
+  }
+
+  #[test]
+  fn reconnecting_moves_a_connection_up_instead_of_duplicating() {
+    let conn = conn_with_schema();
+    record_connection_used(&conn, "c1", 1).unwrap();
+    record_connection_used(&conn, "c2", 2).unwrap();
+    record_connection_used(&conn, "c1", 3).unwrap();
+
+    let list = list_recent(&conn).unwrap();
+    assert_eq!(
+      vec!["c1", "c2"],
+      list
+        .iter()
+        .map(|e| e.connection_id.as_str())
+        .collect::<Vec<_>>()
+    );
+    assert_eq!(list[0].used_at_ms, 3, "the reconnect is the newest use");
+  }
+
+  #[test]
+  fn the_table_is_trimmed_to_the_newest_rows() {
+    let conn = conn_with_schema();
+    for i in 0..(RECENT_CONNECTIONS_KEEP + 10) {
+      record_connection_used(&conn, &format!("c{i}"), i).unwrap();
+    }
+    let list = list_recent(&conn).unwrap();
+    assert_eq!(list.len() as i64, RECENT_CONNECTIONS_KEEP);
+    assert_eq!(
+      list.first().unwrap().connection_id,
+      format!("c{}", RECENT_CONNECTIONS_KEEP + 9)
+    );
+  }
+
+  #[test]
+  fn forgetting_a_connection_removes_it_and_only_it() {
+    let conn = conn_with_schema();
+    record_connection_used(&conn, "c1", 1).unwrap();
+    record_connection_used(&conn, "c2", 2).unwrap();
+
+    assert_eq!(forget_connection(&conn, "c1").unwrap(), 1);
+    assert_eq!(
+      vec!["c2"],
+      list_recent(&conn)
+        .unwrap()
+        .iter()
+        .map(|e| e.connection_id.as_str())
+        .collect::<Vec<_>>()
+    );
+
+    // Forgetting something that is not there is not an error — the delete may
+    // have raced a row that was never written.
+    assert_eq!(forget_connection(&conn, "c1").unwrap(), 0);
   }
 }

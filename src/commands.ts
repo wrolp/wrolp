@@ -8,6 +8,7 @@ import type {
   CommandSetDto,
   CommandSnippetDto,
   CommandHistoryEntry,
+  RecentConnectionEntry,
   HostCommandDto,
   GlobalVariable,
   AiPromptTemplate,
@@ -139,6 +140,35 @@ export async function scanNetwork(args: {
 
 export async function deleteConnection(id: string): Promise<boolean> {
   return await invoke<boolean>('delete_connection', { id })
+}
+
+/**
+ * Remember that a saved connection was just opened, so the welcome page's
+ * "Recent hosts" card can order by real usage instead of sidebar order.
+ * `false` when the connection is no longer saved — nothing left to reconnect to.
+ */
+export async function recordConnectionUsed(connectionId: string): Promise<boolean> {
+  return await invoke<boolean>('record_connection_used', { connectionId })
+}
+
+/**
+ * Remember that a LOCAL terminal was just opened, so the welcome page's
+ * "Recent hosts" card can offer it beside the hosts. `entryId` is a saved
+ * `LocalTerminalEntry` id, or `__default__` for the built-in "open local shell"
+ * row. `false` when that entry is no longer saved.
+ */
+export async function recordLocalTerminalUsed(entryId: string): Promise<boolean> {
+  return await invoke<boolean>('record_local_terminal_used', { entryId })
+}
+
+/**
+ * The active workspace's recently used connections, newest first. Ids and
+ * timestamps only — join against `listConnections()` for the display fields.
+ * Connections deleted since, or moved to another workspace, are already filtered
+ * out by the backend.
+ */
+export async function listRecentConnections(limit?: number): Promise<RecentConnectionEntry[]> {
+  return await invoke<RecentConnectionEntry[]>('list_recent_connections', { limit })
 }
 
 export async function reorderConnections(

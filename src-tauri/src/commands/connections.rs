@@ -52,6 +52,10 @@ pub async fn delete_connection(
 
   if deleted {
     persist_connections(&state).await?;
+    // The recency card joins against the live connection list, so the orphaned row
+    // is already invisible; dropping it keeps the table from carrying rows nothing
+    // can resolve. Best effort — a DB hiccup must not fail a confirmed delete.
+    connection_recents::forget_recent(&state, &id).await;
   }
 
   Ok(deleted)

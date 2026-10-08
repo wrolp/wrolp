@@ -167,6 +167,7 @@ import {
   planCdAccept,
   projectInputLine,
   splitCdArg,
+  unechoedTail,
 } from './terminal/cdSuggest'
 import { KeyInterceptRouter } from './terminal/keyIntercept'
 import { CdSuggestPanel } from './terminal/CdSuggestPanel'
@@ -1263,6 +1264,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // recent chunk carried a cursor reposition (see CURSOR_REPOSITION). The
   // highlighter bypasses while `performance.now() < appFrameUntilRef`.
   const appFrameUntilRef = useRef(0)
+  // The input line as of the keystroke BEFORE the current one, with the tail the
+  // shell has not echoed yet appended — ConPTY repaints a local shell's input line
+  // a poll later, so at Enter the buffer can still be missing the end of what was
+  // typed. The command history records THIS line, not the truncated echo.
+  const typedLineRef = useRef('')
+  // The matching not-yet-echoed tail (same projection the `cd` dropdown and the
+  // ghost completion use; see `projectInputLine`).
+  const typedLagRef = useRef('')
   // True from submitting a command until the shell moves past its input line.
   // ConPTY re-serializes the *screen*, so the echo of that line arrives wrapped
   // in absolute cursor moves (`ESC[4;20Hdir ESC[4;23H`) — indistinguishable from
@@ -2410,6 +2419,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // duplicate instances (transient double-mounts) are blocked here, so a
       // single keystroke is sent exactly once.
       if (activeTerminalByTab.get(currentTabId) !== term) return
+      // Track the typed line for the command history BEFORE this keystroke is
+      // applied: at Enter, `data` clears the projection, so the submitted command
+      // has to be captured on the keystroke that owns it. `null` from the
+      // projection means "cannot be known" (arrow keys, in-place edits) — the
+      // buffer is then the only honest answer, so the line is dropped.
+      const liveCmd = getInputLineAtCursorEnd(term)?.command ?? null
+      const lag = typedLagRef.current
+      const proj = projectInputLine(liveCmd, lag, data)
+      typedLagRef.current = proj.lag
+      typedLineRef.current =
+        liveCmd === null || proj.line === null ? '' : liveCmd + unechoedTail(liveCmd, lag)
       // `cd` directory dropdown: judge the line BEFORE this keystroke's echo is
       // written back (it lags by one keystroke — plan §4.1). Must run before any
       // early return below, or a keystroke could go unjudged.
@@ -2440,7 +2460,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // capture machines. The prompt is captured from the same buffer line so
         // capture can end precisely when the next prompt arrives.
         if (/^[\r\n]+$/.test(data) && !appScreen) {
-          const { prompt, command } = splitPromptCommand(getCurrentCommandLine(term))
+          const { prompt, command: echoed } = splitPromptCommand(getCurrentCommandLine(term))
+          // The buffer is one echo behind whenever the shell has not repainted the
+          // input line yet — ConPTY does that a poll later, so `docker ps` can read
+          // back as `docker p`, or as a bare prompt with nothing echoed at all.
+          // `typedLineRef` carries the same line plus the missing tail; it is only
+          // trusted when it simply EXTENDS what the buffer already shows, so a stale
+          // projection can never invent characters.
+          const typed = typedLineRef.current.trim()
+          const command = typed.length > echoed.length && typed.startsWith(echoed) ? typed : echoed
           // A pager prompt (`---- More ----`, `--More--`, `-- MORE --`, `---(more)---`)
           // is device OUTPUT awaiting a keypress, not a submitted command. Skip the
           // command-processing block (cwd tracking / capture machines / echo recolor) so
@@ -2584,9 +2612,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         expectingEchoRef.current = true
       }
       if (isLocal) {
-        localSendInput(currentTabId, data).catch((err) =>
-          console.error('local_send_input error:', err),
-        )
+        // Flush the echo the same way SSH does below. Local output waits for the
+        // next 100ms poll otherwise, so ConPTY's repaint of the typed line can
+        // land AFTER the Enter that submitted it: the buffer still reads a bare
+        // prompt (or a truncated command) at that instant, and what gets recorded
+        // in the command history is that stale line — `docker p` for `docker ps`,
+        // or nothing at all when nothing had been echoed yet.
+        localSendInput(currentTabId, data)
+          .then(() => pollOutput(currentTabId))
+          .then((chunks) => {
+            for (const chunk of chunks) writeOutput(chunk)
+          })
+          .catch((err) => console.error('local_send_input error:', err))
       } else if (isSerial) {
         serialSendInput(currentTabId, data).catch((err) =>
           console.error('serial_send_input error:', err),

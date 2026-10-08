@@ -242,6 +242,19 @@ export interface CommandHistoryEntry {
   usedAtMs: number
 }
 
+/** One row of the persisted "recently used connections" list behind the welcome
+ *  page's host card. Mirrors `db::RecentConnectionDto`. The display fields (name,
+ *  address, protocol) come from `ConnectionConfig`, so a renamed host shows its
+ *  new details without another read. */
+export interface RecentConnectionEntry {
+  /** A saved connection's id, or `local:<entryId>` for a local terminal. */
+  connectionId: string
+  /** Epoch milliseconds of the last connect to this connection. */
+  usedAtMs: number
+  /** Which list the id resolves against; absent means `connection`. */
+  kind?: 'connection' | 'localTerminal'
+}
+
 /** A single global variable shared by all command-list snippets. Commands
  *  reference it as `${name}`. A non-empty `defaultValue` is substituted
  *  directly at send time; an empty one prompts the user to fill it in. */

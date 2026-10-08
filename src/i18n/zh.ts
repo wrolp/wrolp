@@ -72,7 +72,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   welcomeSub: 'SSH、Telnet、串口与本地终端，一个窗口全包',
   welcomeNewConn: '新建 SSH 连接',
   welcomeLocalTerm: '打开本地终端',
-  welcomeRecentHosts: '已保存的主机',
+  welcomeRecentHosts: '最近使用',
   welcomeNoHosts: '还没有保存的主机',
   welcomeSftp: '文件传输',
   welcomeSftpDesc: '浏览远程文件系统，通过 SFTP 传输文件',
@@ -81,6 +81,13 @@ const zh: Partial<Record<TranslationKey, string>> = {
   welcomeCmdList: '命令列表',
   welcomeCmdListDesc: '保存的命令片段，一键送进终端',
   welcomeScan: '扫描网络',
+
+  // 相对时间，用于欢迎页的「最近使用」卡片。超过一周后由格式化函数回退到按
+  // 本地语言渲染的绝对日期，无需文案条目。
+  timeJustNow: '刚刚',
+  timeMinutesAgo: '{n} 分钟前',
+  timeHoursAgo: '{n} 小时前',
+  timeDaysAgo: '{n} 天前',
 
   // Titlebar
   titlebarSettings: '设置',

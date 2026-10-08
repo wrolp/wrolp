@@ -449,8 +449,12 @@
 
   button {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
+    // `center`, not the `baseline` this had: the row now carries a 20px protocol
+    // tile and a timestamp, neither of which has a baseline to sit on.
+    align-items: center;
+    // No `space-between`: the three groups (tile / text / time) size themselves
+    // and `.wl-text` takes the slack, so the time hugs the right edge and the
+    // address ellipsizes instead of being pushed off the end.
     gap: 8px;
     width: 100%;
     padding: 6px 8px;
@@ -476,17 +480,80 @@
   white-space: nowrap;
 }
 
-.wl-sub {
-  // Shrinkable with an ellipsis, not `flex-shrink: 0`: the address is one long
-  // unbreakable token, and refusing to shrink made the card's min-content — and
-  // through it the whole welcome grid — wider than a narrow window.
+// The name over the address, as one shrinkable group.
+//
+// `min-width: 0` is the ellipsis fix that used to live on `.wl-sub`, moved up
+// here because this is now the flex item: the address is one long unbreakable
+// token, and an unshrinkable item made the card's min-content — and through it
+// the whole welcome grid — wider than a narrow window (see `.welcome-grid` above).
+.wl-text {
+  flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wl-sub {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: $text-dim;
   font-family: $font-mono;
   font-size: var(--fs-xs);
+}
+
+// When this host was last connected to. Short by construction, so it neither
+// shrinks nor ellipsizes — a truncated "3 h a" is worse than no timestamp.
+.wl-when {
+  flex-shrink: 0;
+  color: $text-dim;
+  font-size: var(--fs-xs);
+}
+
+// The protocol tile on a welcome row.
+//
+// These deliberately repeat the sidebar's `.conn-icon` / `.proto-*` rules instead
+// of reusing them: those are nested inside the `.connection-item, .conn-item`
+// block in `_chrome.scss`, so the class names alone would render as unstyled text
+// out here. Same hues, same monospace abbreviation so SSH / TEL / COM are all
+// exactly as wide — sized down for the narrower welcome row.
+.wl-proto {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-2);
+  background: rgba($text-secondary, 0.16);
+  color: $text-secondary;
+  font-family: $font-mono;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.wl-proto-ssh {
+  background: rgba($info, 0.16);
+  color: var(--info-soft-40);
+}
+
+.wl-proto-telnet {
+  background: rgba($warning, 0.16);
+  color: var(--warning-soft-40);
+}
+
+.wl-proto-serial {
+  background: rgba($purple, 0.16);
+  color: var(--purple-soft-40);
+}
+
+// A local shell is not a protocol, but it shares the tile so the column stays
+// square. Neutral on purpose: unlike SSH/TEL/COM there is nothing to distinguish
+// one local row from another by colour, and the sidebar leaves its own local
+// entries un-classed for the same reason.
+.wl-proto-local {
+  background: rgba($text-muted, 0.16);
+  color: $text-muted;
 }
 
 // ===== Drawer: transfer queue =====

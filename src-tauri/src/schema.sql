@@ -107,6 +107,24 @@ CREATE TABLE IF NOT EXISTS command_history (
 CREATE INDEX IF NOT EXISTS idx_command_history_used
   ON command_history (used_at_ms DESC);
 
+-- Recently used saved connections — and local terminals — for the welcome page's
+-- host card. One row per id, refreshed on every connect, and the table is trimmed
+-- to the newest rows on write (like command_history above). A local terminal's id
+-- is namespaced as `local:<entryId>` (see `db::local_recent_id`), because the two
+-- id spaces are independent and a local entry may carry the same uuid as a host.
+--
+-- No workspace column: which workspace a row belongs to is resolved against the
+-- live connection list at query time. Storing it would go stale the moment an
+-- edit moved the connection to another workspace, and it is what lets a deleted
+-- or moved connection drop out of the list with no cleanup step.
+CREATE TABLE IF NOT EXISTS connection_recents (
+  connection_id TEXT PRIMARY KEY,
+  used_at_ms    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_connection_recents_used
+  ON connection_recents (used_at_ms DESC);
+
 -- ==================== Device identity (SSH-COMMAND-INDEX-COMPLETION-PLAN §2.A) ====
 --
 -- One row per *device*, identified by the SHA256 fingerprint of the host key the

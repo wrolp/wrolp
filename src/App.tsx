@@ -116,6 +116,8 @@ import {
   renameWorkspace,
   switchWorkspace,
   listConnections,
+  recordConnectionUsed,
+  recordLocalTerminalUsed,
   saveConnection,
   listTunnels,
   startTunnel,
@@ -2110,6 +2112,27 @@ export default function App() {
     for (const tab of tabs) {
       const prev = prevStatusesRef.current[tab.tabId]
       if (prev !== 'connected' && tab.status === 'connected') {
+        // "Recently used" for the welcome page's host card. Fire-and-forget: a
+        // recency bump is never worth a re-render, and a failure must not disturb
+        // the connect flow that got us here. No dedup needed — this branch is
+        // edge-triggered (the assignment at the bottom of the loop records the
+        // status we just saw), so one connect is one write and a reconnect is one
+        // more, which is the truth we want to record.
+        //
+        // `connectionId` is absent for local shells, docker logs, file editors and
+        // the settings tab: none of those is a saved connection, so there is
+        // nothing to have been "recently used" — except a local shell, which is
+        // still somewhere the user goes, so it is recorded against the sidebar
+        // entry it was opened from (the built-in shortcut included).
+        if (tab.connectionId) {
+          void recordConnectionUsed(tab.connectionId).catch((err) => {
+            console.error('Failed to record connection use:', err)
+          })
+        } else if (tab.tabType === 'localShell') {
+          void recordLocalTerminalUsed(tab.localShellEntryId ?? '__default__').catch((err) => {
+            console.error('Failed to record local terminal use:', err)
+          })
+        }
         const cmd = tab.postConnectCmd
         if (cmd) {
           // Allow the terminal a moment to settle
@@ -8199,6 +8222,8 @@ export default function App() {
                     {tabs.length === 0 ? (
                       <WelcomePage
                         connections={connections}
+                        localTerminals={localTerminals}
+                        activeWorkspaceId={activeWorkspaceId}
                         onOpenConnection={handleSelectConnection}
                         onNewConnection={() => {
                           changeRailMode('hosts')
@@ -8208,7 +8233,15 @@ export default function App() {
                               : { ...l, sidebar: { ...l.sidebar, visible: true } },
                           )
                         }}
-                        onOpenLocalTerminal={() => void handleOpenLocalTerminal()}
+                        onOpenLocalTerminal={(entry) =>
+                          void handleOpenLocalTerminal(
+                            entry?.cwd,
+                            entry?.shell,
+                            entry?.name,
+                            entry?.distro,
+                            entry?.id,
+                          )
+                        }
                         onOpenFiles={() => changeRailMode('files')}
                         onOpenNetTools={() => openRailMode('nettools')}
                         onOpenCommandList={() => setCommandListOpen(true)}

@@ -70,7 +70,7 @@ const en = {
   welcomeSub: 'SSH, Telnet, serial and local shells — in one window',
   welcomeNewConn: 'New SSH connection',
   welcomeLocalTerm: 'Open local terminal',
-  welcomeRecentHosts: 'Saved hosts',
+  welcomeRecentHosts: 'Recent hosts',
   welcomeNoHosts: 'No saved hosts yet',
   welcomeSftp: 'File transfer',
   welcomeSftpDesc: 'Browse the remote filesystem and transfer files over SFTP',
@@ -79,6 +79,14 @@ const en = {
   welcomeCmdList: 'Command list',
   welcomeCmdListDesc: 'Saved command snippets, one click from the terminal',
   welcomeScan: 'Scan network',
+
+  // Relative time, for the welcome page's recent-hosts card. Past a week the
+  // helper falls back to a locale-formatted absolute date, which needs no key —
+  // the browser owns that wording.
+  timeJustNow: 'just now',
+  timeMinutesAgo: '{n} min ago',
+  timeHoursAgo: '{n} h ago',
+  timeDaysAgo: '{n} d ago',
 
   // Titlebar
   titlebarSettings: 'Settings',
