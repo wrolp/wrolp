@@ -2104,11 +2104,25 @@ export default function App() {
   // connecting. The command is persisted on the tab (`postConnectCmd`) so it is
   // re-sent on every reconnect — floating/restoring a docker-shell pane triggers
   // a fresh SSH connect, and without this the pane would show the host shell.
+  //
+  // The waiting timers live in a ref, not in this effect's cleanup, because the
+  // settle window is open while unrelated writes land on the tab — `host-identified`
+  // stamps the device onto it a few hundred ms after connect. A cleanup that cancelled
+  // the pending timer then lost the command for good: the edge trigger below cannot
+  // fire twice for one connect, so the pane stayed at the host shell.
   const prevStatusesRef = useRef<Record<number, string>>({})
+  const postConnectTimersRef = useRef(new Map<number, ReturnType<typeof setTimeout>>())
   useEffect(() => {
-    // Track pending post-connect command timers so a closed tab (or a tabs
-    // change mid-delay) cancels them instead of firing into a dead session.
-    const pending = new Map<number, ReturnType<typeof setTimeout>>()
+    const pending = postConnectTimersRef.current
+    // A tab closed while its command was still waiting must not have it fire into a
+    // dead session — that, and only that, is what tears a pending timer down.
+    const live = new Set(tabs.map((t) => t.tabId))
+    for (const [tabId, timer] of pending) {
+      if (!live.has(tabId)) {
+        clearTimeout(timer)
+        pending.delete(tabId)
+      }
+    }
     for (const tab of tabs) {
       const prev = prevStatusesRef.current[tab.tabId]
       if (prev !== 'connected' && tab.status === 'connected') {
@@ -2134,20 +2148,18 @@ export default function App() {
           })
         }
         const cmd = tab.postConnectCmd
-        if (cmd) {
+        if (cmd && !pending.has(tab.tabId)) {
           // Allow the terminal a moment to settle
-          const t = setTimeout(() => {
-            pending.delete(tab.tabId)
-            sendInput(tab.tabId, cmd)
-          }, 300)
-          pending.set(tab.tabId, t)
+          pending.set(
+            tab.tabId,
+            setTimeout(() => {
+              pending.delete(tab.tabId)
+              sendInput(tab.tabId, cmd)
+            }, 300),
+          )
         }
       }
       prevStatusesRef.current[tab.tabId] = tab.status
-    }
-    // Clear any still-pending timers before the effect re-runs / unmounts.
-    return () => {
-      for (const t of pending.values()) clearTimeout(t)
     }
   }, [tabs])
 
