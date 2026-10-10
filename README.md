@@ -243,6 +243,14 @@ cd src-tauri && cargo clean && cd ..
 yarn tauri build
 ```
 
+## Release
+
+```bash
+gh auth login -h github.com
+
+yarn run publish
+```
+
 ## Testing
 
 ### Rust unit & integration tests
