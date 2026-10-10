@@ -28,6 +28,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -105,8 +106,18 @@ if (!existsSync(sigPath)) {
   console.log('[gen-latest] .sig missing — signing the MSI with loaded private key ...')
   // TAURI_SIGNING_PRIVATE_KEY is already set from .tauri/priv.key above, so the
   // signer will use it directly (no conflicting --private-key flag needed).
-  const signArgs = ['tauri', 'signer', 'sign', join(msiDir, msiFile)]
-  const res = spawnSync('npx', signArgs, { stdio: 'inherit', shell: true, cwd: root })
+  //
+  // The Tauri CLI's own entry is run with this script's `node` rather than through
+  // `npx`: `npx` is a `.cmd` shim on Windows that needs a shell, and Node ≥22
+  // deprecates (DEP0190) an args array combined with `shell: true` — the arguments
+  // would be concatenated into one string without being escaped, which is exactly
+  // what a path like the MSI's must not go through.
+  const require = createRequire(import.meta.url)
+  const res = spawnSync(
+    process.execPath,
+    [require.resolve('@tauri-apps/cli/tauri.js'), 'signer', 'sign', join(msiDir, msiFile)],
+    { stdio: 'inherit', cwd: root },
+  )
   if (res.status !== 0 || !existsSync(sigPath)) {
     console.error(`[gen-latest] Failed to sign MSI.`)
     process.exit(1)

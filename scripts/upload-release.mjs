@@ -90,7 +90,11 @@ if (missing.length) {
 const files = [join(msiDir, msiFile), latestPath]
 
 // ---- check gh CLI ----
-const ghCheck = spawnSync('gh', ['--version'], { stdio: 'ignore', shell: true })
+// No `shell: true` anywhere below: `gh` is a real executable on every platform
+// (gh.exe on Windows), so nothing here needs one — and Node ≥22 deprecates
+// (DEP0190) an args array passed together with `shell: true`, because the
+// arguments are then concatenated into a command string without being escaped.
+const ghCheck = spawnSync('gh', ['--version'], { stdio: 'ignore' })
 if (ghCheck.status !== 0) {
   console.error('[upload] `gh` CLI not found. Install it and run `gh auth login`.')
   process.exit(1)
@@ -98,7 +102,7 @@ if (ghCheck.status !== 0) {
 
 // ---- ensure release exists ----
 const tagArgs = ['gh', 'release', 'view', tag, '--repo', `${owner}/${repo}`]
-const viewRes = spawnSync(tagArgs[0], tagArgs.slice(1), { stdio: 'ignore', shell: true })
+const viewRes = spawnSync(tagArgs[0], tagArgs.slice(1), { stdio: 'ignore' })
 if (viewRes.status !== 0) {
   console.log(`[upload] Release ${tag} not found — creating it ...`)
   const createArgs = [
@@ -109,7 +113,7 @@ if (viewRes.status !== 0) {
   ]
   if (draft) createArgs.push('--draft')
   if (pre) createArgs.push('--prerelease')
-  const res = spawnSync(createArgs[0], createArgs.slice(1), { stdio: 'inherit', shell: true })
+  const res = spawnSync(createArgs[0], createArgs.slice(1), { stdio: 'inherit' })
   if (res.status !== 0) {
     console.error('[upload] Failed to create release.')
     process.exit(1)
@@ -126,7 +130,7 @@ const upArgs = [
   '--repo', `${owner}/${repo}`,
   '--clobber',
 ]
-const upRes = spawnSync(upArgs[0], upArgs.slice(1), { stdio: 'inherit', shell: true })
+const upRes = spawnSync(upArgs[0], upArgs.slice(1), { stdio: 'inherit' })
 if (upRes.status !== 0) {
   console.error('[upload] Upload failed.')
   process.exit(1)
