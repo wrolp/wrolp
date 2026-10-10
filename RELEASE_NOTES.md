@@ -4,6 +4,46 @@
 
 ---
 
+## v0.0.10 — 2026-10-11
+
+Gives the terminal something to complete from: command history is persisted and reachable from every pane, a grey tail continues what you are typing, and the commands installed on each device are indexed once and fed into those candidates. Adds a device identity taken from the host key, with an optional strict check and a new Security settings pane. Plus fixes to `ls` links, the live-line recolor, toasts, the file panel's up button and Docker "Enter Shell".
+
+### Features
+
+- **Persisted command history** — every command you run is stored, with the tab type and the host it ran on, and survives closing the terminal or restarting the app; the newest 300 are kept
+- **Command-history dropdown** — `⌃ History` in the pane's status bar, or Ctrl+Shift+H for the focused terminal: rows grouped by This terminal / All terminals, ↑/↓ walk the list, Enter puts a command on the input line WITHOUT running it, Esc closes
+- **Forget a command** — a ✕ on each row, or Delete / Backspace on the highlighted one, drops it from the persisted history
+- **Ghost command completion** — while you type, the likeliest command continues the line in grey after the caret. Candidates are ranked from what has been run in this terminal, the persisted history, your command list and command sets, and what is installed on the device, and each one says where it came from. `→` applies the nearest part of the tail — one space-separated word at a time, so `git s` takes `tatus`, then ` -sb`, and a walk stops where a completion goes wrong — `End` applies the rest, `Alt+/` opens the candidate list where ↑↓ pick and Enter or a click puts the whole command on the line. Inserted, never run. On by default, switchable per terminal from the right-click menu or Settings → Terminal, with a choice of what `→` applies. Serial consoles are left out — they have no line editor to complete into
+- **Tab is the shell's again** — the `cd` and command-candidate lists no longer take `Tab`, so path and command completion still reach the shell; the candidate list moved to `Alt+/`
+- **Device command index** — the machine a terminal is connected to is enumerated once on first contact and refreshed at most weekly: `compgen` where it exists, with a `$PATH` scan underneath so busybox / ash routers, minimal containers and Windows PowerShell still produce something, capped at 5 000 commands per device. They rank last — anything you have run or saved outranks them. Settings → Terminal reports the count for the focused terminal with "Refresh now" and "Forget this device"; Settings → Data totals commands, devices and the space used
+- **Device identity, with strict host key checking** — a session's host key fingerprint is the device's identity (an address can be reused or moved; the key is what says "same box") and appears as a shield chip with the short fingerprint in the status bar. A key that no longer matches raises a toast showing both the recorded and the presented fingerprint, and the new **Settings → Security** pane can refuse such a connection outright instead of only reporting it
+- **Welcome page returns to recent hosts** — the host card now lists the six connections used most recently, saved connections and local terminals together, with the protocol tile (SSH / TEL / COM) and a relative time ("just now", "5 min ago", past a week an absolute date), so the page reflects where you actually work instead of sidebar order
+- **`cd` suggestions open with nothing selected** — Enter runs what you typed rather than completing a row you never picked; ↑↓ select first and Enter then completes the name, `→` drills in
+
+### Fixes
+
+- Clicking a name in an `ls` / `dir` listing opens the file from the listing under your cursor. Two listings of different directories that share a file name both matched the hovered row, and xterm handed the click to the link stored first — the older listing — so it opened the other directory's file. One link is now built per occurrence and resolved to the entry whose own row is nearest, ties going to the newer listing
+- Enter submits what you typed while only a grey tail is showing: the tail is an offer, not a decision, so it no longer inserted the suggestion and swallowed the key. Only a pick from the open candidate list is inserted
+- The grey tail no longer vanishes a moment after appearing. A recolor that was still landing on the row briefly made it read as neither a prefix nor an extension of the line, which retired the tail; and once output scrolled or the shell printed a fresh prompt the tail could sit on an unrelated row
+- Editing in the middle of a live input line keeps its syntax colouring and leaves the caret where you put it, and the trailing space between two words is no longer eaten by the recolor (`echo hi` came back as `echohi`)
+- An error toast holds while the pointer is on it, and dismisses only from its ✕ — which is now keyboard reachable
+- A serial or Telnet connection saved before the `kind` field existed opens as itself again: the kind is recovered from the fields only that kind ever writes, so `COM3` is no longer handed to russh as a hostname. Port 23 is deliberately not used as evidence — guessing there would silently downgrade a real SSH server to plaintext
+- The file panel's up button walks from the directory the panel opened in all the way to the filesystem root. It had treated the panel's own root as a boundary, so it was grey from the very first frame and after every "Set as root" or jump home; a local pane opened at `""` — really your home — now recovers its displayed path from its own listing, which is what gives it a parent to offer
+- Docker "Enter Shell" no longer leaves you at the host shell when the device-identity write lands during the post-connect settle window: the waiting command survives unrelated writes on the tab and is torn down only when the tab closes
+- The command palette's dim label colours meet AA contrast
+- The `cd` suggestion's folder glyph is drawn from the shared icon set
+
+### Internal
+
+- Five new SQLite tables — `command_history`, `connection_recents`, `hosts`, `connection_hosts`, `host_commands` — with migrations for existing databases
+- New backend surface: history list / record / forget, recent connections, host command index collect / refresh / clear / count, and the host key decision taken inside the SSH handshake callback where refusing is still possible
+- Device identity is keyed by fingerprint, so it survives the saved connection being renamed, re-grouped or edited; sessions with no host key (local, WSL, serial, Telnet) get a `kind:detail` fallback id
+- The enumeration script and its output parser are split so both are testable without a shell; the local machine is never enumerated on behalf of a remote device
+- Regression specs added for ghost completion, the `cd` list, command history, device identity, the host command index, `ls` links, toast hover, the file panel's up button, Docker enter-shell and the welcome page
+- Version bumped to 0.0.10
+
+---
+
 ## v0.0.9 — 2026-09-29
 
 Rebuilds the app shell around an activity rail, a single mode column and a Ctrl+K command palette, and completes the UI redesign — a reskin on new design tokens, a full appearance pane, settings split into one pane per theme, `cd` path suggestions in the terminal, a markdown preview in the editor, and Docker support for a local daemon.
