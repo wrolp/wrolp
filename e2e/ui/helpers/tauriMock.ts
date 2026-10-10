@@ -59,6 +59,13 @@ export interface TauriMockOptions {
   filesByDir?: Record<string, unknown[]>
   /** Value returned by `read_file_content` (opening a file in the editor). */
   fileContent?: Record<string, unknown>
+  /**
+   * The path an OS file picker answers with (`plugin:dialog|open` / `|save`).
+   * Omitted means the user hit Cancel, which is what the dialog-driven flows
+   * (download, upload a folder) then refuse to start — a spec that wants one has
+   * to name the path here.
+   */
+  dialogPath?: string
   /** Value returned by `list_docker_containers` (the sidebar Docker section). */
   dockerContainers?: unknown[]
   /** Rows returned by `list_command_history` (the pane's 历史 dropdown). */
@@ -123,11 +130,17 @@ export interface TauriMockOptions {
    */
   scanResults?: unknown[]
   /**
-   * Keep `scan_network` pending until `resolvePendingScan()` is called. Without
+   * Keep `scan_network` pending until `resolvePendingCall()` is called. Without
    * this the scan is over before the test can look, and nothing covers the UI
    * while it runs (progress read-out, the panel surviving a tab switch).
    */
   scanHold?: boolean
+  /**
+   * Keep `download_file` pending until `resolvePendingCall()` is called, so the
+   * transfer has a real in-flight phase — a download that finishes in a microtask
+   * cannot be told apart from one that never started.
+   */
+  holdDownload?: boolean
 }
 
 /**
@@ -217,6 +230,9 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
         }
         if (cmd.startsWith('plugin:updater|')) return null
         if (cmd === 'plugin:dialog|') return null
+        if (cmd === 'plugin:dialog|open' || cmd === 'plugin:dialog|save') {
+          return opts.dialogPath ?? null
+        }
 
         switch (cmd) {
           case 'poll_output': {
@@ -416,6 +432,12 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_files':
           case 'target_list_files':
             return opts.filesByDir?.[String(args.path)] ?? opts.fileEntries ?? []
+          case 'download_file':
+          case 'target_download_file':
+            if (!opts.holdDownload) return true
+            return new Promise<boolean>((resolve) => {
+              finishPendingCall = () => resolve(true)
+            })
           // Same content read, addressed through a non-session target (the local
           // pane of the dual-pane view opens files this way).
           case 'read_file_content':
@@ -481,8 +503,8 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
       configurable: true,
       writable: true,
     })
-    // Test hook: let a `scanHold` command return, so the test can decide when the
-    // scan is over rather than racing it.
+    // Test hook: let a held command (`scanHold` / `holdDownload`) return, so the
+    // test decides when that work is over rather than racing it.
     Object.defineProperty(window, '__TAURI_FINISH_CALL__', {
       value: () => {
         const finish = finishPendingCall
@@ -495,8 +517,8 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
   }, options)
 }
 
-/** Release a command the mock is holding (see `scanHold`). */
-export async function resolvePendingScan(page: Page) {
+/** Release the command the mock is holding (see `scanHold` / `holdDownload`). */
+export async function resolvePendingCall(page: Page) {
   await page.evaluate(() =>
     (
       window as unknown as {

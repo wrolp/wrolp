@@ -1,7 +1,7 @@
 import { test, expect, type Page } from './helpers/fixtures'
 import {
   installTauriMock,
-  resolvePendingScan,
+  resolvePendingCall,
   invokedCalls,
   type TauriMockOptions,
 } from './helpers/tauriMock'
@@ -85,7 +85,7 @@ test('rows come from the scan-progress events and closed probes are dropped', as
   // line to itself rather than a seventh table cell.
   await expect(page.locator('.scan-banner')).toHaveText(['SSH-2.0-OpenSSH_9.6'])
 
-  await resolvePendingScan(page)
+  await resolvePendingCall(page)
   await expect(page.locator('.scan-progress')).toHaveCount(0)
   await expect(panel(page).getByRole('button', { name: 'Start Scan' })).toBeEnabled()
 })

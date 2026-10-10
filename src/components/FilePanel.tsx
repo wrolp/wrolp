@@ -50,6 +50,9 @@ import { useI18n } from '../i18n'
 /** How many file transfers run at once for a multi-file upload batch. */
 const UPLOAD_CONCURRENCY = 8
 
+/** How long the transfer list stays up once nothing is in flight any more. */
+const TRANSFER_DISMISS_MS = 5000
+
 /**
  * Run `worker` over `items` with at most `limit` tasks in flight at once.
  * Workers pull from a shared index, so a slow file doesn't stall the batch.
@@ -1756,9 +1759,27 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     onMouseLeave: onTransfersMouseLeave,
   } = useCustomScrollbar()
 
-  // Finished rows are no longer swept away on a timer: this list is the app-wide
-  // queue now, and the drawer's transfer tab is where it is reviewed. Clearing it
-  // is the "clear finished" action there, not something a panel does on its own.
+  /* ---- transfers list: auto-close ---- */
+  // A settled list is only clutter: it steals height from the file tree and has
+  // nothing left to watch, so it closes itself a few seconds after the last row
+  // finishes. It *hides* rather than clears — the rows belong to the app-wide
+  // queue and the drawer's transfer tab is where a finished list is reviewed
+  // (v8-P4). Hovering holds it open so it can't vanish mid-read; the next
+  // transfer reopens it.
+  const [transfersDismissed, setTransfersDismissed] = useState(false)
+  const [transfersHovered, setTransfersHovered] = useState(false)
+  const transfersSettled =
+    transferRows.length > 0 &&
+    transferRows.every((r) => r.status !== 'active' && r.status !== 'queued')
+  useEffect(() => {
+    if (!transfersSettled) {
+      setTransfersDismissed(false)
+      return
+    }
+    if (transfersDismissed || transfersHovered) return
+    const timer = window.setTimeout(() => setTransfersDismissed(true), TRANSFER_DISMISS_MS)
+    return () => window.clearTimeout(timer)
+  }, [transfersSettled, transfersDismissed, transfersHovered])
 
   /* ---- transfers panel drag-to-resize ---- */
   const transfersDragRef = useRef<{ startY: number; startH: number } | null>(null)
@@ -2222,8 +2243,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
           {/* Multi-file transfer progress list. Height is user-adjustable via the
               drag handle on its top edge; rows scroll internally when they overflow. */}
-          {showTransfers && transferRows.length > 0 && (
-            <div className="file-transfers" style={{ height: transfersPanelHeight }}>
+          {showTransfers && transferRows.length > 0 && !transfersDismissed && (
+            <div
+              className="file-transfers"
+              style={{ height: transfersPanelHeight }}
+              onMouseEnter={() => setTransfersHovered(true)}
+              onMouseLeave={() => setTransfersHovered(false)}
+            >
               <div
                 className="file-transfers-drag"
                 onMouseDown={onTransfersDragStart}
