@@ -9,6 +9,8 @@ import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
 import { monacoThemeId } from '../lib/theme'
 import { getResolvedTheme, subscribeTheme } from '../lib/themeStore'
 import { loadEditorPrefs, saveEditorPrefs, subscribeEditorPrefs } from '../lib/editorPrefs'
+import { matchShortcut } from '../lib/keybindings'
+import { useShortcutLabel } from '../hooks/useShortcuts'
 import { useI18n } from '../i18n'
 
 export interface EditorTab {
@@ -90,6 +92,8 @@ export function FileEditor({
   const [prefs, setPrefs] = useState(() => loadEditorPrefs())
 
   const { t } = useI18n()
+  // The save button quotes the combo, so it follows a rebind.
+  const saveKeys = useShortcutLabel('saveFile')
 
   // `tab` (not `t`): `t` is the i18n translator below.
   const active = tabs.find((tab) => tab.key === activeKey) || null
@@ -150,10 +154,19 @@ export function FileEditor({
       handlersRef.current.onContentChange(active.key, editor.getValue())
     })
 
-    // Ctrl/Cmd+S inside the editor
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
-      handlersRef.current.onSave(active.key),
-    )
+    // The save key, from the shortcut table (Settings → Shortcuts). A capture
+    // listener on the editor node rather than Monaco's `addCommand`: the command
+    // API takes the keybinding when it is registered, so a rebind would need the
+    // editor to be rebuilt, and Monaco's own keybinding service would answer the
+    // key before anything upstream of it could.
+    const editorNode = editor.getDomNode()
+    const onSaveKey = (e: KeyboardEvent) => {
+      if (!matchShortcut(e, 'saveFile')) return
+      e.preventDefault()
+      e.stopPropagation()
+      handlersRef.current.onSave(active.key)
+    }
+    editorNode?.addEventListener('keydown', onSaveKey, true)
 
     // Set initial EOL
     const model = editor.getModel()
@@ -162,6 +175,7 @@ export function FileEditor({
     }
 
     return () => {
+      editorNode?.removeEventListener('keydown', onSaveKey, true)
       disposable.dispose()
       editor.dispose()
       editorRef.current = null
@@ -478,7 +492,7 @@ export function FileEditor({
                 className="editor-btn primary"
                 onClick={() => onSave(active.key)}
                 disabled={!active.isDirty}
-                title="Save (Ctrl+S)"
+                title={`${t('save')} (${saveKeys})`}
               >
                 Save
               </button>

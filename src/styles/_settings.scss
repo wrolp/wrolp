@@ -109,6 +109,178 @@
   color: var(--cyan);
 }
 
+// ===== Settings → Shortcuts =====
+// Rows, not fields: every row is one action and one key, and the key is a button
+// you press to re-record. `max-width: 640px` from `.settings-pane` is deliberately
+// ignored — a two-column row needs the room to keep the label and the chip apart.
+.shortcut-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.shortcut-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.shortcut-reset-all {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  background: none;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  color: $text-secondary;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    color var(--d-1),
+    border-color var(--d-1);
+
+  &:hover:not(:disabled) {
+    color: $text-primary;
+    border-color: $text-muted;
+  }
+
+  &:disabled {
+    color: $text-muted;
+    cursor: default;
+    opacity: 0.6;
+  }
+}
+
+.shortcut-group {
+  margin-top: 14px;
+
+  &:first-of-type {
+    margin-top: 0;
+  }
+}
+
+.shortcut-group-header {
+  padding: 0 0 4px;
+
+  h4 {
+    margin: 0 0 2px;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: $text-secondary;
+  }
+
+  p {
+    margin: 0 0 6px;
+    font-size: var(--fs-sm);
+    color: $text-muted;
+  }
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+  border-top: 1px solid $border;
+
+  &.recording {
+    background: rgba($accent, 0.08);
+  }
+}
+
+.shortcut-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.shortcut-name {
+  font-size: var(--fs-ui);
+  color: $text-primary;
+}
+
+.shortcut-desc,
+.shortcut-default,
+.shortcut-notice {
+  font-size: var(--fs-sm);
+  color: $text-muted;
+}
+
+.shortcut-notice {
+  &.error {
+    color: $danger;
+  }
+
+  &.caution {
+    color: $warning;
+  }
+}
+
+.shortcut-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.shortcut-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--r-1);
+  color: $text-muted;
+  cursor: pointer;
+
+  &:hover {
+    color: $text-primary;
+    background: $bg-hover;
+  }
+}
+
+// The chip is the button: it shows the live combo and re-records on click.
+.shortcut-kbd {
+  min-width: 96px;
+  padding: 3px 8px;
+  background: $bg-tertiary;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  color: $text-primary;
+  font-family: inherit;
+  cursor: pointer;
+
+  kbd {
+    font-family: 'Consolas', 'Cascadia Code', monospace;
+    font-size: var(--fs-sm);
+  }
+
+  &:hover,
+  &.recording {
+    border-color: $accent;
+  }
+
+  &.recording kbd {
+    color: $accent;
+  }
+}
+
+.shortcut-press {
+  font-size: var(--fs-sm);
+  color: $accent;
+}
+
+.shortcut-empty {
+  margin: 12px 0;
+  font-size: var(--fs-sm);
+  color: $text-muted;
+}
+
 // ===== App Version Info =====
 .app-version-info {
   margin-top: 6px;

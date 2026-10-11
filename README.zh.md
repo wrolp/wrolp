@@ -170,6 +170,13 @@
 - 自动更新（GitHub Release 端点 —— 发布前需在 `tauri.conf.json` 中设置真实 `pubkey`）。
 - 持久化的连接配置（`connections.json`，已加密 —— 同时保存工作区）与 SQLite 数据库（`wrolp.db`，WAL 模式）存放在 OS 配置目录下的 `wrolp-terminal/`。
 
+### 快捷键
+
+- 应用绑定的每一个组合键都集中在一张表里（`src/lib/keybindings.ts`），并由 **设置 → 快捷键** 直接编辑：点某行的按键框，再按下新的组合，下一次按键即生效。搜索框既能搜动作，也能搜按键。
+- 匹配是精确的，修饰键也算 —— `Ctrl+B` 不会连带触发 `Ctrl+Alt+B`。每行可单独解绑、单独恢复默认，也可整体重置；改动保存在 `localStorage`。
+- shell 或系统离不了的键（Tab、Enter、Ctrl+C/V/X/Z/D/W）会被直接拒绝绑定；readline 的其余控制键允许绑定，但会提示「此后不再传给 shell」。`Tab` 在任何位置都仍然留给 shell 做自己的补全。
+- 默认值：`Ctrl+K` 命令面板 · `Ctrl+Shift+P` 命令片段 · `Ctrl+Shift+H` 命令历史 · `Ctrl+Shift+F` 双栏文件 · `Ctrl+B` / `Ctrl+Alt+B` 侧栏 · `Ctrl+J` / `Ctrl+Alt+J` 下栏 · `Ctrl+Alt+I` 检视器 · `Ctrl+\` 分屏 · `Alt+/` 补全 · `Shift+PgUp/PgDn/Home/End` 回滚 · `Ctrl+S` 保存 · `Esc` 关闭浮层。
+
 ## 系统依赖
 
 ### Linux（Debian / Ubuntu）

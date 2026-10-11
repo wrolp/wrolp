@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom'
 import type { ConnectionConfig } from '../types'
 import { listCommandSnippets } from '../commands'
 import { useI18n } from '../i18n'
+import { isDismissKey } from '../lib/keybindings'
 import { Icon } from './Icon'
 
 /**
- * The Ctrl+K command palette — v8's single entry point for "go somewhere or do
+ * The command palette — v8's single entry point for "go somewhere or do
  * something", which is why the titlebar carries nothing but this trigger.
  *
  * It is deliberately *not* a modal: it holds no state the user could lose, so
@@ -217,7 +218,7 @@ export function CommandPalette({
     } else if (e.key === 'Enter') {
       e.preventDefault()
       runAt(selected)
-    } else if (e.key === 'Escape') {
+    } else if (isDismissKey(e)) {
       e.preventDefault()
       onClose()
     }

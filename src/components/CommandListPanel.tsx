@@ -20,6 +20,7 @@ import {
 import { focusTerminal } from './Terminal'
 import { Icon } from './Icon'
 import { useI18n } from '../i18n'
+import { isDismissKey } from '../lib/keybindings'
 
 /**
  * Modal overlay that portals into <body>.
@@ -830,7 +831,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       setGroupMenu(null)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
+      if (isDismissKey(e)) close()
     }
     document.addEventListener('click', close)
     document.addEventListener('keydown', onKey)
@@ -2770,7 +2771,6 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             }}
           />
         )}
-
       </div>
 
       {/* Resize handles live on the float wrapper, NOT inside `.cmd-list-panel`.

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useI18n } from '../i18n'
 import { Icon } from './Icon'
+import { useShortcutLabel } from '../hooks/useShortcuts'
 
 interface TitlebarProps {
   onSettings?: () => void
@@ -30,6 +31,8 @@ export const Titlebar: React.FC<TitlebarProps> = ({
   workspace,
 }) => {
   const { t } = useI18n()
+  // The trigger quotes the palette's combo, so it has to follow a rebind.
+  const paletteKeys = useShortcutLabel('togglePalette')
   const [isMaximized, setIsMaximized] = useState(false)
   const [alwaysOnTop, setAlwaysOnTop] = useState(false)
   const titlebarRef = useRef<HTMLDivElement>(null)
@@ -102,11 +105,13 @@ export const Titlebar: React.FC<TitlebarProps> = ({
             type="button"
             className="cmd-trigger"
             onClick={onCommandPalette}
-            title={`${t('commandPalette')} (Ctrl+K)`}
+            title={`${t('commandPalette')} (${paletteKeys})`}
           >
             <Icon name="search" size={14} />
             <span className="cmd-ph">{t('commandPalettePlaceholder')}</span>
-            <kbd>Ctrl K</kbd>
+            {/* The chip spaces its chips — `Ctrl K`, not `Ctrl+K` — because it is a
+                picture of the keys, while the tooltip above spells the combo out. */}
+            <kbd>{paletteKeys.replace(/\+/g, ' ')}</kbd>
           </button>
         )}
       </div>

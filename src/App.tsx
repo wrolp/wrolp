@@ -30,11 +30,14 @@ import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
 import { CommandListPanel } from './components/CommandListPanel'
+import { ShortcutsPane } from './components/ShortcutsPane'
 import { StatusBar } from './components/StatusBar'
 import NetToolsPanel from './components/nettools/NetToolsPanel'
 import { Icon } from './components/Icon'
 import type { IconName } from './components/Icon'
 import { shellIconName } from './lib/shellIcon'
+import { actionForEvent, isDismissKey, shortcutLabel } from './lib/keybindings'
+import { useShortcutsVersion } from './hooks/useShortcuts'
 import FloatingWindow from './components/FloatingWindow'
 import type { FileTreeHandle } from './components/FilePanel'
 import type {
@@ -604,7 +607,7 @@ function PaneCommandHistory({
       e.preventDefault()
       const row = rows[active]
       if (row) onForget(row.command)
-    } else if (e.key === 'Escape') {
+    } else if (isDismissKey(e)) {
       e.preventDefault()
       onOpenChange(false)
     }
@@ -1457,7 +1460,15 @@ function HighlightSettingsCard({
 // nav button and the pane header, so the two can never name a pane differently.
 // What used to be one 「General」 scroll — where a 370-line card mixed window opacity
 // with the data root and the updater — is now one pane per theme.
-type SettingsPane = 'appearance' | 'terminal' | 'security' | 'data' | 'docker' | 'ai' | 'about'
+type SettingsPane =
+  | 'appearance'
+  | 'shortcuts'
+  | 'terminal'
+  | 'security'
+  | 'data'
+  | 'docker'
+  | 'ai'
+  | 'about'
 const SETTINGS_PANES: {
   key: SettingsPane
   icon: IconName
@@ -1469,6 +1480,14 @@ const SETTINGS_PANES: {
     icon: 'desktop',
     title: 'settingsPaneAppearance',
     desc: 'settingsPaneAppearanceDesc',
+  },
+  // Second, not last: a rebindable key is a property of the interface, and the
+  // pane that lists them has to be where someone looks for "what does this key do".
+  {
+    key: 'shortcuts',
+    icon: 'keyboard',
+    title: 'settingsPaneShortcuts',
+    desc: 'settingsPaneShortcutsDesc',
   },
   {
     key: 'terminal',
@@ -1525,6 +1544,9 @@ function workspaceRootOf(
 
 export default function App() {
   const { t, lang, setLang } = useI18n()
+  // The tooltips that quote a combo (the inspector button) have to follow it
+  // when the user rebinds one, so App subscribes to the shortcut table.
+  useShortcutsVersion()
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   // Per-tab current working directory, reported by the Terminal so the FilePanel
@@ -2987,50 +3009,9 @@ export default function App() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [activeTabId, tabs])
 
-  // Ctrl+Shift+P toggles the floating command list (command snippets).
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
-        e.preventDefault()
-        setCommandListOpen((prev) => !prev)
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  // Ctrl+Shift+H opens the focused pane's command-history dropdown. Plain ↑/↓ are
-  // deliberately NOT bound: they belong to the shell's own recall (readline /
-  // PSReadLine / cmd), and hijacking them would take that away.
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'H' || e.key === 'h')) {
-        if (!focusedLeafTabId) return
-        e.preventDefault()
-        setHistoryOpenLeaf((prev) => (prev === focusedLeafId ? null : focusedLeafId))
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [focusedLeafId, focusedLeafTabId])
-
-  // Ctrl+K toggles the command palette — the shell's single "go somewhere / do
-  // something" entry point, which is why the titlebar carries only its trigger.
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        !e.shiftKey &&
-        !e.altKey &&
-        (e.key === 'k' || e.key === 'K')
-      ) {
-        e.preventDefault()
-        setPaletteOpen((prev) => !prev)
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  // The combos these three effects used to spell out — Ctrl+Shift+P, Ctrl+Shift+H,
+  // Ctrl+K — are now read from the shortcut table in one listener next to
+  // `handleSplitTerminal`, so they can be rebound in Settings → Shortcuts.
 
   // Load persisted workspace layout on startup (merged onto defaults).
   useEffect(() => {
@@ -3070,71 +3051,8 @@ export default function App() {
     updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
   }, [updateLayout])
 
-  // Layout shortcuts:
-  //   Ctrl+B            toggle sidebar visibility
-  //   Ctrl+Alt+B        move sidebar to the other side
-  //   Ctrl+J            toggle the bottom/panel
-  //   Ctrl+Alt+J        move the panel to bottom <-> right
-  //   Ctrl+Alt+I        toggle the inspector column
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const ctrl = e.ctrlKey || e.metaKey
-      if (!ctrl) return
-      const key = e.key.toLowerCase()
-      if (key === 'b' && e.altKey) {
-        e.preventDefault()
-        updateLayout((l) => ({
-          ...l,
-          sidebar: { ...l.sidebar, side: l.sidebar.side === 'left' ? 'right' : 'left' },
-        }))
-        return
-      }
-      if (key === 'b') {
-        e.preventDefault()
-        updateLayout((l) => ({ ...l, sidebar: { ...l.sidebar, visible: !l.sidebar.visible } }))
-        return
-      }
-      if (key === 'j' && e.altKey) {
-        e.preventDefault()
-        updateLayout((l) => ({
-          ...l,
-          bottomPanel: {
-            ...l.bottomPanel,
-            pos: l.bottomPanel.pos === 'bottom' ? 'right' : 'bottom',
-          },
-        }))
-        return
-      }
-      if (key === 'j') {
-        e.preventDefault()
-        updateLayout((l) => ({
-          ...l,
-          bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
-        }))
-        return
-      }
-      if (key === 'i' && e.altKey) {
-        e.preventDefault()
-        // Clearing the float is right on both branches: closing the column must
-        // end it, and opening one is only possible from a state with no float.
-        setInspectorFloat(null)
-        updateLayout((l) => ({
-          ...l,
-          inspector: { ...l.inspector, visible: !l.inspector.visible },
-        }))
-        return
-      }
-      // Ctrl+Shift+F: the dual-pane file view. It also opens the drawer, because
-      // a transfer you cannot see the queue for is only half a transfer.
-      if (key === 'f' && e.shiftKey) {
-        e.preventDefault()
-        openDualPane()
-        return
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [updateLayout, openDualPane])
+  // Ctrl+B / Ctrl+Alt+B / Ctrl+J / Ctrl+Alt+J / Ctrl+Alt+I / Ctrl+Shift+F moved
+  // into the same table-driven listener as the rest (see `handleSplitTerminal`).
 
   // Ref to keep current opacity accessible in debounced save without re-registering listeners
   const opacityRef = useRef(opacity)
@@ -4780,16 +4698,95 @@ export default function App() {
     if (conn) openInSplit(conn, 'row')
   }, [openInSplit])
 
+  // Every app-level combination key, read from the shortcut table. This one
+  // listener replaces the six that used to spell their combos out inline
+  // (Settings → Shortcuts now edits them):
+  //   Ctrl+K            command palette
+  //   Ctrl+Shift+P      floating command list
+  //   Ctrl+Shift+H      this pane's command history
+  //   Ctrl+Shift+F      dual-pane file view — and the drawer, since a transfer
+  //                     you cannot see the queue for is only half a transfer
+  //   Ctrl+B / Ctrl+Alt+B      sidebar: visibility / side
+  //   Ctrl+J / Ctrl+Alt+J      panel: visibility / bottom <-> right
+  //   Ctrl+Alt+I        inspector column
+  //   Ctrl+\            split the active session
+  // Keys that live inside a view — the terminal's completion and scrollback, the
+  // editor's save, an overlay's dismiss — are matched where that view has focus
+  // instead, so a global listener cannot take them away from the shell.
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const ctrl = e.ctrlKey || e.metaKey
-      if (!ctrl || e.key !== '\\') return
-      e.preventDefault()
-      handleSplitTerminal()
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const action = actionForEvent(e)
+      if (!action) return
+      switch (action) {
+        case 'togglePalette':
+          e.preventDefault()
+          setPaletteOpen((prev) => !prev)
+          return
+        case 'toggleCommandList':
+          e.preventDefault()
+          setCommandListOpen((prev) => !prev)
+          return
+        case 'toggleCommandHistory':
+          // Only the pane with focus has a history to show. Plain ↑/↓ are
+          // deliberately not bound anywhere: they belong to the shell's own
+          // recall (readline / PSReadLine / cmd).
+          if (!focusedLeafTabId) return
+          e.preventDefault()
+          setHistoryOpenLeaf((prev) => (prev === focusedLeafId ? null : focusedLeafId))
+          return
+        case 'openDualFilePanel':
+          e.preventDefault()
+          openDualPane()
+          return
+        case 'toggleSidebar':
+          e.preventDefault()
+          updateLayout((l) => ({ ...l, sidebar: { ...l.sidebar, visible: !l.sidebar.visible } }))
+          return
+        case 'flipSidebarSide':
+          e.preventDefault()
+          updateLayout((l) => ({
+            ...l,
+            sidebar: { ...l.sidebar, side: l.sidebar.side === 'left' ? 'right' : 'left' },
+          }))
+          return
+        case 'toggleBottomPanel':
+          e.preventDefault()
+          updateLayout((l) => ({
+            ...l,
+            bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
+          }))
+          return
+        case 'flipPanelPosition':
+          e.preventDefault()
+          updateLayout((l) => ({
+            ...l,
+            bottomPanel: {
+              ...l.bottomPanel,
+              pos: l.bottomPanel.pos === 'bottom' ? 'right' : 'bottom',
+            },
+          }))
+          return
+        case 'toggleInspector':
+          e.preventDefault()
+          // Clearing the float is right on both branches: closing the column must
+          // end it, and opening one is only possible from a state with no float.
+          setInspectorFloat(null)
+          updateLayout((l) => ({
+            ...l,
+            inspector: { ...l.inspector, visible: !l.inspector.visible },
+          }))
+          return
+        case 'splitTerminal':
+          e.preventDefault()
+          handleSplitTerminal()
+          return
+        default:
+          return
+      }
     }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [handleSplitTerminal])
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [updateLayout, openDualPane, handleSplitTerminal, focusedLeafId, focusedLeafTabId])
 
   // Handle connection changes (reload list)
 
@@ -5560,6 +5557,8 @@ export default function App() {
                       </div>
                     </>
                   )}
+
+                  {settingsActiveTab === 'shortcuts' && <ShortcutsPane />}
 
                   {settingsActiveTab === 'terminal' && (
                     <>
@@ -8169,7 +8168,7 @@ export default function App() {
                     }))
                   }}
                   aria-label={inspectorOpen ? t('closeInspector') : t('openInspector')}
-                  title={`${inspectorOpen ? t('closeInspector') : t('openInspector')} (Ctrl+Alt+I)`}
+                  title={`${inspectorOpen ? t('closeInspector') : t('openInspector')} (${shortcutLabel('toggleInspector')})`}
                   data-on={inspectorOpen ? 'true' : undefined}
                 >
                   <Icon name="inspector" size={14} />

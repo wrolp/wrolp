@@ -5,6 +5,7 @@ import { useI18n } from '../i18n'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { handleMarkdownLinkClick } from '../lib/externalLink'
 import { copyText } from '../lib/clipboard'
+import { matchShortcut } from '../lib/keybindings'
 
 interface MarkdownPreviewProps {
   /** The editor's current buffer — unsaved edits are previewed as well. */
@@ -121,7 +122,7 @@ export default function MarkdownPreview({ content, onSave }: MarkdownPreviewProp
       ref={rootRef}
       tabIndex={-1}
       onKeyDown={(e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        if (matchShortcut(e, 'saveFile')) {
           e.preventDefault()
           onSave?.()
         }

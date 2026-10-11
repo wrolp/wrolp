@@ -170,6 +170,13 @@
 - Auto-updater (GitHub release endpoint — set a real `pubkey` in `tauri.conf.json` before shipping).
 - Persistent connection configs (`connections.json`, encrypted — it also stores workspaces) and SQLite DB (`wrolp.db`, WAL mode) under the OS config dir + `wrolp-terminal/`.
 
+### Keyboard shortcuts
+
+- Every combination key the app binds lives in one table (`src/lib/keybindings.ts`), and **Settings → Shortcuts** edits it: click a row's key, press a new combination, and the next keystroke obeys it. Search matches either the action or the combo.
+- A binding matches exactly, modifiers included — `Ctrl+B` does not also fire on `Ctrl+Alt+B`. Each row can be unbound, restored on its own, or reset as a whole; overrides persist in `localStorage`.
+- Keys the shell or the system cannot do without (Tab, Enter, Ctrl+C/V/X/Z/D/W) are refused, and readline's other control keys bind with a visible warning that they stop reaching the shell. `Tab` in particular stays the shell's completion key everywhere.
+- Defaults: `Ctrl+K` palette · `Ctrl+Shift+P` snippet list · `Ctrl+Shift+H` command history · `Ctrl+Shift+F` dual-pane files · `Ctrl+B` / `Ctrl+Alt+B` sidebar · `Ctrl+J` / `Ctrl+Alt+J` panel · `Ctrl+Alt+I` inspector · `Ctrl+\` split · `Alt+/` completion · `Shift+PgUp/PgDn/Home/End` scrollback · `Ctrl+S` save · `Esc` close pop-up.
+
 ## System Dependencies
 
 ### Linux (Debian/Ubuntu)

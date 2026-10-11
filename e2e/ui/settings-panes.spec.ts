@@ -25,7 +25,18 @@ const field = (page: Page, id: string) => page.locator(`#${id}`)
 // Security is third: the panes run interface → how it behaves → what it trusts →
 // what it stores, and a host key policy belongs with neither the terminal nor the
 // disk, so it gets its own entry rather than hiding inside one of them.
-const PANES = ['Appearance', 'Terminal', 'Security', 'Data', 'Docker', 'AI Assistant', 'About']
+// Shortcuts is second because a key you press is part of the interface, not a
+// behaviour of the terminal.
+const PANES = [
+  'Appearance',
+  'Shortcuts',
+  'Terminal',
+  'Security',
+  'Data',
+  'Docker',
+  'AI Assistant',
+  'About',
+]
 
 test('the sidebar lists one entry per pane, in order', async ({ page }) => {
   await openSettings(page)

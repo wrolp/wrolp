@@ -170,6 +170,7 @@ import {
   unechoedTail,
 } from './terminal/cdSuggest'
 import { KeyInterceptRouter } from './terminal/keyIntercept'
+import { isDismissKey, matchShortcut } from '../lib/keybindings'
 import { CdSuggestPanel } from './terminal/CdSuggestPanel'
 import type { CdSuggestAnchor } from './terminal/CdSuggestPanel'
 import { GhostSuggestPanel } from './terminal/GhostSuggestPanel'
@@ -4062,6 +4063,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const interceptCdKey = (ev: KeyboardEvent): boolean => {
     const st = cdRef.current
     if (!st) return false
+    if (isDismissKey(ev)) {
+      // Swallowed on purpose: a bare Esc reaching readline is a META prefix
+      // that would corrupt the next keystroke.
+      closeCdSuggest()
+      return true
+    }
     switch (ev.key) {
       case 'ArrowDown':
         moveCdActive(1)
@@ -4095,11 +4102,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         }
         acceptCdSuggest(st.active, 'enter')
         return true
-      case 'Escape':
-        // Swallowed on purpose: a bare Esc reaching readline is a META prefix
-        // that would corrupt the next keystroke.
-        closeCdSuggest()
-        return true
       default:
         return false
     }
@@ -4129,9 +4131,45 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       id: 'ghost-complete',
       handle: (ev) => ghostKeyRef.current(ev),
     })
+    // Scrollback, last in the chain: an overlay that is open gets the key first.
+    // Answering it here is what makes a rebind work at all — xterm's own
+    // Shift+PageUp handling is compiled in, so the only way to move it onto
+    // another combo is to answer the key before xterm does and scroll ourselves.
+    const offScroll = router.register({
+      id: 'shortcuts',
+      handle: (ev) => {
+        // Parking in the scrollback has to count as a user scroll, or the tail
+        // room snaps straight back to the bottom and the rebind looks broken.
+        const mark = () => {
+          tailRoomUserScrollAtRef.current = performance.now()
+        }
+        if (matchShortcut(ev, 'scrollPageUp')) {
+          mark()
+          term.scrollPages(-1)
+          return true
+        }
+        if (matchShortcut(ev, 'scrollPageDown')) {
+          mark()
+          term.scrollPages(1)
+          return true
+        }
+        if (matchShortcut(ev, 'scrollToTop')) {
+          mark()
+          term.scrollToTop()
+          return true
+        }
+        if (matchShortcut(ev, 'scrollToBottom')) {
+          mark()
+          term.scrollToBottom()
+          return true
+        }
+        return false
+      },
+    })
     return () => {
       offCd()
       offGhost()
+      offScroll()
     }
   }, [termCreated])
 
@@ -4509,8 +4547,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   /** Keys the completion owns — every one of them only while something is showing. */
   const interceptGhostKey = (ev: KeyboardEvent): boolean => {
     // `Alt`+`/` is asked before the modifier guard: it is the whole point of the
-    // alt modifier here, and it never reaches the shell either way.
-    if (ev.altKey && !ev.ctrlKey && !ev.metaKey && ev.key === '/') return openGhostList()
+    // alt modifier here, and it never reaches the shell either way. The combo
+    // itself comes from the shortcut table (Settings → Shortcuts).
+    if (matchShortcut(ev, 'openCompletionList')) return openGhostList()
+    // Asked before the modifier guard, because a rebound dismiss key may carry
+    // one. Only while the list is on screen: a bare Esc reaching readline is a
+    // META prefix, but the completion's *reason* to own the key is to get the
+    // panel out of the way — with no panel there is nothing to dismiss, and an
+    // empty prompt now carries state (so the completion key can list from it)
+    // without that meaning Esc is ours.
+    if (ghostRef.current?.open && isDismissKey(ev)) {
+      ghostDismissedRef.current = true
+      closeGhost()
+      return true
+    }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return false
     const st = ghostRef.current
     if (!st) return false
@@ -4550,16 +4600,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // user typed, not insert the suggestion and swallow the key.
         if (!st.open) return false
         acceptGhost(st.active)
-        return true
-      case 'Escape':
-        // Only while the list is on screen. A bare Esc reaching readline is a META
-        // prefix, but the completion's *reason* to own the key is to get the panel
-        // out of the way — with no panel there is nothing to dismiss, and an empty
-        // prompt now carries state (so `Alt`+`/` can list from it) without that
-        // meaning Esc is ours.
-        if (!st.open) return false
-        ghostDismissedRef.current = true
-        closeGhost()
         return true
       default:
         return false

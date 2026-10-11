@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { isDismissKey } from '../lib/keybindings'
 
 interface ConfirmDialogProps {
   title: string
@@ -26,7 +27,7 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel()
+      if (isDismissKey(e)) onCancel()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

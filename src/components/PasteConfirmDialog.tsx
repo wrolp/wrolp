@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useI18n } from '../i18n'
+import { isDismissKey } from '../lib/keybindings'
 
 interface PasteConfirmDialogProps {
   /** Number of lines in the paste (shown to the user). */
@@ -46,7 +47,7 @@ export function PasteConfirmDialog({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel()
+      if (isDismissKey(e)) onCancel()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

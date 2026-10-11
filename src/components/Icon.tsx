@@ -72,6 +72,8 @@ export type IconName =
   | 'backspace'
   | 'eraser'
   | 'selection'
+  // Settings → Shortcuts. Nothing else in the set reads as "keys".
+  | 'keyboard'
   // The status bar's device chip: which machine, proven by its host key.
   | 'shield'
   // Shell flavours for local-terminal entries. All five are a terminal window
@@ -536,6 +538,20 @@ const PATHS: Record<IconName, ReactNode> = {
   // A dashed frame is the universal "everything inside is selected" mark, which is
   // what 全选 means here; `🔤` was standing in for it with a full-colour glyph.
   selection: <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="4 3" />,
+  // lucide: keyboard
+  keyboard: (
+    <>
+      <path d="M10 8h.01" />
+      <path d="M12 12h.01" />
+      <path d="M14 8h.01" />
+      <path d="M16 12h.01" />
+      <path d="M18 8h.01" />
+      <path d="M6 8h.01" />
+      <path d="M7 16h10" />
+      <path d="M7 12h4" />
+      <rect width="20" height="16" x="2" y="4" rx="2" />
+    </>
+  ),
 }
 
 export function Icon({
