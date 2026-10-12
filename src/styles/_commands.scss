@@ -222,6 +222,11 @@
 // It is the only editable thing in the window, so it gets the same recessed well the
 // nav filter uses (`.nav-search`) — and it reads in both themes, where a
 // `border-bottom` alone made the row look like part of the header.
+//
+// No border at all — not even on `:focus-within`. The field autofocuses when the
+// panel opens, so a focus ring would be permanent blue furniture around the row
+// (and around the mode switch, which lives inside it). The background stepping up
+// one notch is what carries the focus cue instead.
 .cmd-list-search {
   display: flex;
   align-items: center;
@@ -231,13 +236,12 @@
   margin: 10px 14px 6px;
   padding: 0 10px;
   background: $bg-input;
-  border: 1px solid $border;
   border-radius: var(--r-2);
   color: $text-muted;
-  transition: border-color var(--d-1) var(--e-out);
+  transition: background var(--d-1) var(--e-out);
 
   &:focus-within {
-    border-color: $border-focus;
+    background: $bg-hover;
   }
 
   svg {
@@ -249,7 +253,10 @@
     min-width: 0;
     background: transparent;
     border: none;
-    &:focus:not(:focus-visible) {
+    // The UA focus ring draws a blue square around the field — and since the panel
+    // autofocuses, that square is on screen every time it opens. The row's own
+    // background step (`.cmd-list-search:focus-within`) is the focus cue here.
+    &:focus {
       outline: none;
     }
     color: $text-primary;
@@ -794,11 +801,12 @@
 // ===== Command list: bucketing switch + custom groups =====
 
 // Segmented control at the right of the search row (by connection / by group).
+// No outer border, matching the search field it sits in: the single divider
+// between the two sides is what says "segmented", not a box around them.
 .cmd-list-mode-switch {
   display: flex;
   flex-shrink: 0;
   overflow: hidden;
-  border: 1px solid $border;
   border-radius: var(--r-1);
 }
 
