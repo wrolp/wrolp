@@ -110,7 +110,11 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
 
   const failedText = (failed: string[]) =>
     failed.length
-      ? '\n\n' + t('failedItems') + '\n' + failed.slice(0, 5).join('\n') + (failed.length > 5 ? '\n…' : '')
+      ? '\n\n' +
+        t('failedItems') +
+        '\n' +
+        failed.slice(0, 5).join('\n') +
+        (failed.length > 5 ? '\n…' : '')
       : ''
 
   /** FUT1: one-click export of legacy SQLite-backed sessions into files. */
@@ -217,10 +221,14 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
         >
           <option value="">{t('allConnections')}</option>
           {connections.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
           ))}
         </select>
-        <button onClick={reload} className="refresh-btn" title={t('refresh')}><Icon name="refresh" /></button>
+        <button onClick={reload} className="refresh-btn" title={t('refresh')}>
+          <Icon name="refresh" />
+        </button>
         <button onClick={handleMigrateLegacy} className="refresh-btn" title={t('migrateLegacy')}>
           <Icon name="upload" />
         </button>

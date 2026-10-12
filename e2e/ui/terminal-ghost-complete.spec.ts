@@ -546,6 +546,116 @@ test('output that scrolls the view takes a standing tail with it', async ({ page
   await expect(ghost(page)).toHaveText('')
 })
 
+/**
+ * A shell that has history: ↑ replaces the input row with an older command and ↓
+ * puts the typed line back — readline's behaviour, down to the repaint shape that
+ * makes it hard (the row is rewritten in place, so the tail's row guard still
+ * matches). Without this the arrow key is swallowed as a pure control sequence
+ * and nothing is ever recalled, which is what made the ghost bug unreproducible.
+ */
+async function installHistoryShell(page: Page, prompt: string, recalled: string) {
+  await page.evaluate(
+    ({ p, history }) => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+          }
+        }
+      ).__TAURI_INTERNALS__
+      const orig = internals.invoke.bind(internals)
+      const pending: string[] = []
+      let typed = ''
+      let typedBeforeRecall = '' // ↓ puts back the line ↑ replaced, not an empty one
+      internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'local_send_input') {
+          const data = String(args.data ?? '')
+          const repaint = () => {
+            pending.push(
+              `\x1b[1;${p.length + 1}H${typed}\x1b[K\x1b[1;${p.length + typed.length + 1}H`,
+            )
+          }
+          if (/^\x1b(?:\[[\d;]*|O)A$/.test(data)) {
+            typedBeforeRecall = typed
+            typed = history
+            repaint()
+          } else if (/^\x1b(?:\[[\d;]*|O)B$/.test(data)) {
+            typed = typedBeforeRecall
+            repaint()
+          } else {
+            const deletes = (data.match(/\x7f/g) ?? []).length
+            if (deletes) typed = typed.slice(0, Math.max(0, typed.length - deletes))
+            const visible = data.replace(/[\x00-\x1f\x7f]/g, '')
+            if (visible) typed += visible
+            if (deletes || visible) repaint()
+          }
+        }
+        const res = await orig(cmd, args)
+        if (cmd === 'poll_output') return [...(res as string[]), ...pending.splice(0)]
+        return res
+      }
+    },
+    { p: prompt, history: recalled },
+  )
+}
+
+test('↑/↓ history recall takes the standing tail with it', async ({ page }) => {
+  // What the user saw: type `git s`, get the grey `tatus -sb`, press ↑ to reach
+  // back to an older command — and the tail stayed exactly where it was, painted
+  // on top of the recalled line.
+  //
+  // The overlay is `position: fixed` and the shell rewrites the recalled command
+  // onto the SAME buffer row, so neither of the refresh's two guards can catch it:
+  // the row still matches, and the recalled command is not an extension of what we
+  // matched — a `startsWith` mismatch is ambiguous with a repaint still in flight,
+  // which is why the tail has to be retired on the keystroke that asked for the
+  // recall instead of waiting for the echo.
+  const RECALLED = 'journalctl -u nginx --since today'
+  const CMD_ENTRY = { id: 'lt-cmd', name: 'Cmd', cwd: '', shell: 'cmd' }
+  const WIN_PROMPT = 'D:\\repo>'
+  await installLibrary(page, {
+    connections: [],
+    localTerminals: [CMD_ENTRY],
+    pollOutputChunks: [[WIN_PROMPT]],
+  })
+  // A shell with a history: ↑ swaps the whole row for an older command, exactly as
+  // readline does — repaint the prompt's row, erase the rest, park the caret.
+  await installHistoryShell(page, WIN_PROMPT, RECALLED)
+  await page.locator('.conn-item.local-term-item').filter({ hasText: CMD_ENTRY.name }).click()
+  await expect(page.locator('.xterm-rows')).toContainText(WIN_PROMPT)
+  await page.locator('.xterm-screen').click()
+
+  await page.keyboard.type('git s', { delay: 60 })
+  await expect(ghost(page)).toHaveText('tatus -sb')
+
+  await page.keyboard.press('ArrowUp')
+  await expect
+    .poll(() => renderedLine(page), { timeout: 5_000, message: 'the recalled line' })
+    .toBe(`${WIN_PROMPT}${RECALLED}`)
+
+  // Gone, not merely re-anchored: a tail drawn over the recalled command is the
+  // bug, and `visibility: hidden` on an empty element is what "gone" means here.
+  await expect(ghost(page)).toHaveText('')
+
+  // And the shell's own history still works — the key was the shell's all along.
+  const localSent = async () =>
+    (await invokedCalls(page))
+      .filter((c) => c.cmd === 'local_send_input')
+      .map((c) => String(c.args.data))
+  expect(await localSent()).toContain('\x1b[A')
+
+  // Typing after a recall is a fresh question: ↓ puts the pre-recall line back,
+  // and what the tail then offers is judged against THAT line, not the recalled
+  // one the overlay was last anchored to.
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.type('x', { delay: 60 })
+  await expect
+    .poll(() => renderedLine(page), { timeout: 5_000, message: 'the edited line' })
+    .toBe(`${WIN_PROMPT}git sx`)
+  // `git sx` matches no candidate, so there is nothing to paint.
+  await expect(ghost(page)).toBeHidden()
+})
+
 test('Enter submits what was typed, never the standing suggestion', async ({ page }) => {
   // A grey tail is an offer, not a decision. With the candidate list closed, Enter
   // belongs to the shell: swallowing it to insert the completion turned "run this"

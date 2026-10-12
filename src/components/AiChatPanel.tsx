@@ -1,4 +1,12 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type ReactNode } from 'react'
+import {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent, AiPromptTemplate } from '../types'
@@ -985,7 +993,9 @@ export default function AiChatPanel({
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items
     if (!items) return
-    const imageItems = Array.from(items).filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+    const imageItems = Array.from(items).filter(
+      (it) => it.kind === 'file' && it.type.startsWith('image/'),
+    )
     if (imageItems.length === 0) return
     e.preventDefault()
     const readers = imageItems.map(
@@ -1387,7 +1397,8 @@ export default function AiChatPanel({
                         title="Max rounds per run"
                       >
                         <Icon name="refresh" size={13} />
-                        Max rounds: {maxAgentRounds === 0 ? t('aiMaxRoundsUnlimited') : maxAgentRounds}
+                        Max rounds:{' '}
+                        {maxAgentRounds === 0 ? t('aiMaxRoundsUnlimited') : maxAgentRounds}
                       </button>
                     </div>
                   )}
@@ -2286,12 +2297,12 @@ function ToolCallCard({
     const isBulkSet = tool.name === 'set_ui_settings' || tool.name === 'reset_ui_settings'
     if (isBulkSet && entries.length > 3) {
       const changes = args.changes
-      const count = changes ? Object.keys(changes as Record<string, unknown>).length : entries.length
+      const count = changes
+        ? Object.keys(changes as Record<string, unknown>).length
+        : entries.length
       summary += ` · ${count} keys`
     } else if (entries.length) {
-      const parts = entries.map(
-        ([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`,
-      )
+      const parts = entries.map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
       const joined = parts.join(', ')
       // Truncate at 80 chars so the ellipsis in .ai-tool-name kicks in
       // before the summary eats the entire tool-head row.

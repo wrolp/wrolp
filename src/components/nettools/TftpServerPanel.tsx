@@ -195,7 +195,9 @@ export default function TftpServerPanel() {
 
       <div className="nt-card" style={{ flex: '1', minHeight: '150px' }}>
         <div className="nt-card-title">
-          <span>{t('netToolTftpServer')} / {t('ntStatusCol')}</span>
+          <span>
+            {t('netToolTftpServer')} / {t('ntStatusCol')}
+          </span>
           <button className="nt-btn nt-btn-sm" onClick={clear}>
             {t('ntClearFinished')}
           </button>

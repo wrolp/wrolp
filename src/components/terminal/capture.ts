@@ -97,7 +97,12 @@ export function giveUpCapture(term: Terminal, c: CaptureState): void {
  * prompt/size endings, or later from the silence timeout) once capture has
  * ended, so the caller can drop the capture state and resume passthrough.
  */
-export function feedCapture(term: Terminal, c: CaptureState, chunk: string, onEnd: () => void): void {
+export function feedCapture(
+  term: Terminal,
+  c: CaptureState,
+  chunk: string,
+  onEnd: () => void,
+): void {
   c.buf += stripAnsi(chunk)
   c.bytes += chunk.length
 

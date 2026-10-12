@@ -1,9 +1,5 @@
 import { Terminal } from '@xterm/xterm'
-import {
-  TableSpec,
-  colorizeTableLine,
-  looksLikeTableHeader,
-} from '../../lib/tableOutput'
+import { TableSpec, colorizeTableLine, looksLikeTableHeader } from '../../lib/tableOutput'
 import { stripAnsi } from '../../lib/termHighlight'
 
 // ---- generic aligned-table highlight (df / ps / free / ss / mount / ...) ----
@@ -43,7 +39,12 @@ export const writeTableLine = (term: Terminal, c: TableCaptureState, raw: string
   c.lineCount++
 }
 
-export const feedTable = (term: Terminal, c: TableCaptureState, chunk: string, onEnd: () => void) => {
+export const feedTable = (
+  term: Terminal,
+  c: TableCaptureState,
+  chunk: string,
+  onEnd: () => void,
+) => {
   if (c.done) return
   c.bytes += chunk.length
 

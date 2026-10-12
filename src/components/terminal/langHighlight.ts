@@ -84,7 +84,10 @@ export const commandHighlighter = (
       return { lang: 'git', highlighter: (t) => highlightMultiline(t, 'git') }
   }
   if (prog === 'tree') return { lang: 'tree', highlighter: (t) => highlightMultiline(t, 'tree') }
-  if (prog === 'docker' && ['ps', 'images', 'image', 'container', 'compose', 'service'].includes(sub))
+  if (
+    prog === 'docker' &&
+    ['ps', 'images', 'image', 'container', 'compose', 'service'].includes(sub)
+  )
     return { lang: 'docker', highlighter: (t) => highlightMultiline(t, 'docker') }
   if (isPrintLike(cmd)) {
     const lang = langFromPrintCommand(cmd)

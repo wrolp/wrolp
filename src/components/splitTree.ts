@@ -44,7 +44,10 @@ export function collectLeaves(node: SplitNode, acc: SplitLeaf[] = []): SplitLeaf
   return acc
 }
 
-export function buildTabToLeaf(node: SplitNode, map: Map<number, string> = new Map()): Map<number, string> {
+export function buildTabToLeaf(
+  node: SplitNode,
+  map: Map<number, string> = new Map(),
+): Map<number, string> {
   if (node.type === 'leaf') {
     if (node.tabId != null) map.set(node.tabId, node.id)
   } else {
@@ -91,7 +94,11 @@ export function splitLeaf(
 
 // Remove a leaf entirely; collapse branches with a single remaining child.
 // Returns `null` only when the root node itself was the removed leaf.
-export function removeLeafById(node: SplitNode, leafId: string, makeId: () => string): SplitNode | null {
+export function removeLeafById(
+  node: SplitNode,
+  leafId: string,
+  makeId: () => string,
+): SplitNode | null {
   if (node.type === 'leaf') {
     if (node.id === leafId) return null
     return node

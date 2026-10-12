@@ -13,14 +13,7 @@
 // P1 = known-command registry only. Generic column-alignment detection (P2)
 // is left as future work; `spec`/`confirmed` fields are kept for it.
 
-export type ColumnRole =
-  | 'text'
-  | 'path'
-  | 'num'
-  | 'pct'
-  | 'status'
-  | 'addr'
-  | 'time'
+export type ColumnRole = 'text' | 'path' | 'num' | 'pct' | 'status' | 'addr' | 'time'
 
 export interface TableSpec {
   columns: ColumnRole[]
@@ -28,7 +21,9 @@ export interface TableSpec {
 
 const TABLE_PROGRAMS: Record<string, TableSpec> = {
   df: { columns: ['path', 'num', 'num', 'num', 'pct', 'path'] },
-  'ps aux': { columns: ['text', 'num', 'pct', 'pct', 'num', 'num', 'text', 'text', 'text', 'time', 'text'] },
+  'ps aux': {
+    columns: ['text', 'num', 'pct', 'pct', 'num', 'num', 'text', 'text', 'text', 'time', 'text'],
+  },
   'ps -ef': { columns: ['text', 'num', 'num', 'num', 'text', 'text', 'time', 'text'] },
   free: { columns: ['text', 'num', 'num', 'num', 'num', 'num', 'num'] },
   ss: { columns: ['text', 'status', 'num', 'num', 'addr', 'addr'] },

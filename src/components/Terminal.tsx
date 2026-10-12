@@ -163,6 +163,7 @@ import {
   cdCacheKey,
   cdCommandFor,
   clearLineBytes,
+  isHistoryRecall,
   parseCdInput,
   planCdAccept,
   projectInputLine,
@@ -4435,6 +4436,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // lands — so close here rather than projecting onto a line that no longer
     // exists.
     if (/^[\r\n]+$/.test(data)) {
+      ghostLineRef.current = null
+      ghostRowRef.current = -1
+      evaluateGhost(null)
+      return
+    }
+    // ↑/↓ replace the whole line with a command we never saw, and the shell
+    // rewrites it on the very row the tail was placed on — so neither of
+    // `refreshGhost`'s guards can catch it: the row still matches, and the
+    // recalled command is not an extension of what we matched. Worse, the echo
+    // has not landed yet, so `applyKeystroke` answers null and the line below
+    // falls back to the buffer's stale pre-recall text. Retire the tail now, on
+    // the keystroke that asked for the recall; the next one judges the new line.
+    if (isHistoryRecall(data)) {
       ghostLineRef.current = null
       ghostRowRef.current = -1
       evaluateGhost(null)

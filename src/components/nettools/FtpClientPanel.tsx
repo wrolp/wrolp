@@ -262,7 +262,10 @@ export default function FtpClientPanel() {
           <div className="nt-note">{t('ntConnectFirst')}</div>
         </div>
       ) : (
-        <div className="nt-card" style={{ flex: '1', minHeight: '200px', display: 'flex', flexDirection: 'column' }}>
+        <div
+          className="nt-card"
+          style={{ flex: '1', minHeight: '200px', display: 'flex', flexDirection: 'column' }}
+        >
           <div className="nt-card-title">
             <span className="nt-status" style={{ marginRight: 'auto' }}>
               <span className="nt-dot on" />

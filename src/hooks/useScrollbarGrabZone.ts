@@ -13,10 +13,7 @@ import { useEffect, useState, type RefObject } from 'react'
  * Bind this to a container that stays mounted for the component's whole life;
  * the listeners are attached once on mount.
  */
-export function useScrollbarGrabZone(
-  target: RefObject<HTMLElement | null>,
-  zone = 14,
-): boolean {
+export function useScrollbarGrabZone(target: RefObject<HTMLElement | null>, zone = 14): boolean {
   const [near, setNear] = useState(false)
 
   useEffect(() => {

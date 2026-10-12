@@ -227,7 +227,11 @@ export default function HttpServerPanel() {
                 placeholder="cert.pem"
                 disabled={running}
               />
-              <button className="nt-btn nt-btn-sm" onClick={pickFile(setCertPath)} disabled={running}>
+              <button
+                className="nt-btn nt-btn-sm"
+                onClick={pickFile(setCertPath)}
+                disabled={running}
+              >
                 {t('ntBrowse')}
               </button>
             </div>
@@ -243,7 +247,11 @@ export default function HttpServerPanel() {
                 placeholder="key.pem"
                 disabled={running}
               />
-              <button className="nt-btn nt-btn-sm" onClick={pickFile(setKeyPath)} disabled={running}>
+              <button
+                className="nt-btn nt-btn-sm"
+                onClick={pickFile(setKeyPath)}
+                disabled={running}
+              >
                 {t('ntBrowse')}
               </button>
             </div>

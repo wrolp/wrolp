@@ -234,6 +234,23 @@ export function applyKeystroke(line: string, data: string): string | null {
 }
 
 /**
+ * True for the keys a shell reads as history recall: ↑/↓, and readline's ^P/^N.
+ *
+ * These are the keystrokes that make the shell REPLACE the input line with a
+ * command the projection never saw, rather than edit the one it is holding — so
+ * anything placed against the current line has to be retired on the keystroke
+ * itself. Waiting for the echo does not work: the only evidence by then is a row
+ * holding different text, which a repaint still in flight looks exactly like.
+ *
+ * Both encodings are recognised — CSI (`ESC [ A`, with or without modifiers) and
+ * SS3 (`ESC O A`, what readline sends once the keypad is in application mode).
+ */
+export function isHistoryRecall(data: string): boolean {
+  if (data === '\x10' || data === '\x0e') return true // ^P / ^N
+  return /^\x1b(?:\[[\d;]*|O)[AB]$/.test(data)
+}
+
+/**
  * The part of `lag` the buffer has NOT caught up with yet — the tail of what was
  * typed and sent but still has no echo on screen. Callers that need the line "as
  * the user typed it" (the command history, for one) append this to `live`.

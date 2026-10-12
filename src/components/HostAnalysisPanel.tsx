@@ -9,7 +9,10 @@ interface HostAnalysisPanelProps {
   connections: ConnectionConfig[]
 }
 
-export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabId, connections }) => {
+export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({
+  activeTabId,
+  connections,
+}) => {
   const { t } = useI18n()
   const [analysis, setAnalysis] = useState<HostAnalysis | null>(null)
   const [loading, setLoading] = useState(false)
@@ -43,7 +46,8 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
     }
   }, [activeTabId])
 
-  const handleToolClick = useCallback(async (toolName: string) => {
+  const handleToolClick = useCallback(
+    async (toolName: string) => {
       if (activeTabId === null) return
       setSelectedTool(toolName)
       setHelpLoading(true)
@@ -56,18 +60,23 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
       } finally {
         setHelpLoading(false)
       }
-  }, [activeTabId])
+    },
+    [activeTabId],
+  )
 
   const filteredPackages = (analysis?.packages ?? []).filter((p) =>
     p.name.toLowerCase().includes(pkgSearch.toLowerCase()),
   )
 
-  const conn = activeTabId !== null
+  const conn =
+    activeTabId !== null
       ? connections.find((c) => c.id === analysis?.tabId?.toString() || analysis)
       : null
 
-  const connectionName = activeTabId !== null
-    ? connections.find(c => analysis && c.id.toString() === String(analysis.tabId))?.name ?? `Tab ${activeTabId}`
+  const connectionName =
+    activeTabId !== null
+      ? (connections.find((c) => analysis && c.id.toString() === String(analysis.tabId))?.name ??
+        `Tab ${activeTabId}`)
       : '—'
 
   return (
@@ -196,7 +205,9 @@ export const HostAnalysisPanel: React.FC<HostAnalysisPanelProps> = ({ activeTabI
                 </tbody>
               </table>
               {filteredPackages.length > 200 && (
-                <div className="pkg-more">{t('pkgShowingFirst', { shown: 200, total: filteredPackages.length })}</div>
+                <div className="pkg-more">
+                  {t('pkgShowingFirst', { shown: 200, total: filteredPackages.length })}
+                </div>
               )}
               {filteredPackages.length === 0 && (
                 <div className="analysis-empty">{t('pkgNoMatch')}</div>
