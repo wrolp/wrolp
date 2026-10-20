@@ -99,6 +99,7 @@ const en = {
   alwaysOnTopOff: 'Always on top (off)',
 
   // Tabs
+  tabHome: 'Home',
   tabSettings: 'Settings',
   statusDisconnected: 'Disconnected',
   statusConnected: 'Connected',
@@ -510,6 +511,11 @@ const en = {
   statusShapesLabel: 'Distinguish status by shape',
   statusShapesHelp:
     'Error and warning dots change silhouette as well as colour, so state stays readable without colour vision.',
+  alwaysShowHomeLabel: 'Always show Home',
+  alwaysShowHomeHelp:
+    'Keep the Home page pinned as the first tab, so it is one click away while sessions are open. Off, it only appears while no tab is left.',
+  homeUnpinnedHint:
+    'Home is no longer pinned to the tab bar — turn "Always show Home" back on in Settings → Appearance.',
   windowOpacityLightDisabled:
     'The window stays opaque in the light theme (translucency lets the desktop through and looks dirty).',
   // Device identity (host key fingerprint)
@@ -917,6 +923,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   paste: 'Paste',
   closeTerminal: 'Close Terminal',
   closeTab: 'Close tab',
+  unpinHome: 'Unpin Home',
   shellTerminal: 'Terminal',
   // The per-pane button docks an AI pane beside *that* terminal, so the label
   // says "dock" — "AI Chat" alone would read as the inspector's global tab.

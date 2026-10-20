@@ -107,7 +107,7 @@ test('a multi-line snippet is inserted like a paste (guard + quoted-insert)', as
   await installTauriMock(page, { connections: [DEMO_CONN], commandSnippets: MULTI })
   await page.goto('/')
   await page.locator('.connection-item').click()
-  await expect(page.locator('.tab-item')).toContainText('Demo')
+  await expect(page.locator('.tab-item:not(.tab-home)')).toContainText('Demo')
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
 
   await page.keyboard.press('Control+Shift+p')

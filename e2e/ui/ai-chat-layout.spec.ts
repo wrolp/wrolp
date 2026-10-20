@@ -180,7 +180,7 @@ test('asking the assistant opens the inspector, not a workspace tab', async ({ p
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
-  await expect(page.locator('.tab-item')).toHaveCount(1)
+  await expect(page.locator('.tab-item:not(.tab-home)')).toHaveCount(1)
   await expect(page.locator('.inspector')).toHaveCount(0)
 
   await page.locator('.titlebar-btn.ai-chat-btn').click()
@@ -188,7 +188,7 @@ test('asking the assistant opens the inspector, not a workspace tab', async ({ p
   // The old behaviour added a second tab whose pane covered the terminal. The
   // assistant is a view of the session you are already looking at, so the tab
   // count must not move and the terminal must stay on screen.
-  await expect(page.locator('.tab-item')).toHaveCount(1)
+  await expect(page.locator('.tab-item:not(.tab-home)')).toHaveCount(1)
   await expect(page.locator('.inspector-tabs .tab-btn')).toHaveText([
     'Analysis',
     'Docker',

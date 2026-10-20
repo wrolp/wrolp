@@ -316,9 +316,17 @@ export interface TabInfo {
   connectionId?: string
   connectionName: string
   host: string
-  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'suspect' | 'settings'
+  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'suspect' | 'settings' | 'home'
   errorMessage?: string
-  tabType: 'terminal' | 'settings' | 'dockerLog' | 'localShell' | 'serial' | 'telnet' | 'fileEditor'
+  tabType:
+    | 'terminal'
+    | 'settings'
+    | 'dockerLog'
+    | 'localShell'
+    | 'serial'
+    | 'telnet'
+    | 'fileEditor'
+    | 'home'
   /**
    * Which machine this tab is actually talking to, from the backend's
    * `host-identified` event. Absent until a session has completed a handshake —

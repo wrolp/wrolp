@@ -358,6 +358,16 @@
   user-select: none;
 }
 
+// The pinned tab's body: the page across the whole main area, the same surface the
+// Settings overlay takes. `.welcome` fills it through `flex: 1`.
+.welcome-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: $bg-primary;
+}
+
 .welcome-hero {
   display: flex;
   flex-direction: column;
@@ -391,6 +401,17 @@
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+
+// Whether Home keeps a tab bar entry of its own. Muted and below the two real
+// actions: it is a preference *about* the page, not something to do here.
+.welcome-pin {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  font-size: var(--fs-sm);
+  color: $text-muted;
 }
 
 .welcome-grid {

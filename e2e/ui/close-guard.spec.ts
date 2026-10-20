@@ -88,7 +88,7 @@ test('closing the workspace tab with an open file asks first', async ({ page }) 
   await expect(dialog).toContainText('open file')
   await dialog.locator('.btn-danger').click()
   // The workspace and the file tab it owned are both gone.
-  await expect(page.locator('.tab-item')).toHaveCount(0)
+  await expect(page.locator('.tab-item:not(.tab-home)')).toHaveCount(0)
 })
 
 test('closing a file tab discards only that file, not its session', async ({ page }) => {

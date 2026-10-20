@@ -42,7 +42,7 @@ async function boot(page: Page, extra: TauriMockOptions = {}) {
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
-  await expect(page.locator('.tab-item')).toHaveCount(1)
+  await expect(page.locator('.tab-item:not(.tab-home)')).toHaveCount(1)
 }
 
 const tabBtns = (page: Page) => page.locator('.inspector-tabs .tab-btn')

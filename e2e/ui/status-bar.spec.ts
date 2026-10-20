@@ -18,7 +18,7 @@ async function bootWithSession(page: import('@playwright/test').Page) {
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await page.goto('/')
   await page.locator('.connection-item').click()
-  await expect(page.locator('.tab-item')).toHaveCount(1)
+  await expect(page.locator('.tab-item:not(.tab-home)')).toHaveCount(1)
 }
 
 test('the status bar carries the session state, target and geometry', async ({ page }) => {

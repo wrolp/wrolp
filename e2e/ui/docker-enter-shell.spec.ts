@@ -35,7 +35,7 @@ async function boot(page: Page) {
   })
   await page.goto('/')
   await page.locator('.connection-item').first().click()
-  await expect(page.locator('.tab-item')).toContainText('Demo')
+  await expect(page.locator('.tab-item:not(.tab-home)')).toContainText('Demo')
 }
 
 async function enterShell(page: Page) {

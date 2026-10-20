@@ -25,7 +25,7 @@ test('a tab pairs a kind icon with a label that carries no glyph of its own', as
   await bootEnglish(page)
   await page.locator('.connection-item').click()
 
-  const tab = page.locator('.tab-item')
+  const tab = page.locator('.tab-item:not(.tab-home)')
   await expect(tab.locator('svg.tab-icon')).toHaveCount(1)
   await expect(tab.locator('.tab-label')).toHaveText('Demo')
 

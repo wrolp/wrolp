@@ -435,6 +435,15 @@ const DEFS: SettingDef[] = [
     write: (v) => setLang(v as Lang),
     describe: 'Interface language.',
   },
+  {
+    key: 'ui.alwaysShowHome',
+    kind: 'boolean',
+    group: 'ui',
+    default: true,
+    storage: { kind: 'localStorage', key: 'wrolp-always-show-home' },
+    describe:
+      'Keep the Home page pinned as the first tab bar entry, so it can be reopened while sessions are open. Off means Home only appears while no tab is open at all.',
+  },
 
   // ---- security ----------------------------------------------------------
   {

@@ -237,7 +237,7 @@ test('a local container’s files open with no session tab at all', async ({ pag
   // nothing but the CLI, so it now appears over an empty workspace.
   await expect(page.locator('.file-panel')).toBeVisible()
   await expect(page.locator('.tree-row.file', { hasText: 'entrypoint.sh' })).toBeVisible()
-  await expect(page.locator('.tab-item')).toHaveCount(0)
+  await expect(page.locator('.tab-item:not(.tab-home)')).toHaveCount(0)
   await expect
     .poll(async () => (await invokedCalls(page)).find((c) => c.cmd === 'target_list_files')?.args)
     .toMatchObject({ target: { kind: 'dockerLocal', container: LOCAL.name }, path: '/' })
@@ -329,7 +329,7 @@ test('with no terminal tab open, View logs takes the main area as its own tab', 
   // follow stream, so nothing may keep it mounted.
   await page.locator('.tab-item.active .tab-close').click()
   await expect(page.locator('.docker-log-viewer')).toHaveCount(0)
-  await expect(page.locator('.tab-item')).toHaveCount(0)
+  await expect(page.locator('.tab-item:not(.tab-home)')).toHaveCount(0)
 })
 
 test('an installed CLI with no daemon offers one retry, and it lifts when the daemon answers', async ({

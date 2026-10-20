@@ -59,6 +59,10 @@ export interface WelcomePageProps {
   onNewConnection: () => void
   /** No argument opens the built-in default shell; an entry reopens that one. */
   onOpenLocalTerminal: (entry?: LocalTerminalEntry) => void
+  /** Whether Home is pinned as a tab bar entry (see 「一直显示首页」). The page can
+   *  be reached from both states, so the switch has to be on both. */
+  alwaysShowHome: boolean
+  onAlwaysShowChange: (on: boolean) => void
   onOpenFiles: () => void
   onOpenNetTools: () => void
   onOpenCommandList: () => void
@@ -72,6 +76,8 @@ export function WelcomePage({
   onOpenConnection,
   onNewConnection,
   onOpenLocalTerminal,
+  alwaysShowHome,
+  onAlwaysShowChange,
   onOpenFiles,
   onOpenNetTools,
   onOpenCommandList,
@@ -149,6 +155,21 @@ export function WelcomePage({
             <Icon name="desktop" size={14} />
             <span>{t('welcomeLocalTerm')}</span>
           </button>
+        </div>
+        {/* The switch decides whether this page keeps a tab bar entry of its own,
+            so it belongs here rather than only in Settings — this is the page that
+            disappears when it is off. */}
+        <div className="welcome-pin">
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={alwaysShowHome}
+            aria-label={t('alwaysShowHomeLabel')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onAlwaysShowChange(!alwaysShowHome)}
+          />
+          <span>{t('alwaysShowHomeLabel')}</span>
         </div>
       </div>
 

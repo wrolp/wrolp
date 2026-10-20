@@ -88,7 +88,7 @@ test('a chunk ending in a number becomes visible once output goes quiet', async 
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
-  await expect(page.locator('.tab-item')).toContainText('Demo')
+  await expect(page.locator('.tab-item:not(.tab-home)')).toContainText('Demo')
   await expect(page.locator('.xterm-helper-textarea')).toBeAttached()
 
   // Past the silent-gap flush (HL_FLUSH_DELAY_MS = 300ms) the whole line is shown.

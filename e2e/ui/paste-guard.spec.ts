@@ -23,7 +23,7 @@ async function openTerminal(page: Page, pollOutputChunks: string[][]) {
   await installTauriMock(page, { connections: [DEMO_CONN], pollOutputChunks })
   await page.goto('/')
   await page.locator('.connection-item').click()
-  await expect(page.locator('.tab-item')).toContainText('Demo')
+  await expect(page.locator('.tab-item:not(.tab-home)')).toContainText('Demo')
   // `attached` (not `visible`): the guard listens on the container in the
   // capture phase, which works regardless of the pane's visibility state.
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
@@ -155,7 +155,7 @@ test('a multi-line paste into a serial session is dropped with a toast', async (
   await installTauriMock(page, { connections: [SERIAL_CONN] })
   await page.goto('/')
   await page.locator('.connection-item').click()
-  await expect(page.locator('.tab-item')).toContainText('Console')
+  await expect(page.locator('.tab-item:not(.tab-home)')).toContainText('Console')
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
 
   await pasteIntoTerminal(page, 'line one\nline two')

@@ -30,7 +30,7 @@ async function openPanel(page: Page) {
   await installTauriMock(page, { connections: [DEMO_CONN], commandSnippets: [DEMO_SNIPPET] })
   await page.goto('/')
   await page.locator('.connection-item').first().click()
-  await expect(page.locator('.tab-item')).toContainText('Demo')
+  await expect(page.locator('.tab-item:not(.tab-home)')).toContainText('Demo')
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
   await page.keyboard.press('Control+Shift+p')
   await expect(page.locator('.cmd-list-float')).toBeVisible()

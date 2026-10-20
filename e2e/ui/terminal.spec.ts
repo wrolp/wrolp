@@ -23,7 +23,7 @@ test('clicking a connection opens a tab and starts the SSH connect flow', async 
   await page.locator('.connection-item').click()
 
   // Tab + pane header show the connection name.
-  await expect(page.locator('.tab-item')).toContainText('Demo')
+  await expect(page.locator('.tab-item:not(.tab-home)')).toContainText('Demo')
   await expect(page.locator('.term-pane-title')).toContainText('Demo')
 
   // The backend connect command must have been invoked.
@@ -148,7 +148,7 @@ test('the hidden pwd query is never sent before the submitted newline', async ({
   })
   await page.goto('/')
   await page.locator('.connection-item').click()
-  await expect(page.locator('.tab-item')).toContainText('Demo')
+  await expect(page.locator('.tab-item:not(.tab-home)')).toContainText('Demo')
 
   const ta = page.locator('.xterm-helper-textarea')
   await expect(ta).toBeAttached()

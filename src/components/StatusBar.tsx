@@ -47,17 +47,20 @@ export function StatusBar({
 
   const dot = tab ? DOTS[tab.status as keyof typeof DOTS] : undefined
   const stateWord = tab ? STATE_KEYS[tab.status as keyof typeof STATE_KEYS] : undefined
-  const target = tab && tab.tabType !== 'settings' ? tab : null
+  // Home and Settings sit in the bar but talk to nothing, so neither has a
+  // connection to read out — they name themselves instead.
+  const isOwnPage = tab?.tabType === 'settings' || tab?.tabType === 'home'
+  const target = tab && !isOwnPage ? tab : null
 
   return (
     <div className="status-bar">
       {/* Left: what the window is connected to, and how big the grid is. */}
       <div className="status-bar-left">
         {!tab && <span className="status-item dim">{t('noActiveConnection')}</span>}
-        {tab?.tabType === 'settings' && (
+        {isOwnPage && (
           <span className="status-item">
-            <Icon name="settings" size={12} />
-            <span>{t('tabSettings')}</span>
+            <Icon name={tab?.tabType === 'home' ? 'home' : 'settings'} size={12} />
+            <span>{t(tab?.tabType === 'home' ? 'tabHome' : 'tabSettings')}</span>
           </span>
         )}
         {target && (

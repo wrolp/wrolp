@@ -208,6 +208,22 @@ let cachedConnections: ConnectionConfig[] = []
 // Auto-incrementing tab id counter
 let nextTabId = 1
 
+// The pinned Home tab's id. Negative so it can never collide with `nextTabId`, and
+// fixed so unpinning and re-pinning reuse one identity — nothing outside `tabs`
+// remembers it, but a stable id keeps React's keyed list from churning the entries
+// after it.
+const HOME_TAB_ID = -1
+
+// The pinned Home tab. It owns no session and no pane, so — exactly like the
+// Settings entry — it is a tab bar entry whose body is an overlay on the stage.
+const HOME_TAB: TabInfo = {
+  tabId: HOME_TAB_ID,
+  connectionName: 'Home',
+  host: '',
+  status: 'home',
+  tabType: 'home',
+}
+
 // The 「本机 Docker」 group's host. A module constant so every consumer that receives it
 // sees the same object identity — `DockerLogViewer` and `DockerPanel` key work off it.
 const LOCAL_DOCKER_HOST: DockerHostRef = { kind: 'local' }
@@ -837,6 +853,18 @@ function AppearanceSettingsCard({
 }) {
   const { t } = useI18n()
   const { accent, density, uiFontSize, motion, focusRing, statusShapes } = useTheme()
+  // Pinned Home is a tab bar fact owned by `App`, not a theme value, so this card
+  // reads the registry directly and follows every other writer of it.
+  const [alwaysShowHome, setAlwaysShowHome] = useState(
+    () => readSetting('ui.alwaysShowHome')?.value !== false,
+  )
+  useEffect(
+    () =>
+      subscribeAppSettings(() =>
+        setAlwaysShowHome(readSetting('ui.alwaysShowHome')?.value !== false),
+      ),
+    [],
+  )
   // While a drag is in flight the store still reports the last *committed* size —
   // previewing writes the CSS property without notifying anybody, precisely so a
   // slider does not repaint every open terminal once per pixel. The number by the
@@ -1019,6 +1047,20 @@ function AppearanceSettingsCard({
           />
           <span className="settings-label">{t('statusShapesLabel')}</span>
           <span className="settings-help">{t('statusShapesHelp')}</span>
+        </div>
+
+        <div className="settings-field switch-field">
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={alwaysShowHome}
+            aria-label={t('alwaysShowHomeLabel')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => write({ 'ui.alwaysShowHome': !alwaysShowHome })}
+          />
+          <span className="settings-label">{t('alwaysShowHomeLabel')}</span>
+          <span className="settings-help">{t('alwaysShowHomeHelp')}</span>
         </div>
       </div>
     </div>
@@ -1549,6 +1591,14 @@ export default function App() {
   useShortcutsVersion()
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
+  // 「一直显示首页」. Home stops being whatever stands behind an empty stage and
+  // becomes a pinned tab bar entry, so it stays reachable while sessions are open.
+  // The tab is derived from this value: the page's own switch, Settings →
+  // Appearance and closing the tab all write the setting, and the effect below is
+  // the only place that decides whether the entry exists.
+  const [alwaysShowHome, setAlwaysShowHome] = useState(
+    () => readSetting('ui.alwaysShowHome')?.value !== false,
+  )
   // Per-tab current working directory, reported by the Terminal so the FilePanel
   // shell-sync can follow the real (interactive) directory instead of $HOME.
   const [cwdByTab, setCwdByTab] = useState<Record<string, string | null>>({})
@@ -1963,6 +2013,36 @@ export default function App() {
   tabsRef.current = tabs
   const focusedLeafByRootRef = useRef(focusedLeafByRoot)
   focusedLeafByRootRef.current = focusedLeafByRoot
+  useEffect(
+    () =>
+      subscribeAppSettings(() =>
+        setAlwaysShowHome(readSetting('ui.alwaysShowHome')?.value !== false),
+      ),
+    [],
+  )
+  // Pin or unpin the Home entry. `hasHome` is read from `tabsRef` because this runs
+  // on the setting alone: the tab list it has to judge is the live one, not the one
+  // this render closed over.
+  useEffect(() => {
+    const hasHome = tabsRef.current.some((tab) => tab.tabType === 'home')
+    if (hasHome === alwaysShowHome) return
+    if (alwaysShowHome) {
+      setTabs((prev) => (prev.some((tab) => tab.tabType === 'home') ? prev : [HOME_TAB, ...prev]))
+      return
+    }
+    setTabs((prev) => prev.filter((tab) => tab.tabType !== 'home'))
+    setActiveTabId((prev) => {
+      if (prev !== HOME_TAB_ID) return prev
+      const rest = tabsRef.current.filter((tab) => tab.tabType !== 'home' && isWorkspaceTab(tab))
+      return rest.length ? rest[0].tabId : null
+    })
+  }, [alwaysShowHome])
+  // Home is the fallback surface while it is pinned, exactly as the bare empty
+  // stage is while it is not: closing the last session must not leave a Home entry
+  // in the bar with nothing on the stage behind it.
+  useEffect(() => {
+    if (activeTabId === null && alwaysShowHome) setActiveTabId(HOME_TAB_ID)
+  }, [activeTabId, alwaysShowHome])
   // Update the active workspace's tree.
   const updateActiveTree = useCallback(
     (updater: (t: SplitNode) => SplitNode) => {
@@ -3532,6 +3612,17 @@ export default function App() {
     return keys
   }, [])
 
+  // Unpinning Home from the page's own switch or from the tab's ✕ has to say where
+  // it comes back from. Settings → Appearance writes the same key without the hint:
+  // there the switch is under the cursor already.
+  const setHomePinned = useCallback(
+    (on: boolean) => {
+      applySettingChanges({ 'ui.alwaysShowHome': on }, 'user')
+      if (!on) setToast({ kind: 'info', text: t('homeUnpinnedHint') })
+    },
+    [t],
+  )
+
   // Close a top-level tab (workspace): disconnect and remove its own session
   // plus every embedded session created by splitting inside it, and drop its
   // tree.
@@ -3539,6 +3630,12 @@ export default function App() {
     async (tabId: number, opts?: { force?: boolean }) => {
       const root = tabsRef.current.find((t) => t.tabId === tabId)
       if (!root) return
+      // Home owns no session to tear down; its ✕ unpins it and the pin effect
+      // removes the entry.
+      if (root.tabType === 'home') {
+        setHomePinned(false)
+        return
+      }
       // Sessions belonging to this workspace: the root itself + any embedded ones
       // referenced by its tree.
       const tree = splitTreesRef.current[tabId]
@@ -3616,7 +3713,7 @@ export default function App() {
         return remaining.length ? remaining[0].tabId : null
       })
     },
-    [dropSessionFiles],
+    [dropSessionFiles, setHomePinned],
   )
 
   // Select connection — always open a new tab
@@ -4000,6 +4097,7 @@ export default function App() {
   // Compute tab display label (number tabs sharing the same connection)
   const getTabLabel = useCallback(
     (tab: TabInfo): string => {
+      if (tab.tabType === 'home') return t('tabHome')
       if (tab.tabType === 'settings') return t('tabSettings')
       if (tab.tabType === 'dockerLog') return tab.containerName ?? 'Logs'
       if (tab.tabType === 'localShell')
@@ -4040,6 +4138,7 @@ export default function App() {
   // and so the glyphs stop rendering as colour pictures at a size where the shell
   // flavours are indistinguishable.
   const getTabIcon = useCallback((tab: TabInfo): IconName => {
+    if (tab.tabType === 'home') return 'home'
     if (tab.tabType === 'settings') return 'settings'
     if (tab.tabType === 'fileEditor') return 'file'
     if (tab.tabType === 'dockerLog') return 'clipboard'
@@ -4625,7 +4724,11 @@ export default function App() {
         return prev
       const [moved] = nonEmbedded.splice(sourceIndex, 1)
       nonEmbedded.splice(targetIndex, 0, moved)
-      return [...nonEmbedded, ...embedded]
+      // A pinned Home entry is not part of the order the user is dragging into:
+      // it goes back to the front whatever the drop was.
+      const pinned = nonEmbedded.filter((t) => t.tabType === 'home')
+      const rest = nonEmbedded.filter((t) => t.tabType !== 'home')
+      return [...pinned, ...rest, ...embedded]
     })
   }, [])
 
@@ -5140,7 +5243,12 @@ export default function App() {
   const [indexSubjectTabId, setIndexSubjectTabId] = useState<number | null>(null)
   useEffect(() => {
     const tab = tabs.find((t) => t.tabId === activeTabId)
-    if (tab && tab.tabType !== 'settings' && tab.tabType !== 'fileEditor') {
+    if (
+      tab &&
+      tab.tabType !== 'settings' &&
+      tab.tabType !== 'fileEditor' &&
+      tab.tabType !== 'home'
+    ) {
       setIndexSubjectTabId(tab.tabId)
     }
   }, [tabs, activeTabId])
@@ -5158,6 +5266,7 @@ export default function App() {
       : t('hostIndexNone')
 
   const settingsActive = activeTerminalTab?.tabType === 'settings'
+  const homeActive = activeTerminalTab?.tabType === 'home'
   const settingsOverlayRef = useRef<HTMLDivElement>(null)
 
   // Refresh the database figures whenever the Settings tab becomes active.
@@ -7610,12 +7719,50 @@ export default function App() {
       ? activeTerminalTab
       : null
 
+  // The Home page, whoever is showing it: unpinned it is what stands behind an
+  // empty stage, pinned it is the body of the tab. One builder for both, so the
+  // two mount points cannot drift apart.
+  const renderWelcome = () => (
+    <WelcomePage
+      connections={connections}
+      localTerminals={localTerminals}
+      activeWorkspaceId={activeWorkspaceId}
+      alwaysShowHome={alwaysShowHome}
+      onAlwaysShowChange={setHomePinned}
+      onOpenConnection={handleSelectConnection}
+      onNewConnection={() => {
+        changeRailMode('hosts')
+        updateLayout((l) =>
+          l.sidebar.visible ? l : { ...l, sidebar: { ...l.sidebar, visible: true } },
+        )
+      }}
+      onOpenLocalTerminal={(entry) =>
+        void handleOpenLocalTerminal(
+          entry?.cwd,
+          entry?.shell,
+          entry?.name,
+          entry?.distro,
+          entry?.id,
+        )
+      }
+      onOpenFiles={() => changeRailMode('files')}
+      onOpenNetTools={() => openRailMode('nettools')}
+      onOpenCommandList={() => setCommandListOpen(true)}
+      onScanNetwork={() =>
+        updateLayout((l) => ({
+          ...l,
+          inspector: { ...l.inspector, visible: true, tab: 'network' },
+        }))
+      }
+    />
+  )
+
   const terminalContent = (
     <div className="terminal-wrapper">
       <div className="terminal-split-root" style={{ position: 'relative' }}>
         {rootTabs.map((root) => {
           const tree = splitTrees[root.tabId] ?? makeLeaf(`leaf-${root.tabId}`, root.tabId)
-          const workspaceHidden = settingsActive || root.tabId !== shownRootId
+          const workspaceHidden = settingsActive || homeActive || root.tabId !== shownRootId
           return (
             <div
               key={root.tabId}
@@ -7685,6 +7832,10 @@ export default function App() {
             display: settingsActive ? 'block' : 'none',
           }}
         />
+        {/* The pinned Home tab's body. Mounted only while selected — it keeps
+            nothing a trip to a terminal would lose (unlike a Monaco buffer), and a
+            hidden copy would still hold its recency read open. */}
+        {homeActive && <div className="welcome-overlay">{renderWelcome()}</div>}
         {/* The open file, at the full main-area surface. Always mounted and only
             toggled, so Monaco keeps its models — and the scroll position inside
             them — across a trip to the terminal and back. */}
@@ -8109,8 +8260,8 @@ export default function App() {
                     return (
                       <div
                         key={tab.tabId}
-                        className={`tab-item ${tab.tabId === activeTabId ? 'active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
-                        draggable
+                        className={`tab-item ${tab.tabType === 'home' ? 'tab-home' : ''}${tab.tabId === activeTabId ? ' active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
+                        draggable={tab.tabType !== 'home'}
                         title={
                           file
                             ? origin
@@ -8145,7 +8296,8 @@ export default function App() {
                               requestCloseEditorTab(tab.editorKey)
                             else closeTab(tab.tabId)
                           }}
-                          aria-label={t('closeTab')}
+                          aria-label={tab.tabType === 'home' ? t('unpinHome') : t('closeTab')}
+                          title={tab.tabType === 'home' ? t('unpinHome') : undefined}
                         >
                           <Icon name="x" size={11} />
                         </button>
@@ -8229,43 +8381,10 @@ export default function App() {
                     {/* With no tab at all there is no terminal to show, and an empty
                       black rectangle is the least useful answer — so the stage
                       becomes the ways back in (`WelcomePage`). A Settings tab
-                      counts as a tab and takes the stage as before. */}
-                    {tabs.length === 0 ? (
-                      <WelcomePage
-                        connections={connections}
-                        localTerminals={localTerminals}
-                        activeWorkspaceId={activeWorkspaceId}
-                        onOpenConnection={handleSelectConnection}
-                        onNewConnection={() => {
-                          changeRailMode('hosts')
-                          updateLayout((l) =>
-                            l.sidebar.visible
-                              ? l
-                              : { ...l, sidebar: { ...l.sidebar, visible: true } },
-                          )
-                        }}
-                        onOpenLocalTerminal={(entry) =>
-                          void handleOpenLocalTerminal(
-                            entry?.cwd,
-                            entry?.shell,
-                            entry?.name,
-                            entry?.distro,
-                            entry?.id,
-                          )
-                        }
-                        onOpenFiles={() => changeRailMode('files')}
-                        onOpenNetTools={() => openRailMode('nettools')}
-                        onOpenCommandList={() => setCommandListOpen(true)}
-                        onScanNetwork={() =>
-                          updateLayout((l) => ({
-                            ...l,
-                            inspector: { ...l.inspector, visible: true, tab: 'network' },
-                          }))
-                        }
-                      />
-                    ) : (
-                      terminalContent
-                    )}
+                      counts as a tab and takes the stage as before; a pinned Home
+                      tab is the same page with a bar entry of its own, drawn by the
+                      overlay inside `terminalContent`. */}
+                    {tabs.length === 0 ? renderWelcome() : terminalContent}
                   </div>
                 </div>
               </div>

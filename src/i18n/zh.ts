@@ -100,6 +100,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   alwaysOnTopOff: '置顶（关）',
 
   // Tabs
+  tabHome: '首页',
   tabSettings: '设置',
   statusDisconnected: '已断开',
   statusConnected: '已连接',
@@ -484,6 +485,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   focusRingHelp: '键盘聚焦时控件外围显示的描边。',
   statusShapesLabel: '用形状区分状态',
   statusShapesHelp: '错误与警告指示点同时改变轮廓与颜色，色觉受阻时也能读出状态。',
+  alwaysShowHomeLabel: '一直显示首页',
+  alwaysShowHomeHelp:
+    '把首页固定为第一个页签，会话开着的时候也能一键点回去。关闭后，首页只在没有任何页签时出现。',
+  homeUnpinnedHint: '首页已取消标签栏常驻，可在「设置 → 外观」里重新开启「一直显示首页」。',
   windowOpacityLightDisabled: '浅色主题下窗口保持不透明（半透明会透出桌面，观感发脏）。',
   // 设备身份（host key 指纹）
   strictHostKeyLabel: '严格校验主机密钥',
@@ -867,6 +872,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   paste: '粘贴',
   closeTerminal: '关闭终端',
   closeTab: '关闭页签',
+  unpinHome: '取消常驻首页',
   shellTerminal: '终端',
   aiToggle: '停靠 AI',
   aiToggleTitle: '在此终端旁停靠一个 AI 面板',

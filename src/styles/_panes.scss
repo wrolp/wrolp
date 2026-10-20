@@ -1383,7 +1383,11 @@
 
   .term-pane-title {
     font-size: var(--fs-sm);
-    line-height: 1;
+    // `normal`, not `1`: `overflow: hidden` below clips to the line box, and a
+    // 1em line box is shorter than this font's content area, so the descenders of
+    // `g`/`p`/`y` were shaved off. The header is a fixed-height flex row, so a
+    // taller line box can't stretch it — it only buys the glyphs room to fit.
+    line-height: normal;
     color: $text-secondary;
     white-space: nowrap;
     overflow: hidden;
