@@ -154,6 +154,12 @@ export interface TerminalAppearance {
 const MAX_STRING_LEN = 200
 const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
 
+/** Bounds and default for each Home recency list. The two lists are independent
+ *  and both default to ten rows. */
+export const HOME_RECENT_COUNT = { default: 10, min: 1, max: 50 } as const
+
+export type HomeRecentCountKey = 'ui.recentRemoteCount' | 'ui.recentLocalCount'
+
 const defaultHighlightColors = cloneDefaultConfig().rules.reduce<Record<string, string>>(
   (acc, r) => {
     acc[r.key] = r.color
@@ -444,6 +450,26 @@ const DEFS: SettingDef[] = [
     describe:
       'Keep the Home page pinned as the first tab bar entry, so it can be reopened while sessions are open. Off means Home only appears while no tab is open at all.',
   },
+  {
+    key: 'ui.recentRemoteCount',
+    kind: 'number',
+    min: HOME_RECENT_COUNT.min,
+    max: HOME_RECENT_COUNT.max,
+    group: 'ui',
+    default: HOME_RECENT_COUNT.default,
+    storage: { kind: 'localStorage', key: 'wrolp-recent-remote-count' },
+    describe: 'How many recently used remote hosts the Home page lists (1–50, default 10).',
+  },
+  {
+    key: 'ui.recentLocalCount',
+    kind: 'number',
+    min: HOME_RECENT_COUNT.min,
+    max: HOME_RECENT_COUNT.max,
+    group: 'ui',
+    default: HOME_RECENT_COUNT.default,
+    storage: { kind: 'localStorage', key: 'wrolp-recent-local-count' },
+    describe: 'How many recently used local terminals the Home page lists (1–50, default 10).',
+  },
 
   // ---- security ----------------------------------------------------------
   {
@@ -619,6 +645,16 @@ export function toView(def: SettingDef, value?: unknown): SettingView {
 export function readSetting(key: string): SettingView | null {
   const def = BY_KEY.get(key)
   return def ? toView(def) : null
+}
+
+/** One Home recency count, clamped to the registry's bounds. Corrupt storage or
+ *  an out-of-range legacy value reads as the default, never as a broken list. */
+export function readHomeRecentCount(key: HomeRecentCountKey): number {
+  const def = BY_KEY.get(key)
+  const n = Number(def ? readValue(def) : NaN)
+  return Number.isFinite(n)
+    ? Math.min(HOME_RECENT_COUNT.max, Math.max(HOME_RECENT_COUNT.min, Math.round(n)))
+    : HOME_RECENT_COUNT.default
 }
 
 /** Read all registered settings (or a validated subset of keys). */

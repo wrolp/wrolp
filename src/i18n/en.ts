@@ -70,8 +70,10 @@ const en = {
   welcomeSub: 'SSH, Telnet, serial and local shells — in one window',
   welcomeNewConn: 'New SSH connection',
   welcomeLocalTerm: 'Open local terminal',
-  welcomeRecentHosts: 'Recent hosts',
+  welcomeRecentHosts: 'Recent remote hosts',
   welcomeNoHosts: 'No saved hosts yet',
+  welcomeRecentLocal: 'Recent local terminals',
+  welcomeNoLocalTerms: 'No saved local terminals yet',
   welcomeSftp: 'File transfer',
   welcomeSftpDesc: 'Browse the remote filesystem and transfer files over SFTP',
   welcomeNetTools: 'Network tools',
@@ -514,6 +516,11 @@ const en = {
   alwaysShowHomeLabel: 'Always show Home',
   alwaysShowHomeHelp:
     'Keep the Home page pinned as the first tab, so it is one click away while sessions are open. Off, it only appears while no tab is left.',
+  homeRecentCountLabel: 'Recent items on Home',
+  homeRecentRemote: 'Remote hosts',
+  homeRecentLocal: 'Local terminals',
+  homeRecentCountHelp:
+    'How many entries each list keeps (1–50). Both default to 10; the lists are sized independently.',
   homeUnpinnedHint:
     'Home is no longer pinned to the tab bar — turn "Always show Home" back on in Settings → Appearance.',
   windowOpacityLightDisabled:

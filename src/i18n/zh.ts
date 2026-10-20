@@ -72,8 +72,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   welcomeSub: 'SSH、Telnet、串口与本地终端，一个窗口全包',
   welcomeNewConn: '新建 SSH 连接',
   welcomeLocalTerm: '打开本地终端',
-  welcomeRecentHosts: '最近使用',
+  welcomeRecentHosts: '最近远程主机',
   welcomeNoHosts: '还没有保存的主机',
+  welcomeRecentLocal: '最近本地终端',
+  welcomeNoLocalTerms: '还没有保存的本地终端',
   welcomeSftp: '文件传输',
   welcomeSftpDesc: '浏览远程文件系统，通过 SFTP 传输文件',
   welcomeNetTools: '网络工具',
@@ -488,6 +490,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   alwaysShowHomeLabel: '一直显示首页',
   alwaysShowHomeHelp:
     '把首页固定为第一个页签，会话开着的时候也能一键点回去。关闭后，首页只在没有任何页签时出现。',
+  homeRecentCountLabel: '首页最近使用条数',
+  homeRecentRemote: '远程主机',
+  homeRecentLocal: '本地终端',
+  homeRecentCountHelp: '两个列表各自保留的条数（1–50），默认各 10 条，互不影响。',
   homeUnpinnedHint: '首页已取消标签栏常驻，可在「设置 → 外观」里重新开启「一直显示首页」。',
   windowOpacityLightDisabled: '浅色主题下窗口保持不透明（半透明会透出桌面，观感发脏）。',
   // 设备身份（host key 指纹）

@@ -435,6 +435,16 @@
   background: $bg-secondary;
 }
 
+// Remote and local recency lists share one full-width row: they are the page's
+// primary content, and equal-height partners keep the taller list from stretching
+// the short utility cards in the next row into mostly-empty boxes.
+.welcome-recent-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 12px;
+}
+
 .welcome-card-head {
   display: flex;
   align-items: center;

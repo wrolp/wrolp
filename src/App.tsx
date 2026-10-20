@@ -169,7 +169,10 @@ import {
   undoAppearance,
   applySettingChanges,
   readSetting,
+  HOME_RECENT_COUNT,
+  readHomeRecentCount,
   type AppearanceSnapshot,
+  type HomeRecentCountKey,
   type SettingGroup,
 } from './lib/appSettings'
 import { installAiUiBridge, saveAiAppearanceConfig, useAiAppearanceConfig } from './lib/aiUiBridge'
@@ -838,6 +841,65 @@ function TerminalGhostAcceptSetting() {
 }
 
 /**
+ * One Home recency count. The input keeps a draft so a half-typed number is not
+ * clamped under the caret; the setting is written on blur or Enter.
+ */
+function RecentCountSetting({
+  settingKey,
+  id,
+  label,
+}: {
+  settingKey: HomeRecentCountKey
+  id: string
+  label: string
+}) {
+  const [draft, setDraft] = useState(() => String(readHomeRecentCount(settingKey)))
+  useEffect(() => {
+    const sync = () => setDraft(String(readHomeRecentCount(settingKey)))
+    sync()
+    return subscribeAppSettings(sync)
+  }, [settingKey])
+
+  const commit = () => {
+    const n = Number(draft)
+    const next =
+      draft.trim() === '' || !Number.isFinite(n)
+        ? HOME_RECENT_COUNT.default
+        : Math.min(HOME_RECENT_COUNT.max, Math.max(HOME_RECENT_COUNT.min, Math.round(n)))
+    setDraft(String(next))
+    if (next !== readHomeRecentCount(settingKey)) {
+      applySettingChanges({ [settingKey]: next }, 'user')
+    }
+  }
+
+  return (
+    <label htmlFor={id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-sm)' }}>{label}</span>
+      <input
+        id={id}
+        type="number"
+        min={HOME_RECENT_COUNT.min}
+        max={HOME_RECENT_COUNT.max}
+        step={1}
+        className="settings-input"
+        style={{ width: 72 }}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.currentTarget.blur()
+          } else if (e.key === 'Escape') {
+            setDraft(String(readHomeRecentCount(settingKey)))
+            e.currentTarget.blur()
+          }
+        }}
+      />
+    </label>
+  )
+}
+
+/**
  * Settings → Appearance. Everything on this card already worked — * `themeStore` has applied an accent and a density since P0 — but nothing let a *user*
  * reach them, so the only way to change an accent was to ask the AI.
  *
@@ -1061,6 +1123,23 @@ function AppearanceSettingsCard({
           />
           <span className="settings-label">{t('alwaysShowHomeLabel')}</span>
           <span className="settings-help">{t('alwaysShowHomeHelp')}</span>
+        </div>
+
+        <div className="settings-field">
+          <span className="settings-label">{t('homeRecentCountLabel')}</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+            <RecentCountSetting
+              settingKey="ui.recentRemoteCount"
+              id="home-recent-remote"
+              label={t('homeRecentRemote')}
+            />
+            <RecentCountSetting
+              settingKey="ui.recentLocalCount"
+              id="home-recent-local"
+              label={t('homeRecentLocal')}
+            />
+          </div>
+          <span className="settings-help">{t('homeRecentCountHelp')}</span>
         </div>
       </div>
     </div>

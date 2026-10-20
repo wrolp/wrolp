@@ -24,9 +24,13 @@ const BASE: MockConnection[] = [
 /** A saved local-terminal entry, as the sidebar's 本地 section stores it. */
 const LT = { id: 'lt-1', name: 'Bash', cwd: '/var/www', shell: 'bash' }
 
-/** The card's rows, and the recency read that feeds them. */
-const cardRows = (page: Page) => page.locator('.welcome-list li')
-const times = (page: Page) => page.locator('.wl-when')
+/** The two recency cards, and the row lists inside them. Local and remote are
+ *  separate lists now, each with its own configured cap. */
+const remoteCard = (page: Page) => page.locator('[data-testid="welcome-recent-remote"]')
+const localCard = (page: Page) => page.locator('[data-testid="welcome-recent-local"]')
+const remoteRows = (page: Page) => remoteCard(page).locator('.welcome-list li')
+const localRows = (page: Page) => localCard(page).locator('.welcome-list li')
+const times = (page: Page) => remoteCard(page).locator('.wl-when')
 
 /** English throughout: the relative-time strings are asserted literally, and the
  *  app otherwise falls back to the browser locale. */
@@ -48,21 +52,21 @@ test('orders the card by when each host was last connected to', async ({ page })
     ],
   })
 
-  await expect(cardRows(page)).toHaveCount(2)
-  await expect(page.locator('.wl-name')).toHaveText(['Gw', 'Web'])
+  await expect(remoteRows(page)).toHaveCount(2)
+  await expect(remoteCard(page).locator('.wl-name')).toHaveText(['Gw', 'Web'])
 })
 
 test('falls back to the first saved hosts when there is no history yet', async ({ page }) => {
   await boot(page, { connections: BASE })
 
-  await expect(cardRows(page)).toHaveCount(4)
-  await expect(page.locator('.wl-name')).toHaveText(['Web', 'DB', 'Gw', 'Bench'])
+  await expect(remoteRows(page)).toHaveCount(4)
+  await expect(remoteCard(page).locator('.wl-name')).toHaveText(['Web', 'DB', 'Gw', 'Bench'])
   // Fallback rows carry no usage record, so they show no timestamp.
   await expect(times(page)).toHaveCount(0)
 })
 
-test('caps the list instead of scrolling it', async ({ page }) => {
-  const many: MockConnection[] = Array.from({ length: 9 }, (_, i) => ({
+test('caps each list instead of scrolling it', async ({ page }) => {
+  const many: MockConnection[] = Array.from({ length: 12 }, (_, i) => ({
     id: `c${i}`,
     name: `Host ${i}`,
     host: `10.0.0.${i + 1}`,
@@ -71,9 +75,10 @@ test('caps the list instead of scrolling it', async ({ page }) => {
   }))
   await boot(page, { connections: many })
 
-  await expect(cardRows(page)).toHaveCount(6)
+  // The default cap is ten rows per list; the twelfth host is simply not shown.
+  await expect(remoteRows(page)).toHaveCount(10)
   // The cap is a cap: nothing in the card scrolls.
-  await expect(page.locator('.welcome-list')).toHaveCSS('overflow-y', 'visible')
+  await expect(remoteCard(page).locator('.welcome-list')).toHaveCSS('overflow-y', 'visible')
 })
 
 test('drops a recency row whose connection no longer exists', async ({ page }) => {
@@ -86,9 +91,9 @@ test('drops a recency row whose connection no longer exists', async ({ page }) =
     ],
   })
 
-  await expect(cardRows(page)).toHaveCount(1)
-  await expect(page.locator('.wl-name')).toHaveText(['DB'])
-  await expect(page.locator('.welcome-list')).not.toContainText('deleted-host')
+  await expect(remoteRows(page)).toHaveCount(1)
+  await expect(remoteCard(page).locator('.wl-name')).toHaveText(['DB'])
+  await expect(remoteCard(page).locator('.welcome-list')).not.toContainText('deleted-host')
 })
 
 test('each row says which protocol it is and when it was used', async ({ page }) => {
@@ -108,7 +113,7 @@ test('each row says which protocol it is and when it was used', async ({ page })
     ],
   })
 
-  const row = (name: string) => page.locator('.welcome-list li', { hasText: name })
+  const row = (name: string) => remoteCard(page).locator('.welcome-list li', { hasText: name })
   await expect(row('Web').locator('.wl-proto')).toHaveText('SSH')
   await expect(row('Gw').locator('.wl-proto')).toHaveText('TEL')
   await expect(row('Bench').locator('.wl-proto')).toHaveText('COM')
@@ -131,7 +136,7 @@ test('clicking a row opens that connection', async ({ page }) => {
     recentConnections: [{ connectionId: 'c3', usedAtMs: Date.now() - 1000 }],
   })
 
-  await page.locator('.welcome-list li', { hasText: 'Gw' }).locator('button').click()
+  await remoteCard(page).locator('.welcome-list li', { hasText: 'Gw' }).locator('button').click()
 
   // A Telnet connection reaches the backend as `connect_telnet` (not `connect`),
   // dispatched once the terminal pane mounts rather than on the click. That the
@@ -198,13 +203,17 @@ test('recent local terminals are listed on the card and reopen their entry', asy
     ],
   })
 
-  await expect(cardRows(page)).toHaveCount(3)
-  await expect(page.locator('.wl-name')).toHaveText([LT.name, 'Open Local Terminal', 'Web'])
-  await expect(page.locator('.wl-proto').first()).toHaveText('LOC')
+  // The two lists are independent: the local rows stay on their own card, the
+  // host stays on the remote one, and each card keeps its own ordering.
+  await expect(localRows(page)).toHaveCount(2)
+  await expect(remoteRows(page)).toHaveCount(1)
+  await expect(localCard(page).locator('.wl-name')).toHaveText([LT.name, 'Open Local Terminal'])
+  await expect(remoteCard(page).locator('.wl-name')).toHaveText(['Web'])
+  await expect(localRows(page).first().locator('.wl-proto')).toHaveText('LOC')
 
   // Clicking the saved entry reopens THAT shell — its directory and shell reach
   // the backend, which the built-in default (no cwd, no shell) never would.
-  await cardRows(page).first().locator('button').click()
+  await localRows(page).first().locator('button').click()
   const call = (await invokedCalls(page)).find((c) => c.cmd === 'open_local_shell')!
   expect(JSON.stringify(call.args)).toContain(LT.cwd)
 })
@@ -220,5 +229,46 @@ test('a local terminal deleted since drops out of the card', async ({ page }) =>
   })
 
   // The backend filters the orphaned row; the join here would drop it anyway.
-  await expect(page.locator('.wl-name')).toHaveText(['Web'])
+  await expect(localRows(page)).toHaveCount(0)
+  await expect(localCard(page)).toContainText('No saved local terminals yet')
+  await expect(remoteCard(page).locator('.wl-name')).toHaveText(['Web'])
+})
+
+test('each list keeps its own configured number of rows', async ({ page }) => {
+  const many: MockConnection[] = Array.from({ length: 8 }, (_, i) => ({
+    id: `c${i}`,
+    name: `Host ${i}`,
+    host: `10.0.0.${i + 1}`,
+    port: 22,
+    username: 'root',
+  }))
+  const locals = [LT, { id: 'lt-2', name: 'Zsh', cwd: '/srv', shell: 'zsh' }]
+  await page.addInitScript(() => {
+    localStorage.setItem('wrolp-recent-remote-count', '3')
+    localStorage.setItem('wrolp-recent-local-count', '1')
+  })
+  await boot(page, { connections: many, localTerminals: locals })
+
+  await expect(remoteRows(page)).toHaveCount(3)
+  await expect(localRows(page)).toHaveCount(1)
+})
+
+test('the Settings → Appearance counts resize the Home lists', async ({ page }) => {
+  await boot(page, { connections: BASE })
+  await page.locator('.settings-btn').click()
+
+  await page.locator('#home-recent-remote').fill('2')
+  await page.locator('#home-recent-remote').blur()
+  await page.locator('#home-recent-local').fill('4')
+  await page.locator('#home-recent-local').blur()
+  expect(await page.evaluate(() => localStorage.getItem('wrolp-recent-remote-count'))).toBe('2')
+  expect(await page.evaluate(() => localStorage.getItem('wrolp-recent-local-count'))).toBe('4')
+
+  // Closing the Settings tab brings the Home page back whether it is a pinned tab
+  // or what stands behind an empty stage.
+  await page.locator('.tab-item.active .tab-close').click()
+  // Remote fell back to the saved hosts and is capped at two; local has no saved
+  // entries, so it stays empty regardless of its own count.
+  await expect(remoteRows(page)).toHaveCount(2)
+  await expect(localRows(page)).toHaveCount(0)
 })
