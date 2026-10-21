@@ -13,6 +13,7 @@
 use tauri::Emitter;
 
 use crate::db;
+use crate::win_proc::HideConsole;
 
 /// Cap on one device's index. `compgen -c` on a desktop Linux box returns well
 /// over 10 000 names, most of them noise the user will never type; the transport
@@ -137,6 +138,7 @@ pub async fn run_enum(route: &EnumRoute) -> Result<String, String> {
           script,
         ]);
         let out = tokio::process::Command::new("wsl.exe")
+          .hide_console()
           .args(&args)
           .output()
           .await
@@ -146,6 +148,7 @@ pub async fn run_enum(route: &EnumRoute) -> Result<String, String> {
       #[cfg(windows)]
       EnumRoute::LocalWindows => {
         let out = tokio::process::Command::new("powershell.exe")
+          .hide_console()
           .args(["-NoProfile", "-NonInteractive", "-Command", &script])
           .output()
           .await

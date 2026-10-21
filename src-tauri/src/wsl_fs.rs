@@ -7,6 +7,7 @@
 //! through `\\wsl$\<distro>`.
 
 use crate::cmd_fs::{CmdFs, Runner};
+use crate::win_proc::HideConsole;
 
 /// Runs commands inside a WSL distribution.
 pub(crate) struct WslRunner {
@@ -50,6 +51,7 @@ impl Runner for WslRunner {
       use std::process::{Command, Stdio};
 
       let mut cmd = Command::new(&argv[0]);
+      cmd.hide_console();
       cmd.args(&argv[1..]);
       cmd.stdin(if stdin.is_some() {
         Stdio::piped()

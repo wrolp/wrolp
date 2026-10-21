@@ -1,4 +1,5 @@
 use super::*;
+use crate::win_proc::HideConsole;
 // ==================== Local Shell (Local Terminal) ====================
 
 /// Pick the default local shell command for the current platform.
@@ -114,6 +115,7 @@ fn git_for_windows_install_dir() -> Option<String> {
     for root in roots {
       // Absent keys are expected on many machines — skip and try the next root.
       let Ok(out) = Command::new("reg")
+        .hide_console()
         .arg("query")
         .arg(root)
         .arg("/v")
@@ -787,6 +789,7 @@ pub async fn list_wsl_distros() -> Result<Vec<String>, String> {
   // WSL can be slow to answer on a cold start; keep it off the async runtime.
   let bytes = tokio::task::spawn_blocking(|| {
     std::process::Command::new("wsl.exe")
+      .hide_console()
       .args(["-l", "-q"])
       .output()
       .ok()

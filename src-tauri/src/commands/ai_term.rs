@@ -1,4 +1,5 @@
 use super::*;
+use crate::win_proc::HideConsole;
 // ==================== AI → Terminal execution ====================
 //
 // By default `run_command` used to execute through a *separate* channel
@@ -1124,6 +1125,7 @@ async fn run_local_command(command: String, cwd: Option<String>) -> Result<Strin
     #[cfg(windows)]
     let mut child = {
       let mut cmd = StdCommand::new("cmd.exe");
+      cmd.hide_console();
       cmd.args(["/c", &command]);
       cmd
     };

@@ -12,6 +12,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::ssh_session::AppState;
+use crate::win_proc::HideConsole;
 
 /// How long a probe may hang before the UI is told it failed. A CLI whose daemon is
 /// down can block for many seconds on a socket connect, and the sidebar probes on boot.
@@ -71,6 +72,9 @@ async fn run_captured(
   stdin: Option<&[u8]>,
 ) -> Result<(Vec<u8>, Vec<u8>, u32), String> {
   let mut cmd = Command::new(bin);
+  // The probe runs on every launch; without this each call flashes a console
+  // window (the app itself has none — `windows_subsystem = "windows"`).
+  cmd.hide_console();
   cmd
     .args(args)
     .stdin(if stdin.is_some() {
@@ -316,6 +320,7 @@ pub async fn exec_docker_streaming(
       let bin = resolve_cli(state).await?;
       let args: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
       let mut child = Command::new(&bin)
+        .hide_console()
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

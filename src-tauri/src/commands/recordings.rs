@@ -1,4 +1,5 @@
 use super::*;
+use crate::win_proc::HideConsole;
 // ==================== Session Recording ====================
 
 /// Flush all in-memory recording buffers to their NDJSON event files. Called
@@ -209,6 +210,7 @@ fn reveal_in_file_manager(path: &std::path::Path) {
     ]
     .concat();
     let _ = std::process::Command::new("powershell")
+      .hide_console()
       .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
       .spawn();
   }

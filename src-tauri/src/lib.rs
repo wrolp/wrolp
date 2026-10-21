@@ -24,6 +24,7 @@ mod tftp_proto;
 mod vault;
 #[cfg(windows)]
 mod webview_drop;
+mod win_proc;
 mod wsl_fs;
 
 use ssh_session::AppState;
