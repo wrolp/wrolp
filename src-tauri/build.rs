@@ -68,4 +68,13 @@ fn main() {
     println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
     println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
   }
+
+  // `tauri-build` embeds `bundle.icon` into the binary as Win32 resources, and it
+  // does NOT watch the icon files. Emitting any `rerun-if-changed` (the manifest
+  // above) also replaces cargo's default "watch the whole package", so an
+  // icon-only change used to relink the PREVIOUS resource: the exe kept its old
+  // logo even when built after the new icons. Watch both inputs here so a rebuild
+  // is all it takes (was: `cargo clean` first).
+  println!("cargo:rerun-if-changed=icons");
+  println!("cargo:rerun-if-changed=tauri.conf.json");
 }
