@@ -45,6 +45,8 @@ export type IconName =
   | 'terminal'
   | 'sparkles'
   | 'send'
+  // AI chat's "Chat only" mode: a conversation, explicitly without shell tools.
+  | 'messageSquare'
   | 'chevronDown'
   | 'settings'
   | 'externalLink'
@@ -385,6 +387,8 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="m21.854 2.147-10.94 10.939" />
     </>
   ),
+  // lucide: message-square
+  messageSquare: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
   // lucide: chevron-down
   chevronDown: <path d="m6 9 6 6 6-6" />,
   // lucide: settings

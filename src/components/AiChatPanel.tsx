@@ -27,12 +27,22 @@ import {
   hideBuiltinTemplate,
   restoreBuiltinTemplate,
 } from '../commands'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { focusTerminal } from './Terminal'
 import { handleMarkdownLinkClick } from '../lib/externalLink'
 import { copyText } from '../lib/clipboard'
+
+type ChatMode = 'chat' | 'command' | 'read_only'
+
+// The mode picker lives in the cramped input toolbar, so its trigger is
+// icon-only; the popup keeps the labels for discoverability.
+const CHAT_MODES: { value: ChatMode; icon: IconName; labelKey: TranslationKey }[] = [
+  { value: 'chat', icon: 'messageSquare', labelKey: 'aiModeChat' },
+  { value: 'command', icon: 'terminal', labelKey: 'aiModeCommand' },
+  { value: 'read_only', icon: 'eye', labelKey: 'aiModeReadOnly' },
+]
 
 // Map markdown elements to our existing chat styles so the look stays
 // consistent with the previous (hand-rolled) renderer.
@@ -197,7 +207,7 @@ interface AiChatPanelProps {
   isTelnet?: boolean
   /** Default AI chat mode, taken from the global AI setting. The panel can
    *  toggle away from it at runtime. */
-  defaultMode?: 'chat' | 'command' | 'read_only'
+  defaultMode?: ChatMode
   /** Default maximum agent-loop rounds, taken from the global AI setting. */
   defaultMaxAgentRounds?: number
 }
@@ -291,9 +301,8 @@ export default function AiChatPanel({
 
   // AI chat mode: "chat" (plain text only, no tools), "command" (full access,
   // all commands allowed), or "read_only" (inspection commands only).
-  const [chatMode, setChatMode] = useState<'chat' | 'command' | 'read_only'>(
-    defaultMode ?? 'command',
-  )
+  const [chatMode, setChatMode] = useState<ChatMode>(defaultMode ?? 'command')
+  const activeChatMode = CHAT_MODES.find((mode) => mode.value === chatMode) ?? CHAT_MODES[0]
 
   // Maximum agent-loop rounds for a single run. Starts from the global default.
   const [maxAgentRounds, setMaxAgentRounds] = useState<number>(defaultMaxAgentRounds ?? 200)
@@ -691,6 +700,7 @@ export default function AiChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pollRef = useRef<number>(0)
   const templatePickerRef = useRef<HTMLDivElement>(null)
+  const modePickerRef = useRef<HTMLDivElement>(null)
   // Guard against double-firing confirmAndResume.
   const confirmingRef = useRef(false)
   // Synchronously track tool IDs the user has already acted on (Allow/Deny).
@@ -702,6 +712,8 @@ export default function AiChatPanel({
   const [pendingImages, setPendingImages] = useState<string[]>([])
   // Whether the template picker dropdown (next to the image previews) is open.
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
+  // Whether the chat-mode dropdown is open.
+  const [modePickerOpen, setModePickerOpen] = useState(false)
   // URL of an image currently shown in the fullscreen lightbox (null = closed).
   const [previewImage, setPreviewImage] = useState<string | null>(null)
 
@@ -716,6 +728,25 @@ export default function AiChatPanel({
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [templatePickerOpen])
+
+  // Close the chat-mode dropdown on an outside click or Escape.
+  useEffect(() => {
+    if (!modePickerOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (!modePickerRef.current?.contains(e.target as Node)) {
+        setModePickerOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setModePickerOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [modePickerOpen])
 
   // Close the image lightbox with Escape.
   useEffect(() => {
@@ -1792,17 +1823,40 @@ export default function AiChatPanel({
           />
           <div className="ai-chat-input-actions">
             <div className="ai-chat-input-actions-left">
-              <select
-                className="ai-chat-mode-select"
-                value={chatMode}
-                onChange={(e) => setChatMode(e.target.value as 'chat' | 'command' | 'read_only')}
-                disabled={streaming}
-                title={t('aiModeLabel')}
-              >
-                <option value="chat">{t('aiModeChat')}</option>
-                <option value="command">{t('aiModeCommand')}</option>
-                <option value="read_only">{t('aiModeReadOnly')}</option>
-              </select>
+              <div className="ai-chat-mode-wrap" ref={modePickerRef}>
+                <button
+                  type="button"
+                  className="ai-chat-action-btn"
+                  onClick={() => setModePickerOpen((open) => !open)}
+                  disabled={streaming}
+                  title={`${t('aiModeLabel')}: ${t(activeChatMode.labelKey)}`}
+                  aria-label={`${t('aiModeLabel')}: ${t(activeChatMode.labelKey)}`}
+                  aria-haspopup="menu"
+                  aria-expanded={modePickerOpen}
+                >
+                  <Icon name={activeChatMode.icon} size={16} />
+                </button>
+                {modePickerOpen && (
+                  <div className="ai-chat-mode-menu" role="menu">
+                    {CHAT_MODES.map((mode) => (
+                      <button
+                        key={mode.value}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={chatMode === mode.value}
+                        className={`ai-chat-mode-item${chatMode === mode.value ? ' is-active' : ''}`}
+                        onClick={() => {
+                          setChatMode(mode.value)
+                          setModePickerOpen(false)
+                        }}
+                      >
+                        <Icon name={mode.icon} size={14} />
+                        <span>{t(mode.labelKey)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 className="ai-chat-action-btn"

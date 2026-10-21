@@ -1810,36 +1810,52 @@
   row-gap: 4px;
 }
 
-.ai-chat-mode-select {
-  height: 34px;
+.ai-chat-mode-wrap {
+  position: relative;
   flex-shrink: 0;
-  padding: 0 8px;
+}
+
+.ai-chat-mode-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 200px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: $bg-secondary;
   border: 1px solid $border;
   border-radius: var(--r-3);
-  // Use a solid (non-transparent) dark background: the native option popup
-  // inherits the control's background, so this keeps the expanded dropdown dark
-  // instead of flashing bright white on hover.
-  background: $bg-input;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
+.ai-chat-mode-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-2);
   color: $text-secondary;
   font-size: var(--fs-sm);
+  text-align: left;
+  white-space: nowrap;
   cursor: pointer;
-  transition: all var(--d-2);
+  transition:
+    background var(--d-2),
+    color var(--d-2);
 
-  &:hover:not(:disabled) {
+  &:hover {
     background: $bg-hover;
     color: $text-primary;
   }
-  &:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
 
-  // Force the popup items to a dark background with light text (the OS/WebView
-  // default is a white popup). Hover highlight is painted natively and can't be
-  // fully overridden, but this removes the white flash.
-  option {
-    background: $bg-secondary;
-    color: $text-primary;
+  &.is-active {
+    color: $accent;
   }
 }
 
