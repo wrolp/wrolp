@@ -4,6 +4,36 @@
 
 ---
 
+## v0.0.11 — 2026-10-21
+
+Turns Home into a tab you can keep, gives the two recent lists their own size, and moves every keyboard shortcut into one table that Settings can rebind. Plus a launch that no longer flashes console windows, the new app icon finally reaching the exe, and build/release fixes that had been quietly making rebuilds lie.
+
+### Features
+
+- **Home stays one click away** — Home is now a fixed first tab instead of only what stands behind an empty stage, so the page that leads back into everything no longer disappears the moment a session opens. "Always show Home" (on by default) sits both on the Home page and in Settings → Appearance; its × unpins the tab rather than closing a session, and a toast says where it comes back from. The pane title's clipped descenders (g / p / y) are fixed in the same pass.
+- **Remote hosts and local terminals are separate recent lists** — they used to share one six-row card, so "recent" said nothing about which kind of thing was recent and the seventh entry was unreachable. Home now shows two cards taking the row together, each with its own count in Settings → Appearance (1–50, both default to 10), and each falls back to its own saved entries so one category's history no longer hides the other's. The backend still keeps 100 recency rows either way.
+- **Every shortcut is rebindable** — all combos now come from one table, and Settings → Shortcuts lists them by group with a recorder per row. A combo already taken is refused by the name of the action that owns it, a reserved key is refused outright, and a combo the shell itself uses is accepted with a caution. Rows show their default once overridden, each can be reset or unbound, "Reset all" restores everything, and the hints in the titlebar and tooltips follow the new binding on the next keystroke.
+- **The AI chat's mode picker is an icon dropdown** — the native `<select>` flashed a white popup inside the WebView and claimed a full label's width in the input toolbar. Mode labels stay discoverable from the themed menu.
+
+### Fixes
+
+- **No more console windows flashing at launch** — the app is a `windows_subsystem = "windows"` binary, so every console child it spawned got a brand-new window from Windows: the startup Docker probe's two commands (`docker --version`, then `docker version --format …`), plus `wsl.exe`, `powershell.exe`, `reg query` and `cmd.exe` elsewhere. All of them now run with `CREATE_NO_WINDOW`; ConPTY shells and `explorer` are deliberately untouched.
+- **The new app icon actually ships** — the exe kept embedding the previous icon even when rebuilt after the change: `tauri-build` does not watch `icons/`, and `build.rs` declaring `rerun-if-changed` for the manifest replaced cargo's default package-wide watch, so the stale resource was linked again. The icons directory and `tauri.conf.json` are watched now — a rebuild is all it takes, no `cargo clean`.
+- **The command list's search row lost its boxes** — the field autofocuses when the panel opens, so its focus ring was permanent blue furniture, and the By connection / By group control drew a second box inside it. The row keeps its recessed well and steps its background up on focus instead; only the divider between the two segments remains.
+- **A recalled command retires the grey tail** — ↑ history recall replaces the input line without a keystroke of its own, so the ghost completion's tail could stay painted over text it no longer described.
+- **`tauri dev` no longer dies while cargo writes `src-tauri/target`** — Vite's watcher walked into the Rust build output and, on Windows, hit EBUSY on a file cargo held open. That killed the dev server and with it `beforeDevCommand`, so the app never came up. Nothing under `src-tauri` needs HMR.
+- **`yarn run publish` stopped printing DEP0190 and stopped needing a shell** — `npx` is a `.cmd` shim on Windows that Node cannot spawn without `shell: true`, and Node ≥22 deprecates an args array combined with it. The release scripts now run the Tauri CLI's own entry with the running `node`, and call `gh` without a shell at all.
+
+### Internal
+
+- `build.rs` watches `icons/` and `tauri.conf.json`; `cargo clean` is no longer part of the icon workflow
+- `scripts/release.mjs`, `scripts/gen-latest-json.mjs` and `scripts/upload-release.mjs` spawn without `shell: true`, signing included
+- README documents the `gh auth login` + publish steps
+- New shortcut registry (`src/lib/keybindings.ts`), `ShortcutsPane`, `useShortcuts`; `App.tsx` / `Terminal.tsx` / `FileEditor.tsx` read bindings through it
+- Regression specs for rebinding (conflicts, reserved keys, reset), the ghost tail retiring on history recall, and the `cd` list
+
+---
+
 ## v0.0.10 — 2026-10-11
 
 Gives the terminal something to complete from: command history is persisted and reachable from every pane, a grey tail continues what you are typing, and the commands installed on each device are indexed once and fed into those candidates. Adds a device identity taken from the host key, with an optional strict check and a new Security settings pane. Plus fixes to `ls` links, the live-line recolor, toasts, the file panel's up button and Docker "Enter Shell".
