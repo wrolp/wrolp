@@ -24,16 +24,33 @@ import { useI18n } from '../i18n'
  */
 const INLINE_ACTIONS_MIN_WIDTH = 320
 
-/** One row action, rendered inline on a wide panel and as a menu item on a narrow one. */
-interface RowAction {
+/**
+ * The toolbar's threshold is higher: its connection filter (~140px) and the session
+ * count (~60px) stay on the line, and the four buttons add ~130px on top.
+ */
+const INLINE_TOOLBAR_MIN_WIDTH = 360
+
+/** One panel action, rendered inline on a wide panel and as a menu item on a narrow one. */
+interface PanelAction {
   key: string
   icon: IconName
   label: string
   /** Tooltip override — the recording path for "show in folder". */
   title?: string
   disabled?: boolean
+  /** Red styling for the destructive verb. */
+  danger?: boolean
   run: () => void
 }
+
+/**
+ * An open action menu, in viewport coordinates. Both strips share the machinery so
+ * they behave the same way: close on outside click or Escape, and keep the action
+ * list identical between the inline and collapsed forms.
+ */
+type PanelMenu =
+  | { kind: 'row'; session: SessionSummary; x: number; y: number }
+  | { kind: 'toolbar'; x: number; y: number }
 
 interface SessionListPanelProps {
   connections: ConnectionConfig[]
@@ -59,29 +76,30 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
     confirmLabel?: string
     onConfirm: () => void
   } | null>(null)
-  // The panel is a resizable column (160–500px), so the row's action strip switches
-  // between inline icons and one menu button based on the width it actually gets.
+  // The panel is a resizable column (160–500px). Its two action strips need different
+  // amounts of room, so one measurement feeds both thresholds rather than each
+  // watching the element itself.
   const panelRef = useRef<HTMLDivElement>(null)
-  const [compact, setCompact] = useState(false)
-  const [rowMenu, setRowMenu] = useState<{ session: SessionSummary; x: number; y: number } | null>(
-    null,
-  )
+  const [panelWidth, setPanelWidth] = useState(0)
+  const compactRow = panelWidth > 0 && panelWidth < INLINE_ACTIONS_MIN_WIDTH
+  const compactToolbar = panelWidth > 0 && panelWidth < INLINE_TOOLBAR_MIN_WIDTH
+  const [menu, setMenu] = useState<PanelMenu | null>(null)
 
   useEffect(() => {
     const el = panelRef.current
     if (!el) return
-    const measure = (width: number) => setCompact(width > 0 && width < INLINE_ACTIONS_MIN_WIDTH)
+    const measure = (width: number) => setPanelWidth(width)
     measure(el.getBoundingClientRect().width)
     const ro = new ResizeObserver(([entry]) => measure(entry.contentRect.width))
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
 
-  // The row menu is positioned in viewport coordinates, so it has to close on the
-  // interactions that would otherwise leave it floating over the list.
+  // The menus are positioned in viewport coordinates, so they have to close on the
+  // interactions that would otherwise leave them floating over the list.
   useEffect(() => {
-    if (!rowMenu) return
-    const close = () => setRowMenu(null)
+    if (!menu) return
+    const close = () => setMenu(null)
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close()
     }
@@ -91,7 +109,7 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
       document.removeEventListener('click', close)
       window.removeEventListener('keydown', onKey)
     }
-  }, [rowMenu])
+  }, [menu])
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -169,8 +187,8 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
    * The row's actions in display order. The compact menu renders this same list, so a
    * width change can never hide an action or drift the two forms apart.
    */
-  const rowActions = (s: SessionSummary): RowAction[] => {
-    const actions: RowAction[] = [
+  const rowActions = (s: SessionSummary): PanelAction[] => {
+    const actions: PanelAction[] = [
       {
         key: 'play',
         icon: 'play',
@@ -203,23 +221,68 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
     }
     actions.push(
       { key: 'rename', icon: 'edit', label: t('rename'), run: () => startRename(s) },
-      { key: 'delete', icon: 'trash', label: t('delete'), run: () => handleDelete(s.id) },
+      {
+        key: 'delete',
+        icon: 'trash',
+        label: t('delete'),
+        danger: true,
+        run: () => handleDelete(s.id),
+      },
     )
     return actions
   }
 
-  const openRowMenu = (e: React.MouseEvent<HTMLButtonElement>, s: SessionSummary) => {
+  /** The toolbar's four verbs, in their inline order. */
+  const toolbarActions = (): PanelAction[] => [
+    { key: 'reload', icon: 'refresh', label: t('refresh'), run: () => void reload() },
+    { key: 'migrate', icon: 'upload', label: t('migrateLegacy'), run: handleMigrateLegacy },
+    { key: 'rescan', icon: 'search', label: t('rescanRecordings'), run: () => void runRescan() },
+    {
+      key: 'delete-all',
+      icon: 'trash',
+      label: t('deleteAllSessions'),
+      danger: true,
+      run: handleDeleteAll,
+    },
+  ]
+
+  const openMenu = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    target: { kind: 'row'; session: SessionSummary } | { kind: 'toolbar' },
+  ) => {
     e.stopPropagation()
     const r = e.currentTarget.getBoundingClientRect()
     // Right-align the menu with the button, and keep it inside the window: the panel
     // can be docked on either side, so "open to the left" is not a safe default.
     const width = 176
-    setRowMenu({
-      session: s,
-      x: Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)),
-      y: Math.min(r.bottom + 4, window.innerHeight - 200),
-    })
+    const x = Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8))
+    const y = Math.min(r.bottom + 4, window.innerHeight - 200)
+    setMenu(
+      target.kind === 'row' ? { kind: 'row', session: target.session, x, y } : { ...target, x, y },
+    )
   }
+
+  /** Shared by both menus, so the row and toolbar menus cannot drift apart. */
+  const renderMenuItems = (actions: PanelAction[]) =>
+    actions.map((a) => (
+      <div
+        key={a.key}
+        role="menuitem"
+        className={`context-menu-item${a.danger ? ' ctx-danger' : ''}${
+          a.disabled ? ' is-disabled' : ''
+        }`}
+        aria-disabled={a.disabled || undefined}
+        title={a.title}
+        onClick={() => {
+          if (a.disabled) return
+          setMenu(null)
+          a.run()
+        }}
+      >
+        <Icon name={a.icon} size={14} />
+        {a.label}
+      </div>
+    ))
 
   const failedText = (failed: string[]) =>
     failed.length
@@ -339,18 +402,42 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
             </option>
           ))}
         </select>
-        <button onClick={reload} className="refresh-btn" title={t('refresh')}>
-          <Icon name="refresh" />
-        </button>
-        <button onClick={handleMigrateLegacy} className="refresh-btn" title={t('migrateLegacy')}>
-          <Icon name="upload" />
-        </button>
-        <button onClick={runRescan} className="refresh-btn" title={t('rescanRecordings')}>
-          <Icon name="search" />
-        </button>
-        <button onClick={handleDeleteAll} className="delete-all-btn" title={t('deleteAllSessions')}>
-          <Icon name="trash" />
-        </button>
+        {compactToolbar ? (
+          <button
+            type="button"
+            className="refresh-btn session-more-btn"
+            title={t('moreActions')}
+            aria-label={t('moreActions')}
+            aria-haspopup="menu"
+            aria-expanded={menu?.kind === 'toolbar'}
+            onClick={(e) => openMenu(e, { kind: 'toolbar' })}
+          >
+            <Icon name="more" />
+          </button>
+        ) : (
+          <>
+            <button onClick={reload} className="refresh-btn" title={t('refresh')}>
+              <Icon name="refresh" />
+            </button>
+            <button
+              onClick={handleMigrateLegacy}
+              className="refresh-btn"
+              title={t('migrateLegacy')}
+            >
+              <Icon name="upload" />
+            </button>
+            <button onClick={runRescan} className="refresh-btn" title={t('rescanRecordings')}>
+              <Icon name="search" />
+            </button>
+            <button
+              onClick={handleDeleteAll}
+              className="delete-all-btn"
+              title={t('deleteAllSessions')}
+            >
+              <Icon name="trash" />
+            </button>
+          </>
+        )}
         <span className="session-count">{t('sessionCount', { n: sessions.length })}</span>
       </div>
 
@@ -397,15 +484,15 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
                 </span>
               </div>
               <div className="session-row-actions">
-                {compact ? (
+                {compactRow ? (
                   <button
                     type="button"
                     className="session-more-btn"
                     title={t('moreActions')}
                     aria-label={t('moreActions')}
                     aria-haspopup="menu"
-                    aria-expanded={rowMenu?.session.id === s.id}
-                    onClick={(e) => openRowMenu(e, s)}
+                    aria-expanded={menu?.kind === 'row' && menu.session.id === s.id}
+                    onClick={(e) => openMenu(e, { kind: 'row', session: s })}
                   >
                     <Icon name="more" />
                   </button>
@@ -429,34 +516,18 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
         </div>
       )}
 
-      {/* The compact row's action menu. Fixed coordinates from the button, so it
-          escapes the row's `overflow: hidden` instead of being clipped. */}
-      {rowMenu && (
+      {/* One menu serves both collapsed strips. Fixed coordinates from the button, so
+          it escapes the row's `overflow: hidden` instead of being clipped. */}
+      {menu && (
         <div
-          className="context-menu session-row-menu"
+          className="context-menu session-action-menu"
           role="menu"
-          style={{ left: rowMenu.x, top: rowMenu.y }}
+          style={{ left: menu.x, top: menu.y }}
           onClick={(e) => e.stopPropagation()}
         >
-          {rowActions(rowMenu.session).map((a) => (
-            <div
-              key={a.key}
-              role="menuitem"
-              className={`context-menu-item${a.key === 'delete' ? ' ctx-danger' : ''}${
-                a.disabled ? ' is-disabled' : ''
-              }`}
-              aria-disabled={a.disabled || undefined}
-              title={a.title}
-              onClick={() => {
-                if (a.disabled) return
-                setRowMenu(null)
-                a.run()
-              }}
-            >
-              <Icon name={a.icon} size={14} />
-              {a.label}
-            </div>
-          ))}
+          {menu.kind === 'row'
+            ? renderMenuItems(rowActions(menu.session))
+            : renderMenuItems(toolbarActions())}
         </div>
       )}
 
