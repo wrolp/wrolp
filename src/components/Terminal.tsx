@@ -152,6 +152,8 @@ import {
   commitSubmittedCommands,
   isPagerPrompt,
   isApplicationScreen,
+  isInteractiveQuestion,
+  looksLikeInteractivePrompt,
   getInputTextBeforeCaret,
   CURSOR_REPOSITION,
   VERTICAL_MOVE,
@@ -741,20 +743,6 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   function looksLikeShellPrompt(line: string): boolean {
     return /[$#%>❯]\s*$/.test(line.trimEnd())
   }
-  // An interactive program (ssh host-key confirmation, yes/no questions, password
-  // prompts, ...) is not a shell command line, so recoloring it corrupts the
-  // echoed first character. Treat such lines as prompts and suspend live coloring
-  // until a real shell prompt returns.
-  function looksLikeInteractivePrompt(line: string): boolean {
-    const plain = line.trimEnd()
-    if (!plain) return false
-    if (/are you sure you want to continue connecting/i.test(plain)) return true
-    if (/\(yes\/no(?:\/[^)]+)?\)\s*\?*\s*$/i.test(plain)) return true
-    if (/\[\s*y\s*\/\s*n\s*\]\s*\?*\s*$/i.test(plain)) return true
-    if (/\b(password|passphrase|passcode|pin)\b.*:\s*$/i.test(plain)) return true
-    if (/\?\s*$/.test(plain)) return true
-    return false
-  }
 
   // Start a table capture for known table commands (df/ps/free/ss/...). Only
   // one command runs at a time, so clears the print/ls captures first to avoid
@@ -1289,6 +1277,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // The matching not-yet-echoed tail (same projection the `cd` dropdown and the
   // ghost completion use; see `projectInputLine`).
   const typedLagRef = useRef('')
+  // The buffer row (absolute, so scrollback counts) that the previous Enter submitted.
+  // ConPTY repaints a local shell's screen a poll late, so the caret can still be on
+  // the row of the command that was already recorded when the next Enter arrives;
+  // `staleSubmit` in the input handler is what keeps that window from writing the old
+  // command into the history a second time — with the first character typed after the
+  // Enter glued onto its tail by `typedLineRef`.
+  const lastSubmitRowRef = useRef(-1)
   // True from submitting a command until the shell moves past its input line.
   // ConPTY re-serializes the *screen*, so the echo of that line arrives wrapped
   // in absolute cursor moves (`ESC[4;20Hdir ESC[4;23H`) — indistinguishable from
@@ -2469,15 +2464,29 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // with the cursor/clear sequences stripped (stale rows, broken box borders,
         // exactly BUGS.md B46). Skip every shell-oriented heuristic in that case.
         const appScreen = isApplicationScreen(term)
-        if (shellReadyRef.current && !appScreen) {
+        // A lone Enter submits the buffer line under the caret, so read it once and
+        // share it between the staleness test below and the parse further down.
+        const isLoneEnter = /^[\r\n]+$/.test(data) && !appScreen
+        const submitRow = term.buffer.active.baseY + term.buffer.active.cursorY
+        const submitLine = isLoneEnter ? getCurrentCommandLine(term) : ''
+        // A shell takes an Enter by moving to the next line, so the caret sitting on
+        // the SAME row as the previous Enter means the screen has not repainted since
+        // — this submit's own line is nowhere on screen yet, and the row under the
+        // caret still holds the command already recorded. Recording it would be wrong
+        // twice over: the text is stale, and `typedLineRef` glues the first character
+        // typed after the Enter onto its tail (`yarn tauri dev` → `yarn tauri devy`).
+        // Record nothing: from here this submit's content genuinely cannot be known.
+        const staleSubmit = isLoneEnter && lastSubmitRowRef.current === submitRow
+        if (isLoneEnter && submitLine.length > 0) lastSubmitRowRef.current = submitRow
+        if (shellReadyRef.current && !appScreen && !staleSubmit) {
           commitSubmittedCommands(term, data, currentTabId)
         }
         // A lone Enter submits a single command: detect print-style commands
         // (`cat`/`head`/`tail`) and `ls`-style listings for their respective
         // capture machines. The prompt is captured from the same buffer line so
         // capture can end precisely when the next prompt arrives.
-        if (/^[\r\n]+$/.test(data) && !appScreen) {
-          const { prompt, command: echoed } = splitPromptCommand(getCurrentCommandLine(term))
+        if (isLoneEnter) {
+          const { prompt, command: echoed } = splitPromptCommand(submitLine)
           // The buffer is one echo behind whenever the shell has not repainted the
           // input line yet — ConPTY does that a poll later, so `docker ps` can read
           // back as `docker p`, or as a bare prompt with nothing echoed at all.
@@ -2505,8 +2514,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             // link resolution. SSH is seeded from $HOME on the first `cd`.
             if (command) {
               // Feed the pane's command-history dropdown (the pane owns the list,
-              // so a float-out / dock-back re-mount keeps it).
-              onCommandSubmittedRef.current?.(command)
+              // so a float-out / dock-back re-mount keeps it). The same two rules
+              // `commitSubmittedCommands` applies decide it: the line must carry a
+              // shell prompt, and it must not be a program's own question with the
+              // answer on the same row. Without them an output row the user merely
+              // stepped on with Enter (`28Z WARN bevy_ecs::...`, `Delete? [Y/n] y`)
+              // became a saved command.
+              if (prompt && !staleSubmit && !isInteractiveQuestion(prompt + command)) {
+                onCommandSubmittedRef.current?.(command)
+              }
               // Session-boundary commands switch the shell context: entering a
               // nested session (docker exec shell / interactive ssh) or leaving
               // one (exit/logout) makes the tracked cwd stale — it describes the

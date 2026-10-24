@@ -92,6 +92,12 @@ const findLeftmostMarker = (
 // `[root@host:~] ` or `(venv) `. The head up to (and including) the bracket must
 // be space-free and start with the matching opener, which rules out ordinary
 // command text such as `echo [a-z] file`.
+//
+// An answer-choice group is NOT a prompt: `[y/n] ` / `(yes/no) ` sit at the end of
+// a program's own question, and reading them as the prompt turned the typed answer
+// into a submitted command (`[y/n] y` → command `y`).
+const OPTION_LIST_HEAD = /^[([{]\s*(?:y|yes|n|no)(?:\s*[/|]\s*(?:y|yes|n|no))+\s*[)\]}]$/i
+
 const findBracketPrompt = (text: string): { pos: number; len: number } | null => {
   const pairs: Array<[string, string]> = [
     ['[', ']'],
@@ -103,6 +109,7 @@ const findBracketPrompt = (text: string): { pos: number; len: number } | null =>
     if (pos <= 0 || pos >= MAX_PROMPT_LEN) continue
     const head = text.slice(0, pos + 1)
     if (!head.startsWith(open) || /\s/.test(head)) continue
+    if (OPTION_LIST_HEAD.test(head)) continue
     return { pos, len: 2 }
   }
   return null
@@ -145,6 +152,45 @@ export function splitPromptCommand(line: string): { prompt: string; command: str
 const PAGER_PROMPT_RE = /-{2,}\s*\(?\s*more\s*\)?\s*-{2,}/i
 
 export const isPagerPrompt = (line: string): boolean => PAGER_PROMPT_RE.test(line)
+
+/**
+ * True when the line ENDS with a program's own question rather than a shell
+ * prompt — and with the answer already typed after it (`[y/n] y`, `(yes/no)? n`),
+ * because the echo of the answer lands on the same row as the question. This is
+ * what the submit path reads back, so without it an answer is recorded as a
+ * command.
+ *
+ * Narrower than `looksLikeInteractivePrompt` on purpose: a trailing `?` alone is
+ * not enough to call something a question, since `ls file?` is a real command.
+ */
+export function isInteractiveQuestion(line: string): boolean {
+  const plain = line.trim()
+  if (!plain) return false
+  if (/are you sure you want to continue connecting/i.test(plain)) return true
+  if (/[([{]\s*(?:y|yes|n|no)(?:\s*[/|]\s*(?:y|yes|n|no))+\s*[)\]}]\s*[?:]?\s*\S*$/i.test(plain))
+    return true
+  // A password answer must never reach the history. `--password=x` is not matched:
+  // the rule needs a colon after the word, which only the prompt itself carries.
+  return /\b(?:password|passphrase|passcode|pin)\b[^:]*:\s*\S*$/i.test(plain)
+}
+
+/**
+ * Heuristic that suspends live input-line coloring while a program is asking
+ * something (login/password prompts, yes/no questions, ssh's host-key
+ * confirmation): recoloring such a line corrupts the character the user just
+ * echoed. Moved here from `Terminal.tsx` so the command-history writers can veto
+ * the same lines instead of only suspending coloring.
+ */
+export function looksLikeInteractivePrompt(line: string): boolean {
+  const plain = line.trimEnd()
+  if (!plain) return false
+  if (isInteractiveQuestion(plain)) return true
+  // Shapes that only matter for coloring: any `(yes/no/…)` choice group, any
+  // password-ish prefix, and any line that simply ends in `?`.
+  if (/\(yes\/no(?:\/[^)]+)?\)\s*\?*\s*$/i.test(plain)) return true
+  if (/\b(password|passphrase|passcode|pin)\b.*:\s*$/i.test(plain)) return true
+  return /\?\s*$/.test(plain)
+}
 
 /**
  * True when the screen is owned by an interactive application (a TUI) rather than
@@ -361,6 +407,8 @@ export function getInputTextBeforeCaret(term: Terminal): string | null {
 // terminal-buffer line (which holds tab-completed text); a multi-line paste
 // commits each pasted line directly.
 export function commitSubmittedCommands(term: Terminal, data: string, tabId: number) {
+  const commit = (cmd: string) =>
+    commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
   if (/^[\r\n]+$/.test(data)) {
     const rawLine = getCurrentCommandLine(term)
     if (!rawLine) return
@@ -368,17 +416,15 @@ export function commitSubmittedCommands(term: Terminal, data: string, tabId: num
     // No prompt marker — not a submitted command (e.g. pager output / help text).
     if (!prompt) return
     const cmd = command.trim()
-    // Never record a pager prompt (`---- More ----`) as a submitted command —
-    // paging through long device output would otherwise flood the command history.
-    if (cmd.length > 0 && !isPagerPrompt(cmd)) {
-      commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
+    // Nor is a program's own question with its answer on the same row, whichever
+    // half of the line the question marker landed on.
+    if (cmd.length > 0 && !isPagerPrompt(cmd) && !isInteractiveQuestion(prompt + cmd)) {
+      commit(cmd)
     }
     return
   }
   for (const raw of data.split(/[\r\n]+/)) {
     const cmd = raw.replace(/[\x00-\x1f]/g, '').trim()
-    if (cmd.length > 0) {
-      commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
-    }
+    if (cmd.length > 0) commit(cmd)
   }
 }
