@@ -21,6 +21,11 @@ import type {
   ContainerInfo,
   DockerHostRef,
   DockerProbe,
+  K8sHostRef,
+  K8sContext,
+  K8sNamespace,
+  K8sResource,
+  K8sExecTarget,
   ToolCallEvent,
   AiEndpointProfile,
   LocalShellDir,
@@ -1173,4 +1178,145 @@ export async function confirmAiTool(
  */
 export async function aiUiToolResult(id: number, result: string): Promise<void> {
   return await invoke<void>('ai_ui_tool_result', { id, result })
+}
+
+// ===== Kubernetes panel =====
+
+/** kubeconfig contexts on the selected host, current one flagged. */
+export async function k8sListContexts(host: K8sHostRef): Promise<K8sContext[]> {
+  return await invoke<K8sContext[]>('k8s_list_contexts', { host })
+}
+
+export async function k8sListNamespaces(
+  host: K8sHostRef,
+  context?: string | null,
+): Promise<K8sNamespace[]> {
+  return await invoke<K8sNamespace[]>('k8s_list_namespaces', { host, context: context ?? null })
+}
+
+/** `namespace` of `null` / `'*'` means all namespaces (`kubectl -A`). */
+export async function k8sListResources(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  kind: string,
+): Promise<K8sResource[]> {
+  return await invoke<K8sResource[]>('k8s_list_resources', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    kind,
+  })
+}
+
+export async function k8sResourceYaml(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  kind: string,
+  name: string,
+): Promise<string> {
+  return await invoke<string>('k8s_resource_yaml', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    kind,
+    name,
+  })
+}
+
+export async function k8sPodLogs(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  pod: string,
+  container?: string | null,
+  tailLines?: number,
+): Promise<string> {
+  return await invoke<string>('k8s_pod_logs', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    pod,
+    container: container ?? null,
+    tailLines,
+  })
+}
+
+export async function k8sDeleteResource(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  kind: string,
+  name: string,
+): Promise<void> {
+  return await invoke('k8s_delete_resource', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    kind,
+    name,
+  })
+}
+
+export async function k8sScaleResource(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  kind: string,
+  name: string,
+  replicas: number,
+): Promise<string> {
+  return await invoke<string>('k8s_scale_resource', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    kind,
+    name,
+    replicas,
+  })
+}
+
+export async function k8sApplyYaml(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  yaml: string,
+): Promise<string> {
+  return await invoke<string>('k8s_apply_yaml', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    yaml,
+  })
+}
+
+/** The line an SSH pane types to enter a pod's shell (`postConnectCmd`). */
+export async function k8sPodExecCommand(exec: K8sExecTarget): Promise<string> {
+  return await invoke<string>('k8s_pod_exec_command', {
+    context: exec.context ?? null,
+    namespace: exec.namespace,
+    pod: exec.pod,
+    container: exec.container ?? null,
+  })
+}
+
+/** Start a local PTY running `kubectl exec -it` into the pod (local host only). */
+export async function openLocalKubectlShell(
+  tabId: number,
+  exec: K8sExecTarget,
+  reuseExisting: boolean = true,
+  cols?: number,
+  rows?: number,
+): Promise<void> {
+  return await invoke('open_local_kubectl_shell', {
+    tabId,
+    context: exec.context ?? null,
+    namespace: exec.namespace,
+    pod: exec.pod,
+    container: exec.container ?? null,
+    reuseExisting,
+    cols: cols ?? 0,
+    rows: rows ?? 0,
+  })
 }

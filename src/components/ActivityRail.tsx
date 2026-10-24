@@ -9,7 +9,7 @@ import type { TranslationKey } from '../i18n/en'
  * a time, which is why the collapsed/expanded plumbing the old stacked sidebar
  * needed is gone.
  */
-export type RailMode = 'hosts' | 'files' | 'containers' | 'sessions' | 'nettools'
+export type RailMode = 'hosts' | 'files' | 'containers' | 'k8s' | 'sessions' | 'nettools'
 
 interface ActivityRailProps {
   mode: RailMode
@@ -17,6 +17,7 @@ interface ActivityRailProps {
   /** A mode with nothing to show is hidden rather than rendered empty. */
   filesAvailable: boolean
   containersAvailable: boolean
+  k8sAvailable: boolean
   onSettings: () => void
 }
 
@@ -24,6 +25,7 @@ const MODES: { mode: RailMode; icon: IconName; labelKey: TranslationKey }[] = [
   { mode: 'hosts', icon: 'server', labelKey: 'railHosts' },
   { mode: 'files', icon: 'folderOpen', labelKey: 'railFiles' },
   { mode: 'containers', icon: 'container', labelKey: 'railContainers' },
+  { mode: 'k8s', icon: 'boxes', labelKey: 'railK8s' },
   { mode: 'sessions', icon: 'history', labelKey: 'railSessions' },
   { mode: 'nettools', icon: 'network', labelKey: 'railNetTools' },
 ]
@@ -33,12 +35,19 @@ export function ActivityRail({
   onModeChange,
   filesAvailable,
   containersAvailable,
+  k8sAvailable,
   onSettings,
 }: ActivityRailProps) {
   const { t } = useI18n()
 
   const visible = (m: RailMode) =>
-    m === 'files' ? filesAvailable : m === 'containers' ? containersAvailable : true
+    m === 'files'
+      ? filesAvailable
+      : m === 'containers'
+        ? containersAvailable
+        : m === 'k8s'
+          ? k8sAvailable
+          : true
 
   return (
     <nav className="activity-rail" aria-label={t('railNav')}>

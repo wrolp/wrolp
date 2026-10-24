@@ -14,6 +14,7 @@ mod ftp_fs;
 mod host_analysis;
 mod host_commands;
 mod host_identity;
+mod k8s_host;
 mod local_fs;
 mod rec_file;
 mod remote_fs;
@@ -353,6 +354,16 @@ pub fn run() {
       commands::poll_docker_logs,
       commands::stop_docker_logs_stream,
       commands::open_local_docker_shell,
+      commands::k8s_list_contexts,
+      commands::k8s_list_namespaces,
+      commands::k8s_list_resources,
+      commands::k8s_resource_yaml,
+      commands::k8s_pod_logs,
+      commands::k8s_delete_resource,
+      commands::k8s_scale_resource,
+      commands::k8s_apply_yaml,
+      commands::k8s_pod_exec_command,
+      commands::open_local_kubectl_shell,
       commands::command_help,
       commands::get_app_version,
       commands::open_config_dir,

@@ -12,7 +12,7 @@ import { expect, type Page } from './fixtures'
  */
 export async function selectRailMode(
   page: Page,
-  mode: 'hosts' | 'files' | 'containers' | 'sessions' | 'nettools',
+  mode: 'hosts' | 'files' | 'containers' | 'k8s' | 'sessions' | 'nettools',
 ) {
   const item = page.locator(`.rail-item[data-mode="${mode}"]`)
   await expect(item).toBeVisible()

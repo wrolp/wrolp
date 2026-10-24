@@ -21,6 +21,7 @@
 @use 'modal'; // modal dialogs, context menus, forms inside dialogs
 @use 'files'; // sidebar container, status bar, file panel
 @use 'panels'; // toast, bottom panel, docker panel, pane/dock drag feedback
+@use 'k8s'; // Kubernetes rail mode: context/namespace pickers, resource rows, log/YAML overlays
 @use 'analysis'; // host analysis, docker analysis, docker log viewer
 @use 'ai'; // AI chat panel
 @use 'cards'; // settings shared card styles

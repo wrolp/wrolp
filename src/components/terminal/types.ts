@@ -1,4 +1,4 @@
-import type { TargetRef } from '../../types'
+import type { K8sExecTarget, TargetRef } from '../../types'
 import type { GhostCandidate } from './ghostComplete'
 
 /** Props for the terminal component, isolated so other modules can reference
@@ -48,6 +48,9 @@ export interface TerminalComponentProps {
    *  `ls` link bases come from the container's own prompt instead of the host
    *  cwd (see startLsCaptureIfMatch). Cleared on `exit`. */
   dockerContainer?: string
+  /** Local only: the pod this PTY entered with `kubectl exec -it`. Mirrors the
+   *  Docker container flag — the exec is spawn-time, not typed into a shell. */
+  kubectlExec?: K8sExecTarget
   /** Working directory to start the local shell in (local mode only). */
   localCwd?: string
   /** Shell command to use for the local shell (local mode only). */

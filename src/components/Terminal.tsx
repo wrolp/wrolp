@@ -20,6 +20,7 @@ import {
   resizeTerminal,
   openLocalShell,
   openLocalDockerShell,
+  openLocalKubectlShell,
   localSendInput,
   localResize,
   pollWorkingDir,
@@ -57,7 +58,7 @@ import {
 } from '../lib/lsParse'
 import type { LsEntry } from '../lib/lsParse'
 import { detectTableCommand } from '../lib/tableOutput'
-import type { AiTermMark, FileEntry, TargetRef } from '../types'
+import type { AiTermMark, FileEntry, K8sExecTarget, TargetRef } from '../types'
 import {
   activeTerminalByTab,
   latestTerminalByTab,
@@ -99,6 +100,7 @@ const HL_FLUSH_DELAY_MS = 300
 function openLocalPty(
   tabId: number,
   container: string | null | undefined,
+  kubectlExec: K8sExecTarget | null | undefined,
   shellType: string | undefined,
   cwd: string | undefined,
   distro: string | undefined,
@@ -106,6 +108,9 @@ function openLocalPty(
   cols: number,
   rows: number,
 ): Promise<void> {
+  if (kubectlExec) {
+    return openLocalKubectlShell(tabId, kubectlExec, reuseExisting, cols, rows)
+  }
   return container
     ? openLocalDockerShell(tabId, container, reuseExisting, cols, rows)
     : openLocalShell(tabId, shellType, cwd, reuseExisting, cols, rows, distro)
@@ -269,6 +274,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   isSerial,
   isTelnet,
   dockerContainer,
+  kubectlExec,
   localCwd,
   localShellType,
   localDistro,
@@ -313,6 +319,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Enter-handler nested tracking never fires — see prop docs).
   const dockerContainerRef = useRef<string | null>(dockerContainer)
   dockerContainerRef.current = dockerContainer
+  // Non-null when this local tab is a `kubectl exec -it` shell. Like the Docker
+  // flag, it makes nested-session heuristics treat the shell as inside another host.
+  const kubectlExecRef = useRef<K8sExecTarget | null>(kubectlExec ?? null)
+  kubectlExecRef.current = kubectlExec ?? null
+  // Both spawn-time shells run *inside* another host, so the tracked host cwd and
+  // `pwd` describe the outer machine. (Only the nested-session heuristics read this;
+  // container file access still keys off `dockerContainerRef` alone.)
+  const nestedShellRef = useRef(false)
+  nestedShellRef.current = dockerContainerRef.current != null || kubectlExecRef.current != null
   // Wrapper that keeps cwdRef in sync AND notifies the parent (so the FilePanel
   // shell-sync follows the real directory instead of $HOME from poll_working_dir).
   const onCwdChangeRef = useRef(onCwdChange)
@@ -824,7 +839,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       capturedBase,
       name: entry.name,
       cwd: cwdRef.current,
-      nested: dockerContainerRef.current != null,
+      nested: nestedShellRef.current,
       exists: (p) => fsFileExists(lsFsTarget(), p),
     })
     // Plain `ls` (multi format) carries no type info — resolve dir-vs-file at
@@ -855,7 +870,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // In a docker exec shell the path is container-side (base came from the
       // container's prompt or is a bare relative name) — the host-tracked cwd
       // can't describe it, so skip the host-side tracking there.
-      if (dockerContainerRef.current == null) {
+      if (!nestedShellRef.current) {
         const next = resolveCdTarget(abs, cwdRef.current)
         if (next) setCwd(next)
       }
@@ -1176,7 +1191,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // OUTER cwd. So no base is captured; links resolve relative and the nested
     // shell resolves them against its own working directory. The outer $HOME
     // must not be used to expand `~` either.
-    const nested = nestedDepthRef.current > 0 || dockerContainerRef.current != null
+    const nested = nestedDepthRef.current > 0 || nestedShellRef.current
     const homePromise: Promise<string | null> =
       isLocal || nested ? Promise.resolve(null) : pollWorkingDir(tabIdRef.current).catch(() => null)
     const cwdPromise: Promise<string | null> = isLocal
@@ -2546,7 +2561,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                   // host-tracked cwd can't describe container paths, so skip both
                   // the `pwd` seed and the cwd tracking (ls links resolve from the
                   // container's prompt instead).
-                  if (dockerContainerRef.current != null) return
+                  if (nestedShellRef.current) return
                   // SSH: seed the cwd from the shell's real directory (a hidden
                   // `pwd` query) when we don't yet track an absolute cwd. We never
                   // guess from $HOME, since the dir need not live under it. Inside
@@ -2808,6 +2823,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         openLocalPty(
           currentTabId,
           dockerContainerRef.current,
+          kubectlExecRef.current,
           localShellTypeRef.current,
           localCwd,
           localDistroRef.current,
@@ -3158,6 +3174,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         openLocalPty(
           currentTabId,
           dockerContainerRef.current,
+          kubectlExecRef.current,
           localShellTypeRef.current,
           localCwd,
           localDistroRef.current,
@@ -4206,7 +4223,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     cdCacheRef.current.clear()
     closeCdSuggest()
     closeGhost()
-  }, [isLocal, localShellType, dockerContainer, reconnectTrigger])
+  }, [isLocal, localShellType, dockerContainer, kubectlExec, reconnectTrigger])
 
   const handleToggleCdSuggest = useCallback(() => {
     setCtxMenu(null)

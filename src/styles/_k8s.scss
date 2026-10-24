@@ -1,0 +1,287 @@
+@use 'variables' as *;
+
+// ===== Kubernetes panel =====
+//
+// One rail mode, ~264px wide. Everything here follows the Docker panel's row shape
+// (name + detail + chips) so the two columns read as siblings.
+
+.k8s-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid $border;
+  background: $bg-primary;
+}
+
+.k8s-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid $border;
+  flex: none;
+}
+
+.k8s-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: $text-muted;
+
+  &.k8s-field-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.k8s-select,
+.k8s-input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  background: $bg-input;
+  color: $text-primary;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+
+  &:focus {
+    outline: none;
+    border-color: $border-focus;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+  }
+}
+
+.k8s-notice {
+  flex: none;
+  padding: 4px 10px;
+  border-bottom: 1px solid $border;
+  font-size: var(--fs-xs);
+  color: var(--success-soft-40);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.k8s-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 6px;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+  }
+
+  .file-error,
+  .file-empty {
+    padding: 8px 10px;
+    font-size: var(--fs-sm);
+    color: $text-dim;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}
+
+.k8s-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition: background var(--d-1) var(--e-out);
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
+.k8s-icon {
+  display: flex;
+  flex: none;
+  color: $text-muted;
+}
+
+.k8s-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.k8s-name {
+  font-size: var(--fs-sm);
+  color: $text-primary;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.k8s-ns {
+  margin-left: 6px;
+  font-size: var(--fs-xs);
+  color: $text-dim;
+}
+
+.k8s-detail {
+  min-height: 1em;
+  font-size: var(--fs-xs);
+  color: $text-muted;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.k8s-chips {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+}
+
+.k8s-chip {
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: $bg-active;
+  color: $text-secondary;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+
+  &.ok {
+    background: rgba($success, 0.16);
+    color: var(--success-soft-40);
+  }
+  &.warn {
+    background: rgba($warning, 0.16);
+    color: var(--warning-soft-40);
+  }
+  &.bad {
+    background: rgba($danger, 0.18);
+    color: var(--danger-soft-40);
+  }
+  &.muted {
+    color: $text-muted;
+  }
+}
+
+// ===== Overlays =====
+
+.k8s-modal {
+  display: flex;
+  flex-direction: column;
+  width: 860px;
+  max-width: 92vw;
+  max-height: 84vh;
+  overflow: hidden;
+}
+
+.k8s-modal .modal-header {
+  flex: none;
+}
+
+.k8s-modal-close {
+  display: flex;
+  color: $text-muted;
+  cursor: pointer;
+
+  &:hover {
+    color: $text-primary;
+  }
+}
+
+.k8s-log-toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: none;
+  padding: 8px 16px;
+  border-bottom: 1px solid $border;
+}
+
+.k8s-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: $text-muted;
+
+  .k8s-select {
+    width: auto;
+    min-width: 80px;
+  }
+
+  &.k8s-check {
+    cursor: pointer;
+    user-select: none;
+  }
+}
+
+.k8s-btn {
+  padding: 4px 10px;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  background: $bg-input;
+  color: $text-primary;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
+.k8s-log-output,
+.k8s-yaml {
+  margin: 0;
+  flex: 1;
+  min-height: 240px;
+  padding: 12px 16px;
+  overflow: auto;
+  background: $bg-primary;
+  color: $text-primary;
+  font-family: $font-mono;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.k8s-yaml {
+  white-space: pre;
+}
+
+.k8s-modal .modal-error {
+  flex: none;
+  margin: 8px 16px 0;
+}
+
+.k8s-apply-input {
+  width: 100%;
+  min-height: 320px;
+  padding: 10px;
+  resize: vertical;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  background: $bg-input;
+  color: $text-primary;
+  font-family: $font-mono;
+  font-size: 12px;
+  line-height: 1.5;
+
+  &:focus {
+    outline: none;
+    border-color: $border-focus;
+  }
+}

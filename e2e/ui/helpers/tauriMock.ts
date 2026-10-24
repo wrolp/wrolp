@@ -115,6 +115,16 @@ export interface TauriMockOptions {
    * (BUGS.md B35).
    */
   dockerLogsByContainer?: Record<string, string>
+  /** kubeconfig contexts returned by `k8s_list_contexts` (defaults to `[]`). */
+  k8sContexts?: unknown[]
+  /** Namespaces returned by `k8s_list_namespaces` (defaults to `[]`). */
+  k8sNamespaces?: unknown[]
+  /** Resource rows keyed by kind (`pods`, `deployments`, …). */
+  k8sResources?: Record<string, unknown[]>
+  /** YAML returned by `k8s_resource_yaml`. */
+  k8sYaml?: string
+  /** Log text returned by `k8s_pod_logs`. */
+  k8sLogs?: string
   /**
    * Value returned by `get_local_terminals` (the sidebar's saved local-terminal
    * entries). The section also renders an always-present "open default local
@@ -398,6 +408,28 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             const name = String(args.containerName ?? '')
             return byName?.[name] ?? opts.dockerLogs ?? ''
           }
+          // Kubernetes panel. Every answer is a plain value, like the commands.ts
+          // wrappers expect; the mutating calls return what the UI only toasts.
+          case 'k8s_list_contexts':
+            return opts.k8sContexts ?? []
+          case 'k8s_list_namespaces':
+            return opts.k8sNamespaces ?? []
+          case 'k8s_list_resources':
+            return (opts.k8sResources ?? {})[String(args.kind ?? '')] ?? []
+          case 'k8s_resource_yaml':
+            return opts.k8sYaml ?? ''
+          case 'k8s_pod_logs':
+            return opts.k8sLogs ?? ''
+          case 'k8s_delete_resource':
+            return null
+          case 'k8s_scale_resource':
+            return ''
+          case 'k8s_apply_yaml':
+            return 'mock applied'
+          case 'k8s_pod_exec_command':
+            return 'kubectl -n apps exec -it web-0 -- /bin/sh'
+          case 'open_local_kubectl_shell':
+            return null
           // Follow mode (the viewer's default) streams instead of fetching; the
           // stream command/ids are unused by tests that turn Follow off, but a
           // defined `poll_docker_logs` keeps the poll loop from throwing.

@@ -362,6 +362,12 @@ export interface TabInfo {
   // When set, this terminal tab is a shell running inside a Docker container
   // (`docker exec`). The value is the container name.
   dockerContainer?: string
+  // When set, this tab is a local PTY running `kubectl exec -it` into a pod.
+  // The SSH equivalent is carried by `postConnectCmd` instead.
+  kubectlExec?: K8sExecTarget
+  // Overrides the tab-bar label for a shell opened for one object (a pod's
+  // `kubectl exec`), so it is not numbered like a second tab of the connection.
+  commandLabel?: string
   // Command sent automatically each time this tab (re)connects. Used by the
   // docker-shell pane so floating/restoring the pane — which triggers a fresh
   // SSH connect — re-enters the container instead of showing the host shell.
@@ -508,6 +514,49 @@ export interface DockerProbe {
   /** `DOCKER_HOST` as the environment sets it, shown so a custom endpoint is visible. */
   dockerHost: string | null
   message: string
+}
+
+/**
+ * Where a kubectl command runs: a connected jump-host tab, or this machine.
+ * Mirrors `K8sHostRef` in `src-tauri/src/k8s_host.rs`.
+ */
+export type K8sHostRef = { kind: 'ssh'; jumpTabId: number } | { kind: 'local' }
+
+/** One kubeconfig context. Mirrors `K8sContext` on the Rust side. */
+export interface K8sContext {
+  name: string
+  cluster: string
+  user: string
+  /** The context's default namespace, when it sets one. */
+  namespace?: string | null
+  current: boolean
+}
+
+export interface K8sNamespace {
+  name: string
+  status: string
+}
+
+/** One row in the Kubernetes panel; the shape is shared by every resource kind. */
+export interface K8sResource {
+  kind: string
+  name: string
+  namespace: string
+  status: string
+  /** `ready/total` for pods, workloads and jobs; empty for the rest. */
+  ready: string
+  restarts: number
+  detail: string
+  containers: string[]
+  createdAt?: string | null
+}
+
+/** What the SSH / local shell needs to enter a pod. */
+export interface K8sExecTarget {
+  context?: string | null
+  namespace: string
+  pod: string
+  container?: string | null
 }
 
 /** A recorded local-shell working directory (for the "recent directories" list). */

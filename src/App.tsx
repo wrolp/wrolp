@@ -29,6 +29,7 @@ import { NetworkScanPanel } from './components/NetworkScanPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
+import { K8sPanel } from './components/K8sPanel'
 import { CommandListPanel } from './components/CommandListPanel'
 import { ShortcutsPane } from './components/ShortcutsPane'
 import { StatusBar } from './components/StatusBar'
@@ -46,6 +47,8 @@ import type {
   DeviceIdentity,
   TargetRef,
   ContainerInfo,
+  K8sHostRef,
+  K8sExecTarget,
   WorkspaceLayout,
   FileTargetMode,
   LocalTerminalEntry,
@@ -110,6 +113,7 @@ import {
   removeDockerContainer,
   startDockerContainer,
   stopDockerContainer,
+  k8sPodExecCommand,
   localClose,
   getLocalTerminals,
   saveLocalTerminals,
@@ -230,6 +234,10 @@ const HOME_TAB: TabInfo = {
 // The 「本机 Docker」 group's host. A module constant so every consumer that receives it
 // sees the same object identity — `DockerLogViewer` and `DockerPanel` key work off it.
 const LOCAL_DOCKER_HOST: DockerHostRef = { kind: 'local' }
+
+// The Kubernetes mode's host for this machine. Same reasoning as above: one shared
+// constant so the panel never sees a fresh identity per paint.
+const LOCAL_K8S_HOST: K8sHostRef = { kind: 'local' }
 
 // Pixel gap between adjacent terminal split panes. Panes are inset by half of
 // this on every edge shared with a sibling (see `renderPane`), and the invisible
@@ -2078,6 +2086,18 @@ export default function App() {
       ? { kind: 'ssh', jumpTabId: tab.tabId }
       : null
   }, [focusedLeafTabId, tabs])
+  // The Kubernetes mode follows the same rule: a local shell (or no terminal at all)
+  // means this machine's kubeconfig, a connected SSH/Telnet session means kubectl on
+  // that host. Whether kubectl is actually installed is the panel's first call —
+  // refusing to show the mode here would require probing every host on connect.
+  const k8sHost = useMemo<K8sHostRef | null>(() => {
+    const tab = focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
+    if (tab == null || tab.tabType === 'localShell') return LOCAL_K8S_HOST
+    if (tab.status !== 'connected') return null
+    return tab.tabType === 'terminal' || tab.tabType === 'telnet'
+      ? { kind: 'ssh', jumpTabId: tab.tabId }
+      : null
+  }, [focusedLeafTabId, tabs])
   // connectionId of the pane the command list sends to (drives its
   // "this connection only" filter + default scope for new commands).
   const activeSnippetConnectionId: string | null =
@@ -2192,6 +2212,7 @@ export default function App() {
       conn: ConnectionConfig,
       direction: 'row' | 'column',
       dockerContainer?: string,
+      shell?: { postConnectCmd: string; commandLabel: string; kubectlExec?: K8sExecTarget },
     ): number | null => {
       const rootId = workspaceAnchorIdRef.current
       if (rootId == null) return null
@@ -2216,15 +2237,19 @@ export default function App() {
         tabType: isSerial ? 'serial' : isTelnet ? 'telnet' : 'terminal',
         embedded: true,
         dockerContainer,
-        // Persisted so the shell re-enters the container on every reconnect
+        kubectlExec: shell?.kubectlExec,
+        commandLabel: shell?.commandLabel,
+        // Persisted so the shell re-enters the container/pod on every reconnect
         // (e.g. when the pane is floated/restored and reconnects).
-        postConnectCmd: dockerContainer
-          ? `docker exec -it ${dockerContainer} /bin/bash || docker exec -it ${dockerContainer} /bin/sh\r`
-          : isSerial || (isTelnet && !conn.autoLogin)
-            ? undefined
-            : conn.startupDir
-              ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
-              : undefined,
+        postConnectCmd:
+          shell?.postConnectCmd ??
+          (dockerContainer
+            ? `docker exec -it ${dockerContainer} /bin/bash || docker exec -it ${dockerContainer} /bin/sh\r`
+            : isSerial || (isTelnet && !conn.autoLogin)
+              ? undefined
+              : conn.startupDir
+                ? `cd "${conn.startupDir.replace(/"/g, '\\"')}"\r`
+                : undefined),
       }
       setTabs((prev) => [...prev, newTab])
       const { tree: nt, newLeafId: nl } = splitLeaf(tree, targetId, tabId, direction, newLeafId)
@@ -3511,6 +3536,7 @@ export default function App() {
   // Open a local shell as a NEW top-level tab (workspace). Passing `container` makes it
   // a local container's shell instead: the same tab type, but the PTY runs
   // `docker exec -it` (see `open_local_docker_shell`) and the tab names the container.
+  // `kubectlExec` is the same idea for a pod on a local cluster.
   const openLocalShellTab = useCallback(
     (
       cwd?: string,
@@ -3519,6 +3545,7 @@ export default function App() {
       distro?: string,
       entryId?: string,
       container?: string,
+      kubectlExec?: K8sExecTarget,
     ): number => {
       const tabId = nextTabId++
       const newTab: TabInfo = {
@@ -3533,11 +3560,12 @@ export default function App() {
         // this is the field the terminal's line-editor heuristics read (clear vs cls,
         // Ctrl-A/E raw sequences). Left undefined it would fall back to the Windows
         // default and send `cls` inside a Linux container.
-        localShellType: container ? 'sh' : shell,
-        localShellName: container ?? name,
+        localShellType: container || kubectlExec ? 'sh' : shell,
+        localShellName: container ?? (kubectlExec ? kubectlExec.pod : name),
         localShellDistro: distro,
         localShellEntryId: entryId,
         dockerContainer: container,
+        kubectlExec,
       }
       setTabs((prev) => [...prev, newTab])
       const leafId = newLeafId()
@@ -3575,6 +3603,35 @@ export default function App() {
       openInSplit(conn, 'column', container.name)
     },
     [focusedLeafTabId, tabs, connections, openInSplit, openLocalShellTab],
+  )
+
+  // "Open shell" from the Kubernetes panel. A jump host gets a split pane of that
+  // session with `kubectl exec -it` typed into it (persisted as `postConnectCmd`, so
+  // a reconnect re-enters the pod); a local cluster gets a PTY of its own.
+  const handleExecK8sPod = useCallback(
+    async (target: K8sExecTarget) => {
+      if (!k8sHost) return
+      if (k8sHost.kind === 'local') {
+        openLocalShellTab(undefined, 'sh', target.pod, undefined, undefined, undefined, target)
+        return
+      }
+      const activeTab =
+        focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
+      if (!activeTab?.connectionId) return
+      const conn = connections.find((c) => c.id === activeTab.connectionId)
+      if (!conn) return
+      try {
+        const cmd = await k8sPodExecCommand(target)
+        openInSplit(conn, 'column', undefined, {
+          postConnectCmd: `${cmd}\r`,
+          commandLabel: target.container ? `${target.pod}:${target.container}` : target.pod,
+          kubectlExec: target,
+        })
+      } catch (e) {
+        setToast({ kind: 'error', text: String(e) })
+      }
+    },
+    [k8sHost, focusedLeafTabId, tabs, connections, openInSplit, openLocalShellTab],
   )
 
   // Right-click → split the current window; default (left-click) opens a new tab.
@@ -4179,6 +4236,7 @@ export default function App() {
       if (tab.tabType === 'home') return t('tabHome')
       if (tab.tabType === 'settings') return t('tabSettings')
       if (tab.tabType === 'dockerLog') return tab.containerName ?? 'Logs'
+      if (tab.commandLabel) return tab.commandLabel
       if (tab.tabType === 'localShell')
         return tab.localShellName || tab.localShellCwd || t('localTerminal')
       if (tab.dockerContainer) return tab.dockerContainer
@@ -4221,6 +4279,9 @@ export default function App() {
     if (tab.tabType === 'settings') return 'settings'
     if (tab.tabType === 'fileEditor') return 'file'
     if (tab.tabType === 'dockerLog') return 'clipboard'
+    // A pod's exec shell is named after the pod; the boxes glyph keeps it distinct
+    // from the connection tabs it split away from.
+    if (tab.kubectlExec) return 'boxes'
     // Checked before the shell flavour: a local container's shell is a `localShell` tab,
     // and what distinguishes it from a plain one is the container it exec'd into.
     if (tab.dockerContainer) return 'container'
@@ -5557,6 +5618,7 @@ export default function App() {
               isSerial={isSerial}
               isTelnet={isTelnet}
               dockerContainer={tab.dockerContainer}
+              kubectlExec={tab.kubectlExec}
               localCwd={tab.localShellCwd}
               localShellType={tab.localShellType}
               localDistro={tab.localShellDistro}
@@ -8195,6 +8257,18 @@ export default function App() {
               {t('dockerLocalUnavailable')}
             </button>
           )}
+        {/* Kubernetes — one column, whose host follows the focused terminal just
+            like the Docker group above it. The panel keeps its own context /
+            namespace selection and its log/YAML overlays. */}
+        {railMode === 'k8s' && k8sHost && (
+          <div className="collapsible-section" style={{ flex: 1, overflow: 'hidden' }}>
+            <K8sPanel
+              host={k8sHost}
+              filter={navFilter}
+              onExecPod={(target) => void handleExecK8sPod(target)}
+            />
+          </div>
+        )}
         {/* Sessions — recorded terminal sessions get their own column instead of
             being buried in the drawer. */}
         {railMode === 'sessions' && (
@@ -8236,7 +8310,7 @@ export default function App() {
     >
       {/* The filter belongs to whichever panel can use it: hosts and containers
           filter their list, files and sessions have their own controls. */}
-      {(railMode === 'hosts' || railMode === 'containers') && (
+      {(railMode === 'hosts' || railMode === 'containers' || railMode === 'k8s') && (
         <div className="nav-search">
           <Icon name="search" size={12} />
           <input
@@ -8301,6 +8375,7 @@ export default function App() {
             tabs.some((tab) => tab.status === 'connected') || fileTarget?.kind === 'dockerLocal'
           }
           containersAvailable={!!dockerHost}
+          k8sAvailable={!!k8sHost}
           onSettings={handleOpenSettings}
         />
 
