@@ -6,6 +6,10 @@
 // signed and a .sig is produced.
 //
 // Then it runs: tauri build -> strip _en-US suffix -> generate latest.json.
+//
+// It stops before any of that unless HEAD carries the tag for the version being
+// built (see `release-tag-guard.mjs`), so an artifact is never labeled with a
+// version its bytes do not match.
 
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -13,10 +17,20 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
+import { requireVersionTag } from './release-tag-guard.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
 const keyPath = join(root, '.tauri', 'priv.key')
+
+// 0. refuse to build what cannot be traced back to a commit
+const conf = JSON.parse(readFileSync(join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'))
+requireVersionTag({
+  root,
+  tag: `v${conf.version}`,
+  version: conf.version,
+  label: 'release',
+})
 
 const env = { ...process.env }
 

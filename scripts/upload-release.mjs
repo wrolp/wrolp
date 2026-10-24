@@ -7,6 +7,8 @@
 // it so the Tauri auto-updater endpoint resolves correctly.
 //
 // Prerequisites:
+//   0. HEAD carries the version tag being published (`git tag --points-at HEAD`),
+//      otherwise this script stops before touching `gh` — see release-tag-guard.mjs.
 //   1. Run the full release pipeline first so the artifacts exist on disk:
 //        yarn release            (build -> strip _en-US -> gen latest.json)
 //   or, if you only want to (re)publish existing artifacts:
@@ -16,7 +18,8 @@
 //
 // Usage:
 //   node scripts/upload-release.mjs [--tag v0.0.3] [--notes "..."] [--draft] [--pre]
-//     --tag   Release/tag name (default: v<version> from tauri.conf.json)
+//     --tag   Release/tag name (default: v<version> from tauri.conf.json); it must
+//             be a tag on HEAD, exactly like the default one.
 //     --notes Release notes text (default: "Release <version>")
 //     --draft Create as a draft release (no auto-update until published)
 //     --pre   Mark the release as a pre-release
@@ -30,6 +33,7 @@ import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { requireVersionTag } from './release-tag-guard.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -58,19 +62,20 @@ const owner = m?.[1] || 'wrolp'
 const repo = m?.[2] || 'wrolp'
 const tag = tagOverride || `v${version}`
 
+// ---- refuse to publish from an untagged workspace ----
+requireVersionTag({ root, tag, version, label: 'upload' })
+
 // ---- locate artifacts ----
 const msiDir = join(root, 'src-tauri', 'target', 'release', 'bundle', 'msi')
 if (!existsSync(msiDir)) {
   console.error(`[upload] MSI dir not found: ${msiDir}\n  Run "yarn release" first.`)
   process.exit(1)
 }
-const msiFile = readdirSync(msiDir).find(
-  (f) => f.startsWith(productName) && f.endsWith('_x64.msi')
-)
+const msiFile = readdirSync(msiDir).find((f) => f.startsWith(productName) && f.endsWith('_x64.msi'))
 if (!msiFile) {
   console.error(
     `[upload] No suffix-free MSI found in ${msiDir}.\n` +
-      `  Expected "${productName}_${version}_x64.msi". Did you run "yarn release"?`
+      `  Expected "${productName}_${version}_x64.msi". Did you run "yarn release"?`,
   )
   process.exit(1)
 }
@@ -80,7 +85,7 @@ if (!existsSync(latestPath)) missing.push(latestPath)
 if (missing.length) {
   console.error(
     `[upload] Missing artifact(s):\n  ${missing.join('\n  ')}\n` +
-      `  Run "yarn release" (or "node scripts/gen-latest-json.mjs") first.`
+      `  Run "yarn release" (or "node scripts/gen-latest-json.mjs") first.`,
   )
   process.exit(1)
 }
@@ -106,10 +111,16 @@ const viewRes = spawnSync(tagArgs[0], tagArgs.slice(1), { stdio: 'ignore' })
 if (viewRes.status !== 0) {
   console.log(`[upload] Release ${tag} not found — creating it ...`)
   const createArgs = [
-    'gh', 'release', 'create', tag,
-    '--repo', `${owner}/${repo}`,
-    '--title', tag,
-    '--notes', notes || `Release ${version}`,
+    'gh',
+    'release',
+    'create',
+    tag,
+    '--repo',
+    `${owner}/${repo}`,
+    '--title',
+    tag,
+    '--notes',
+    notes || `Release ${version}`,
   ]
   if (draft) createArgs.push('--draft')
   if (pre) createArgs.push('--prerelease')
@@ -125,9 +136,13 @@ if (viewRes.status !== 0) {
 // ---- upload (--clobber replaces existing assets) ----
 console.log(`[upload] Uploading ${files.length} files to ${owner}/${repo}@${tag} ...`)
 const upArgs = [
-  'gh', 'release', 'upload', tag,
+  'gh',
+  'release',
+  'upload',
+  tag,
   ...files.map((f) => resolve(f)),
-  '--repo', `${owner}/${repo}`,
+  '--repo',
+  `${owner}/${repo}`,
   '--clobber',
 ]
 const upRes = spawnSync(upArgs[0], upArgs.slice(1), { stdio: 'inherit' })
@@ -137,4 +152,6 @@ if (upRes.status !== 0) {
 }
 
 console.log('[upload] Done.')
-console.log(`[upload] latest.json: https://github.com/${owner}/${repo}/releases/download/${tag}/latest.json`)
+console.log(
+  `[upload] latest.json: https://github.com/${owner}/${repo}/releases/download/${tag}/latest.json`,
+)
