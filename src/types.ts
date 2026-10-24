@@ -574,6 +574,14 @@ export interface K8sPortForward {
   message: string
 }
 
+/** One drain of a `kubectl logs -f` stream. Mirrors `K8sLogPoll` on the Rust side. */
+export interface K8sLogPoll {
+  /** Text read since the previous poll, in order. */
+  chunks: string[]
+  /** True once the stream has ended (pod gone, session dropped, or it was stopped). */
+  ended: boolean
+}
+
 /** What the SSH / local shell needs to enter a pod. */
 export interface K8sExecTarget {
   context?: string | null

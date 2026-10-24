@@ -825,6 +825,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   k8sContainer: '容器',
   k8sTail: '行数',
   k8sFollow: '跟随',
+  k8sStreamEnded: '日志流已结束 —— 该 Pod 不再有新输出。',
   k8sCopy: '复制',
   k8sCopied: '已复制',
   k8sRestarts: '重启 {n}',

@@ -34,7 +34,10 @@ async function boot(page: Page) {
     k8sNamespaces: NAMESPACES,
     k8sResources: { pods: [POD] },
     k8sYaml: 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-0\n',
-    k8sLogs: 'hello from web-0\n',
+    k8sLogs: 'one-shot web-0 log\n',
+    // Two drains, then the stream reports itself ended — enough to prove the viewer
+    // appends across polls instead of replacing its buffer each time.
+    k8sLogChunks: [['hello from '], ['web-0\n']],
   })
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await page.goto('/')
@@ -65,12 +68,43 @@ test('the panel lists the current context and shows the row YAML', async ({ page
   expect(named[0]?.args).toMatchObject({ kind: 'pods', namespace: 'apps', context: 'prod' })
 })
 
-test('logs open for the pod and delete is scoped to its namespace', async ({ page }) => {
+test('logs stream into the viewer and delete is scoped to its namespace', async ({ page }) => {
   await boot(page)
 
   await page.locator('.k8s-item').click({ button: 'right' })
   await menuItem(page, /^Logs$/).click()
+
+  // Follow is on by default, so the viewer opens a `kubectl logs -f` rather than
+  // asking for the same tail over and over.
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'k8s_logs_stream_start')
+        .map((c) => c.args),
+    )
+    .toContainEqual(
+      expect.objectContaining({
+        pod: 'web-0',
+        namespace: 'apps',
+        context: 'prod',
+        tailLines: 500,
+      }),
+    )
+  // Both scripted drains are in the buffer: the second appended, it did not replace.
   await expect(page.locator('.k8s-log-output')).toContainText('hello from web-0')
+  // The scripted stream runs out, and the backend says so.
+  await expect(page.locator('.k8s-note')).toContainText('Stream ended')
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'stop_k8s_logs_stream')
+        .map((c) => c.args.streamId),
+    )
+    .toContain('mock-k8s-log')
+
+  // Follow off switches to the one-shot `kubectl logs --tail N` read.
+  await page.locator('.k8s-log-toolbar input[type="checkbox"]').uncheck()
+  await expect(page.locator('.k8s-log-output')).toContainText('one-shot web-0 log')
   await page.locator('.k8s-modal-close').click()
 
   await page.locator('.k8s-item').click({ button: 'right' })

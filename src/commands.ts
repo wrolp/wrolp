@@ -26,6 +26,7 @@ import type {
   K8sNamespace,
   K8sResource,
   K8sPortForward,
+  K8sLogPoll,
   K8sExecTarget,
   ToolCallEvent,
   AiEndpointProfile,
@@ -1355,4 +1356,34 @@ export async function k8sListPortForwards(): Promise<K8sPortForward[]> {
 /** Stop a forward (and its tunnel), or drop a row whose process already exited. */
 export async function k8sStopPortForward(id: number): Promise<void> {
   return await invoke('k8s_stop_port_forward', { id })
+}
+
+/**
+ * Open a live `kubectl logs -f`. The viewer drains it with `pollK8sLogs`, the same
+ * read-don't-stream arrangement as the Docker log viewer and the terminal.
+ */
+export async function k8sLogsStreamStart(
+  host: K8sHostRef,
+  context: string | null,
+  namespace: string | null,
+  pod: string,
+  container?: string | null,
+  tailLines?: number,
+): Promise<string> {
+  return await invoke<string>('k8s_logs_stream_start', {
+    host,
+    context,
+    namespace: namespace ?? null,
+    pod,
+    container: container ?? null,
+    tailLines,
+  })
+}
+
+export async function pollK8sLogs(streamId: string): Promise<K8sLogPoll> {
+  return await invoke<K8sLogPoll>('poll_k8s_logs', { streamId })
+}
+
+export async function stopK8sLogsStream(streamId: string): Promise<boolean> {
+  return await invoke<boolean>('stop_k8s_logs_stream', { streamId })
 }

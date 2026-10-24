@@ -125,6 +125,8 @@ export interface TauriMockOptions {
   k8sYaml?: string
   /** Log text returned by `k8s_pod_logs`. */
   k8sLogs?: string
+  /** Scripted `poll_k8s_logs` answers, drained one array per poll. */
+  k8sLogChunks?: string[][]
   /** Rows returned by `k8s_list_port_forwards` (defaults to `[]`). */
   k8sPortForwards?: unknown[]
   /**
@@ -178,6 +180,9 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
       ...(s as Record<string, unknown>),
     }))
     const pollChunks: string[][] = (opts.pollOutputChunks ?? []).map((c) => [...c])
+    // Scripted `poll_k8s_logs` answers, drained one array per poll. Once they run out
+    // the stream reports `ended`, which is how a viewer sees a pod's logs stop.
+    const k8sLogChunks: string[][] = (opts.k8sLogChunks ?? []).map((c) => [...c])
     // Stateful device-command index, so `clear_host_commands` -> re-read really
     // does come back empty rather than replaying the seeded rows.
     let hostIndex: Array<Record<string, unknown>> = (opts.hostCommands ?? []).map((r) => ({
@@ -436,6 +441,16 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return 1
           case 'k8s_stop_port_forward':
             return null
+          // The live log stream: an id, scripted drains, and a stop that answers
+          // whether the stream was still there.
+          case 'k8s_logs_stream_start':
+            return 'mock-k8s-log'
+          case 'poll_k8s_logs': {
+            const next = k8sLogChunks.shift()
+            return { chunks: next ?? [], ended: next === undefined }
+          }
+          case 'stop_k8s_logs_stream':
+            return true
           case 'open_local_kubectl_shell':
             return null
           // Follow mode (the viewer's default) streams instead of fetching; the

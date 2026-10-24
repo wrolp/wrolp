@@ -878,6 +878,10 @@ pub struct AppState {
   pub k8s_forwards: StdMutex<HashMap<u32, crate::k8s_forward::ForwardRuntime>>,
   /// Monotonic port-forward id counter.
   pub next_k8s_forward_id: AtomicU64,
+  /// Live `kubectl logs -f` streams: stream_id → reader state (polled, not pushed).
+  pub k8s_log_streams: StdMutex<HashMap<String, crate::k8s_host::LogStream>>,
+  /// Monotonic K8s log stream id counter.
+  pub next_k8s_log_stream_id: AtomicU64,
 }
 
 /// A user-defined local terminal: opens a local shell in `cwd` using `shell`.
@@ -1028,6 +1032,8 @@ impl AppState {
       next_tunnel_id: AtomicU64::new(1),
       k8s_forwards: StdMutex::new(HashMap::new()),
       next_k8s_forward_id: AtomicU64::new(1),
+      k8s_log_streams: StdMutex::new(HashMap::new()),
+      next_k8s_log_stream_id: AtomicU64::new(1),
       upload_sessions: StdMutex::new(HashMap::new()),
       next_upload_id: AtomicU64::new(1),
       upload_batch_sessions: StdMutex::new(HashMap::new()),

@@ -14,11 +14,14 @@ import {
   k8sListNamespaces,
   k8sListPortForwards,
   k8sListResources,
+  k8sLogsStreamStart,
   k8sPodLogs,
   k8sPortForwardStart,
   k8sResourceYaml,
   k8sScaleResource,
   k8sStopPortForward,
+  pollK8sLogs,
+  stopK8sLogsStream,
 } from '../commands'
 import { Icon } from './Icon'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -50,6 +53,20 @@ const KIND_LABEL: Record<Kind, TranslationKey> = {
   cronjobs: 'k8sKindCronjobs',
   configmaps: 'k8sKindConfigmaps',
   secrets: 'k8sKindSecrets',
+}
+
+/**
+ * Cap on the log viewer's buffer. A chatty pod can outrun the 500 ms poll, and the
+ * text is held in React state — so the oldest content is dropped at a newline
+ * boundary rather than growing without limit.
+ */
+const MAX_LOG_CHARS = 300_000
+
+function trimToChars(text: string): string {
+  if (text.length <= MAX_LOG_CHARS) return text
+  const cut = text.length - MAX_LOG_CHARS
+  const nl = text.indexOf('\n', cut)
+  return nl >= 0 ? text.slice(nl + 1) : text.slice(cut)
 }
 
 const ALL_NAMESPACES = '*'
@@ -100,6 +117,8 @@ interface LogState {
   text: string
   error: string
   loading: boolean
+  /** The `kubectl logs -f` stream ran out (pod gone, session dropped). */
+  ended: boolean
 }
 
 interface YamlState {
@@ -154,6 +173,13 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const [scaleError, setScaleError] = useState('')
   const [copied, setCopied] = useState(false)
   const logRef = useRef<HTMLPreElement>(null)
+  // The live `kubectl logs -f` on screen, its next poll, and whether the viewer is
+  // pinned to the bottom. All three are imperative handles, not render state.
+  const streamIdRef = useRef<string | null>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stickRef = useRef(true)
+  const logsRef = useRef<LogState | null>(null)
+  logsRef.current = logs
 
   // Port forwards are app-wide (they outlive this panel), so the list is polled rather
   // than kept in component state alongside the resource rows.
@@ -322,6 +348,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const openLogs = useCallback(
     (row: K8sResource) => {
       if (!context) return
+      stickRef.current = true
       setLogs({
         row,
         context,
@@ -332,59 +359,133 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         text: '',
         error: '',
         loading: true,
+        ended: false,
       })
       setCopied(false)
     },
     [context, namespace, rowNamespace],
   )
 
-  // Fetch (and, while Follow is on, poll) a pod's log tail. Polling instead of
-  // `kubectl logs -f` keeps this panel free of another backend stream registry;
-  // 2s is the viewer's refresh cadence, and the tail is bounded by the picker.
+  // ---- follow mode: a live `kubectl logs -f` drained by a poll ----
+  //
+  // The recursive `setTimeout` (not `setInterval`) is what keeps the order straight:
+  // a slow `poll_k8s_logs` cannot overlap the next one and append chunks out of turn.
+  const appendLogs = useCallback((text: string) => {
+    setLogs((prev) =>
+      prev ? { ...prev, text: trimToChars(prev.text + text), loading: false } : prev,
+    )
+  }, [])
+
+  const stopLogStream = useCallback(async () => {
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+    const sid = streamIdRef.current
+    streamIdRef.current = null
+    if (sid) {
+      await stopK8sLogsStream(sid).catch(() => {
+        /* already gone */
+      })
+    }
+  }, [])
+
+  const startLogStream = useCallback(
+    async (scope: {
+      context: string
+      namespace: string
+      pod: string
+      container: string
+      tail: number
+    }) => {
+      await stopLogStream()
+      try {
+        const sid = await k8sLogsStreamStart(
+          hostRef.current,
+          scope.context,
+          scope.namespace,
+          scope.pod,
+          scope.container || null,
+          scope.tail,
+        )
+        streamIdRef.current = sid
+        const tick = async () => {
+          // The stream was closed or replaced while this tick was queued.
+          if (streamIdRef.current !== sid) return
+          try {
+            const poll = await pollK8sLogs(sid)
+            if (streamIdRef.current !== sid) return
+            if (poll.chunks.length > 0) appendLogs(poll.chunks.join(''))
+            else setLogs((prev) => (prev ? { ...prev, loading: false } : prev))
+            if (poll.ended) {
+              streamIdRef.current = null
+              setLogs((prev) => (prev ? { ...prev, ended: true, loading: false } : prev))
+              // The buffer is drained; releasing it keeps the registry from holding
+              // a dead stream until the viewer happens to close.
+              await stopK8sLogsStream(sid).catch(() => {})
+              return
+            }
+          } catch {
+            // A failed poll is not worth losing the follow for; the next tick retries.
+          }
+          if (streamIdRef.current === sid) {
+            pollTimerRef.current = setTimeout(tick, 500)
+          }
+        }
+        pollTimerRef.current = setTimeout(tick, 500)
+      } catch (e) {
+        setLogs((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev))
+      }
+    },
+    [appendLogs, stopLogStream],
+  )
+
+  // One string names everything the viewer can be asked about, so switching pod,
+  // container, tail length or follow mode restarts the read from a clean buffer.
+  const logScope = logs
+    ? `${logs.context}|${logs.namespace}|${logs.row.name}|${logs.container}|${logs.tail}|${logs.follow}`
+    : ''
   useEffect(() => {
-    if (!logs) return
-    let cancelled = false
-    const fetch = () => {
+    const current = logsRef.current
+    if (!current) return
+    setLogs((prev) => (prev ? { ...prev, text: '', error: '', ended: false, loading: true } : prev))
+    if (current.follow) {
+      void startLogStream({
+        context: current.context,
+        namespace: current.namespace,
+        pod: current.row.name,
+        container: current.container,
+        tail: current.tail,
+      })
+    } else {
       k8sPodLogs(
         hostRef.current,
-        logs.context,
-        logs.namespace,
-        logs.row.name,
-        logs.container || null,
-        logs.tail,
+        current.context,
+        current.namespace,
+        current.row.name,
+        current.container || null,
+        current.tail,
       )
-        .then((text) => {
-          if (cancelled) return
-          setLogs((prev) => (prev ? { ...prev, text, error: '', loading: false } : prev))
-        })
-        .catch((e) => {
-          if (cancelled) return
-          setLogs((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev))
-        })
+        .then((text) =>
+          setLogs((prev) => (prev ? { ...prev, text, loading: false, error: '' } : prev)),
+        )
+        .catch((e) =>
+          setLogs((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev)),
+        )
     }
-    fetch()
-    if (!logs.follow) {
-      return () => {
-        cancelled = true
-      }
-    }
-    const id = setInterval(fetch, 2000)
     return () => {
-      cancelled = true
-      clearInterval(id)
+      void stopLogStream()
     }
-    // `text`/`loading` are outputs, not inputs: depending on them would restart the
-    // interval on every tick.
+    // `logScope` is the whole input; the callbacks read it through refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logs?.row.name, logs?.context, logs?.namespace, logs?.container, logs?.tail, logs?.follow])
+  }, [logScope])
 
-  // Keep the newest lines in view while Follow is on. A user who scrolls back is
-  // pulled forward on the next poll — the trade-off of a polling viewer, and the
-  // reason Follow is a switch they can turn off.
+  // Keep the newest lines in view, but only while the user has not scrolled back to
+  // read something — a viewer that yanks you forward is a viewer you turn off.
   useEffect(() => {
-    if (!logs?.follow || !logRef.current) return
+    if (!logRef.current || !stickRef.current) return
     logRef.current.scrollTop = logRef.current.scrollHeight
-  }, [logs?.text, logs?.follow])
+  }, [logs?.text])
 
   const openYaml = useCallback(
     (row: K8sResource) => {
@@ -905,9 +1006,17 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
               </button>
             </div>
             {logs.error && <div className="modal-error">{logs.error}</div>}
-            <pre className="k8s-log-output" ref={logRef}>
+            <pre
+              className="k8s-log-output"
+              ref={logRef}
+              onScroll={(e) => {
+                const el = e.currentTarget
+                stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+              }}
+            >
               {logs.loading && !logs.text ? t('loading') : logs.text || t('k8sNoLogs')}
             </pre>
+            {logs.ended && <div className="k8s-note">{t('k8sStreamEnded')}</div>}
           </div>
         </div>
       )}

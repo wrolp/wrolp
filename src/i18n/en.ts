@@ -872,6 +872,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   k8sContainer: 'Container',
   k8sTail: 'Tail',
   k8sFollow: 'Follow',
+  k8sStreamEnded: 'Stream ended — no more logs are coming from this pod.',
   k8sCopy: 'Copy',
   k8sCopied: 'Copied',
   k8sRestarts: 'restarts {n}',

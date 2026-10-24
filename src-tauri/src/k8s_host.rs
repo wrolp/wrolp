@@ -9,9 +9,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::oneshot;
 
 use crate::ssh_session::AppState;
 use crate::win_proc::HideConsole;
@@ -582,6 +585,203 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
   })
 }
 
+// ==================== Streaming (`kubectl logs -f`) ====================
+
+/// A live `kubectl logs -f`: the text the pump has read since the last drain, whether
+/// the pump has ended, and the sender that stops it.
+pub struct LogStream {
+  pub chunks: Arc<StdMutex<Vec<String>>>,
+  pub ended: Arc<AtomicBool>,
+  pub cancel: oneshot::Sender<()>,
+}
+
+/// What `poll_k8s_logs` answers: the new text, and whether the stream is over (the pod
+/// was deleted, the session dropped). The UI renders its own label for `ended`, so the
+/// backend reports state rather than a sentence.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct K8sLogPoll {
+  pub chunks: Vec<String>,
+  pub ended: bool,
+}
+
+/// Byte stream → UTF-8-safe text chunks.
+///
+/// A read can end in the middle of a multi-byte character (CJK logs are the common
+/// case), and decoding that chunk on its own would paint U+FFFD diamonds across the
+/// viewer. The undecodable tail is held and decoded with the next read.
+pub(crate) struct ChunkSink {
+  carry: Vec<u8>,
+  out: Arc<StdMutex<Vec<String>>>,
+}
+
+impl ChunkSink {
+  fn new(out: Arc<StdMutex<Vec<String>>>) -> Self {
+    Self {
+      carry: Vec::new(),
+      out,
+    }
+  }
+
+  fn push(&mut self, chunk: &[u8]) {
+    self.carry.extend_from_slice(chunk);
+    let usable = {
+      let (complete, _) = crate::commands::split_incomplete_utf8(&self.carry);
+      complete.len()
+    };
+    if usable == 0 {
+      return;
+    }
+    let bytes: Vec<u8> = self.carry.drain(..usable).collect();
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    if let Ok(mut v) = self.out.lock() {
+      v.push(text);
+    }
+  }
+
+  /// Emit whatever is still held — the stream is ending, so no more bytes are coming
+  /// and a partial character is better shown than dropped.
+  fn flush(&mut self) {
+    if self.carry.is_empty() {
+      return;
+    }
+    let text = String::from_utf8_lossy(&std::mem::take(&mut self.carry)).to_string();
+    if let Ok(mut v) = self.out.lock() {
+      v.push(text);
+    }
+  }
+}
+
+/// Begin `kubectl logs -f …` and keep appending to the returned stream until it is
+/// cancelled or the pod's log ends. Both transports merge stdout *and* stderr into one
+/// sequence: a container's error output arrives on kubectl's stderr.
+pub async fn spawn_logs_stream(
+  state: &tauri::State<'_, AppState>,
+  host: &K8sHostRef,
+  argv: &[String],
+) -> Result<LogStream, String> {
+  match host {
+    K8sHostRef::Ssh { jump_tab_id } => {
+      let jump = crate::remote_fs::get_jump_handle(state, *jump_tab_id)?;
+      let mut channel = crate::docker_fs::exec_streaming_on_jump(&jump, argv).await?;
+      let mut parts = new_log_stream();
+      let chunks = parts.chunks.clone();
+      let ended = parts.ended.clone();
+      let mut cancel_rx = parts.cancel_rx.take().unwrap();
+      tauri::async_runtime::spawn(async move {
+        use russh::ChannelMsg;
+        let mut col = ChunkSink::new(chunks);
+        loop {
+          tokio::select! {
+            _ = &mut cancel_rx => break,
+            msg = channel.wait() => match msg {
+              Some(ChannelMsg::Data { data }) => col.push(&data),
+              Some(ChannelMsg::ExtendedData { ref data, .. }) => col.push(data),
+              Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+              _ => {}
+            }
+          }
+        }
+        col.flush();
+        ended.store(true, Ordering::SeqCst);
+        // Otherwise the remote `kubectl logs -f` outlives the stream it served.
+        let _ = channel.close().await;
+      });
+      Ok(parts.into_stream())
+    }
+    K8sHostRef::Local => spawn_local_logs(argv),
+  }
+}
+
+/// The buffers a stream needs, before its pump task takes them.
+struct LogStreamParts {
+  chunks: Arc<StdMutex<Vec<String>>>,
+  ended: Arc<AtomicBool>,
+  cancel: oneshot::Sender<()>,
+  /// Taken by the pump task; `None` once it owns the read loop.
+  cancel_rx: Option<oneshot::Receiver<()>>,
+}
+
+impl LogStreamParts {
+  fn into_stream(self) -> LogStream {
+    LogStream {
+      chunks: self.chunks,
+      ended: self.ended,
+      cancel: self.cancel,
+    }
+  }
+}
+
+fn new_log_stream() -> LogStreamParts {
+  let (cancel, cancel_rx) = oneshot::channel::<()>();
+  LogStreamParts {
+    chunks: Arc::new(StdMutex::new(Vec::new())),
+    ended: Arc::new(AtomicBool::new(false)),
+    cancel,
+    cancel_rx: Some(cancel_rx),
+  }
+}
+
+/// The local half of [`spawn_logs_stream`], with no Tauri state to reach for — which
+/// is what lets it be tested against a real kubectl.
+pub(crate) fn spawn_local_logs(argv: &[String]) -> Result<LogStream, String> {
+  let mut parts = new_log_stream();
+  let chunks = parts.chunks.clone();
+  let ended = parts.ended.clone();
+  let mut cmd = Command::new(&argv[0]);
+  cmd.hide_console();
+  cmd
+    .args(&argv[1..])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
+  let mut child = cmd
+    .spawn()
+    .map_err(|e| format!("failed to start `{}`: {e}", argv[0]))?;
+  let stdout = child
+    .stdout
+    .take()
+    .ok_or_else(|| "kubectl logs gave us no stdout handle".to_string())?;
+  if let Some(stderr) = child.stderr.take() {
+    let err_chunks = chunks.clone();
+    tauri::async_runtime::spawn(async move {
+      let mut reader = BufReader::new(stderr);
+      let mut col = ChunkSink::new(err_chunks);
+      let mut buf = [0u8; 8192];
+      loop {
+        match reader.read(&mut buf).await {
+          Ok(0) | Err(_) => break,
+          Ok(n) => col.push(&buf[..n]),
+        }
+      }
+      col.flush();
+    });
+  }
+  let sink = chunks.clone();
+  let done = ended.clone();
+  let mut reader = BufReader::new(stdout);
+  let mut cancel_rx = parts.cancel_rx.take().unwrap();
+  tauri::async_runtime::spawn(async move {
+    let mut col = ChunkSink::new(sink);
+    let mut buf = [0u8; 8192];
+    loop {
+      tokio::select! {
+        _ = &mut cancel_rx => break,
+        n = reader.read(&mut buf) => match n {
+          Ok(0) | Err(_) => break,
+          Ok(n) => col.push(&buf[..n]),
+        }
+      }
+    }
+    col.flush();
+    done.store(true, Ordering::SeqCst);
+    // The pump ending is the kill: dropping the child stops `logs -f`.
+    drop(child);
+  });
+  Ok(parts.into_stream())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -751,5 +951,70 @@ mod tests {
       contexts.len(),
       contexts.iter().find(|c| c.current).map(|c| c.name.as_str())
     );
+  }
+
+  #[test]
+  fn a_chunk_ending_mid_character_is_held_not_mangled() {
+    let out = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let mut sink = ChunkSink::new(out.clone());
+    let bytes = "中文".as_bytes(); // two 3-byte characters
+    sink.push(&bytes[..2]);
+    assert!(
+      out.lock().unwrap().is_empty(),
+      "an incomplete character must not decode on its own"
+    );
+    sink.push(&bytes[2..5]);
+    assert_eq!(out.lock().unwrap().join(""), "中");
+    sink.push(&bytes[5..]);
+    assert_eq!(out.lock().unwrap().join(""), "中文");
+    sink.flush();
+    assert_eq!(out.lock().unwrap().join(""), "中文");
+  }
+
+  /// Against a real kubectl: `cargo test --lib k8s_host -- --ignored`.
+  ///
+  /// Asks for the logs of a pod that cannot exist, which drives the whole local
+  /// transport — spawn, stderr, exit, `ended` — without needing a running cluster.
+  /// Whether kubectl refuses at the API server or the kubeconfig, it must say so in
+  /// the buffer and end the stream rather than leave it hanging.
+  #[tokio::test]
+  #[ignore]
+  async fn a_local_stream_reports_its_own_end() {
+    let argv = [
+      "kubectl",
+      "logs",
+      "-f",
+      "wrolp-no-such-pod",
+      "-n",
+      "default",
+      "--tail",
+      "5",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect::<Vec<_>>();
+    let stream = match spawn_local_logs(&argv) {
+      Ok(stream) => stream,
+      Err(e) => {
+        eprintln!("SKIP: {e}");
+        return;
+      }
+    };
+    for _ in 0..100 {
+      if stream.ended.load(Ordering::SeqCst) {
+        break;
+      }
+      tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let text = stream.chunks.lock().map(|v| v.join("")).unwrap_or_default();
+    assert!(
+      stream.ended.load(Ordering::SeqCst),
+      "kubectl exited but the stream never reported it"
+    );
+    assert!(
+      !text.trim().is_empty(),
+      "expected kubectl's own message in the buffer"
+    );
+    eprintln!("OK: local stream ended with {:?}", text.trim());
   }
 }

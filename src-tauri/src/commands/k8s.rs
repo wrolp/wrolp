@@ -6,8 +6,8 @@
 
 use super::*;
 use crate::k8s_host::{
-  exec_kubectl, kubectl_argv, parse_contexts, parse_namespaces, parse_resources, K8sContext,
-  K8sHostRef, K8sNamespace, K8sResource, RESOURCE_KINDS,
+  exec_kubectl, kubectl_argv, parse_contexts, parse_namespaces, parse_resources, spawn_logs_stream,
+  K8sContext, K8sHostRef, K8sLogPoll, K8sNamespace, K8sResource, RESOURCE_KINDS,
 };
 use serde_json::Value;
 
@@ -498,4 +498,103 @@ pub async fn k8s_stop_port_forward(
   use tauri::Emitter;
   let _ = app.emit("tunnel-changed", serde_json::json!({}));
   Ok(())
+}
+
+// ==================== Log streaming ====================
+
+/// Open a `kubectl logs -f` and hand back its stream id. The viewer polls
+/// [`poll_k8s_logs`] for what has arrived, like every other output surface here —
+/// `emit` from a Windows background thread is what the terminal path avoids.
+#[tauri::command]
+pub async fn k8s_logs_stream_start(
+  state: tauri::State<'_, AppState>,
+  host: K8sHostRef,
+  context: Option<String>,
+  namespace: Option<String>,
+  pod: String,
+  container: Option<String>,
+  tail_lines: Option<u32>,
+) -> Result<String, String> {
+  if pod.trim().is_empty() {
+    return Err("missing pod name".to_string());
+  }
+  // `--tail N` first, then `-f`: the viewer wants the recent history and what comes
+  // after it, not the pod's whole life since creation.
+  let tail = tail_lines.unwrap_or(500).to_string();
+  let mut args = vec![
+    "logs".to_string(),
+    pod,
+    "--tail".to_string(),
+    tail,
+    "-f".to_string(),
+  ];
+  if let Some(c) = container
+    .as_deref()
+    .map(str::trim)
+    .filter(|c| !c.is_empty())
+  {
+    args.push("-c".into());
+    args.push(c.to_string());
+  }
+  let argv = kubectl_argv(context.as_deref(), namespace.as_deref(), false, &args);
+  let stream = spawn_logs_stream(&state, &host, &argv).await?;
+  let stream_id = {
+    let id = state.next_k8s_log_stream_id.fetch_add(1, Ordering::Relaxed);
+    format!("klog_{}", id)
+  };
+  state
+    .k8s_log_streams
+    .lock()
+    .map_err(|e| e.to_string())?
+    .insert(stream_id.clone(), stream);
+  Ok(stream_id)
+}
+
+/// Drain the text read since the last poll, and report whether the stream ended.
+#[tauri::command]
+pub async fn poll_k8s_logs(
+  state: tauri::State<'_, AppState>,
+  stream_id: String,
+) -> Result<K8sLogPoll, String> {
+  let guard = state.k8s_log_streams.lock().map_err(|e| e.to_string())?;
+  match guard.get(&stream_id) {
+    Some(stream) => {
+      let chunks = stream
+        .chunks
+        .lock()
+        .map(|mut v| std::mem::take(&mut *v))
+        .unwrap_or_default();
+      Ok(K8sLogPoll {
+        chunks,
+        ended: stream.ended.load(Ordering::SeqCst),
+      })
+    }
+    // Stopped between polls: the viewer stops asking.
+    None => Ok(K8sLogPoll {
+      chunks: Vec::new(),
+      ended: true,
+    }),
+  }
+}
+
+/// Stop a stream and drop its buffer. Answers false for an id already gone.
+#[tauri::command]
+pub async fn stop_k8s_logs_stream(
+  state: tauri::State<'_, AppState>,
+  stream_id: String,
+) -> Result<bool, String> {
+  let stream = state
+    .k8s_log_streams
+    .lock()
+    .map_err(|e| e.to_string())?
+    .remove(&stream_id);
+  match stream {
+    Some(stream) => {
+      // The pump ends on the cancel and closes its transport, which is what stops
+      // the remote `logs -f` too.
+      let _ = stream.cancel.send(());
+      Ok(true)
+    }
+    None => Ok(false),
+  }
 }
