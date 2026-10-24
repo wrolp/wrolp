@@ -744,6 +744,9 @@ pub async fn connect(
               // Any tunnels carried by this SSH session are dead now — abort
               // their accept loops so local listeners close immediately.
               cleanup_tunnels_for_tab(&app_state, tid);
+              // So is any `kubectl port-forward` exec'd through it; dropping the
+              // runtime releases its row and the tunnel that rode on it.
+              crate::k8s_forward::cleanup_forwards_for_tab(&app_state, tid);
               let _ = app_handle.emit("tunnel-changed", serde_json::json!({}));
             } else {
               eprintln!(

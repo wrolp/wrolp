@@ -831,6 +831,20 @@ const zh: Partial<Record<TranslationKey, string>> = {
   k8sNoLogs: '暂无日志输出',
   k8sYamlTitle: 'YAML — {name}',
   k8sLoadingYaml: '正在加载 YAML…',
+  k8sForwards: '端口转发',
+  k8sForward: '端口转发…',
+  k8sForwardTitle: '转发 {target}',
+  k8sForwardLocal: '本地端口',
+  k8sForwardRemote: '目标端口',
+  k8sForwardLan: '允许其他机器连接',
+  k8sForwardViaJump:
+    'kubectl 运行在已连接的主机上，Wrolp 会同时建立一条 SSH 隧道 —— 本机用相同端口号即可访问。',
+  k8sForwardStart: '开始转发',
+  k8sForwardStop: '停止转发',
+  k8sForwardDismiss: '清除',
+  k8sForwardBadLocal: '请输入 1–65535 之间的本地端口',
+  k8sForwardBadRemote: '请输入要访问的端口 —— 数字，或 `http` 这类命名端口',
+  k8sForwardStarted: '正在转发 {addr} → {target}',
 
   // Docker
   dockerLogsViewer: 'Docker 日志',

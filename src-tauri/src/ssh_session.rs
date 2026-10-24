@@ -873,6 +873,11 @@ pub struct AppState {
   pub tunnels: StdMutex<HashMap<u32, TunnelRuntime>>,
   /// Monotonic tunnel id counter.
   pub next_tunnel_id: AtomicU64,
+  /// Active `kubectl port-forward` processes: id → runtime (+ its tunnel, when the
+  /// forward runs through a jump host).
+  pub k8s_forwards: StdMutex<HashMap<u32, crate::k8s_forward::ForwardRuntime>>,
+  /// Monotonic port-forward id counter.
+  pub next_k8s_forward_id: AtomicU64,
 }
 
 /// A user-defined local terminal: opens a local shell in `cwd` using `shell`.
@@ -1021,6 +1026,8 @@ impl AppState {
       local_terminals: StdMutex::new(local_terminals),
       tunnels: StdMutex::new(HashMap::new()),
       next_tunnel_id: AtomicU64::new(1),
+      k8s_forwards: StdMutex::new(HashMap::new()),
+      next_k8s_forward_id: AtomicU64::new(1),
       upload_sessions: StdMutex::new(HashMap::new()),
       next_upload_id: AtomicU64::new(1),
       upload_batch_sessions: StdMutex::new(HashMap::new()),

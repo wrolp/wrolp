@@ -86,6 +86,9 @@ pub struct K8sResource {
   pub detail: String,
   /// Container names, for the pod logs / exec pickers.
   pub containers: Vec<String>,
+  /// Exposed ports, for the port-forward dialog's prefill (container ports, or a
+  /// service's own).
+  pub ports: Vec<u16>,
   pub created_at: Option<String>,
 }
 
@@ -251,6 +254,51 @@ fn u64_at(v: &Value, path: &[&str]) -> u64 {
     }
   }
   cur.as_u64().unwrap_or(0)
+}
+
+/// Ports worth forwarding: a workload's container ports, else a service's own.
+fn push_port(out: &mut Vec<u16>, value: Option<&Value>) {
+  if let Some(n) = value
+    .and_then(Value::as_u64)
+    .and_then(|n| u16::try_from(n).ok())
+  {
+    if n > 0 && !out.contains(&n) {
+      out.push(n);
+    }
+  }
+}
+
+fn exposed_ports(item: &Value) -> Vec<u16> {
+  let mut out: Vec<u16> = Vec::new();
+  let Some(spec) = item.get("spec") else {
+    return out;
+  };
+  for container in spec
+    .get("containers")
+    .and_then(Value::as_array)
+    .into_iter()
+    .flatten()
+  {
+    for port in container
+      .get("ports")
+      .and_then(Value::as_array)
+      .into_iter()
+      .flatten()
+    {
+      push_port(&mut out, port.get("containerPort"));
+    }
+  }
+  if out.is_empty() {
+    for port in spec
+      .get("ports")
+      .and_then(Value::as_array)
+      .into_iter()
+      .flatten()
+    {
+      push_port(&mut out, port.get("port"));
+    }
+  }
+  out
 }
 
 /// Pull the contexts out of `kubectl config view -o json`.
@@ -529,6 +577,7 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
     restarts,
     detail,
     containers,
+    ports: exposed_ports(item),
     created_at,
   })
 }
@@ -575,7 +624,7 @@ mod tests {
         "metadata": { "name": "web-0", "namespace": "apps", "creationTimestamp": "2026-10-01T00:00:00Z" },
         "spec": {
           "nodeName": "node-1",
-          "containers": [{ "name": "web", "image": "nginx:1.29" }]
+          "containers": [{ "name": "web", "image": "nginx:1.29", "ports": [{ "containerPort": 8080 }] }]
         },
         "status": {
           "phase": "Running",
@@ -592,6 +641,7 @@ mod tests {
     assert_eq!(rows[0].ready, "1/2");
     assert_eq!(rows[0].restarts, 5);
     assert_eq!(rows[0].containers, vec!["web"]);
+    assert_eq!(rows[0].ports, vec![8080]);
     assert!(rows[0].detail.contains("nginx:1.29"));
     assert!(rows[0].detail.contains("node-1"));
   }
@@ -629,6 +679,9 @@ mod tests {
     let rows = parse_resources("services", &json);
     assert_eq!(rows[0].status, "NodePort");
     assert_eq!(rows[0].detail, "10.0.0.7 · 80/TCP, 443/TCP");
+    // No container ports on a service, so its own `spec.ports` are what a forward
+    // dialog prefills from.
+    assert_eq!(rows[0].ports, vec![80, 443]);
   }
 
   #[test]

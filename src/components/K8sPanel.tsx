@@ -1,14 +1,24 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { K8sContext, K8sExecTarget, K8sHostRef, K8sNamespace, K8sResource } from '../types'
+import type {
+  K8sContext,
+  K8sExecTarget,
+  K8sHostRef,
+  K8sNamespace,
+  K8sPortForward,
+  K8sResource,
+} from '../types'
 import {
   k8sApplyYaml,
   k8sDeleteResource,
   k8sListContexts,
   k8sListNamespaces,
+  k8sListPortForwards,
   k8sListResources,
   k8sPodLogs,
+  k8sPortForwardStart,
   k8sResourceYaml,
   k8sScaleResource,
+  k8sStopPortForward,
 } from '../commands'
 import { Icon } from './Icon'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -43,6 +53,17 @@ const KIND_LABEL: Record<Kind, TranslationKey> = {
 }
 
 const ALL_NAMESPACES = '*'
+
+/**
+ * The kinds `kubectl port-forward` accepts, mapped to the target prefix it wants.
+ * ConfigMaps and the rest are absent, so the menu item never offers them.
+ */
+const FORWARD_PREFIX: Partial<Record<string, string>> = {
+  pods: 'pod',
+  services: 'service',
+  deployments: 'deployment',
+  statefulsets: 'statefulset',
+}
 
 /** Chip tone for a status word; unknown states stay neutral (`.warn`). */
 function statusTone(status: string): 'ok' | 'warn' | 'bad' {
@@ -133,6 +154,20 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const [scaleError, setScaleError] = useState('')
   const [copied, setCopied] = useState(false)
   const logRef = useRef<HTMLPreElement>(null)
+
+  // Port forwards are app-wide (they outlive this panel), so the list is polled rather
+  // than kept in component state alongside the resource rows.
+  const [forwards, setForwards] = useState<K8sPortForward[]>([])
+  const [forwardDialog, setForwardDialog] = useState<{
+    target: string
+    context: string
+    namespace: string
+  } | null>(null)
+  const [forwardLocal, setForwardLocal] = useState('')
+  const [forwardRemote, setForwardRemote] = useState('')
+  const [forwardLan, setForwardLan] = useState(false)
+  const [forwardBusy, setForwardBusy] = useState(false)
+  const [forwardError, setForwardError] = useState('')
 
   // Reload on the host's *shape*, not object identity: callers pass a fresh literal
   // per render, as they do for DockerPanel.
@@ -262,19 +297,20 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   }, [notice])
 
   // Escape closes whichever overlay is open. ConfirmDialog already handles its own,
-  // so this only covers the four K8s-owned ones.
+  // so this only covers the five K8s-owned ones.
   useEffect(() => {
-    if (!logs && !yaml && !applyOpen && !scaleTarget) return
+    if (!logs && !yaml && !applyOpen && !scaleTarget && !forwardDialog) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       setLogs(null)
       setYaml(null)
       setApplyOpen(false)
       setScaleTarget(null)
+      setForwardDialog(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [logs, yaml, applyOpen, scaleTarget])
+  }, [logs, yaml, applyOpen, scaleTarget, forwardDialog])
 
   // The namespace a row actually lives in — all-namespaces mode lists several.
   const rowNamespace = useCallback(
@@ -452,6 +488,98 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     }
   }, [logs])
 
+  const refreshForwards = useCallback(async () => {
+    try {
+      setForwards(await k8sListPortForwards())
+    } catch {
+      // A failed read leaves the last known rows on screen; the next tick retries.
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshForwards()
+  }, [refreshForwards])
+
+  // Poll only while something is actually running: an exited row is stable, and a
+  // panel full of dead forwards needs no timer to keep telling the same story.
+  const hasRunningForward = forwards.some((f) => f.running)
+  useEffect(() => {
+    if (!hasRunningForward) return
+    const id = setInterval(() => void refreshForwards(), 2000)
+    return () => clearInterval(id)
+  }, [hasRunningForward, refreshForwards])
+
+  const openForwardDialog = useCallback(
+    (row: K8sResource) => {
+      const prefix = FORWARD_PREFIX[row.kind]
+      if (!prefix || !context) return
+      setForwardDialog({
+        target: `${prefix}/${row.name}`,
+        context,
+        namespace: rowNamespace(row, namespace),
+      })
+      // Prefill both halves with the object's own port: the common case is "expose
+      // this port on the same number here".
+      const port = row.ports[0] ? String(row.ports[0]) : ''
+      setForwardLocal(port)
+      setForwardRemote(port)
+      setForwardLan(false)
+      setForwardError('')
+    },
+    [context, namespace, rowNamespace],
+  )
+
+  const startForward = useCallback(async () => {
+    if (!forwardDialog) return
+    const local = Number(forwardLocal)
+    if (!Number.isInteger(local) || local < 1 || local > 65535) {
+      setForwardError(t('k8sForwardBadLocal'))
+      return
+    }
+    const remote = forwardRemote.trim()
+    if (!remote) {
+      setForwardError(t('k8sForwardBadRemote'))
+      return
+    }
+    setForwardBusy(true)
+    setForwardError('')
+    try {
+      await k8sPortForwardStart(
+        hostRef.current,
+        forwardDialog.context || null,
+        forwardDialog.namespace,
+        forwardDialog.target,
+        local,
+        remote,
+        forwardLan,
+      )
+      setForwardDialog(null)
+      setNotice(
+        t('k8sForwardStarted', {
+          addr: `${forwardLan ? '0.0.0.0' : '127.0.0.1'}:${local}`,
+          target: forwardDialog.target,
+        }),
+      )
+      await refreshForwards()
+    } catch (e) {
+      setForwardError(String(e))
+    } finally {
+      setForwardBusy(false)
+    }
+  }, [forwardDialog, forwardLocal, forwardRemote, forwardLan, refreshForwards, t])
+
+  const stopForward = useCallback(
+    async (id: number) => {
+      try {
+        await k8sStopPortForward(id)
+      } catch (e) {
+        setError(String(e))
+      }
+      await refreshForwards()
+    },
+    [refreshForwards],
+  )
+
   const q = filter.toLowerCase()
   const visible = resources.filter(
     (r) =>
@@ -464,6 +592,8 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const menuRow = menu?.row
   const canScale =
     menuRow != null && (menuRow.kind === 'deployments' || menuRow.kind === 'statefulsets')
+  // `kubectl port-forward` only speaks to workload-ish targets; the map is the list.
+  const canForward = menuRow != null && FORWARD_PREFIX[menuRow.kind] != null
 
   return (
     <div className="k8s-panel">
@@ -600,6 +730,41 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         ))}
       </div>
 
+      {/* Port forwards outlive this panel (and the resource list it was started from),
+          so they get their own strip: address → target, with the row that stopped
+          on its own kept until it is dismissed. */}
+      {forwards.length > 0 && (
+        <div className="k8s-forwards">
+          <div className="k8s-forwards-head">
+            <span>{t('k8sForwards')}</span>
+            <span className="cnt">{forwards.length}</span>
+          </div>
+          {forwards.map((f) => (
+            <div
+              key={f.id}
+              className={`k8s-forward${f.running ? '' : ' dead'}`}
+              title={f.message || undefined}
+            >
+              <span className={`k8s-dot ${f.running ? 'on' : 'off'}`} />
+              <span className="k8s-forward-addr">{f.listenAddr}</span>
+              <span className="k8s-forward-arrow">→</span>
+              <span className="k8s-forward-target">
+                {f.target}:{f.remotePort}
+              </span>
+              <button
+                type="button"
+                className="icon-btn"
+                title={f.running ? t('k8sForwardStop') : t('k8sForwardDismiss')}
+                aria-label={f.running ? t('k8sForwardStop') : t('k8sForwardDismiss')}
+                onClick={() => void stopForward(f.id)}
+              >
+                <Icon name={f.running ? 'stop' : 'x'} size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {menu && (
         <div
           ref={menuRef}
@@ -626,6 +791,18 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
                 </div>
               )}
             </>
+          )}
+          {canForward && (
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                openForwardDialog(menu.row)
+                setMenu(null)
+              }}
+            >
+              <Icon name="link" size={14} />
+              {t('k8sForward')}
+            </div>
           )}
           {canScale && (
             <div
@@ -817,6 +994,64 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
               </button>
               <button className="btn-primary" onClick={() => void doScale()} disabled={scaleBusy}>
                 {t('confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {forwardDialog && (
+        <div className="modal-overlay" onMouseDown={() => setForwardDialog(null)}>
+          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t('k8sForwardTitle', { target: forwardDialog.target })}</h3>
+            </div>
+            <div className="modal-body">
+              <div className="k8s-forward-fields">
+                <label className="k8s-field">
+                  <span>{t('k8sForwardLocal')}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    className="k8s-input"
+                    value={forwardLocal}
+                    onChange={(e) => setForwardLocal(e.target.value)}
+                    placeholder="8080"
+                    autoFocus
+                  />
+                </label>
+                <label className="k8s-field">
+                  <span>{t('k8sForwardRemote')}</span>
+                  <input
+                    className="k8s-input"
+                    value={forwardRemote}
+                    onChange={(e) => setForwardRemote(e.target.value)}
+                    placeholder="8080"
+                  />
+                </label>
+              </div>
+              <label className="k8s-inline k8s-check">
+                <input
+                  type="checkbox"
+                  checked={forwardLan}
+                  onChange={(e) => setForwardLan(e.target.checked)}
+                />
+                <span>{t('k8sForwardLan')}</span>
+              </label>
+              {host.kind === 'ssh' && <div className="k8s-note">{t('k8sForwardViaJump')}</div>}
+              {forwardError && <div className="modal-error">{forwardError}</div>}
+            </div>
+            <div className="modal-footer">
+              <button className="btn-cancel" onClick={() => setForwardDialog(null)}>
+                {t('cancel')}
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => void startForward()}
+                disabled={forwardBusy}
+              >
+                {t('k8sForwardStart')}
               </button>
             </div>
           </div>

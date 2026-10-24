@@ -14,6 +14,7 @@ mod ftp_fs;
 mod host_analysis;
 mod host_commands;
 mod host_identity;
+mod k8s_forward;
 mod k8s_host;
 mod local_fs;
 mod rec_file;
@@ -363,6 +364,9 @@ pub fn run() {
       commands::k8s_scale_resource,
       commands::k8s_apply_yaml,
       commands::k8s_pod_exec_command,
+      commands::k8s_port_forward_start,
+      commands::k8s_list_port_forwards,
+      commands::k8s_stop_port_forward,
       commands::open_local_kubectl_shell,
       commands::command_help,
       commands::get_app_version,

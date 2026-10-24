@@ -125,6 +125,8 @@ export interface TauriMockOptions {
   k8sYaml?: string
   /** Log text returned by `k8s_pod_logs`. */
   k8sLogs?: string
+  /** Rows returned by `k8s_list_port_forwards` (defaults to `[]`). */
+  k8sPortForwards?: unknown[]
   /**
    * Value returned by `get_local_terminals` (the sidebar's saved local-terminal
    * entries). The section also renders an always-present "open default local
@@ -428,6 +430,12 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return 'mock applied'
           case 'k8s_pod_exec_command':
             return 'kubectl -n apps exec -it web-0 -- /bin/sh'
+          case 'k8s_list_port_forwards':
+            return opts.k8sPortForwards ?? []
+          case 'k8s_port_forward_start':
+            return 1
+          case 'k8s_stop_port_forward':
+            return null
           case 'open_local_kubectl_shell':
             return null
           // Follow mode (the viewer's default) streams instead of fetching; the

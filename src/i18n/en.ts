@@ -878,6 +878,20 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   k8sNoLogs: 'No log output',
   k8sYamlTitle: 'YAML — {name}',
   k8sLoadingYaml: 'Loading YAML…',
+  k8sForwards: 'Port forwards',
+  k8sForward: 'Port forward…',
+  k8sForwardTitle: 'Forward {target}',
+  k8sForwardLocal: 'Local port',
+  k8sForwardRemote: 'Target port',
+  k8sForwardLan: 'Allow connections from other machines',
+  k8sForwardViaJump:
+    'kubectl runs on the connected host, so Wrolp also opens an SSH tunnel — the port is reachable here on the same number.',
+  k8sForwardStart: 'Start forward',
+  k8sForwardStop: 'Stop forward',
+  k8sForwardDismiss: 'Dismiss',
+  k8sForwardBadLocal: 'Enter a local port between 1 and 65535',
+  k8sForwardBadRemote: 'Enter the port to reach — a number, or a named port like `http`',
+  k8sForwardStarted: 'Forwarding {addr} → {target}',
 
   // Docker
   dockerLogsViewer: 'Docker Logs',

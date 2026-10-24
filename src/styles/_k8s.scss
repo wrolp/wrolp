@@ -285,3 +285,92 @@
     border-color: $border-focus;
   }
 }
+
+// ===== Port forwards =====
+//
+// A strip under the resource list, not a section of its own: forwards are few, and
+// the panel is one narrow column.
+
+.k8s-forwards {
+  flex: none;
+  max-height: 34%;
+  overflow-y: auto;
+  border-top: 1px solid $border;
+  padding: 2px 6px 4px;
+}
+
+.k8s-forwards-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 2px;
+  font-size: var(--fs-xs);
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.k8s-forward {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--r-2);
+  font-size: var(--fs-xs);
+  color: $text-primary;
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.dead {
+    color: $text-muted;
+
+    .k8s-forward-addr {
+      text-decoration: line-through;
+    }
+  }
+}
+
+.k8s-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+
+  &.on {
+    background: $success;
+  }
+  &.off {
+    background: $danger;
+  }
+}
+
+.k8s-forward-addr {
+  font-family: $font-mono;
+  white-space: nowrap;
+}
+
+.k8s-forward-arrow {
+  color: $text-dim;
+}
+
+.k8s-forward-target {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.k8s-forward-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.k8s-note {
+  margin-top: 8px;
+  font-size: var(--fs-xs);
+  color: $text-muted;
+}

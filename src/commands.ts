@@ -25,6 +25,7 @@ import type {
   K8sContext,
   K8sNamespace,
   K8sResource,
+  K8sPortForward,
   K8sExecTarget,
   ToolCallEvent,
   AiEndpointProfile,
@@ -1319,4 +1320,39 @@ export async function openLocalKubectlShell(
     cols: cols ?? 0,
     rows: rows ?? 0,
   })
+}
+
+/**
+ * Start `kubectl port-forward <target> <localPort>:<remotePort>`. A jump-host forward
+ * is two hops: kubectl binds the port there and an SSH tunnel carries it here, so the
+ * same port number means the same thing on both ends.
+ */
+export async function k8sPortForwardStart(
+  host: K8sHostRef,
+  context: string | null,
+  namespace: string,
+  target: string,
+  localPort: number,
+  remotePort: string,
+  allInterfaces: boolean,
+): Promise<number> {
+  return await invoke<number>('k8s_port_forward_start', {
+    host,
+    context,
+    namespace,
+    target,
+    localPort,
+    remotePort,
+    allInterfaces,
+  })
+}
+
+/** Every forward started this session, running or recently exited. */
+export async function k8sListPortForwards(): Promise<K8sPortForward[]> {
+  return await invoke<K8sPortForward[]>('k8s_list_port_forwards')
+}
+
+/** Stop a forward (and its tunnel), or drop a row whose process already exited. */
+export async function k8sStopPortForward(id: number): Promise<void> {
+  return await invoke('k8s_stop_port_forward', { id })
 }

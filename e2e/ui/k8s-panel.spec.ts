@@ -125,3 +125,90 @@ test('apply sends the editor text and exec opens a local kubectl shell', async (
       }),
     )
 })
+
+// Port forwarding: the dialog's two fields become the kubectl spec, and the strip
+// below the list is the only place a running forward is visible.
+test('a service can be forwarded and the running forward is stopped', async ({ page }) => {
+  await installTauriMock(page, {
+    k8sContexts: CONTEXTS,
+    k8sNamespaces: NAMESPACES,
+    k8sResources: {
+      services: [
+        {
+          kind: 'services',
+          name: 'api',
+          namespace: 'apps',
+          status: 'ClusterIP',
+          ready: '',
+          restarts: 0,
+          detail: '10.0.0.7 · 80/TCP',
+          containers: [],
+          ports: [80],
+        },
+      ],
+    },
+    k8sPortForwards: [
+      {
+        id: 1,
+        hostKind: 'local',
+        jumpTabId: null,
+        context: 'prod',
+        namespace: 'apps',
+        target: 'pod/web-0',
+        remotePort: '8080',
+        listenAddr: '127.0.0.1:18080',
+        startedAt: 1,
+        running: true,
+        message: 'Forwarding from 127.0.0.1:18080 -> 8080',
+      },
+    ],
+  })
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await page.goto('/')
+  await selectRailMode(page, 'k8s')
+
+  // The pre-existing forward is listed without waiting for an action.
+  await expect(page.locator('.k8s-forward')).toHaveCount(1)
+  await expect(page.locator('.k8s-forward-addr')).toHaveText('127.0.0.1:18080')
+
+  await page.locator('.k8s-select').nth(2).selectOption('services')
+  const row = page.locator('.k8s-item')
+  await expect(row).toHaveCount(1)
+  await row.click({ button: 'right' })
+  await menuItem(page, /^Port forward/).click()
+
+  // Both ports prefilled from the service's own `spec.ports`.
+  const dialog = page.locator('.modal').filter({ hasText: 'Forward service/api' })
+  await expect(dialog).toHaveCount(1)
+  const localInput = dialog.locator('input[type="number"]')
+  await expect(localInput).toHaveValue('80')
+  await localInput.fill('19090')
+  await dialog.locator('.k8s-input').nth(1).fill('http')
+  await dialog.locator('.btn-primary').click()
+
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'k8s_port_forward_start')
+        .map((c) => c.args),
+    )
+    .toContainEqual(
+      expect.objectContaining({
+        target: 'service/api',
+        namespace: 'apps',
+        context: 'prod',
+        localPort: 19090,
+        remotePort: 'http',
+        allInterfaces: false,
+      }),
+    )
+
+  await page.locator('.k8s-forward .icon-btn').first().click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'k8s_stop_port_forward')
+        .map((c) => c.args.id),
+    )
+    .toContain(1)
+})

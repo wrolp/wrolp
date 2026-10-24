@@ -26,8 +26,18 @@ pub async fn start_tunnel(
   state: tauri::State<'_, AppState>,
   args: StartTunnelArgs,
 ) -> Result<u32, String> {
+  start_tunnel_runtime(&app, &state, args).await
+}
+
+/// The tunnel itself, callable from inside the app: a jump-host `kubectl
+/// port-forward` needs one to make the port kubectl bound *there* reachable here.
+pub(crate) async fn start_tunnel_runtime(
+  app: &tauri::AppHandle,
+  state: &tauri::State<'_, AppState>,
+  args: StartTunnelArgs,
+) -> Result<u32, String> {
   // Validate the carrier session and grab its shared handle.
-  let handle = get_jump_handle(&state, args.tab_id)?;
+  let handle = get_jump_handle(state, args.tab_id)?;
 
   let local_addr_str = args
     .local_addr

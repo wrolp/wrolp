@@ -171,7 +171,7 @@ pub async fn k8s_pod_logs(
   // transport failure is an error here, so the text the user asked for is never
   // replaced by a status word.
   match exec_kubectl(&state, &host, &argv, None).await {
-    Ok((out, err, 0)) => Ok(String::from_utf8_lossy(&out).to_string()),
+    Ok((out, _, 0)) => Ok(String::from_utf8_lossy(&out).to_string()),
     Ok((_, err, status)) => Err(failure(&format!("logs {pod}"), &err, status)),
     Err(e) => Err(format!("kubectl logs failed for {pod}: {e}")),
   }
@@ -336,4 +336,166 @@ pub async fn open_local_kubectl_shell(
     rows,
   )
   .await
+}
+
+// ==================== Port forwarding ====================
+
+/// Start `kubectl port-forward <target> <localPort>:<remotePort>` and keep it running.
+///
+/// The jump-host case is two hops and both are started here: kubectl binds the port on
+/// the jump host's loopback, and an `ssh -L` tunnel (see
+/// [`crate::commands::tunnels::start_tunnel_runtime`]) maps the same port number from
+/// this machine onto that listener. `all_interfaces` widens whichever end the *user*
+/// connects to — the local process's bind address, or the tunnel's.
+#[tauri::command]
+pub async fn k8s_port_forward_start(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  host: K8sHostRef,
+  context: Option<String>,
+  namespace: String,
+  target: String,
+  local_port: u16,
+  remote_port: String,
+  all_interfaces: Option<bool>,
+) -> Result<u32, String> {
+  let target = crate::k8s_forward::checked_target(&target)?;
+  let remote = crate::k8s_forward::checked_remote_port(&remote_port)?;
+  if local_port == 0 {
+    return Err("choose a local port to listen on".to_string());
+  }
+  let all_if = all_interfaces.unwrap_or(false);
+  let ctx = context
+    .as_deref()
+    .map(str::trim)
+    .filter(|c| !c.is_empty())
+    .map(str::to_string);
+  let ns = {
+    let t = namespace.trim();
+    (if t.is_empty() { "default" } else { t }).to_string()
+  };
+  let jump_tab_id = match &host {
+    K8sHostRef::Ssh { jump_tab_id } => Some(*jump_tab_id),
+    K8sHostRef::Local => None,
+  };
+  let host_kind: &'static str = if jump_tab_id.is_some() {
+    "ssh"
+  } else {
+    "local"
+  };
+  // Only the local case lets kubectl itself bind on 0.0.0.0: a jump host is somebody
+  // else's machine, and exposing a pod port on its interface is not ours to decide.
+  let argv = crate::k8s_forward::port_forward_argv(
+    ctx.as_deref(),
+    &ns,
+    &target,
+    local_port,
+    &remote,
+    all_if && host_kind == "local",
+  );
+
+  let id = state.next_k8s_forward_id.fetch_add(1, Ordering::Relaxed) as u32;
+  let lines = Arc::new(StdMutex::new(std::collections::VecDeque::<String>::new()));
+  let running = Arc::new(AtomicBool::new(true));
+  let (_pump, cancel) = match jump_tab_id {
+    // Dropping the JoinHandle detaches the pump; it is stopped through `cancel`.
+    None => {
+      crate::k8s_forward::spawn_local_forward(app.clone(), id, argv, lines.clone(), running.clone())
+        .await?
+    }
+    Some(tab) => {
+      crate::k8s_forward::spawn_jump_forward(
+        app.clone(),
+        id,
+        &state,
+        tab,
+        argv,
+        lines.clone(),
+        running.clone(),
+      )
+      .await?
+    }
+  };
+
+  // The second hop. A tunnel that cannot bind means the forward is unreachable from
+  // here, so the kubectl process is unwound rather than left half-alive.
+  let mut tunnel_id = None;
+  if let Some(tab) = jump_tab_id {
+    let args = StartTunnelArgs {
+      tab_id: tab,
+      connection_id: None,
+      config_id: None,
+      local_addr: Some(if all_if { "0.0.0.0" } else { "127.0.0.1" }.to_string()),
+      local_port,
+      remote_host: "127.0.0.1".to_string(),
+      remote_port: local_port,
+      name: Some(format!("kubectl {target}:{remote}")),
+    };
+    match crate::commands::tunnels::start_tunnel_runtime(&app, &state, args).await {
+      Ok(tid) => tunnel_id = Some(tid),
+      Err(e) => {
+        let _ = cancel.send(());
+        return Err(format!(
+          "kubectl is forwarding on the jump host, but this machine cannot listen on {local_port}: {e}"
+        ));
+      }
+    }
+  }
+
+  {
+    let mut map = state.k8s_forwards.lock().map_err(|e| e.to_string())?;
+    map.insert(
+      id,
+      crate::k8s_forward::ForwardRuntime {
+        id,
+        host_kind,
+        jump_tab_id,
+        context: ctx,
+        namespace: ns,
+        target: target.clone(),
+        remote_port: remote.clone(),
+        listen_addr: crate::k8s_forward::listen_addr(local_port, all_if),
+        started_at: chrono::Utc::now().timestamp(),
+        running,
+        lines,
+        cancel,
+        tunnel_id,
+      },
+    );
+  }
+  eprintln!("[k8s] port-forward {id} ({host_kind}) -> {target}:{remote} on {local_port}");
+  Ok(id)
+}
+
+/// Every forward this session started, running or recently exited. Polled by the
+/// panel rather than pushed — the same rule the terminal output follows.
+#[tauri::command]
+pub async fn k8s_list_port_forwards(
+  state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::k8s_forward::K8sPortForward>, String> {
+  let mut out: Vec<_> = state
+    .k8s_forwards
+    .lock()
+    .map_err(|e| e.to_string())?
+    .values()
+    .map(|f| f.info())
+    .collect();
+  out.sort_by_key(|f| f.id);
+  Ok(out)
+}
+
+/// Stop a forward (and its tunnel), or drop a row whose process already exited.
+#[tauri::command]
+pub async fn k8s_stop_port_forward(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  id: u32,
+) -> Result<(), String> {
+  if !crate::k8s_forward::stop_forward(&state, id) {
+    return Err(format!("no such port forward: {id}"));
+  }
+  // The tunnel is gone with it, so the sidebar's tunnel list has to be re-read.
+  use tauri::Emitter;
+  let _ = app.emit("tunnel-changed", serde_json::json!({}));
+  Ok(())
 }

@@ -548,7 +548,30 @@ export interface K8sResource {
   restarts: number
   detail: string
   containers: string[]
+  /** Exposed ports (container ports, or a service's own) for the forward prefill. */
+  ports: number[]
   createdAt?: string | null
+}
+
+/** A running (or just-exited) `kubectl port-forward`. Mirrors `K8sPortForward`. */
+export interface K8sPortForward {
+  id: number
+  /** Which machine kubectl runs on: this one, or the jump host of `jumpTabId`. */
+  hostKind: 'local' | 'ssh'
+  jumpTabId: number | null
+  context: string | null
+  namespace: string
+  /** `pod/web-0`, `service/api`, … */
+  target: string
+  /** Pod-side port or named port. */
+  remotePort: string
+  /** What to connect to from this machine, e.g. `127.0.0.1:8080`. */
+  listenAddr: string
+  startedAt: number
+  /** False once the process exited; the row stays so `message` remains readable. */
+  running: boolean
+  /** Last kubectl output lines. */
+  message: string
 }
 
 /** What the SSH / local shell needs to enter a pod. */
