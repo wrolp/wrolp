@@ -383,3 +383,70 @@
   font-size: var(--fs-xs);
   color: $text-muted;
 }
+
+// ===== Modes and Helm =====
+
+// Resources and releases share the scope pickers, so the switch sits above them and
+// spans the column: two labels, no room for anything else.
+.k8s-modes {
+  display: flex;
+  gap: 4px;
+  flex: none;
+  padding: 6px 8px 0;
+}
+
+.k8s-mode {
+  flex: 1;
+  padding: 3px 0;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: $text-muted;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+
+  &:hover {
+    color: $text-primary;
+    background: $bg-hover;
+  }
+
+  &.active {
+    background: $bg-active;
+    color: $text-primary;
+  }
+}
+
+.k8s-history {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.k8s-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 16px;
+  font-size: var(--fs-sm);
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
+.k8s-history-rev {
+  font-family: $font-mono;
+  color: $text-secondary;
+  flex: none;
+}
+
+.k8s-history-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-muted;
+}

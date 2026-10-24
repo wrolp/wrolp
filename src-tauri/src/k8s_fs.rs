@@ -108,14 +108,6 @@ pub(crate) fn new_local_pod_fs(
   )
 }
 
-/// Listing helper for the file panel's "which pod am I in" label.
-pub fn pod_label(pod: &str, container: Option<&str>) -> String {
-  match container.map(str::trim).filter(|c| !c.is_empty()) {
-    Some(c) => format!("{pod}:{c}"),
-    None => pod.to_string(),
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -167,12 +159,5 @@ mod tests {
   fn the_blank_container_name_is_no_container_at_all() {
     let argv = runner("web-0", Some("  "), None).argv(false, &["pwd".to_string()]);
     assert!(!argv.iter().any(|a| a == "-c"), "{argv:?}");
-  }
-
-  #[test]
-  fn the_label_names_the_container_when_there_is_one() {
-    assert_eq!(pod_label("web-0", None), "web-0");
-    assert_eq!(pod_label("web-0", Some("web")), "web-0:web");
-    assert_eq!(pod_label("web-0", Some(" ")), "web-0");
   }
 }

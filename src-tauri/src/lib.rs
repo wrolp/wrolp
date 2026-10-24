@@ -11,6 +11,7 @@ mod docker_analysis;
 mod docker_fs;
 mod docker_host;
 mod ftp_fs;
+mod helm;
 mod host_analysis;
 mod host_commands;
 mod host_identity;
@@ -374,6 +375,13 @@ pub fn run() {
       commands::list_k8s_forward_rules,
       commands::save_k8s_forward_rule,
       commands::delete_k8s_forward_rule,
+      commands::helm_probe,
+      commands::helm_list_releases,
+      commands::helm_release_values,
+      commands::helm_release_history,
+      commands::helm_rollback,
+      commands::helm_uninstall,
+      commands::helm_upgrade_install,
       commands::open_local_kubectl_shell,
       commands::command_help,
       commands::get_app_version,

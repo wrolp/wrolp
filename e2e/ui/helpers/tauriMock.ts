@@ -129,6 +129,14 @@ export interface TauriMockOptions {
   k8sLogChunks?: string[][]
   /** Saved forward rules returned by `list_k8s_forward_rules`. */
   k8sForwardRules?: unknown[]
+  /** Answer to `helm_probe`; omitted means "no helm here". */
+  helmProbe?: { installed: boolean; version?: string | null; message?: string }
+  /** Rows returned by `helm_list_releases`. */
+  helmReleases?: unknown[]
+  /** Rows returned by `helm_release_history`. */
+  helmHistory?: unknown[]
+  /** YAML returned by `helm_release_values`. */
+  helmValues?: string
   /** Rows returned by `k8s_list_port_forwards` (defaults to `[]`). */
   k8sPortForwards?: unknown[]
   /**
@@ -476,6 +484,28 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             }
             return k8sRules.map((r) => ({ ...r }))
           }
+          // Helm. The verbs answer with the strings helm prints, since the panel
+          // shows them; the reads replay what the spec scripted.
+          case 'helm_probe':
+            return (
+              opts.helmProbe ?? {
+                installed: false,
+                version: null,
+                message: 'helm: command not found',
+              }
+            )
+          case 'helm_list_releases':
+            return opts.helmReleases ?? []
+          case 'helm_release_history':
+            return opts.helmHistory ?? []
+          case 'helm_release_values':
+            return opts.helmValues ?? ''
+          case 'helm_rollback':
+            return 'Rollback was successful'
+          case 'helm_uninstall':
+            return 'release uninstalled'
+          case 'helm_upgrade_install':
+            return 'Release "web" has been upgraded.'
           case 'open_local_kubectl_shell':
             return null
           // Follow mode (the viewer's default) streams instead of fetching; the

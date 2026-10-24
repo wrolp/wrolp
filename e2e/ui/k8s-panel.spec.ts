@@ -339,3 +339,137 @@ test('a saved forward rule restarts and can be forgotten', async ({ page }) => {
   await saved.getByRole('button', { name: 'Forget this rule' }).click()
   await expect(page.locator('.k8s-forward.saved')).toHaveCount(0)
 })
+
+// The Helm mode shares the panel's scope pickers and swaps the list underneath them.
+test('helm releases list, read values, roll back and install', async ({ page }) => {
+  await installTauriMock(page, {
+    k8sContexts: CONTEXTS,
+    k8sNamespaces: NAMESPACES,
+    helmProbe: { installed: true, version: '3.16.2', message: 'v3.16.2' },
+    helmReleases: [
+      {
+        name: 'web',
+        namespace: 'apps',
+        revision: '7',
+        updated: '2026-10-24 09:00:00 +0000 UTC',
+        status: 'deployed',
+        chart: 'nginx-1.2.3',
+        app_version: '1.25',
+      },
+      {
+        name: 'queue',
+        namespace: 'apps',
+        revision: '1',
+        updated: '2026-10-23 09:00:00 +0000 UTC',
+        status: 'failed',
+        chart: 'redis-8.0.1',
+        app_version: '7.2',
+      },
+    ],
+    helmHistory: [
+      {
+        revision: 1,
+        updated: 'then',
+        status: 'superseded',
+        chart: 'nginx-1.2.2',
+        app_version: '1.25',
+        description: 'Install complete',
+      },
+      {
+        revision: 2,
+        updated: 'now',
+        status: 'deployed',
+        chart: 'nginx-1.2.3',
+        app_version: '1.25',
+        description: 'Upgrade complete',
+      },
+    ],
+    helmValues: 'replicas: 2\nimage:\n  tag: "1.25"\n',
+  })
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await page.goto('/')
+  await selectRailMode(page, 'k8s')
+
+  await page.locator('.k8s-mode', { hasText: 'Helm' }).click()
+  const rows = page.locator('.k8s-item')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.first()).toContainText('nginx-1.2.3')
+  await expect(rows.nth(1).locator('.k8s-chip.bad')).toHaveText('failed')
+
+  // A click reads the values; the head says whose.
+  await rows.first().click()
+  await expect(page.locator('.k8s-modal .k8s-yaml')).toContainText('replicas: 2')
+  await expect(page.locator('.k8s-modal h3')).toHaveText('web — Values')
+  await page.locator('.k8s-modal-close').click()
+
+  await rows.first().click({ button: 'right' })
+  await menuItem(page, /^History$/).click()
+  await expect(page.locator('.k8s-history-row')).toHaveCount(2)
+  // Newest first, so the superseded revision to roll back to is the second row —
+  // and the deployed one has nothing to roll back to.
+  await expect(page.locator('.k8s-history-row').first().locator('button')).toBeDisabled()
+  const rollback = page.locator('.k8s-history-row').nth(1).locator('button')
+  await expect(rollback).toBeEnabled()
+  await rollback.click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'helm_rollback').map((c) => c.args),
+    )
+    .toContainEqual(
+      expect.objectContaining({ release: 'web', namespace: 'apps', revision: 1, context: 'prod' }),
+    )
+
+  await rows.last().click({ button: 'right' })
+  await menuItem(page, /^Uninstall$/).click()
+  await expect(page.locator('.confirm-dialog')).toContainText('Uninstall release')
+  await page.locator('.confirm-dialog .btn-danger').click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'helm_uninstall').map((c) => c.args),
+    )
+    .toContainEqual(expect.objectContaining({ release: 'queue', namespace: 'apps' }))
+
+  // Install / upgrade: the dialog's fields become the helm argv, values over stdin.
+  await page.getByRole('button', { name: 'Install / upgrade' }).click()
+  const dialog = page.locator('.modal').filter({ hasText: 'Install / upgrade a release' })
+  await dialog.locator('.k8s-field .k8s-input').first().fill('web')
+  await dialog.locator('.k8s-field .k8s-input').nth(2).fill('bitnami/nginx')
+  await dialog.locator('.k8s-apply-input').fill('replicas: 3')
+  await dialog.locator('.k8s-check', { hasText: 'Wait for the rollout to finish' }).click()
+  await dialog.locator('.btn-primary').click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'helm_upgrade_install').map((c) => c.args),
+    )
+    .toContainEqual(
+      expect.objectContaining({
+        release: 'web',
+        chart: 'bitnami/nginx',
+        namespace: 'apps',
+        context: 'prod',
+        values: 'replicas: 3',
+        wait: true,
+      }),
+    )
+})
+
+// No helm on the host is a statement about the host, not a broken list.
+test('the Helm mode says so when the host has no helm', async ({ page }) => {
+  await installTauriMock(page, {
+    k8sContexts: CONTEXTS,
+    k8sNamespaces: NAMESPACES,
+  })
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await page.goto('/')
+  await selectRailMode(page, 'k8s')
+  await page.locator('.k8s-mode', { hasText: 'Helm' }).click()
+  await expect(page.locator('.k8s-list .file-empty')).toHaveText(
+    'helm is not available on this host',
+  )
+  // Not installed means not asked: the list command never runs.
+  await expect
+    .poll(
+      async () => (await invokedCalls(page)).filter((c) => c.cmd === 'helm_list_releases').length,
+    )
+    .toBe(0)
+})

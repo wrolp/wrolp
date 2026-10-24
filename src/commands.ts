@@ -28,6 +28,9 @@ import type {
   K8sPortForward,
   K8sForwardRule,
   K8sLogPoll,
+  HelmRelease,
+  HelmRevision,
+  HelmProbe,
   K8sExecTarget,
   ToolCallEvent,
   AiEndpointProfile,
@@ -1401,4 +1404,96 @@ export async function k8sSaveForwardRule(rule: K8sForwardRule): Promise<K8sForwa
 
 export async function k8sDeleteForwardRule(id: string): Promise<K8sForwardRule[]> {
   return await invoke<K8sForwardRule[]>('delete_k8s_forward_rule', { id })
+}
+
+// ===== Helm =====
+
+/** Whether this host has helm, so the panel can say that instead of a CLI error. */
+export async function helmProbe(host: K8sHostRef): Promise<HelmProbe> {
+  return await invoke<HelmProbe>('helm_probe', { host })
+}
+
+/** Releases in one namespace, or across all of them when `namespace` is `'*'`. */
+export async function helmListReleases(
+  host: K8sHostRef,
+  context: string | null,
+  namespace: string | null,
+): Promise<HelmRelease[]> {
+  return await invoke<HelmRelease[]>('helm_list_releases', {
+    host,
+    context,
+    namespace: namespace && namespace !== '*' ? namespace : null,
+  })
+}
+
+/** The values a release was installed with; `all` includes the chart's defaults. */
+export async function helmReleaseValues(
+  host: K8sHostRef,
+  context: string | null,
+  namespace: string | null,
+  release: string,
+  all: boolean,
+): Promise<string> {
+  return await invoke<string>('helm_release_values', {
+    host,
+    context,
+    namespace,
+    release,
+    all,
+  })
+}
+
+export async function helmReleaseHistory(
+  host: K8sHostRef,
+  context: string | null,
+  namespace: string | null,
+  release: string,
+): Promise<HelmRevision[]> {
+  return await invoke<HelmRevision[]>('helm_release_history', { host, context, namespace, release })
+}
+
+export async function helmRollback(
+  host: K8sHostRef,
+  context: string | null,
+  namespace: string | null,
+  release: string,
+  revision?: number | null,
+): Promise<string> {
+  return await invoke<string>('helm_rollback', { host, context, namespace, release, revision })
+}
+
+export async function helmUninstall(
+  host: K8sHostRef,
+  context: string | null,
+  namespace: string | null,
+  release: string,
+): Promise<string> {
+  return await invoke<string>('helm_uninstall', { host, context, namespace, release })
+}
+
+/** `helm upgrade --install`: the one verb that both installs and upgrades. */
+export async function helmUpgradeInstall(
+  host: K8sHostRef,
+  context: string | null,
+  namespace: string,
+  args: {
+    release: string
+    chart: string
+    version?: string | null
+    values?: string | null
+    wait?: boolean
+    createNamespace?: boolean
+  },
+): Promise<string> {
+  return await invoke<string>('helm_upgrade_install', {
+    host,
+    context,
+    namespace,
+    release: args.release,
+    chart: args.chart,
+    version: args.version ?? null,
+    values: args.values ?? null,
+    wait: args.wait ?? false,
+    createNamespace: args.createNamespace ?? false,
+  })
 }

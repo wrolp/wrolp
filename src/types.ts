@@ -561,7 +561,7 @@ export interface K8sResource {
   createdAt?: string | null
 }
 
-/** A running (or just-exited) `kubectl port-forward`. Mirrors `K8sPortForward`. */
+/** What `k8s_list_port_forwards` reports for one live (or just-exited) forward. */
 export interface K8sPortForward {
   id: number
   /** Which machine kubectl runs on: this one, or the jump host of `jumpTabId`. */
@@ -605,6 +605,35 @@ export interface K8sForwardRule {
   localPort: number
   remotePort: string
   allInterfaces: boolean
+}
+
+/** One deployed helm release, as `helm list -o json` reports it. */
+export interface HelmRelease {
+  name: string
+  namespace: string
+  /** A string because helm prints it as one. */
+  revision: string
+  updated: string
+  status: string
+  chart: string
+  appVersion: string
+}
+
+/** One revision of a release, from `helm history -o json`. */
+export interface HelmRevision {
+  revision: number
+  updated: string
+  status: string
+  chart: string
+  appVersion: string
+  description: string
+}
+
+/** Whether the host has helm at all. */
+export interface HelmProbe {
+  installed: boolean
+  version: string | null
+  message: string
 }
 
 /** What the SSH / local shell needs to enter a pod. */

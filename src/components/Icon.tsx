@@ -33,6 +33,8 @@ export type IconName =
   | 'container'
   // Kubernetes (lucide: boxes)
   | 'boxes'
+  // Helm releases (lucide: package)
+  | 'package'
   // The drawer's transfer queue: two opposing arrows — the pair every transfer
   // is one half of (lucide arrow-left-right).
   | 'transfer'
@@ -252,6 +254,15 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="m10 14 11.9-6.9" />
       <path d="M14 19.8v-8.1" />
       <path d="M18 17.5V9.4" />
+    </>
+  ),
+  // lucide: package — a helm release.
+  package: (
+    <>
+      <path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z" />
+      <path d="M12 22V12" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="m7.5 4.27 9 5.15" />
     </>
   ),
   // lucide: boxes — the Kubernetes rail entry (and its resource rows).

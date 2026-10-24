@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
+  HelmProbe,
+  HelmRelease,
+  HelmRevision,
   K8sContext,
   K8sExecTarget,
   K8sForwardRule,
@@ -9,8 +12,15 @@ import type {
   K8sResource,
 } from '../types'
 import {
-  k8sDeleteForwardRule,
+  helmListReleases,
+  helmProbe,
+  helmReleaseHistory,
+  helmReleaseValues,
+  helmRollback,
+  helmUninstall,
+  helmUpgradeInstall,
   k8sApplyYaml,
+  k8sDeleteForwardRule,
   k8sDeleteResource,
   k8sListContexts,
   k8sListForwardRules,
@@ -23,8 +33,8 @@ import {
   k8sResourceYaml,
   k8sScaleResource,
   k8sStopPortForward,
-  pollK8sLogs,
   k8sSaveForwardRule,
+  pollK8sLogs,
   stopK8sLogsStream,
 } from '../commands'
 import { Icon } from './Icon'
@@ -86,15 +96,36 @@ const FORWARD_PREFIX: Partial<Record<string, string>> = {
   statefulsets: 'statefulset',
 }
 
-/** Chip tone for a status word; unknown states stay neutral (`.warn`). */
+/** Chip tone for a status word; unknown states stay neutral (`.warn`). Covers both
+ * kubectl's phases and helm's release statuses (`deployed`, `pending-upgrade`, …). */
 function statusTone(status: string): 'ok' | 'warn' | 'bad' {
   const v = status.toLowerCase()
   if (
-    ['running', 'ready', 'active', 'complete', 'completed', 'succeeded', 'scheduled'].includes(v)
+    [
+      'running',
+      'ready',
+      'active',
+      'complete',
+      'completed',
+      'succeeded',
+      'scheduled',
+      'deployed',
+    ].includes(v)
   ) {
     return 'ok'
   }
-  if (['failed', 'error', 'crashloopbackoff', 'stopped', 'suspended', 'terminating'].includes(v)) {
+  if (
+    [
+      'failed',
+      'error',
+      'crashloopbackoff',
+      'stopped',
+      'suspended',
+      'terminating',
+      'uninstalled',
+      'uninstalling',
+    ].includes(v)
+  ) {
     return 'bad'
   }
   return 'warn'
@@ -222,6 +253,37 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const [rules, setRules] = useState<K8sForwardRule[]>([])
   const [forwardSave, setForwardSave] = useState(true)
 
+  // Resources and Helm releases share the scope pickers above (context, namespace)
+  // but not the list, so one switch decides which of the two is on screen.
+  const [mode, setMode] = useState<'resources' | 'helm'>('resources')
+  const [releases, setReleases] = useState<HelmRelease[]>([])
+  const [helmInfo, setHelmInfo] = useState<HelmProbe | null>(null)
+  const [helmLoading, setHelmLoading] = useState(false)
+  const [helmError, setHelmError] = useState('')
+  const [helmMenu, setHelmMenu] = useState<{ x: number; y: number; rel: HelmRelease } | null>(null)
+  const [helmText, setHelmText] = useState<{
+    title: string
+    text: string
+    error: string
+    loading: boolean
+  } | null>(null)
+  const [history, setHistory] = useState<{
+    release: string
+    rows: HelmRevision[]
+    error: string
+    loading: boolean
+  } | null>(null)
+  const [confirmUninstall, setConfirmUninstall] = useState<HelmRelease | null>(null)
+  const [installOpen, setInstallOpen] = useState(false)
+  const [installRelease, setInstallRelease] = useState('')
+  const [installChart, setInstallChart] = useState('')
+  const [installVersion, setInstallVersion] = useState('')
+  const [installValues, setInstallValues] = useState('')
+  const [installWait, setInstallWait] = useState(false)
+  const [installCreateNs, setInstallCreateNs] = useState(false)
+  const [installBusy, setInstallBusy] = useState(false)
+  const [installError, setInstallError] = useState('')
+
   // Reload on the host's *shape*, not object identity: callers pass a fresh literal
   // per render, as they do for DockerPanel.
   const hostKey = host.kind === 'ssh' ? `ssh:${host.jumpTabId}` : 'local'
@@ -242,6 +304,9 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     setNamespaces([])
     setNamespace('')
     setResources([])
+    // A different host may have a different helm (or none), so the probe is stale.
+    setHelmInfo(null)
+    setReleases([])
     k8sListContexts(hostRef.current)
       .then((list) => {
         if (cancelled) return
@@ -324,9 +389,169 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   // Load on every scope change, and when the App or a local action asks for a refresh.
   useEffect(() => loadResources(), [loadResources, localRefresh, refreshSignal])
 
+  // ---- Helm ----
+
+  // Asking the host once whether helm exists keeps "no helm here" a statement about
+  // the host rather than a broken-looking release list.
+  useEffect(() => {
+    if (mode !== 'helm' || helmInfo) return
+    let cancelled = false
+    helmProbe(hostRef.current)
+      .then((p) => {
+        if (!cancelled) setHelmInfo(p)
+      })
+      .catch((e) => {
+        if (!cancelled) setHelmInfo({ installed: false, version: null, message: String(e) })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [mode, helmInfo])
+
+  const loadReleases = useCallback(() => {
+    if (!context || !helmInfo?.installed) return
+    let cancelled = false
+    setHelmLoading(true)
+    setHelmError('')
+    helmListReleases(hostRef.current, context || null, namespace)
+      .then((rows) => {
+        if (!cancelled) setReleases(rows)
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setHelmError(String(e))
+          setReleases([])
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setHelmLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [context, namespace, helmInfo])
+
+  useEffect(() => loadReleases(), [loadReleases, refreshSignal])
+
+  const showValues = useCallback(
+    async (rel: HelmRelease) => {
+      const title = `${rel.name} — ${t('k8sHelmValues')}`
+      setHelmText({ title, text: '', error: '', loading: true })
+      try {
+        const text = await helmReleaseValues(
+          hostRef.current,
+          context || null,
+          rel.namespace,
+          rel.name,
+          false,
+        )
+        setHelmText((prev) => (prev ? { ...prev, text, loading: false } : prev))
+      } catch (e) {
+        setHelmText((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev))
+      }
+    },
+    [context, t],
+  )
+
+  const showHistory = useCallback(
+    async (rel: HelmRelease) => {
+      setHistory({ release: rel.name, rows: [], error: '', loading: true })
+      try {
+        const rows = await helmReleaseHistory(
+          hostRef.current,
+          context || null,
+          rel.namespace,
+          rel.name,
+        )
+        setHistory((prev) => (prev ? { ...prev, rows, loading: false } : prev))
+      } catch (e) {
+        setHistory((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev))
+      }
+    },
+    [context],
+  )
+
+  const doRollback = useCallback(
+    async (rel: HelmRelease, revision: number) => {
+      try {
+        await helmRollback(hostRef.current, context || null, rel.namespace, rel.name, revision)
+        setHistory(null)
+        setNotice(t('k8sHelmRolledBack', { name: rel.name, revision }))
+        setLocalRefresh((k) => k + 1)
+      } catch (e) {
+        setHistory((prev) => (prev ? { ...prev, error: String(e) } : prev))
+      }
+    },
+    [context, t],
+  )
+
+  const doUninstall = useCallback(async () => {
+    if (!confirmUninstall) return
+    const rel = confirmUninstall
+    try {
+      await helmUninstall(hostRef.current, context || null, rel.namespace, rel.name)
+      setConfirmUninstall(null)
+      setNotice(t('k8sHelmUninstalled', { name: rel.name }))
+      setLocalRefresh((k) => k + 1)
+    } catch (e) {
+      setConfirmUninstall(null)
+      setHelmError(String(e))
+    }
+  }, [confirmUninstall, context, t])
+
+  const doInstall = useCallback(async () => {
+    const release = installRelease.trim()
+    const chart = installChart.trim()
+    if (!release) {
+      setInstallError(t('k8sHelmNeedRelease'))
+      return
+    }
+    if (!chart) {
+      setInstallError(t('k8sHelmNeedChart'))
+      return
+    }
+    if (namespace === ALL_NAMESPACES) {
+      // `helm upgrade --install` has to be told where to put the release.
+      setInstallError(t('k8sHelmNeedNamespace'))
+      return
+    }
+    setInstallBusy(true)
+    setInstallError('')
+    try {
+      await helmUpgradeInstall(hostRef.current, context || null, namespace, {
+        release,
+        chart,
+        version: installVersion.trim() || null,
+        values: installValues.trim() || null,
+        wait: installWait,
+        createNamespace: installCreateNs,
+      })
+      setInstallOpen(false)
+      setNotice(t('k8sHelmInstalled', { name: release, chart }))
+      setLocalRefresh((k) => k + 1)
+    } catch (e) {
+      setInstallError(String(e))
+    } finally {
+      setInstallBusy(false)
+    }
+  }, [
+    installRelease,
+    installChart,
+    installVersion,
+    installValues,
+    installWait,
+    installCreateNs,
+    context,
+    namespace,
+    t,
+  ])
+
   // Context menu dismissal + viewport clamping (the Docker panel's pattern).
   useEffect(() => {
-    const close = () => setMenu(null)
+    const close = () => {
+      setMenu(null)
+      setHelmMenu(null)
+    }
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [])
@@ -350,9 +575,18 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   }, [notice])
 
   // Escape closes whichever overlay is open. ConfirmDialog already handles its own,
-  // so this only covers the five K8s-owned ones.
+  // so this covers the K8s-owned ones.
   useEffect(() => {
-    if (!logs && !yaml && !applyOpen && !scaleTarget && !forwardDialog) return
+    const open =
+      logs ||
+      yaml ||
+      applyOpen ||
+      scaleTarget ||
+      forwardDialog ||
+      helmText ||
+      history ||
+      installOpen
+    if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       setLogs(null)
@@ -360,10 +594,13 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       setApplyOpen(false)
       setScaleTarget(null)
       setForwardDialog(null)
+      setHelmText(null)
+      setHistory(null)
+      setInstallOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [logs, yaml, applyOpen, scaleTarget, forwardDialog])
+  }, [logs, yaml, applyOpen, scaleTarget, forwardDialog, helmText, history, installOpen])
 
   // The namespace a row actually lives in — all-namespaces mode lists several.
   const rowNamespace = useCallback(
@@ -800,6 +1037,14 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       r.detail.toLowerCase().includes(q) ||
       r.status.toLowerCase().includes(q),
   )
+  // The same filter box narrows the release list, by chart and status as well as name.
+  const visibleReleases = releases.filter(
+    (r) =>
+      !q ||
+      r.name.toLowerCase().includes(q) ||
+      r.chart.toLowerCase().includes(q) ||
+      r.status.toLowerCase().includes(q),
+  )
 
   const menuRow = menu?.row
   const canScale =
@@ -812,30 +1057,73 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       <div className="panel-head sec">
         <span className="panel-title">{t('railK8s')}</span>
         <span className="cnt" title={context}>
-          {context ? `${visible.length} · ${context}` : visible.length}
+          {context
+            ? `${mode === 'helm' ? visibleReleases.length : visible.length} · ${context}`
+            : mode === 'helm'
+              ? visibleReleases.length
+              : visible.length}
         </span>
-        <button
-          type="button"
-          className="icon-btn"
-          title={t('k8sApply')}
-          aria-label={t('k8sApply')}
-          onClick={() => {
-            setApplyError('')
-            setApplyOpen(true)
-          }}
-          disabled={!context}
-        >
-          <Icon name="edit" size={13} />
-        </button>
+        {mode === 'helm' ? (
+          <button
+            type="button"
+            className="icon-btn"
+            title={t('k8sHelmInstall')}
+            aria-label={t('k8sHelmInstall')}
+            onClick={() => {
+              setInstallError('')
+              setInstallOpen(true)
+            }}
+            disabled={!helmInfo?.installed}
+          >
+            <Icon name="plus" size={13} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="icon-btn"
+            title={t('k8sApply')}
+            aria-label={t('k8sApply')}
+            onClick={() => {
+              setApplyError('')
+              setApplyOpen(true)
+            }}
+            disabled={!context}
+          >
+            <Icon name="edit" size={13} />
+          </button>
+        )}
         <button
           type="button"
           className="icon-btn"
           title={t('refresh')}
           aria-label={t('refresh')}
           onClick={() => setLocalRefresh((k) => k + 1)}
-          disabled={loading}
+          disabled={loading || helmLoading}
         >
           <Icon name="refresh" size={13} />
+        </button>
+      </div>
+
+      {/* Two lists, one scope: the context and namespace pickers below apply to
+          whichever of these is showing. */}
+      <div className="k8s-modes" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === 'resources'}
+          className={`k8s-mode${mode === 'resources' ? ' active' : ''}`}
+          onClick={() => setMode('resources')}
+        >
+          {t('k8sModeResources')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === 'helm'}
+          className={`k8s-mode${mode === 'helm' ? ' active' : ''}`}
+          onClick={() => setMode('helm')}
+        >
+          {t('k8sModeHelm')}
         </button>
       </div>
 
@@ -874,72 +1162,130 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
             ))}
           </select>
         </label>
-        <label className="k8s-field">
-          <span>{t('k8sResourceKind')}</span>
-          <select
-            className="k8s-select"
-            value={kind}
-            onChange={(e) => setKind(e.target.value as Kind)}
-            aria-label={t('k8sResourceKind')}
-          >
-            {KINDS.map((k) => (
-              <option key={k} value={k}>
-                {t(KIND_LABEL[k])}
-              </option>
-            ))}
-          </select>
-        </label>
+        {mode === 'resources' && (
+          <label className="k8s-field">
+            <span>{t('k8sResourceKind')}</span>
+            <select
+              className="k8s-select"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as Kind)}
+              aria-label={t('k8sResourceKind')}
+            >
+              {KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {t(KIND_LABEL[k])}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       {notice && <div className="k8s-notice">{notice}</div>}
 
       <div className="k8s-list">
-        {error && <div className="file-error">{error}</div>}
-        {loading && <div className="file-empty">{t('loading')}</div>}
-        {!loading && !error && !context && contexts.length === 0 && (
-          <div className="file-empty">{t('k8sNoContexts')}</div>
+        {mode === 'resources' && (
+          <>
+            {error && <div className="file-error">{error}</div>}
+            {loading && <div className="file-empty">{t('loading')}</div>}
+            {!loading && !error && !context && contexts.length === 0 && (
+              <div className="file-empty">{t('k8sNoContexts')}</div>
+            )}
+            {!loading && !error && context && visible.length === 0 && (
+              <div className="file-empty">{t('k8sNoResources', { kind: t(KIND_LABEL[kind]) })}</div>
+            )}
+          </>
         )}
-        {!loading && !error && context && visible.length === 0 && (
-          <div className="file-empty">{t('k8sNoResources', { kind: t(KIND_LABEL[kind]) })}</div>
+        {mode === 'helm' && (
+          <>
+            {helmError && <div className="file-error">{helmError}</div>}
+            {helmLoading && <div className="file-empty">{t('loading')}</div>}
+            {helmInfo && !helmInfo.installed && (
+              <div className="file-empty" title={helmInfo.message || undefined}>
+                {t('k8sNoHelm')}
+              </div>
+            )}
+            {!helmLoading && helmInfo?.installed && !helmError && visibleReleases.length === 0 && (
+              <div className="file-empty">{t('k8sNoReleases')}</div>
+            )}
+          </>
         )}
-        {visible.map((r) => (
-          <div
-            key={`${r.namespace}/${r.name}`}
-            className={`k8s-item${r.kind === 'pods' && activePod === r.name ? ' active' : ''}`}
-            onClick={() => openYaml(r)}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setMenu({ x: e.clientX, y: e.clientY, row: r })
-              setMenuStyle({ left: e.clientX, top: e.clientY })
-            }}
-            title={`${r.name}${r.namespace ? `\n${r.namespace}` : ''}\n${r.status}${
-              r.detail ? `\n${r.detail}` : ''
-            }`}
-          >
-            <span className="k8s-icon">
-              <Icon name="boxes" size={14} />
-            </span>
-            <div className="k8s-info">
-              <div className="k8s-name">
-                {r.name}
-                {r.namespace && namespace === ALL_NAMESPACES && (
-                  <span className="k8s-ns">{r.namespace}</span>
+        {mode === 'resources' &&
+          visible.map((r) => (
+            <div
+              key={`${r.namespace}/${r.name}`}
+              className={`k8s-item${r.kind === 'pods' && activePod === r.name ? ' active' : ''}`}
+              onClick={() => openYaml(r)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setMenu({ x: e.clientX, y: e.clientY, row: r })
+                setMenuStyle({ left: e.clientX, top: e.clientY })
+              }}
+              title={`${r.name}${r.namespace ? `\n${r.namespace}` : ''}\n${r.status}${
+                r.detail ? `\n${r.detail}` : ''
+              }`}
+            >
+              <span className="k8s-icon">
+                <Icon name="boxes" size={14} />
+              </span>
+              <div className="k8s-info">
+                <div className="k8s-name">
+                  {r.name}
+                  {r.namespace && namespace === ALL_NAMESPACES && (
+                    <span className="k8s-ns">{r.namespace}</span>
+                  )}
+                </div>
+                <div className="k8s-detail">{r.detail}</div>
+              </div>
+              <div className="k8s-chips">
+                <span className={`k8s-chip ${statusTone(r.status)}`}>{r.status}</span>
+                {r.ready && <span className="k8s-chip muted">{r.ready}</span>}
+                {r.restarts > 0 && (
+                  <span className="k8s-chip bad" title={t('k8sRestarts', { n: r.restarts })}>
+                    ↻{r.restarts}
+                  </span>
                 )}
               </div>
-              <div className="k8s-detail">{r.detail}</div>
             </div>
-            <div className="k8s-chips">
-              <span className={`k8s-chip ${statusTone(r.status)}`}>{r.status}</span>
-              {r.ready && <span className="k8s-chip muted">{r.ready}</span>}
-              {r.restarts > 0 && (
-                <span className="k8s-chip bad" title={t('k8sRestarts', { n: r.restarts })}>
-                  ↻{r.restarts}
-                </span>
-              )}
+          ))}
+        {mode === 'helm' &&
+          visibleReleases.map((r) => (
+            <div
+              key={`${r.namespace}/${r.name}`}
+              className="k8s-item"
+              onClick={() => void showValues(r)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setHelmMenu({ x: e.clientX, y: e.clientY, rel: r })
+                setMenuStyle({ left: e.clientX, top: e.clientY })
+              }}
+              title={`${r.name}\n${r.namespace}\n${r.status} · ${t('k8sHelmRevision')} ${r.revision}\n${r.chart}${
+                r.updated ? `\n${r.updated}` : ''
+              }\n\n${t('k8sHelmValuesHint')}`}
+            >
+              <span className="k8s-icon">
+                <Icon name="package" size={14} />
+              </span>
+              <div className="k8s-info">
+                <div className="k8s-name">
+                  {r.name}
+                  {r.namespace && namespace === ALL_NAMESPACES && (
+                    <span className="k8s-ns">{r.namespace}</span>
+                  )}
+                </div>
+                <div className="k8s-detail">
+                  {r.chart}
+                  {r.appVersion ? ` · ${r.appVersion}` : ''}
+                </div>
+              </div>
+              <div className="k8s-chips">
+                <span className={`k8s-chip ${statusTone(r.status)}`}>{r.status}</span>
+                <span className="k8s-chip muted">r{r.revision}</span>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
       </div>
 
       {/* Port forwards outlive this panel (and the resource list it was started from),
@@ -1109,6 +1455,47 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           >
             <Icon name="trash" size={14} />
             {t('delete')}
+          </div>
+        </div>
+      )}
+
+      {/* Helm releases: values and history are reads, uninstall is not. */}
+      {helmMenu && (
+        <div
+          ref={menuRef}
+          className="context-menu"
+          style={{ left: menuStyle.left, top: menuStyle.top }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              void showValues(helmMenu.rel)
+              setHelmMenu(null)
+            }}
+          >
+            <Icon name="file" size={14} />
+            {t('k8sHelmValues')}
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              void showHistory(helmMenu.rel)
+              setHelmMenu(null)
+            }}
+          >
+            <Icon name="history" size={14} />
+            {t('k8sHelmHistory')}
+          </div>
+          <div
+            className="context-menu-item ctx-danger"
+            onClick={() => {
+              setConfirmUninstall(helmMenu.rel)
+              setHelmMenu(null)
+            }}
+          >
+            <Icon name="trash" size={14} />
+            {t('k8sHelmUninstall')}
           </div>
         </div>
       )}
@@ -1344,6 +1731,175 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Helm values — the same read-only pre the pod YAML uses. */}
+      {helmText && (
+        <div className="modal-overlay" onMouseDown={() => setHelmText(null)}>
+          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{helmText.title}</h3>
+              <span className="k8s-modal-close" onClick={() => setHelmText(null)}>
+                <Icon name="x" size={14} />
+              </span>
+            </div>
+            {helmText.error && <div className="modal-error">{helmText.error}</div>}
+            <pre className="k8s-yaml">
+              {helmText.loading && !helmText.text ? t('loading') : helmText.text}
+            </pre>
+          </div>
+        </div>
+      )}
+
+      {/* Revision history, with a rollback per row. */}
+      {history && (
+        <div className="modal-overlay" onMouseDown={() => setHistory(null)}>
+          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t('k8sHelmHistoryTitle', { name: history.release })}</h3>
+              <span className="k8s-modal-close" onClick={() => setHistory(null)}>
+                <Icon name="x" size={14} />
+              </span>
+            </div>
+            {history.error && <div className="modal-error">{history.error}</div>}
+            <div className="k8s-history">
+              {history.loading && <div className="file-empty">{t('loading')}</div>}
+              {!history.loading && history.rows.length === 0 && (
+                <div className="file-empty">{t('k8sHelmNoHistory')}</div>
+              )}
+              {history.rows
+                .slice()
+                .reverse()
+                .map((rev) => (
+                  <div key={rev.revision} className="k8s-history-row">
+                    <span className="k8s-history-rev">r{rev.revision}</span>
+                    <span className={`k8s-chip ${statusTone(rev.status)}`}>{rev.status}</span>
+                    <span className="k8s-history-desc">
+                      {rev.chart}
+                      {rev.description ? ` · ${rev.description}` : ''}
+                    </span>
+                    <button
+                      type="button"
+                      className="k8s-btn"
+                      disabled={rev.status === 'deployed'}
+                      title={rev.updated}
+                      onClick={() => {
+                        const rel = releases.find((r) => r.name === history.release)
+                        if (rel) void doRollback(rel, rev.revision)
+                      }}
+                    >
+                      {t('k8sHelmRollback')}
+                    </button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Install / upgrade: `helm upgrade --install`, so one dialog covers both. */}
+      {installOpen && (
+        <div className="modal-overlay" onMouseDown={() => setInstallOpen(false)}>
+          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t('k8sHelmInstallTitle')}</h3>
+              <span className="k8s-modal-close" onClick={() => setInstallOpen(false)}>
+                <Icon name="x" size={14} />
+              </span>
+            </div>
+            <div className="modal-body">
+              <div className="k8s-forward-fields">
+                <label className="k8s-field">
+                  <span>{t('k8sHelmRelease')}</span>
+                  <input
+                    className="k8s-input"
+                    value={installRelease}
+                    onChange={(e) => setInstallRelease(e.target.value)}
+                    placeholder="web"
+                    autoFocus
+                  />
+                </label>
+                <label className="k8s-field">
+                  <span>{t('k8sHelmVersion')}</span>
+                  <input
+                    className="k8s-input"
+                    value={installVersion}
+                    onChange={(e) => setInstallVersion(e.target.value)}
+                    placeholder="1.2.3"
+                  />
+                </label>
+              </div>
+              <label className="k8s-field">
+                <span>{t('k8sHelmChart')}</span>
+                <input
+                  className="k8s-input"
+                  value={installChart}
+                  onChange={(e) => setInstallChart(e.target.value)}
+                  placeholder="bitnami/nginx or oci://host/charts/web"
+                />
+              </label>
+              <label className="k8s-field">
+                <span>{t('k8sHelmValuesFile')}</span>
+                <textarea
+                  className="k8s-apply-input"
+                  value={installValues}
+                  onChange={(e) => setInstallValues(e.target.value)}
+                  placeholder={'replicas: 2\nimage:\n  tag: "1.2.3"'}
+                  spellCheck={false}
+                />
+              </label>
+              <label className="k8s-inline k8s-check">
+                <input
+                  type="checkbox"
+                  checked={installWait}
+                  onChange={(e) => setInstallWait(e.target.checked)}
+                />
+                <span>{t('k8sHelmWait')}</span>
+              </label>
+              <label className="k8s-inline k8s-check">
+                <input
+                  type="checkbox"
+                  checked={installCreateNs}
+                  onChange={(e) => setInstallCreateNs(e.target.checked)}
+                />
+                <span>{t('k8sHelmCreateNamespace')}</span>
+              </label>
+              <div className="k8s-note">
+                {t('k8sHelmInstallScope', {
+                  namespace: namespace === ALL_NAMESPACES ? t('k8sAllNamespaces') : namespace,
+                })}
+              </div>
+              {installError && <div className="modal-error">{installError}</div>}
+            </div>
+            <div className="modal-footer">
+              <button className="btn-cancel" onClick={() => setInstallOpen(false)}>
+                {t('cancel')}
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => void doInstall()}
+                disabled={installBusy}
+              >
+                {t('k8sHelmInstall')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmUninstall && (
+        <ConfirmDialog
+          danger
+          title={t('k8sHelmUninstallTitle')}
+          message={t('k8sHelmUninstallConfirm', {
+            name: confirmUninstall.name,
+            namespace: confirmUninstall.namespace,
+          })}
+          confirmLabel={t('k8sHelmUninstall')}
+          cancelLabel={t('cancel')}
+          onConfirm={() => void doUninstall()}
+          onCancel={() => setConfirmUninstall(null)}
+        />
       )}
 
       {confirmDelete && (
