@@ -127,6 +127,8 @@ export interface TauriMockOptions {
   k8sLogs?: string
   /** Scripted `poll_k8s_logs` answers, drained one array per poll. */
   k8sLogChunks?: string[][]
+  /** Saved forward rules returned by `list_k8s_forward_rules`. */
+  k8sForwardRules?: unknown[]
   /** Rows returned by `k8s_list_port_forwards` (defaults to `[]`). */
   k8sPortForwards?: unknown[]
   /**
@@ -178,6 +180,11 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     // Stateful command-snippet store so the editor's save -> reload works.
     const snippets: Array<Record<string, unknown>> = (opts.commandSnippets ?? []).map((s) => ({
       ...(s as Record<string, unknown>),
+    }))
+    // Stateful saved-forward list, so save -> re-read reflects the new rule the way
+    // the JSON file does in the real backend.
+    const k8sRules: Array<Record<string, unknown>> = (opts.k8sForwardRules ?? []).map((r) => ({
+      ...(r as Record<string, unknown>),
     }))
     const pollChunks: string[][] = (opts.pollOutputChunks ?? []).map((c) => [...c])
     // Scripted `poll_k8s_logs` answers, drained one array per poll. Once they run out
@@ -451,6 +458,24 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           }
           case 'stop_k8s_logs_stream':
             return true
+          // Saved forward rules, from the stateful list above: fresh copies each read
+          // so the panel's state cannot alias the store.
+          case 'list_k8s_forward_rules':
+            return k8sRules.map((r) => ({ ...r }))
+          case 'save_k8s_forward_rule': {
+            const rule = args.rule as Record<string, unknown>
+            const i = k8sRules.findIndex((r) => r.id === rule.id)
+            if (i >= 0) k8sRules[i] = rule
+            else k8sRules.push(rule)
+            return k8sRules.map((r) => ({ ...r }))
+          }
+          case 'delete_k8s_forward_rule': {
+            const id = String(args.id)
+            for (let i = k8sRules.length - 1; i >= 0; i--) {
+              if (k8sRules[i].id === id) k8sRules.splice(i, 1)
+            }
+            return k8sRules.map((r) => ({ ...r }))
+          }
           case 'open_local_kubectl_shell':
             return null
           // Follow mode (the viewer's default) streams instead of fetching; the

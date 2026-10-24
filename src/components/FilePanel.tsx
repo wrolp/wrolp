@@ -343,7 +343,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // sync), so re-entering docker/jump mode can restore the previously browsed
   // filesystem instead of dropping back to the picker/form.
   useEffect(() => {
-    if (isDockerTarget(target) || target.kind === 'jumpRemote' || target.kind === 'dockerSsh') {
+    if (
+      isDockerTarget(target) ||
+      target.kind === 'jumpRemote' ||
+      target.kind === 'dockerSsh' ||
+      target.kind === 'k8sPod'
+    ) {
       lastNonSessionTarget[tabId] = target
     }
   }, [target, tabId])
@@ -750,11 +755,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
         : targetChanged && cached
           ? cached.currentPath
           : (remoteCwd ?? defaultPath)
-      const startRoot = isDockerTarget(target)
-        ? '/'
-        : targetChanged && cached
-          ? cached.rootPath
-          : (remoteCwd ?? defaultPath)
+      const startRoot =
+        isDockerTarget(target) || target.kind === 'k8sPod'
+          ? '/'
+          : targetChanged && cached
+            ? cached.rootPath
+            : (remoteCwd ?? defaultPath)
       setCurrentPath(startPath)
       setRootPath(startRoot)
       // Non-session targets (jump/docker) can be addressed through a freshly

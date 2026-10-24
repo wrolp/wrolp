@@ -160,6 +160,32 @@ test('apply sends the editor text and exec opens a local kubectl shell', async (
     )
 })
 
+// The pod's own filesystem, browsed by the same Files panel that reads containers.
+test('browsing a pod points the Files panel at its filesystem', async ({ page }) => {
+  await boot(page)
+
+  await page.locator('.k8s-item').click({ button: 'right' })
+  await menuItem(page, /^Browse files$/).click()
+  await selectRailMode(page, 'files')
+
+  // The head names the target — container and all, since a multi-container pod has
+  // to be browsed through one of them — and the listing asks for `/`.
+  await expect(page.locator('.file-panel .cnt').first()).toHaveText('pod:apps/web-0:web')
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'target_list_files').map((c) => c.args),
+    )
+    .toContainEqual(expect.objectContaining({ path: '/' }))
+  const call = (await invokedCalls(page)).find((c) => c.cmd === 'target_list_files')
+  expect(call?.args.target).toMatchObject({
+    kind: 'k8sPod',
+    namespace: 'apps',
+    pod: 'web-0',
+    container: 'web',
+    host: { kind: 'local' },
+  })
+})
+
 // Port forwarding: the dialog's two fields become the kubectl spec, and the strip
 // below the list is the only place a running forward is visible.
 test('a service can be forwarded and the running forward is stopped', async ({ page }) => {
@@ -191,6 +217,7 @@ test('a service can be forwarded and the running forward is stopped', async ({ p
         target: 'pod/web-0',
         remotePort: '8080',
         listenAddr: '127.0.0.1:18080',
+        localPort: 18080,
         startedAt: 1,
         running: true,
         message: 'Forwarding from 127.0.0.1:18080 -> 8080',
@@ -236,6 +263,21 @@ test('a service can be forwarded and the running forward is stopped', async ({ p
         allInterfaces: false,
       }),
     )
+  // "Remember this forward" is on by default, so the rule is saved with the start.
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'save_k8s_forward_rule')
+        .map((c) => c.args.rule),
+    )
+    .toContainEqual(
+      expect.objectContaining({
+        hostKind: 'local',
+        target: 'service/api',
+        localPort: 19090,
+        remotePort: 'http',
+      }),
+    )
 
   await page.locator('.k8s-forward .icon-btn').first().click()
   await expect
@@ -245,4 +287,55 @@ test('a service can be forwarded and the running forward is stopped', async ({ p
         .map((c) => c.args.id),
     )
     .toContain(1)
+})
+
+// A saved rule is the panel's way of surviving a restart: it names a connection, not
+// a tab, and is only startable while a session to that host is open.
+test('a saved forward rule restarts and can be forgotten', async ({ page }) => {
+  await installTauriMock(page, {
+    k8sContexts: CONTEXTS,
+    k8sNamespaces: NAMESPACES,
+    k8sResources: { pods: [POD] },
+    k8sForwardRules: [
+      {
+        id: 'r1',
+        hostKind: 'local',
+        connectionId: null,
+        connectionName: null,
+        context: 'prod',
+        namespace: 'apps',
+        target: 'pod/web-0',
+        localPort: 19090,
+        remotePort: '8080',
+        allInterfaces: false,
+      },
+    ],
+  })
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await page.goto('/')
+  await selectRailMode(page, 'k8s')
+
+  const saved = page.locator('.k8s-forward.saved')
+  await expect(saved).toHaveCount(1)
+  await expect(saved.locator('.k8s-forward-addr')).toHaveText('127.0.0.1:19090')
+
+  await saved.getByRole('button', { name: 'Start' }).click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'k8s_port_forward_start')
+        .map((c) => c.args),
+    )
+    .toContainEqual(
+      expect.objectContaining({
+        target: 'pod/web-0',
+        namespace: 'apps',
+        context: 'prod',
+        localPort: 19090,
+        remotePort: '8080',
+      }),
+    )
+
+  await saved.getByRole('button', { name: 'Forget this rule' }).click()
+  await expect(page.locator('.k8s-forward.saved')).toHaveCount(0)
 })

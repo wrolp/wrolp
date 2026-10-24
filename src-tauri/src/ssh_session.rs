@@ -691,6 +691,19 @@ pub enum TargetRef {
     #[serde(rename = "tabId")]
     tab_id: u32,
   },
+  /// A Kubernetes pod's filesystem, read through `kubectl exec`. The cluster is
+  /// reached however the panel reaches kubectl: on a jump host's session, or here.
+  #[serde(rename = "k8sPod")]
+  K8sPod {
+    host: crate::k8s_host::K8sHostRef,
+    #[serde(default)]
+    context: Option<String>,
+    namespace: String,
+    pod: String,
+    /// A multi-container pod needs one named; absent means kubectl's default.
+    #[serde(default)]
+    container: Option<String>,
+  },
 }
 
 /// A Docker container discovered via `docker ps` on the jump host.
@@ -869,6 +882,8 @@ pub struct AppState {
   pub local_shell_dirs: StdMutex<Vec<LocalShellDir>>,
   /// Saved local terminal entries (user-defined local shells with a cwd + shell)
   pub local_terminals: StdMutex<Vec<LocalTerminalEntry>>,
+  /// Saved `kubectl port-forward` rules, reopened by the panel in a later session.
+  pub k8s_forward_rules: StdMutex<Vec<crate::k8s_forward::K8sForwardRule>>,
   /// Active port-forwarding tunnels: id → runtime (acceptor task + metadata).
   pub tunnels: StdMutex<HashMap<u32, TunnelRuntime>>,
   /// Monotonic tunnel id counter.
@@ -994,6 +1009,7 @@ impl AppState {
       get_initial_connections(base_dir.as_deref());
     let ai_config = crate::ai::load_ai_config_in(base_dir.as_deref()).ok();
     let local_terminals = get_initial_local_terminals(base_dir.as_deref());
+    let k8s_forward_rules = crate::k8s_forward::load_rules(base_dir.as_deref());
     Self {
       base_dir,
       connections: StdMutex::new(connections),
@@ -1028,6 +1044,7 @@ impl AppState {
       local_shells: StdMutex::new(HashMap::new()),
       local_shell_dirs: StdMutex::new(Vec::new()),
       local_terminals: StdMutex::new(local_terminals),
+      k8s_forward_rules: StdMutex::new(k8s_forward_rules),
       tunnels: StdMutex::new(HashMap::new()),
       next_tunnel_id: AtomicU64::new(1),
       k8s_forwards: StdMutex::new(HashMap::new()),

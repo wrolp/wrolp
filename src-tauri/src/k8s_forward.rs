@@ -11,7 +11,7 @@
 //! machine to the port kubectl opened on the jump host's loopback. Locally the two
 //! collapse into the single kubectl process.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -62,9 +62,76 @@ pub struct K8sPortForward {
   pub remote_port: String,
   /// What to connect to from this machine, e.g. `127.0.0.1:8080`.
   pub listen_addr: String,
+  /// The port number on that address — how the panel matches a forward to its rule.
+  pub local_port: u16,
   pub started_at: i64,
   pub running: bool,
   pub message: String,
+}
+
+/// A saved forward, kept in `k8s_forward_rules.json` so the same port can be reopened
+/// in a later session.
+///
+/// It names a *connection*, never a tab: tab ids are per-run, and a rule that could not
+/// say which host it belonged to would be unstartable after a restart.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct K8sForwardRule {
+  pub id: String,
+  /// `"local"` or `"ssh"` — which machine kubectl runs on.
+  pub host_kind: String,
+  /// Saved connection a jump-host rule needs an open session for.
+  #[serde(default)]
+  pub connection_id: Option<String>,
+  /// Its display name, so the panel can say which session to open without a lookup.
+  #[serde(default)]
+  pub connection_name: Option<String>,
+  #[serde(default)]
+  pub context: Option<String>,
+  pub namespace: String,
+  pub target: String,
+  pub local_port: u16,
+  pub remote_port: String,
+  #[serde(default)]
+  pub all_interfaces: bool,
+}
+
+/// Validate a rule read from disk or sent by the UI, so a hand-edited file cannot
+/// smuggle an argument into a later `kubectl` argv.
+pub fn checked_rule(rule: &K8sForwardRule) -> Result<K8sForwardRule, String> {
+  Ok(K8sForwardRule {
+    target: checked_target(&rule.target)?,
+    remote_port: checked_remote_port(&rule.remote_port)?,
+    local_port: if rule.local_port == 0 {
+      return Err("a forward rule needs a local port".to_string());
+    } else {
+      rule.local_port
+    },
+    namespace: rule.namespace.trim().to_string(),
+    ..rule.clone()
+  })
+}
+
+/// Path to the rules file under an explicit data dir (what tests override).
+pub fn rules_path_in(base_dir: &std::path::Path) -> std::path::PathBuf {
+  base_dir.join("k8s_forward_rules.json")
+}
+
+/// Path to the rules file in the default config dir.
+pub fn default_rules_path() -> Option<std::path::PathBuf> {
+  dirs::config_dir().map(|p| p.join("wrolp-terminal").join("k8s_forward_rules.json"))
+}
+
+/// Read the saved rules. A file that cannot be parsed yields no rules rather than an
+/// error: the panel still has to open.
+pub fn load_rules(base_dir: Option<&std::path::Path>) -> Vec<K8sForwardRule> {
+  let Some(path) = base_dir.map(rules_path_in).or_else(default_rules_path) else {
+    return Vec::new();
+  };
+  std::fs::read_to_string(path)
+    .ok()
+    .and_then(|content| serde_json::from_str::<Vec<K8sForwardRule>>(&content).ok())
+    .unwrap_or_default()
 }
 
 /// A live forward: metadata plus the shutdown sender and, for the jump-host case, the
@@ -78,6 +145,7 @@ pub struct ForwardRuntime {
   pub target: String,
   pub remote_port: String,
   pub listen_addr: String,
+  pub local_port: u16,
   pub started_at: i64,
   pub running: Arc<AtomicBool>,
   pub lines: Arc<StdMutex<VecDeque<String>>>,
@@ -101,6 +169,7 @@ impl ForwardRuntime {
       target: self.target.clone(),
       remote_port: self.remote_port.clone(),
       listen_addr: self.listen_addr.clone(),
+      local_port: self.local_port,
       started_at: self.started_at,
       running: self.running.load(Ordering::SeqCst),
       message,
@@ -536,5 +605,80 @@ mod tests {
     // The newest MAX_LINES of the MAX_LINES + 10 fed: the first 10 were dropped.
     assert_eq!(got.front().unwrap(), "line 10");
     assert_eq!(got.back().unwrap(), &format!("line {}", MAX_LINES + 9));
+  }
+
+  fn rule() -> K8sForwardRule {
+    K8sForwardRule {
+      id: "r1".to_string(),
+      host_kind: "ssh".to_string(),
+      connection_id: Some("c1".to_string()),
+      connection_name: Some("web-01".to_string()),
+      context: Some("prod".to_string()),
+      namespace: "apps".to_string(),
+      target: "pod/web-0".to_string(),
+      local_port: 18080,
+      remote_port: "http".to_string(),
+      all_interfaces: false,
+    }
+  }
+
+  #[test]
+  fn a_rule_reads_the_camel_case_shape_the_frontend_sends() {
+    let json = r#"{"id":"r1","hostKind":"ssh","connectionId":"c1","connectionName":"web-01",
+      "context":"prod","namespace":"apps","target":"pod/web-0","localPort":18080,
+      "remotePort":"http","allInterfaces":false}"#;
+    let parsed: K8sForwardRule = serde_json::from_str(json).unwrap();
+    assert_eq!(parsed, rule());
+    assert_eq!(checked_rule(&parsed).unwrap(), rule());
+  }
+
+  #[test]
+  fn a_saved_rule_is_validated_before_it_can_reach_kubectl() {
+    for bad in [
+      K8sForwardRule {
+        target: "secret/db".to_string(),
+        ..rule()
+      },
+      K8sForwardRule {
+        target: "pod/../etc".to_string(),
+        ..rule()
+      },
+      K8sForwardRule {
+        remote_port: "80;rm".to_string(),
+        ..rule()
+      },
+      K8sForwardRule {
+        local_port: 0,
+        ..rule()
+      },
+    ] {
+      assert!(checked_rule(&bad).is_err(), "{bad:?} should be rejected");
+    }
+  }
+
+  #[test]
+  fn rules_survive_a_write_and_read_through_the_data_dir() {
+    let dir = std::env::temp_dir().join(format!(
+      "wrolp-k8s-rules-{}-{}",
+      std::process::id(),
+      chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let written = vec![
+      rule(),
+      K8sForwardRule {
+        id: "r2".to_string(),
+        ..rule()
+      },
+    ];
+    std::fs::write(
+      rules_path_in(&dir),
+      serde_json::to_string_pretty(&written).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(load_rules(Some(&dir)), written);
+    // No file at all is an empty list, not an error.
+    assert_eq!(load_rules(Some(&dir.join("missing"))), Vec::new());
+    std::fs::remove_dir_all(&dir).ok();
   }
 }

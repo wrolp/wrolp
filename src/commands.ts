@@ -26,6 +26,7 @@ import type {
   K8sNamespace,
   K8sResource,
   K8sPortForward,
+  K8sForwardRule,
   K8sLogPoll,
   K8sExecTarget,
   ToolCallEvent,
@@ -1386,4 +1387,18 @@ export async function pollK8sLogs(streamId: string): Promise<K8sLogPoll> {
 
 export async function stopK8sLogsStream(streamId: string): Promise<boolean> {
   return await invoke<boolean>('stop_k8s_logs_stream', { streamId })
+}
+
+/** Saved port-forward rules, kept in the data directory across sessions. */
+export async function k8sListForwardRules(): Promise<K8sForwardRule[]> {
+  return await invoke<K8sForwardRule[]>('list_k8s_forward_rules')
+}
+
+/** Add or replace one rule; the answer is the new list, so no re-read is needed. */
+export async function k8sSaveForwardRule(rule: K8sForwardRule): Promise<K8sForwardRule[]> {
+  return await invoke<K8sForwardRule[]>('save_k8s_forward_rule', { rule })
+}
+
+export async function k8sDeleteForwardRule(id: string): Promise<K8sForwardRule[]> {
+  return await invoke<K8sForwardRule[]>('delete_k8s_forward_rule', { id })
 }

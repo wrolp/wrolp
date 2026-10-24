@@ -2,15 +2,18 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import type {
   K8sContext,
   K8sExecTarget,
+  K8sForwardRule,
   K8sHostRef,
   K8sNamespace,
   K8sPortForward,
   K8sResource,
 } from '../types'
 import {
+  k8sDeleteForwardRule,
   k8sApplyYaml,
   k8sDeleteResource,
   k8sListContexts,
+  k8sListForwardRules,
   k8sListNamespaces,
   k8sListPortForwards,
   k8sListResources,
@@ -21,6 +24,7 @@ import {
   k8sScaleResource,
   k8sStopPortForward,
   pollK8sLogs,
+  k8sSaveForwardRule,
   stopK8sLogsStream,
 } from '../commands'
 import { Icon } from './Icon'
@@ -105,6 +109,19 @@ interface K8sPanelProps {
   refreshSignal?: number
   /** Absent on a read-only panel. Opens a shell in the row's pod. */
   onExecPod?: (target: K8sExecTarget) => void
+  /** Opens the pod's filesystem in the Files panel. Absent for a read-only panel. */
+  onBrowsePod?: (target: K8sExecTarget) => void
+  /** Pod whose filesystem the Files panel is currently showing. */
+  activePod?: string | null
+  /** Saved connection behind `host`, recorded on a rule so it can be reopened later. */
+  connectionId?: string | null
+  /** Its display name, for the "open a session first" hint. */
+  connectionName?: string | null
+  /**
+   * Where a saved rule would run right now, or null when its host is not reachable —
+   * a jump-host rule needs an open session to that connection.
+   */
+  resolveRuleHost?: (rule: K8sForwardRule) => K8sHostRef | null
 }
 
 interface LogState {
@@ -141,6 +158,11 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   filter = '',
   refreshSignal,
   onExecPod,
+  onBrowsePod,
+  activePod,
+  connectionId,
+  connectionName,
+  resolveRuleHost,
 }) => {
   const { t } = useI18n()
   const [contexts, setContexts] = useState<K8sContext[]>([])
@@ -194,6 +216,11 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const [forwardLan, setForwardLan] = useState(false)
   const [forwardBusy, setForwardBusy] = useState(false)
   const [forwardError, setForwardError] = useState('')
+  // Saved rules outlive the running forwards, so they are a separate list: a rule
+  // with no live forward is offered for restart, and one with a forward is hidden
+  // (the running row already shows it).
+  const [rules, setRules] = useState<K8sForwardRule[]>([])
+  const [forwardSave, setForwardSave] = useState(true)
 
   // Reload on the host's *shape*, not object identity: callers pass a fresh literal
   // per render, as they do for DockerPanel.
@@ -625,6 +652,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       setForwardLocal(port)
       setForwardRemote(port)
       setForwardLan(false)
+      setForwardSave(true)
       setForwardError('')
     },
     [context, namespace, rowNamespace],
@@ -654,6 +682,28 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         remote,
         forwardLan,
       )
+      if (forwardSave) {
+        // Saved after the forward actually started: a rule that cannot work is
+        // clutter, and the start is where the port conflict would have shown up.
+        const rule: K8sForwardRule = {
+          id: crypto.randomUUID(),
+          hostKind: hostRef.current.kind,
+          connectionId: hostRef.current.kind === 'ssh' ? (connectionId ?? null) : null,
+          connectionName: hostRef.current.kind === 'ssh' ? (connectionName ?? null) : null,
+          context: forwardDialog.context || null,
+          namespace: forwardDialog.namespace,
+          target: forwardDialog.target,
+          localPort: local,
+          remotePort: remote,
+          allInterfaces: forwardLan,
+        }
+        try {
+          setRules(await k8sSaveForwardRule(rule))
+        } catch (e) {
+          // The forward is up; only the remembering failed.
+          setError(String(e))
+        }
+      }
       setForwardDialog(null)
       setNotice(
         t('k8sForwardStarted', {
@@ -667,7 +717,17 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     } finally {
       setForwardBusy(false)
     }
-  }, [forwardDialog, forwardLocal, forwardRemote, forwardLan, refreshForwards, t])
+  }, [
+    forwardDialog,
+    forwardLocal,
+    forwardRemote,
+    forwardLan,
+    forwardSave,
+    connectionId,
+    connectionName,
+    refreshForwards,
+    t,
+  ])
 
   const stopForward = useCallback(
     async (id: number) => {
@@ -680,6 +740,57 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     },
     [refreshForwards],
   )
+
+  useEffect(() => {
+    k8sListForwardRules()
+      .then(setRules)
+      .catch(() => setRules([]))
+  }, [])
+
+  // What identifies a forward across the running list and the saved rules. The port
+  // number rather than `listenAddr`, so a rule saved with 0.0.0.0 still matches.
+  const forwardKey = (o: {
+    namespace: string
+    target: string
+    localPort: number
+    remotePort: string
+  }) => `${o.namespace}|${o.target}|${o.localPort}|${o.remotePort}`
+
+  const startForwardRule = useCallback(
+    async (rule: K8sForwardRule) => {
+      const host = resolveRuleHost?.(rule)
+      if (!host) {
+        setNotice(
+          t('k8sForwardNeedsSession', { name: rule.connectionName ?? rule.connectionId ?? '' }),
+        )
+        return
+      }
+      try {
+        await k8sPortForwardStart(
+          host,
+          rule.context ?? null,
+          rule.namespace,
+          rule.target,
+          rule.localPort,
+          rule.remotePort,
+          rule.allInterfaces,
+        )
+        setNotice(t('k8sForwardStarted', { addr: `:${rule.localPort}`, target: rule.target }))
+        await refreshForwards()
+      } catch (e) {
+        setError(String(e))
+      }
+    },
+    [refreshForwards, resolveRuleHost, t],
+  )
+
+  const removeForwardRule = useCallback(async (id: string) => {
+    try {
+      setRules(await k8sDeleteForwardRule(id))
+    } catch (e) {
+      setError(String(e))
+    }
+  }, [])
 
   const q = filter.toLowerCase()
   const visible = resources.filter(
@@ -794,7 +905,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         {visible.map((r) => (
           <div
             key={`${r.namespace}/${r.name}`}
-            className="k8s-item"
+            className={`k8s-item${r.kind === 'pods' && activePod === r.name ? ' active' : ''}`}
             onClick={() => openYaml(r)}
             onContextMenu={(e) => {
               e.preventDefault()
@@ -832,39 +943,82 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       </div>
 
       {/* Port forwards outlive this panel (and the resource list it was started from),
-          so they get their own strip: address → target, with the row that stopped
-          on its own kept until it is dismissed. */}
-      {forwards.length > 0 && (
-        <div className="k8s-forwards">
-          <div className="k8s-forwards-head">
-            <span>{t('k8sForwards')}</span>
-            <span className="cnt">{forwards.length}</span>
-          </div>
-          {forwards.map((f) => (
-            <div
-              key={f.id}
-              className={`k8s-forward${f.running ? '' : ' dead'}`}
-              title={f.message || undefined}
-            >
-              <span className={`k8s-dot ${f.running ? 'on' : 'off'}`} />
-              <span className="k8s-forward-addr">{f.listenAddr}</span>
-              <span className="k8s-forward-arrow">→</span>
-              <span className="k8s-forward-target">
-                {f.target}:{f.remotePort}
-              </span>
-              <button
-                type="button"
-                className="icon-btn"
-                title={f.running ? t('k8sForwardStop') : t('k8sForwardDismiss')}
-                aria-label={f.running ? t('k8sForwardStop') : t('k8sForwardDismiss')}
-                onClick={() => void stopForward(f.id)}
-              >
-                <Icon name={f.running ? 'stop' : 'x'} size={12} />
-              </button>
+          so they get their own strip: address → target, with the row that stopped on
+          its own kept until dismissed. Saved rules with no live forward sit under the
+          running ones, ready to start again. */}
+      {(() => {
+        const running = new Set(forwards.map((f) => forwardKey(f)))
+        const idle = rules.filter((r) => !running.has(forwardKey(r)))
+        if (forwards.length === 0 && idle.length === 0) return null
+        return (
+          <div className="k8s-forwards">
+            <div className="k8s-forwards-head">
+              <span>{t('k8sForwards')}</span>
+              <span className="cnt">{forwards.length + idle.length}</span>
             </div>
-          ))}
-        </div>
-      )}
+            {forwards.map((f) => (
+              <div
+                key={f.id}
+                className={`k8s-forward${f.running ? '' : ' dead'}`}
+                title={f.message || undefined}
+              >
+                <span className={`k8s-dot ${f.running ? 'on' : 'off'}`} />
+                <span className="k8s-forward-addr">{f.listenAddr}</span>
+                <span className="k8s-forward-arrow">→</span>
+                <span className="k8s-forward-target">
+                  {f.target}:{f.remotePort}
+                </span>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title={f.running ? t('k8sForwardStop') : t('k8sForwardDismiss')}
+                  aria-label={f.running ? t('k8sForwardStop') : t('k8sForwardDismiss')}
+                  onClick={() => void stopForward(f.id)}
+                >
+                  <Icon name={f.running ? 'stop' : 'x'} size={12} />
+                </button>
+              </div>
+            ))}
+            {idle.map((r) => {
+              const canStart = resolveRuleHost ? resolveRuleHost(r) != null : true
+              const hint = t('k8sForwardNeedsSession', {
+                name: r.connectionName ?? r.connectionId ?? '',
+              })
+              return (
+                <div key={r.id} className="k8s-forward saved" title={canStart ? r.target : hint}>
+                  <span className="k8s-dot idle" />
+                  <span className="k8s-forward-addr">
+                    {r.allInterfaces ? '0.0.0.0' : '127.0.0.1'}:{r.localPort}
+                  </span>
+                  <span className="k8s-forward-arrow">→</span>
+                  <span className="k8s-forward-target">
+                    {r.target}:{r.remotePort}
+                  </span>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title={canStart ? t('k8sForwardStartNow') : hint}
+                    aria-label={t('k8sForwardStartNow')}
+                    disabled={!canStart}
+                    onClick={() => void startForwardRule(r)}
+                  >
+                    <Icon name="play" size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title={t('k8sForwardRemoveRule')}
+                    aria-label={t('k8sForwardRemoveRule')}
+                    onClick={() => void removeForwardRule(r.id)}
+                  >
+                    <Icon name="trash" size={12} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })()}
 
       {menu && (
         <div
@@ -889,6 +1043,23 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
                 <div className="context-menu-item" onClick={() => exec(menu.row)}>
                   <Icon name="terminal" size={14} />
                   {t('k8sExec')}
+                </div>
+              )}
+              {onBrowsePod && (
+                <div
+                  className="context-menu-item"
+                  onClick={() => {
+                    onBrowsePod({
+                      context: context || null,
+                      namespace: rowNamespace(menu.row, namespace),
+                      pod: menu.row.name,
+                      container: menu.row.containers[0] ?? null,
+                    })
+                    setMenu(null)
+                  }}
+                >
+                  <Icon name="folderOpen" size={14} />
+                  {t('k8sBrowseFiles')}
                 </div>
               )}
             </>
@@ -1147,6 +1318,14 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
                   onChange={(e) => setForwardLan(e.target.checked)}
                 />
                 <span>{t('k8sForwardLan')}</span>
+              </label>
+              <label className="k8s-inline k8s-check">
+                <input
+                  type="checkbox"
+                  checked={forwardSave}
+                  onChange={(e) => setForwardSave(e.target.checked)}
+                />
+                <span>{t('k8sForwardSaveRule')}</span>
               </label>
               {host.kind === 'ssh' && <div className="k8s-note">{t('k8sForwardViaJump')}</div>}
               {forwardError && <div className="modal-error">{forwardError}</div>}

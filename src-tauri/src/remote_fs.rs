@@ -260,6 +260,9 @@ pub async fn build_sftp(
     TargetRef::Docker { .. } | TargetRef::DockerLocal { .. } => {
       Err("Target is a Docker exec target and does not support SFTP streaming upload".into())
     }
+    TargetRef::K8sPod { .. } => {
+      Err("Target is a pod exec target and does not support SFTP streaming upload".into())
+    }
     TargetRef::Local { .. } => {
       Err("Target is a local target and does not support SFTP streaming upload".into())
     }
@@ -300,6 +303,30 @@ pub async fn build_fs(
         user.clone(),
       )))
     }
+    TargetRef::K8sPod {
+      host,
+      context,
+      namespace,
+      pod,
+      container,
+    } => match host {
+      crate::k8s_host::K8sHostRef::Ssh { jump_tab_id } => {
+        let jump = get_jump_handle(state, *jump_tab_id)?;
+        Ok(Box::new(crate::k8s_fs::new_pod_fs(
+          jump,
+          context.clone(),
+          namespace.clone(),
+          pod.clone(),
+          container.clone(),
+        )))
+      }
+      crate::k8s_host::K8sHostRef::Local => Ok(Box::new(crate::k8s_fs::new_local_pod_fs(
+        context.clone(),
+        namespace.clone(),
+        pod.clone(),
+        container.clone(),
+      ))),
+    },
     TargetRef::Local { .. } => Ok(Box::new(crate::local_fs::LocalFs::new())),
     TargetRef::Wsl { distro, .. } => Ok(Box::new(crate::wsl_fs::new_wsl_fs(distro.clone()))),
     TargetRef::Ftp { tab_id } => {

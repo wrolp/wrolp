@@ -104,6 +104,11 @@
   &:hover {
     background: $bg-hover;
   }
+
+  // The pod whose filesystem the Files panel is showing.
+  &.active {
+    background: var(--menu-hover);
+  }
 }
 
 .k8s-icon {
@@ -343,6 +348,10 @@
   }
   &.off {
     background: $danger;
+  }
+  // A saved rule with nothing running behind it.
+  &.idle {
+    background: $text-dim;
   }
 }
 

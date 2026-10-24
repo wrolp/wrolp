@@ -107,14 +107,15 @@ pub async fn exec_kubectl(
       let jump = crate::remote_fs::get_jump_handle(state, *jump_tab_id)?;
       crate::docker_fs::exec_on_jump(&jump, args, stdin).await
     }
-    K8sHostRef::Local => exec_local(args, stdin).await,
+    K8sHostRef::Local => exec_local_argv(args, stdin).await,
   }
 }
 
-/// Spawn `kubectl` on this machine to completion. `args[0]` is dropped because the
-/// program name is fixed here; the rest goes straight to the process — no shell, so
-/// names with spaces or quotes cannot be re-parsed as syntax.
-async fn exec_local(
+/// Spawn a CLI on this machine to completion. `args[0]` is the program and the rest
+/// goes straight to the process — no shell in between, so names with spaces or quotes
+/// cannot be re-parsed as syntax. Public because the pod filesystem runner needs it
+/// without a jump session to look up.
+pub async fn exec_local_argv(
   args: &[String],
   stdin: Option<&[u8]>,
 ) -> Result<(Vec<u8>, Vec<u8>, u32), String> {
@@ -930,7 +931,7 @@ mod tests {
       "-o".to_string(),
       "json".to_string(),
     ];
-    let (out, err, status) = match exec_local(&argv, None).await {
+    let (out, err, status) = match exec_local_argv(&argv, None).await {
       Ok(v) => v,
       Err(e) => {
         eprintln!("SKIP: {e}");

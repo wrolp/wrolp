@@ -350,6 +350,11 @@ pub async fn target_download_directory(
     // A container on this machine has no owning session tab, so its transfer progress is
     // reported under tab 0 — the transfer list keys on the path, not the tab.
     TargetRef::DockerLocal { .. } => 0,
+    // A pod reports the session its kubectl runs on, or 0 for a local cluster.
+    TargetRef::K8sPod { host, .. } => match host {
+      crate::k8s_host::K8sHostRef::Ssh { jump_tab_id } => *jump_tab_id,
+      crate::k8s_host::K8sHostRef::Local => 0,
+    },
   };
   let local_root_str = local_root.to_string_lossy().to_string();
   let summary = crate::remote_fs::download_dir_recursive(
@@ -806,6 +811,10 @@ pub async fn target_upload_local_dir(
     | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
     // See `download_dir`: a local container has no owning session tab.
     TargetRef::DockerLocal { .. } => 0,
+    TargetRef::K8sPod { host, .. } => match host {
+      crate::k8s_host::K8sHostRef::Ssh { jump_tab_id } => *jump_tab_id,
+      crate::k8s_host::K8sHostRef::Local => 0,
+    },
   };
   let dir_key = local_dir.replace('\\', "/");
   let start = std::time::Instant::now();

@@ -455,6 +455,7 @@ pub async fn k8s_port_forward_start(
         target: target.clone(),
         remote_port: remote.clone(),
         listen_addr: crate::k8s_forward::listen_addr(local_port, all_if),
+        local_port,
         started_at: chrono::Utc::now().timestamp(),
         running,
         lines,
@@ -498,6 +499,75 @@ pub async fn k8s_stop_port_forward(
   use tauri::Emitter;
   let _ = app.emit("tunnel-changed", serde_json::json!({}));
   Ok(())
+}
+
+// ==================== Saved forward rules ====================
+
+/// Write the rule list to `k8s_forward_rules.json` under the effective data dir.
+fn persist_rules(state: &tauri::State<'_, AppState>) -> Result<(), String> {
+  let rules = state
+    .k8s_forward_rules
+    .lock()
+    .map_err(|e| e.to_string())?
+    .clone();
+  let path = data_dir_for(state.base_dir.as_deref())
+    .map(|d| crate::k8s_forward::rules_path_in(&d))
+    .or_else(crate::k8s_forward::default_rules_path);
+  if let Some(path) = path {
+    if let Some(parent) = path.parent() {
+      let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(&rules).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
+/// Every saved forward rule, in the order the panel should show them.
+#[tauri::command]
+pub async fn list_k8s_forward_rules(
+  state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::k8s_forward::K8sForwardRule>, String> {
+  Ok(
+    state
+      .k8s_forward_rules
+      .lock()
+      .map_err(|e| e.to_string())?
+      .clone(),
+  )
+}
+
+/// Add or replace one rule (matched on `id`) and return the new list, so the panel
+/// never has to re-read after a write.
+#[tauri::command]
+pub async fn save_k8s_forward_rule(
+  state: tauri::State<'_, AppState>,
+  rule: crate::k8s_forward::K8sForwardRule,
+) -> Result<Vec<crate::k8s_forward::K8sForwardRule>, String> {
+  let rule = crate::k8s_forward::checked_rule(&rule)?;
+  {
+    let mut rules = state.k8s_forward_rules.lock().map_err(|e| e.to_string())?;
+    match rules.iter_mut().find(|r| r.id == rule.id) {
+      Some(existing) => *existing = rule,
+      None => rules.push(rule),
+    }
+  }
+  persist_rules(&state)?;
+  list_k8s_forward_rules(state).await
+}
+
+/// Drop a rule. Unknown ids are not an error — the panel may already have removed it.
+#[tauri::command]
+pub async fn delete_k8s_forward_rule(
+  state: tauri::State<'_, AppState>,
+  id: String,
+) -> Result<Vec<crate::k8s_forward::K8sForwardRule>, String> {
+  {
+    let mut rules = state.k8s_forward_rules.lock().map_err(|e| e.to_string())?;
+    rules.retain(|r| r.id != id);
+  }
+  persist_rules(&state)?;
+  list_k8s_forward_rules(state).await
 }
 
 // ==================== Log streaming ====================

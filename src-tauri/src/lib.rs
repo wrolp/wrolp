@@ -15,6 +15,7 @@ mod host_analysis;
 mod host_commands;
 mod host_identity;
 mod k8s_forward;
+mod k8s_fs;
 mod k8s_host;
 mod local_fs;
 mod rec_file;
@@ -370,6 +371,9 @@ pub fn run() {
       commands::k8s_logs_stream_start,
       commands::poll_k8s_logs,
       commands::stop_k8s_logs_stream,
+      commands::list_k8s_forward_rules,
+      commands::save_k8s_forward_rule,
+      commands::delete_k8s_forward_rule,
       commands::open_local_kubectl_shell,
       commands::command_help,
       commands::get_app_version,

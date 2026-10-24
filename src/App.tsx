@@ -49,6 +49,7 @@ import type {
   ContainerInfo,
   K8sHostRef,
   K8sExecTarget,
+  K8sForwardRule,
   WorkspaceLayout,
   FileTargetMode,
   LocalTerminalEntry,
@@ -2098,6 +2099,36 @@ export default function App() {
       ? { kind: 'ssh', jumpTabId: tab.tabId }
       : null
   }, [focusedLeafTabId, tabs])
+  // The connection behind the panel's host. A saved forward records it (never a tab
+  // id, which means nothing to the next session) so it can be reopened later.
+  const k8sConnectionId =
+    k8sHost?.kind === 'ssh'
+      ? (tabs.find((t) => t.tabId === k8sHost.jumpTabId)?.connectionId ?? null)
+      : null
+  const k8sConnection = k8sConnectionId
+    ? connections.find((c) => c.id === k8sConnectionId)
+    : undefined
+  const k8sConnectionName = k8sConnection
+    ? k8sConnection.name === k8sConnection.host
+      ? `${k8sConnection.host}:${k8sConnection.port}`
+      : `${k8sConnection.name} (${k8sConnection.host}:${k8sConnection.port})`
+    : null
+  // Where a saved rule would run now: this machine, or an open session to the
+  // connection it was saved against. Null means "start a session first".
+  const resolveK8sRuleHost = useCallback(
+    (rule: K8sForwardRule): K8sHostRef | null => {
+      if (rule.hostKind === 'local') return LOCAL_K8S_HOST
+      if (!rule.connectionId) return null
+      const tab = tabs.find(
+        (t) =>
+          t.connectionId === rule.connectionId &&
+          t.status === 'connected' &&
+          (t.tabType === 'terminal' || t.tabType === 'telnet'),
+      )
+      return tab ? { kind: 'ssh', jumpTabId: tab.tabId } : null
+    },
+    [tabs],
+  )
   // connectionId of the pane the command list sends to (drives its
   // "this connection only" filter + default scope for new commands).
   const activeSnippetConnectionId: string | null =
@@ -3634,6 +3665,39 @@ export default function App() {
     [k8sHost, focusedLeafTabId, tabs, connections, openInSplit, openLocalShellTab],
   )
 
+  // "Browse files" from the Kubernetes panel: the pod's own filesystem, read through
+  // `kubectl exec` by the same Files panel that browses containers. Clicking the
+  // already-open pod drops back to the session's filesystem.
+  const handleBrowsePod = useCallback(
+    (target: K8sExecTarget) => {
+      if (!k8sHost) return
+      const same =
+        fileTarget?.kind === 'k8sPod' &&
+        fileTarget.pod === target.pod &&
+        fileTarget.namespace === target.namespace &&
+        (fileTarget.container ?? null) === (target.container ?? null)
+      if (same) {
+        setFileTarget(null)
+        setFileMode('ssh')
+        return
+      }
+      setFileTarget({
+        kind: 'k8sPod',
+        host: k8sHost,
+        context: target.context ?? null,
+        namespace: target.namespace,
+        pod: target.pod,
+        container: target.container ?? null,
+      })
+      setFileMode('k8s')
+      setToast({
+        kind: 'info',
+        text: t('k8sFilesOpened', { pod: target.pod, namespace: target.namespace }),
+      })
+    },
+    [k8sHost, fileTarget, t],
+  )
+
   // Right-click → split the current window; default (left-click) opens a new tab.
   const handleOpenSplit = useCallback(
     (conn: ConnectionConfig, direction: 'row' | 'column') => {
@@ -3870,10 +3934,11 @@ export default function App() {
       target.kind === 'wsl' ||
       target.kind === 'ftp'
         ? target.tabId
-        : target.kind === 'dockerLocal'
-          ? // A local container has no jump session to name, but the Files panel it was
-            // opened from lives in a pane of some session — that workspace owns the editor
-            // tab (close routing and the pane header both key off this).
+        : target.kind === 'dockerLocal' || target.kind === 'k8sPod'
+          ? // A local container (or a pod on a local cluster) has no jump session to
+            // name, but the Files panel it was opened from lives in a pane of some
+            // session — that workspace owns the editor tab (close routing and the
+            // pane header both key off this).
             (workspaceAnchorIdRef.current ?? 0)
           : target.jumpTabId
     setEditorTabs((prev) => {
@@ -8024,8 +8089,10 @@ export default function App() {
     const sessionConnected = filesTab?.status === 'connected'
     // A local container's files are read by spawning the CLI, so the panel has a
     // filesystem to show even with no session anywhere — the same reason the Docker
-    // group can point at this machine without one.
-    const showFilePanel = sessionConnected || fileTarget?.kind === 'dockerLocal'
+    // group can point at this machine without one, and why a local cluster's pod
+    // target does too.
+    const showFilePanel =
+      sessionConnected || fileTarget?.kind === 'dockerLocal' || fileTarget?.kind === 'k8sPod'
     // Whether the single Docker group renders: it needs a reachable host, and when
     // that host is this machine the daemon has to be answering. (The retry line below
     // covers the installed-but-idle local case, which is the one the user can fix.)
@@ -8109,9 +8176,12 @@ export default function App() {
                     : `${fconn.name} (${fconn.host}:${fconn.port})`
                   : (ftab?.connectionName ?? undefined)
                 // Docker targets: show BOTH the host machine and the container
-                // name (e.g. "prod (10.0.0.5:22) → docker:nginx"). WSL targets
+                // name (e.g. "prod (10.0.0.5:22) → docker:nginx"). Pod targets say
+                // the same thing for a cluster (`→ pod:apps/web-0`), WSL targets
                 // show the distribution; other non-session targets (jump) use
                 // their own targetLabel.
+                const podLabel = (t: Extract<TargetRef, { kind: 'k8sPod' }>) =>
+                  `pod:${t.namespace}/${t.pod}${t.container ? `:${t.container}` : ''}`
                 const serverLabel = fileTarget
                   ? isDockerTarget(fileTarget)
                     ? // Only a jump-host container is reached *through* that session — a
@@ -8119,11 +8189,15 @@ export default function App() {
                       hostLabel && fileTarget.kind === 'docker'
                       ? `${hostLabel} → docker:${fileTarget.container}`
                       : `docker:${fileTarget.container}`
-                    : fileTarget.kind === 'wsl'
-                      ? fileTarget.distro
-                        ? `WSL (${fileTarget.distro})`
-                        : 'WSL'
-                      : undefined
+                    : fileTarget.kind === 'k8sPod'
+                      ? fileTarget.host.kind === 'ssh' && hostLabel
+                        ? `${hostLabel} → ${podLabel(fileTarget)}`
+                        : podLabel(fileTarget)
+                      : fileTarget.kind === 'wsl'
+                        ? fileTarget.distro
+                          ? `WSL (${fileTarget.distro})`
+                          : 'WSL'
+                        : undefined
                   : hostLabel
                 return (
                   <FilePanel
@@ -8134,7 +8208,7 @@ export default function App() {
                     hasSession={sessionConnected}
                     serverLabel={serverLabel}
                     defaultPath={
-                      isDockerTarget(fileTarget)
+                      isDockerTarget(fileTarget) || fileTarget?.kind === 'k8sPod'
                         ? '/'
                         : fileTarget?.kind === 'local' || fileTarget?.kind === 'wsl'
                           ? // Empty path resolves to the user's home directory
@@ -8265,7 +8339,12 @@ export default function App() {
             <K8sPanel
               host={k8sHost}
               filter={navFilter}
+              activePod={fileTarget?.kind === 'k8sPod' ? fileTarget.pod : null}
+              connectionId={k8sConnectionId}
+              connectionName={k8sConnectionName}
+              resolveRuleHost={resolveK8sRuleHost}
               onExecPod={(target) => void handleExecK8sPod(target)}
+              onBrowsePod={handleBrowsePod}
             />
           </div>
         )}
@@ -8372,7 +8451,9 @@ export default function App() {
           // Same test the Files section used to apply to itself: a connected
           // session, or a local container target (which needs no session).
           filesAvailable={
-            tabs.some((tab) => tab.status === 'connected') || fileTarget?.kind === 'dockerLocal'
+            tabs.some((tab) => tab.status === 'connected') ||
+            fileTarget?.kind === 'dockerLocal' ||
+            fileTarget?.kind === 'k8sPod'
           }
           containersAvailable={!!dockerHost}
           k8sAvailable={!!k8sHost}

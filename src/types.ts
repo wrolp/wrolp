@@ -483,6 +483,14 @@ export type TargetRef =
   | { kind: 'local'; tabId: number }
   | { kind: 'wsl'; tabId: number; distro?: string }
   | { kind: 'ftp'; tabId: number }
+  | {
+      kind: 'k8sPod'
+      host: K8sHostRef
+      context?: string | null
+      namespace: string
+      pod: string
+      container?: string | null
+    }
 
 /** A Docker container discovered via `docker ps` on a connected (jump) host. */
 export interface ContainerInfo {
@@ -567,6 +575,8 @@ export interface K8sPortForward {
   remotePort: string
   /** What to connect to from this machine, e.g. `127.0.0.1:8080`. */
   listenAddr: string
+  /** The port number on that address — how a running forward matches its rule. */
+  localPort: number
   startedAt: number
   /** False once the process exited; the row stays so `message` remains readable. */
   running: boolean
@@ -580,6 +590,21 @@ export interface K8sLogPoll {
   chunks: string[]
   /** True once the stream has ended (pod gone, session dropped, or it was stopped). */
   ended: boolean
+}
+
+/** A saved `kubectl port-forward`, reopened in a later session. */
+export interface K8sForwardRule {
+  id: string
+  hostKind: 'local' | 'ssh'
+  /** The session a jump-host rule needs; tab ids do not survive a restart. */
+  connectionId?: string | null
+  connectionName?: string | null
+  context?: string | null
+  namespace: string
+  target: string
+  localPort: number
+  remotePort: string
+  allInterfaces: boolean
 }
 
 /** What the SSH / local shell needs to enter a pod. */
@@ -678,7 +703,7 @@ export interface LocalTerminalEntry {
  * Which filesystem the Files panel is currently browsing. Drives the mode
  * switcher (SSH local session / ProxyJump remote / Docker container).
  */
-export type FileTargetMode = 'ssh' | 'jump' | 'docker' | 'local'
+export type FileTargetMode = 'ssh' | 'jump' | 'docker' | 'k8s' | 'local'
 
 /** Human-readable label for a target (used in chips / headers). */
 // ===== Host Analysis =====
@@ -799,6 +824,8 @@ export function targetLabel(target: TargetRef): string {
       return target.distro ? `WSL (${target.distro})` : 'WSL'
     case 'ftp':
       return 'FTP'
+    case 'k8sPod':
+      return target.container ? `pod:${target.pod}:${target.container}` : `pod:${target.pod}`
   }
 }
 
