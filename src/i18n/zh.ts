@@ -997,6 +997,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   playback: '回放',
   extractCommands: '提取命令',
   showInFolder: '在文件夹中显示',
+  moreActions: '更多操作',
   recordingFilePath: '录制文件：{path}',
   failedItems: '失败项：',
   migrateLegacy: '迁移旧录制到文件',

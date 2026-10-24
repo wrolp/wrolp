@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { ConnectionConfig, SessionSummary } from '../types'
 import {
   listSessions,
@@ -14,7 +14,26 @@ import {
 import { save } from '@tauri-apps/plugin-dialog'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Icon } from './Icon'
+import type { IconName } from './Icon'
 import { useI18n } from '../i18n'
+
+/**
+ * Below this row width the six inline icon buttons would leave the title/meta column
+ * too little room, so they collapse into one menu button. The number is the buttons'
+ * own footprint (6 × ~28px + gaps) plus a readable info column and the row's padding.
+ */
+const INLINE_ACTIONS_MIN_WIDTH = 320
+
+/** One row action, rendered inline on a wide panel and as a menu item on a narrow one. */
+interface RowAction {
+  key: string
+  icon: IconName
+  label: string
+  /** Tooltip override — the recording path for "show in folder". */
+  title?: string
+  disabled?: boolean
+  run: () => void
+}
 
 interface SessionListPanelProps {
   connections: ConnectionConfig[]
@@ -40,6 +59,39 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
     confirmLabel?: string
     onConfirm: () => void
   } | null>(null)
+  // The panel is a resizable column (160–500px), so the row's action strip switches
+  // between inline icons and one menu button based on the width it actually gets.
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [compact, setCompact] = useState(false)
+  const [rowMenu, setRowMenu] = useState<{ session: SessionSummary; x: number; y: number } | null>(
+    null,
+  )
+
+  useEffect(() => {
+    const el = panelRef.current
+    if (!el) return
+    const measure = (width: number) => setCompact(width > 0 && width < INLINE_ACTIONS_MIN_WIDTH)
+    measure(el.getBoundingClientRect().width)
+    const ro = new ResizeObserver(([entry]) => measure(entry.contentRect.width))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // The row menu is positioned in viewport coordinates, so it has to close on the
+  // interactions that would otherwise leave it floating over the list.
+  useEffect(() => {
+    if (!rowMenu) return
+    const close = () => setRowMenu(null)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+    }
+    document.addEventListener('click', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('click', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [rowMenu])
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -106,6 +158,67 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
     } catch (e) {
       console.error('Failed to reveal session file:', e)
     }
+  }
+
+  const startRename = (s: SessionSummary) => {
+    setEditingId(s.id)
+    setEditTitle(s.title || s.connectionName || '')
+  }
+
+  /**
+   * The row's actions in display order. The compact menu renders this same list, so a
+   * width change can never hide an action or drift the two forms apart.
+   */
+  const rowActions = (s: SessionSummary): RowAction[] => {
+    const actions: RowAction[] = [
+      {
+        key: 'play',
+        icon: 'play',
+        label: t('playback'),
+        disabled: s.eventCount === 0,
+        run: () => onPlaySession(s),
+      },
+      {
+        key: 'extract',
+        icon: 'clipboard',
+        label: t('extractCommands'),
+        run: () => void handleExtract(s.id),
+      },
+      {
+        key: 'cast',
+        icon: 'download',
+        label: t('exportCast'),
+        disabled: s.eventCount === 0,
+        run: () => void handleExportCast(s),
+      },
+    ]
+    if (s.eventsFile) {
+      actions.push({
+        key: 'reveal',
+        icon: 'folderOpen',
+        label: t('showInFolder'),
+        title: t('recordingFilePath', { path: s.eventsFile }),
+        run: () => void handleReveal(s.id),
+      })
+    }
+    actions.push(
+      { key: 'rename', icon: 'edit', label: t('rename'), run: () => startRename(s) },
+      { key: 'delete', icon: 'trash', label: t('delete'), run: () => handleDelete(s.id) },
+    )
+    return actions
+  }
+
+  const openRowMenu = (e: React.MouseEvent<HTMLButtonElement>, s: SessionSummary) => {
+    e.stopPropagation()
+    const r = e.currentTarget.getBoundingClientRect()
+    // Right-align the menu with the button, and keep it inside the window: the panel
+    // can be docked on either side, so "open to the left" is not a safe default.
+    const width = 176
+    setRowMenu({
+      session: s,
+      x: Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)),
+      y: Math.min(r.bottom + 4, window.innerHeight - 200),
+    })
   }
 
   const failedText = (failed: string[]) =>
@@ -212,7 +325,7 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
   }
 
   return (
-    <div className="session-list-panel">
+    <div className="session-list-panel" ref={panelRef}>
       <div className="panel-toolbar">
         <select
           value={filterConn}
@@ -284,48 +397,64 @@ export const SessionListPanel: React.FC<SessionListPanelProps> = ({
                 </span>
               </div>
               <div className="session-row-actions">
-                <button
-                  onClick={() => onPlaySession(s)}
-                  title={t('playback')}
-                  disabled={s.eventCount === 0}
-                >
-                  <Icon name="play" />
-                </button>
-                <button onClick={() => handleExtract(s.id)} title={t('extractCommands')}>
-                  <Icon name="clipboard" />
-                </button>
-                <button
-                  onClick={() => handleExportCast(s)}
-                  title={t('exportCast')}
-                  disabled={s.eventCount === 0}
-                >
-                  <Icon name="download" />
-                </button>
-                {s.eventsFile && (
+                {compact ? (
                   <button
-                    onClick={() => handleReveal(s.id)}
-                    title={
-                      s.eventsFile
-                        ? t('recordingFilePath', { path: s.eventsFile })
-                        : t('showInFolder')
-                    }
+                    type="button"
+                    className="session-more-btn"
+                    title={t('moreActions')}
+                    aria-label={t('moreActions')}
+                    aria-haspopup="menu"
+                    aria-expanded={rowMenu?.session.id === s.id}
+                    onClick={(e) => openRowMenu(e, s)}
                   >
-                    <Icon name="folderOpen" />
+                    <Icon name="more" />
                   </button>
+                ) : (
+                  rowActions(s).map((a) => (
+                    <button
+                      key={a.key}
+                      type="button"
+                      onClick={a.run}
+                      title={a.title ?? a.label}
+                      aria-label={a.label}
+                      disabled={a.disabled}
+                    >
+                      <Icon name={a.icon} />
+                    </button>
+                  ))
                 )}
-                <button
-                  onClick={() => {
-                    setEditingId(s.id)
-                    setEditTitle(s.title || s.connectionName || '')
-                  }}
-                  title={t('rename')}
-                >
-                  <Icon name="edit" />
-                </button>
-                <button onClick={() => handleDelete(s.id)} title={t('delete')}>
-                  <Icon name="trash" />
-                </button>
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* The compact row's action menu. Fixed coordinates from the button, so it
+          escapes the row's `overflow: hidden` instead of being clipped. */}
+      {rowMenu && (
+        <div
+          className="context-menu session-row-menu"
+          role="menu"
+          style={{ left: rowMenu.x, top: rowMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {rowActions(rowMenu.session).map((a) => (
+            <div
+              key={a.key}
+              role="menuitem"
+              className={`context-menu-item${a.key === 'delete' ? ' ctx-danger' : ''}${
+                a.disabled ? ' is-disabled' : ''
+              }`}
+              aria-disabled={a.disabled || undefined}
+              title={a.title}
+              onClick={() => {
+                if (a.disabled) return
+                setRowMenu(null)
+                a.run()
+              }}
+            >
+              <Icon name={a.icon} size={14} />
+              {a.label}
             </div>
           ))}
         </div>

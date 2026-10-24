@@ -427,6 +427,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  // At the column's narrow end the select and four buttons cannot share one line;
+  // wrapping keeps every control reachable instead of clipping the last one. The
+  // session rows solve the same problem by collapsing their actions into a menu.
+  flex-wrap: wrap;
+  row-gap: 4px;
   padding: 4px 8px;
   border-bottom: 1px solid $border;
   flex-shrink: 0;

@@ -703,6 +703,17 @@ input[type='password']::-ms-clear {
         background: rgba(240, 107, 107, 0.15);
       }
     }
+
+    // An action that exists but cannot run for this row (e.g. playback of a session
+    // with no events). Kept in the list so the menu's shape does not shift per row.
+    &.is-disabled {
+      opacity: 0.45;
+      cursor: default;
+
+      &:hover {
+        background: none;
+      }
+    }
   }
 }
 

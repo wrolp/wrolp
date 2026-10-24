@@ -1052,6 +1052,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   playback: 'Playback',
   extractCommands: 'Extract commands',
   showInFolder: 'Show in folder',
+  moreActions: 'More actions',
   recordingFilePath: 'Recording file: {path}',
   failedItems: 'Failed items:',
   migrateLegacy: 'Migrate legacy recordings to files',

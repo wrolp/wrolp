@@ -35,6 +35,8 @@ export type IconName =
   | 'boxes'
   // Helm releases (lucide: package)
   | 'package'
+  // Overflow menu (lucide: ellipsis)
+  | 'more'
   // The drawer's transfer queue: two opposing arrows — the pair every transfer
   // is one half of (lucide arrow-left-right).
   | 'transfer'
@@ -254,6 +256,14 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="m10 14 11.9-6.9" />
       <path d="M14 19.8v-8.1" />
       <path d="M18 17.5V9.4" />
+    </>
+  ),
+  // lucide: ellipsis — the collapsed action strip.
+  more: (
+    <>
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+      <circle cx="5" cy="12" r="1" />
     </>
   ),
   // lucide: package — a helm release.

@@ -135,8 +135,10 @@ export interface TauriMockOptions {
   helmReleases?: unknown[]
   /** Rows returned by `helm_release_history`. */
   helmHistory?: unknown[]
-  /** YAML returned by `helm_release_values`. */
+  /** Rows returned by `helm_release_values`. */
   helmValues?: string
+  /** Rows returned by `list_sessions` (the Sessions rail mode). */
+  sessions?: unknown[]
   /** Rows returned by `k8s_list_port_forwards` (defaults to `[]`). */
   k8sPortForwards?: unknown[]
   /**
@@ -324,12 +326,14 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'get_local_shell_dirs':
           case 'list_local_drives':
           case 'list_tunnels':
-          case 'list_sessions':
           case 'list_global_variables':
           case 'list_ai_prompt_templates':
           case 'list_hidden_builtin_templates':
           case 'list_ai_models':
             return []
+          // The recorder's session list (the Sessions rail mode).
+          case 'list_sessions':
+            return opts.sessions ?? []
           // The persisted command history. The backend answers newest-first with
           // the newest 300, so a spec that cares about order supplies its own rows.
           case 'list_command_history':
