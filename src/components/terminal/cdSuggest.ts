@@ -2,7 +2,7 @@
 // (plan: task/plans/cd-directory-dropdown-plan.md).
 //
 // Nothing in here touches xterm, React or IPC: every export is a pure function
-// over strings and arrays, so `scripts/check-cd-suggest.mjs` can exercise all
+// over strings and arrays, so `tests/check-cd-suggest.mjs` can exercise all
 // its branches directly (Node >= 23 strips TS types natively).
 //
 // NOTE: the `../../lib/lsParse.ts` import carries an explicit extension on
@@ -288,7 +288,7 @@ export class CdListCache<T> {
   private readonly max: number
 
   // NOTE: no parameter properties — Node's type-stripping loader (which is how
-  // `scripts/check-cd-suggest.mjs` imports this module) rejects them.
+  // `tests/check-cd-suggest.mjs` imports this module) rejects them.
   constructor(ttlMs = 15_000, max = 64) {
     this.ttlMs = ttlMs
     this.max = max

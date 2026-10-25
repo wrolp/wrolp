@@ -1,6 +1,6 @@
 // Contrast audit for self-declared colour pairs in the stylesheets (B32 follow-up).
 //
-// Run with:  node scripts/check-ui-contrast.mjs [--all] [--min=3] [--list] [--fail-on-violation]
+// Run with:  node tests/check-ui-contrast.mjs [--all] [--min=3] [--list] [--fail-on-violation]
 //
 // Why this shape: the B32 defect was a foreground and a background declared *in the
 // same rule* (`background: rgba($accent,.15); color: $accent` → blue on blue-grey,

@@ -443,7 +443,7 @@ function pickAction(input: PastePlanInput): PasteAction {
 }
 
 /** Decide everything about a paste in one pure step (unit-testable, see
- *  `scripts/check-paste-guard.mjs`): the action, whether the safer choices are
+ *  `tests/check-paste-guard.mjs`): the action, whether the safer choices are
  *  available, and the text each action will type.
  *
  *  The line continuation is applied to every path that INSERTS the text

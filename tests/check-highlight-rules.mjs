@@ -1,6 +1,6 @@
 // Self-check for the terminal output highlighting patterns (B23 + regressions).
 //
-// Run with:  node scripts/check-highlight-rules.mjs
+// Run with:  node tests/check-highlight-rules.mjs
 //
 // Node ≥ 22.18 can import TypeScript directly (type stripping). highlightRules.ts
 // is side-effect free (no DOM/localStorage at module load), so it imports cleanly.

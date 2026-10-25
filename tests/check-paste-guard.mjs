@@ -1,6 +1,6 @@
 // Self-check for the multi-line paste guard's pure functions (B20).
 //
-// Run with:  node scripts/check-paste-guard.mjs
+// Run with:  node tests/check-paste-guard.mjs
 //
 // Node ≥ 22.18 / 23 can import TypeScript directly (type stripping), which is
 // all `src/lib/pasteGuard.ts` needs — it has no runtime dependencies and only
