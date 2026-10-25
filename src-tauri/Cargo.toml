@@ -15,9 +15,9 @@ dirs = "6"
 log = "0.4"
 simplelog = "0.12"
 # `russh-keys` was merged into `russh::keys` in 0.50 — the separate crate is gone.
-# 0.63.2 is the first release that fixes every published russh advisory
-# (see task/BUGS.md B19); it pairs with `russh-sftp` 3.x.
-russh = "0.63"
+# 0.64.1 is the first release that fixes every published russh advisory
+# (see task/BUGS.md B19/B47); `russh-sftp` 3.x has no runtime russh dependency.
+russh = "0.64"
 russh-sftp = "3"
 async-trait = "0.1"
 encoding_rs = "0.8"
