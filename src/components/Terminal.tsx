@@ -1281,8 +1281,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // ConPTY repaints a local shell's screen a poll late, so the caret can still be on
   // the row of the command that was already recorded when the next Enter arrives;
   // `staleSubmit` in the input handler is what keeps that window from writing the old
-  // command into the history a second time — with the first character typed after the
-  // Enter glued onto its tail by `typedLineRef`.
+  // command into the history a second time.
   const lastSubmitRowRef = useRef(-1)
   // True from submitting a command until the shell moves past its input line.
   // ConPTY re-serializes the *screen*, so the echo of that line arrives wrapped
@@ -2473,11 +2472,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // the SAME row as the previous Enter means the screen has not repainted since
         // — this submit's own line is nowhere on screen yet, and the row under the
         // caret still holds the command already recorded. Recording it would be wrong
-        // twice over: the text is stale, and `typedLineRef` glues the first character
-        // typed after the Enter onto its tail (`yarn tauri dev` → `yarn tauri devy`).
-        // Record nothing: from here this submit's content genuinely cannot be known.
+        // twice over: the text is stale, and whatever this Enter's own keystroke put
+        // into `typedLineRef` describes that old row, not this command. Record
+        // nothing: from here this submit's content genuinely cannot be known.
         const staleSubmit = isLoneEnter && lastSubmitRowRef.current === submitRow
-        if (isLoneEnter && submitLine.length > 0) lastSubmitRowRef.current = submitRow
+        // Arm on EVERY submitted Enter, whatever the row happens to read. A blank
+        // read (right after `clear`, before the repainted prompt) and a paste — whose
+        // newlines ride inside one `onData` block, so `isLoneEnter` is false — both
+        // used to leave the guard pointing at an older row, which is how the next
+        // Enter read the late echo of the line already recorded and saved it again
+        // with one character glued on the end.
+        lastSubmitRowRef.current = submitRow
         if (shellReadyRef.current && !appScreen && !staleSubmit) {
           commitSubmittedCommands(term, data, currentTabId)
         }

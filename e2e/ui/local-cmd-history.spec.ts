@@ -1,6 +1,13 @@
 import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock, invokedCalls, pasteIntoTerminal } from './helpers/tauriMock'
 
+declare global {
+  interface Window {
+    /** Queue PTY output the test releases on the next poll (see `installManualOutput`). */
+    __queueOutput: (chunk: string) => void
+  }
+}
+
 // A LOCAL shell's commands belong in the command history too (the pane's 历史
 // dropdown and the persisted `command_history` table). ConPTY re-serializes the
 // whole console screen, so its echo of the typed line can land AFTER the Enter
@@ -11,6 +18,33 @@ const PROMPT = 'user@host:~$ '
 
 const button = (page: Page) => page.locator('[data-setting="terminal.commandHistory"]')
 const items = (page: Page) => page.locator('.tsb-history-item')
+
+/**
+ * Output the test releases by hand, so a repaint can be made to land exactly
+ * between two keystrokes — the interleaving a real ConPTY delivers, which
+ * `installShellScript` (every poll drains everything it has queued) cannot express.
+ */
+async function installManualOutput(page: Page) {
+  await page.evaluate(() => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+        }
+      }
+    ).__TAURI_INTERNALS__
+    const orig = internals.invoke.bind(internals)
+    const held: string[] = []
+    internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
+      const res = await orig(cmd, args)
+      if (cmd === 'poll_output') return [...(res as string[]), ...held.splice(0)]
+      return res
+    }
+    window.__queueOutput = (chunk: string) => {
+      held.push(chunk)
+    }
+  })
+}
 
 /** Commands the app persisted into `command_history`. */
 const recorded = async (page: Page) =>
@@ -218,4 +252,73 @@ test('a pasted block still records every line of it', async ({ page }) => {
   await dialog.getByRole('button', { name: /execute line by line/i }).click()
 
   await expect.poll(() => committed(page)).toEqual(['echo one', 'echo two'])
+})
+
+test('a repaint that lands after its own Enter cannot glue the next keystroke on', async ({
+  page,
+}) => {
+  // The row under the caret is blank when the Enter arrives (right after a `clear`,
+  // before the repainted prompt), so nothing can be recorded from it — and the guard
+  // used to arm only when that read found something. ConPTY then paints prompt +
+  // command back onto the SAME row, and the first character of the next command
+  // glued itself to the end of the line already on screen: `yarn tauri dev` landed in
+  // the saved history as `yarn tauri devy`.
+  await bootLocalShell(page, '\x1b[2J\x1b[H')
+  await installManualOutput(page)
+
+  await page.keyboard.type('yarn tauri dev', { delay: 20 })
+  await page.keyboard.press('Enter')
+
+  await page.evaluate((p) => window.__queueOutput(p + 'yarn tauri dev'), PROMPT)
+  await page.waitForTimeout(150)
+
+  await page.keyboard.type('y', { delay: 20 })
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(300)
+
+  // The submitted line is the one already recorded, so this Enter records nothing
+  // rather than writing it again with one character welded on.
+  expect(await recorded(page)).toEqual([])
+  expect(await committed(page)).toEqual([])
+})
+
+test('a paste that leaves its last line under the caret arms the same guard', async ({ page }) => {
+  // A pasted block's newlines ride inside one `onData` chunk, so it is never the
+  // "lone Enter" the guard armed on — and the line it parks under the caret then read
+  // as the next command's head.
+  await bootLocalShell(page)
+  await installManualOutput(page)
+
+  await pasteIntoTerminal(page, 'echo one\necho two')
+  const dialog = page.locator('.paste-confirm-dialog')
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: /execute line by line/i }).click()
+
+  await page.evaluate(() => window.__queueOutput('echo two'))
+  await page.waitForTimeout(150)
+
+  await page.keyboard.type('x', { delay: 20 })
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(300)
+
+  expect(await recorded(page)).toEqual([])
+})
+
+test('the command typed after the shell has moved on is still recorded whole', async ({ page }) => {
+  // The same late repaint, but the shell then advances to a fresh prompt row: from
+  // there on the projection describes the new line again, so a real command must not
+  // be lost by the two guards above.
+  await bootLocalShell(page, '\x1b[2J\x1b[H')
+  await installManualOutput(page)
+
+  await page.keyboard.type('yarn tauri dev', { delay: 20 })
+  await page.keyboard.press('Enter')
+
+  await page.evaluate((p) => window.__queueOutput(p + 'yarn tauri dev\r\n' + p), PROMPT)
+  await page.waitForTimeout(150)
+
+  await page.keyboard.type('yarn dev', { delay: 20 })
+  await page.keyboard.press('Enter')
+
+  await expect.poll(() => recorded(page)).toContain('yarn dev|localShell|localhost')
 })
