@@ -136,6 +136,33 @@ mod tests {
     fs.remove_dir(dir).await.expect("remove_dir");
   }
 
+  /// `~` must name the distro's home, not a directory called `~`. That is what a
+  /// `cd ~` + `ls` in a WSL tab asks for. Ignored by default (needs WSL); run
+  /// with `cargo test --lib wsl_fs -- --ignored --nocapture`.
+  #[tokio::test]
+  #[ignore = "requires a WSL distribution"]
+  async fn tilde_lists_the_home_dir() {
+    let fs = new_wsl_fs(None);
+    let home = fs.list_dir("").await.expect("list WSL home");
+    let tilde = fs.list_dir("~").await.expect("list ~");
+    assert_eq!(
+      tilde.len(),
+      home.len(),
+      "`~` and the resolved home must list the same directory"
+    );
+    assert_eq!(
+      tilde.first().map(|e| e.path.clone()),
+      home.first().map(|e| e.path.clone()),
+      "and report the same absolute paths"
+    );
+    assert!(
+      tilde.iter().all(|e| !e.path.starts_with("~/")),
+      "no entry may come back under a literal `~`"
+    );
+    assert!(fs.metadata("~").await.expect("stat ~").is_dir);
+    eprintln!("wsl `~` listing: {} entries", tilde.len());
+  }
+
   fn runner(distro: Option<&str>) -> WslRunner {
     WslRunner {
       distro: distro.map(|s| s.to_string()),

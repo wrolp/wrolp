@@ -61,6 +61,24 @@ impl<R: Runner> CmdFs<R> {
     }
     Ok(home)
   }
+
+  /// Rewrite a leading `~` to the inner system's home directory.
+  ///
+  /// Neither runner may leave that to a shell: `wsl.exe -e` and `docker exec` run
+  /// without a login shell, and a path always arrives here as a *quoted*
+  /// positional argument, where POSIX shells expand no tildes either. Left as it
+  /// is, `~/projects` names a literal directory called `~` — which never exists,
+  /// so a `cd ~` + `ls` in a WSL tab listed nothing and every entry lost its
+  /// directory type. Costs one extra `$HOME` lookup, and only for a tilde path.
+  async fn expand_tilde(&self, path: &str) -> Result<String, String> {
+    if path == "~" {
+      return self.resolve_home().await;
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+      return Ok(format!("{}/{}", self.resolve_home().await?, rest));
+    }
+    Ok(path.to_string())
+  }
 }
 
 /// Directory-listing script executed on the inner system. Entries are emitted
@@ -152,7 +170,7 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
     let path = if path.is_empty() || (self.dot_is_home && path == ".") {
       self.resolve_home().await?
     } else {
-      path.to_string()
+      self.expand_tilde(path).await?
     };
     let inner = vec![
       "sh".to_string(),
@@ -172,6 +190,7 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
   }
 
   async fn metadata(&self, path: &str) -> Result<FileMeta, String> {
+    let path = self.expand_tilde(path).await?;
     // %s=size %Y=mtime(epoch) %A=perms(symbolic) %F=file type
     let inner = vec![
       "stat".to_string(),
@@ -187,11 +206,12 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
         String::from_utf8_lossy(&err).trim()
       ));
     }
-    Ok(parse_stat(path, &out))
+    Ok(parse_stat(&path, &out))
   }
 
   async fn read_file(&self, path: &str) -> Result<Vec<u8>, String> {
-    let inner = vec!["cat".to_string(), "--".to_string(), path.to_string()];
+    let path = self.expand_tilde(path).await?;
+    let inner = vec!["cat".to_string(), "--".to_string(), path];
     let (out, err, status) = self.runner.run(&inner, None).await?;
     if status != 0 {
       return Err(format!(
@@ -208,7 +228,7 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
       "-c".to_string(),
       "mkdir -p -- \"$(dirname -- \"$1\")\" && cat > \"$1\"".to_string(),
       "_".to_string(),
-      path.to_string(),
+      self.expand_tilde(path).await?,
     ];
     let (_out, err, status) = self.runner.run(&inner, Some(data)).await?;
     if status != 0 {
@@ -225,7 +245,7 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
       "mkdir".to_string(),
       "-p".to_string(),
       "--".to_string(),
-      path.to_string(),
+      self.expand_tilde(path).await?,
     ];
     let (_o, err, status) = self.runner.run(&inner, None).await?;
     if status != 0 {
@@ -242,8 +262,8 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
       "mv".to_string(),
       "-T".to_string(),
       "--".to_string(),
-      from.to_string(),
-      to.to_string(),
+      self.expand_tilde(from).await?,
+      self.expand_tilde(to).await?,
     ];
     let (_o, err, status) = self.runner.run(&inner, None).await?;
     if status != 0 {
@@ -260,7 +280,7 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
       "rm".to_string(),
       "-f".to_string(),
       "--".to_string(),
-      path.to_string(),
+      self.expand_tilde(path).await?,
     ];
     let (_o, err, status) = self.runner.run(&inner, None).await?;
     if status != 0 {
@@ -277,7 +297,7 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
       "rm".to_string(),
       "-rf".to_string(),
       "--".to_string(),
-      path.to_string(),
+      self.expand_tilde(path).await?,
     ];
     let (_o, err, status) = self.runner.run(&inner, None).await?;
     if status != 0 {
@@ -293,6 +313,66 @@ impl<R: Runner> RemoteFs for CmdFs<R> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::sync::Mutex;
+
+  /// Answers a `$HOME` lookup with `home` and any listing with one directory,
+  /// while recording every argv it was asked to run.
+  struct FakeRunner {
+    home: &'static str,
+    runs: Mutex<Vec<Vec<String>>>,
+  }
+
+  #[async_trait::async_trait]
+  impl Runner for FakeRunner {
+    async fn run(
+      &self,
+      inner: &[String],
+      _stdin: Option<&[u8]>,
+    ) -> Result<(Vec<u8>, Vec<u8>, u32), String> {
+      self.runs.lock().unwrap().push(inner.to_vec());
+      if inner.len() == 3 && inner[2].starts_with("printf %s") {
+        return Ok((self.home.as_bytes().to_vec(), Vec::new(), 0));
+      }
+      let listing = b"-\x1f12\x1f1700000000\x1f-rw-r--r--\x1fnotes\n";
+      Ok((listing.to_vec(), Vec::new(), 0))
+    }
+  }
+
+  fn fake(home: &'static str) -> CmdFs<FakeRunner> {
+    CmdFs::new(
+      FakeRunner {
+        home,
+        runs: Mutex::new(Vec::new()),
+      },
+      true,
+    )
+  }
+
+  #[tokio::test]
+  async fn tilde_listing_resolves_against_the_inner_home() {
+    let fs = fake("/home/ubuntu");
+    let entries = fs.list_dir("~/projects").await.unwrap();
+    // The path handed back to the frontend hangs off the EXPANDED directory, so a
+    // click on the entry cannot drift into one literally named `~`.
+    assert_eq!(entries[0].path, "/home/ubuntu/projects/notes");
+    let runs = fs.runner.runs.lock().unwrap();
+    assert_eq!(runs[0][2], "printf %s \"$HOME\"");
+    // argv: sh -c <script> _ <path>
+    assert_eq!(runs[1][4], "/home/ubuntu/projects");
+    assert_eq!(runs[1][2], LIST_SCRIPT);
+  }
+
+  #[tokio::test]
+  async fn bare_tilde_and_absolute_paths_behave_differently() {
+    let fs = fake("/home/ubuntu");
+    fs.metadata("~").await.unwrap();
+    fs.metadata("/etc").await.unwrap();
+    let runs = fs.runner.runs.lock().unwrap();
+    assert_eq!(runs.len(), 3, "only the tilde may cost a $HOME lookup");
+    // argv 0 is the lookup; 1 is the stat of the expanded home, 2 the plain stat.
+    assert_eq!(runs[1][runs[1].len() - 1], "/home/ubuntu");
+    assert_eq!(runs[2][runs[2].len() - 1], "/etc");
+  }
 
   #[test]
   fn parses_listing_lines() {

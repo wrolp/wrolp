@@ -28,6 +28,23 @@ impl LocalFs {
     if path.is_empty() {
       return self.root.clone();
     }
+    // A leading `~` means home to every shell the local terminal can run
+    // (git-bash's `~` is %USERPROFILE%, which is `root`), and `cd ~` followed by
+    // `ls` asks for exactly that. Read literally it is a child directory named
+    // `~`, which never exists — so the listing came back empty and every entry
+    // of the home directory lost its type.
+    if path == "~" {
+      return self.root.clone();
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+      return self.root.join(rest);
+    }
+    #[cfg(windows)]
+    {
+      if let Some(rest) = path.strip_prefix("~\\") {
+        return self.root.join(rest);
+      }
+    }
     let p = Path::new(path);
     #[cfg(windows)]
     {
@@ -213,5 +230,15 @@ mod tests {
     let cwd = std::env::current_dir().unwrap();
     let p = cwd.to_string_lossy().replace('\\', "/");
     assert_eq!(fs.resolve(&p), PathBuf::from(&p));
+  }
+
+  #[test]
+  fn resolve_tilde_as_home() {
+    let fs = LocalFs::new();
+    let home = fs.root.clone();
+    assert_eq!(fs.resolve("~"), home);
+    assert_eq!(fs.resolve("~/notes.txt"), home.join("notes.txt"));
+    // Only a LEADING tilde expands; elsewhere it is an ordinary file name.
+    assert_eq!(fs.resolve("a~b"), home.join("a~b"));
   }
 }

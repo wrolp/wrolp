@@ -2598,7 +2598,19 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                     }
                   }
                   const next = resolveCdTarget(arg, cwdRef.current)
-                  if (!next) return
+                  if (!next) {
+                    // `cd ~`, `cd -`, a bare `cd`: the shell moved somewhere whose
+                    // absolute path cannot be derived from the command line. Keep
+                    // the previous directory tracked anyway and the next `ls`
+                    // lists, colours and resolves against a directory the user has
+                    // already left — every entry loses its directory type and every
+                    // click opens the same-named entry of the OLD directory. So drop
+                    // it: the `ls` capture then asks the shell itself (the hidden
+                    // `pwd` query) or falls back to the prompt, both of which are
+                    // current. Same treatment as the drive switch above.
+                    setCwd(null)
+                    return
+                  }
                   // Don't trust the computed path — verify the directory actually exists
                   // before updating the tracked cwd. A failed `cd` leaves the shell in
                   // its current directory, so using the bogus target would make all
