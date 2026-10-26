@@ -3,6 +3,7 @@
  * Registered at app startup via this file.
  */
 import * as monaco from 'monaco-editor'
+import { shellMonarchLanguage } from './shellLanguage'
 
 /**
  * Register Monarch-based language definitions before any editor instance is created.
@@ -11,6 +12,20 @@ import * as monaco from 'monaco-editor'
 export function registerCustomLanguages(): void {
   registerNginx()
   registerProperties()
+  registerShell()
+}
+
+// ── SHELL ──────────────────────────────────────────────────────────────────
+
+/**
+ * Replace Monaco's built-in `shell` tokenizer with ./shellLanguage.ts. The
+ * built-in one paints everything inside `$( ... )` as a variable and lets a
+ * stray quote run away through the rest of the file; `setMonarchTokensProvider`
+ * swaps the provider for the already-registered language, so the file-name →
+ * language mapping and the editor's bracket/auto-close behaviour stay as-is.
+ */
+function registerShell(): void {
+  monaco.languages.setMonarchTokensProvider('shell', shellMonarchLanguage)
 }
 
 // ── NGINX ──────────────────────────────────────────────────────────────────
