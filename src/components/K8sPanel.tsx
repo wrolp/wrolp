@@ -39,6 +39,7 @@ import {
 } from '../commands'
 import { Icon } from './Icon'
 import { ConfirmDialog } from './ConfirmDialog'
+import { DraggableModal } from './DraggableModal'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 
@@ -1502,394 +1503,375 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
 
       {/* Logs */}
       {logs && (
-        <div className="modal-overlay" onMouseDown={() => setLogs(null)}>
-          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t('k8sLogsTitle', { name: logs.row.name })}</h3>
-              <span className="k8s-modal-close" onClick={() => setLogs(null)}>
-                <Icon name="x" size={14} />
-              </span>
-            </div>
-            <div className="k8s-log-toolbar">
-              {logs.row.containers.length > 1 && (
-                <label className="k8s-inline">
-                  <span>{t('k8sContainer')}</span>
-                  <select
-                    className="k8s-select"
-                    value={logs.container}
-                    onChange={(e) =>
-                      setLogs((prev) =>
-                        prev ? { ...prev, container: e.target.value, loading: true } : prev,
-                      )
-                    }
-                  >
-                    {logs.row.containers.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
+        <DraggableModal className="k8s-modal" onClose={() => setLogs(null)}>
+          <div className="modal-header">
+            <h3>{t('k8sLogsTitle', { name: logs.row.name })}</h3>
+            <span className="k8s-modal-close" onClick={() => setLogs(null)}>
+              <Icon name="x" size={14} />
+            </span>
+          </div>
+          <div className="k8s-log-toolbar">
+            {logs.row.containers.length > 1 && (
               <label className="k8s-inline">
-                <span>{t('k8sTail')}</span>
+                <span>{t('k8sContainer')}</span>
                 <select
                   className="k8s-select"
-                  value={logs.tail}
+                  value={logs.container}
                   onChange={(e) =>
                     setLogs((prev) =>
-                      prev ? { ...prev, tail: Number(e.target.value), loading: true } : prev,
+                      prev ? { ...prev, container: e.target.value, loading: true } : prev,
                     )
                   }
                 >
-                  {[200, 500, 2000, 5000].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
+                  {logs.row.containers.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
                     </option>
                   ))}
                 </select>
               </label>
-              <label className="k8s-inline k8s-check">
-                <input
-                  type="checkbox"
-                  checked={logs.follow}
-                  onChange={(e) =>
-                    setLogs((prev) => (prev ? { ...prev, follow: e.target.checked } : prev))
-                  }
-                />
-                <span>{t('k8sFollow')}</span>
-              </label>
-              <button type="button" className="k8s-btn" onClick={copyLogs}>
-                {copied ? t('k8sCopied') : t('k8sCopy')}
-              </button>
-            </div>
-            {logs.error && <div className="modal-error">{logs.error}</div>}
-            <pre
-              className="k8s-log-output"
-              ref={logRef}
-              onScroll={(e) => {
-                const el = e.currentTarget
-                stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
-              }}
-            >
-              {logs.loading && !logs.text ? t('loading') : logs.text || t('k8sNoLogs')}
-            </pre>
-            {logs.ended && <div className="k8s-note">{t('k8sStreamEnded')}</div>}
+            )}
+            <label className="k8s-inline">
+              <span>{t('k8sTail')}</span>
+              <select
+                className="k8s-select"
+                value={logs.tail}
+                onChange={(e) =>
+                  setLogs((prev) =>
+                    prev ? { ...prev, tail: Number(e.target.value), loading: true } : prev,
+                  )
+                }
+              >
+                {[200, 500, 2000, 5000].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="k8s-inline k8s-check">
+              <input
+                type="checkbox"
+                checked={logs.follow}
+                onChange={(e) =>
+                  setLogs((prev) => (prev ? { ...prev, follow: e.target.checked } : prev))
+                }
+              />
+              <span>{t('k8sFollow')}</span>
+            </label>
+            <button type="button" className="k8s-btn" onClick={copyLogs}>
+              {copied ? t('k8sCopied') : t('k8sCopy')}
+            </button>
           </div>
-        </div>
+          {logs.error && <div className="modal-error">{logs.error}</div>}
+          <pre
+            className="k8s-log-output"
+            ref={logRef}
+            onScroll={(e) => {
+              const el = e.currentTarget
+              stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+            }}
+          >
+            {logs.loading && !logs.text ? t('loading') : logs.text || t('k8sNoLogs')}
+          </pre>
+          {logs.ended && <div className="k8s-note">{t('k8sStreamEnded')}</div>}
+        </DraggableModal>
       )}
 
       {/* YAML */}
       {yaml && (
-        <div className="modal-overlay" onMouseDown={() => setYaml(null)}>
-          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t('k8sYamlTitle', { name: yaml.row.name })}</h3>
-              <span className="k8s-modal-close" onClick={() => setYaml(null)}>
-                <Icon name="x" size={14} />
-              </span>
-            </div>
-            {yaml.error && <div className="modal-error">{yaml.error}</div>}
-            <pre className="k8s-yaml">
-              {yaml.loading && !yaml.text ? t('k8sLoadingYaml') : yaml.text}
-            </pre>
+        <DraggableModal className="k8s-modal" onClose={() => setYaml(null)}>
+          <div className="modal-header">
+            <h3>{t('k8sYamlTitle', { name: yaml.row.name })}</h3>
+            <span className="k8s-modal-close" onClick={() => setYaml(null)}>
+              <Icon name="x" size={14} />
+            </span>
           </div>
-        </div>
+          {yaml.error && <div className="modal-error">{yaml.error}</div>}
+          <pre className="k8s-yaml">
+            {yaml.loading && !yaml.text ? t('k8sLoadingYaml') : yaml.text}
+          </pre>
+        </DraggableModal>
       )}
 
       {/* Apply */}
       {applyOpen && (
-        <div className="modal-overlay" onMouseDown={() => setApplyOpen(false)}>
-          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t('k8sApplyTitle')}</h3>
-              <span className="k8s-modal-close" onClick={() => setApplyOpen(false)}>
-                <Icon name="x" size={14} />
-              </span>
-            </div>
-            <div className="modal-body">
-              <textarea
-                className="k8s-apply-input"
-                value={applyText}
-                onChange={(e) => setApplyText(e.target.value)}
-                placeholder={t('k8sApplyPlaceholder')}
-                spellCheck={false}
-                autoFocus
-              />
-              {applyError && <div className="modal-error">{applyError}</div>}
-            </div>
-            <div className="modal-footer">
-              <button className="btn-cancel" onClick={() => setApplyOpen(false)}>
-                {t('cancel')}
-              </button>
-              <button
-                className="btn-primary"
-                onClick={() => void doApply()}
-                disabled={applyBusy || !applyText.trim()}
-              >
-                {t('k8sApply')}
-              </button>
-            </div>
+        <DraggableModal className="k8s-modal" onClose={() => setApplyOpen(false)}>
+          <div className="modal-header">
+            <h3>{t('k8sApplyTitle')}</h3>
+            <span className="k8s-modal-close" onClick={() => setApplyOpen(false)}>
+              <Icon name="x" size={14} />
+            </span>
           </div>
-        </div>
+          <div className="modal-body">
+            <textarea
+              className="k8s-apply-input"
+              value={applyText}
+              onChange={(e) => setApplyText(e.target.value)}
+              placeholder={t('k8sApplyPlaceholder')}
+              spellCheck={false}
+              autoFocus
+            />
+            {applyError && <div className="modal-error">{applyError}</div>}
+          </div>
+          <div className="modal-footer">
+            <button className="btn-cancel" onClick={() => setApplyOpen(false)}>
+              {t('cancel')}
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => void doApply()}
+              disabled={applyBusy || !applyText.trim()}
+            >
+              {t('k8sApply')}
+            </button>
+          </div>
+        </DraggableModal>
       )}
 
       {/* Scale */}
       {scaleTarget && (
-        <div className="modal-overlay" onMouseDown={() => setScaleTarget(null)}>
-          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t('k8sScaleTitle', { name: scaleTarget.row.name })}</h3>
-            </div>
-            <div className="modal-body">
-              <label className="k8s-field">
-                <span>{t('k8sReplicas')}</span>
-                <input
-                  type="number"
-                  min={0}
-                  className="k8s-input"
-                  value={scaleValue}
-                  onChange={(e) => setScaleValue(e.target.value)}
-                  autoFocus
-                />
-              </label>
-              {scaleError && <div className="modal-error">{scaleError}</div>}
-            </div>
-            <div className="modal-footer">
-              <button className="btn-cancel" onClick={() => setScaleTarget(null)}>
-                {t('cancel')}
-              </button>
-              <button className="btn-primary" onClick={() => void doScale()} disabled={scaleBusy}>
-                {t('confirm')}
-              </button>
-            </div>
+        <DraggableModal onClose={() => setScaleTarget(null)}>
+          <div className="modal-header">
+            <h3>{t('k8sScaleTitle', { name: scaleTarget.row.name })}</h3>
           </div>
-        </div>
+          <div className="modal-body">
+            <label className="k8s-field">
+              <span>{t('k8sReplicas')}</span>
+              <input
+                type="number"
+                min={0}
+                className="k8s-input"
+                value={scaleValue}
+                onChange={(e) => setScaleValue(e.target.value)}
+                autoFocus
+              />
+            </label>
+            {scaleError && <div className="modal-error">{scaleError}</div>}
+          </div>
+          <div className="modal-footer">
+            <button className="btn-cancel" onClick={() => setScaleTarget(null)}>
+              {t('cancel')}
+            </button>
+            <button className="btn-primary" onClick={() => void doScale()} disabled={scaleBusy}>
+              {t('confirm')}
+            </button>
+          </div>
+        </DraggableModal>
       )}
 
       {forwardDialog && (
-        <div className="modal-overlay" onMouseDown={() => setForwardDialog(null)}>
-          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t('k8sForwardTitle', { target: forwardDialog.target })}</h3>
-            </div>
-            <div className="modal-body">
-              <div className="k8s-forward-fields">
-                <label className="k8s-field">
-                  <span>{t('k8sForwardLocal')}</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={65535}
-                    className="k8s-input"
-                    value={forwardLocal}
-                    onChange={(e) => setForwardLocal(e.target.value)}
-                    placeholder="8080"
-                    autoFocus
-                  />
-                </label>
-                <label className="k8s-field">
-                  <span>{t('k8sForwardRemote')}</span>
-                  <input
-                    className="k8s-input"
-                    value={forwardRemote}
-                    onChange={(e) => setForwardRemote(e.target.value)}
-                    placeholder="8080"
-                  />
-                </label>
-              </div>
-              <label className="k8s-inline k8s-check">
-                <input
-                  type="checkbox"
-                  checked={forwardLan}
-                  onChange={(e) => setForwardLan(e.target.checked)}
-                />
-                <span>{t('k8sForwardLan')}</span>
-              </label>
-              <label className="k8s-inline k8s-check">
-                <input
-                  type="checkbox"
-                  checked={forwardSave}
-                  onChange={(e) => setForwardSave(e.target.checked)}
-                />
-                <span>{t('k8sForwardSaveRule')}</span>
-              </label>
-              {host.kind === 'ssh' && <div className="k8s-note">{t('k8sForwardViaJump')}</div>}
-              {forwardError && <div className="modal-error">{forwardError}</div>}
-            </div>
-            <div className="modal-footer">
-              <button className="btn-cancel" onClick={() => setForwardDialog(null)}>
-                {t('cancel')}
-              </button>
-              <button
-                className="btn-primary"
-                onClick={() => void startForward()}
-                disabled={forwardBusy}
-              >
-                {t('k8sForwardStart')}
-              </button>
-            </div>
+        <DraggableModal onClose={() => setForwardDialog(null)}>
+          <div className="modal-header">
+            <h3>{t('k8sForwardTitle', { target: forwardDialog.target })}</h3>
           </div>
-        </div>
+          <div className="modal-body">
+            <div className="k8s-forward-fields">
+              <label className="k8s-field">
+                <span>{t('k8sForwardLocal')}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  className="k8s-input"
+                  value={forwardLocal}
+                  onChange={(e) => setForwardLocal(e.target.value)}
+                  placeholder="8080"
+                  autoFocus
+                />
+              </label>
+              <label className="k8s-field">
+                <span>{t('k8sForwardRemote')}</span>
+                <input
+                  className="k8s-input"
+                  value={forwardRemote}
+                  onChange={(e) => setForwardRemote(e.target.value)}
+                  placeholder="8080"
+                />
+              </label>
+            </div>
+            <label className="k8s-inline k8s-check">
+              <input
+                type="checkbox"
+                checked={forwardLan}
+                onChange={(e) => setForwardLan(e.target.checked)}
+              />
+              <span>{t('k8sForwardLan')}</span>
+            </label>
+            <label className="k8s-inline k8s-check">
+              <input
+                type="checkbox"
+                checked={forwardSave}
+                onChange={(e) => setForwardSave(e.target.checked)}
+              />
+              <span>{t('k8sForwardSaveRule')}</span>
+            </label>
+            {host.kind === 'ssh' && <div className="k8s-note">{t('k8sForwardViaJump')}</div>}
+            {forwardError && <div className="modal-error">{forwardError}</div>}
+          </div>
+          <div className="modal-footer">
+            <button className="btn-cancel" onClick={() => setForwardDialog(null)}>
+              {t('cancel')}
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => void startForward()}
+              disabled={forwardBusy}
+            >
+              {t('k8sForwardStart')}
+            </button>
+          </div>
+        </DraggableModal>
       )}
 
       {/* Helm values — the same read-only pre the pod YAML uses. */}
       {helmText && (
-        <div className="modal-overlay" onMouseDown={() => setHelmText(null)}>
-          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{helmText.title}</h3>
-              <span className="k8s-modal-close" onClick={() => setHelmText(null)}>
-                <Icon name="x" size={14} />
-              </span>
-            </div>
-            {helmText.error && <div className="modal-error">{helmText.error}</div>}
-            <pre className="k8s-yaml">
-              {helmText.loading && !helmText.text ? t('loading') : helmText.text}
-            </pre>
+        <DraggableModal className="k8s-modal" onClose={() => setHelmText(null)}>
+          <div className="modal-header">
+            <h3>{helmText.title}</h3>
+            <span className="k8s-modal-close" onClick={() => setHelmText(null)}>
+              <Icon name="x" size={14} />
+            </span>
           </div>
-        </div>
+          {helmText.error && <div className="modal-error">{helmText.error}</div>}
+          <pre className="k8s-yaml">
+            {helmText.loading && !helmText.text ? t('loading') : helmText.text}
+          </pre>
+        </DraggableModal>
       )}
 
       {/* Revision history, with a rollback per row. */}
       {history && (
-        <div className="modal-overlay" onMouseDown={() => setHistory(null)}>
-          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t('k8sHelmHistoryTitle', { name: history.release })}</h3>
-              <span className="k8s-modal-close" onClick={() => setHistory(null)}>
-                <Icon name="x" size={14} />
-              </span>
-            </div>
-            {history.error && <div className="modal-error">{history.error}</div>}
-            <div className="k8s-history">
-              {history.loading && <div className="file-empty">{t('loading')}</div>}
-              {!history.loading && history.rows.length === 0 && (
-                <div className="file-empty">{t('k8sHelmNoHistory')}</div>
-              )}
-              {history.rows
-                .slice()
-                .reverse()
-                .map((rev) => (
-                  <div key={rev.revision} className="k8s-history-row">
-                    <span className="k8s-history-rev">r{rev.revision}</span>
-                    <span className={`k8s-chip ${statusTone(rev.status)}`}>{rev.status}</span>
-                    <span className="k8s-history-desc">
-                      {rev.chart}
-                      {rev.description ? ` · ${rev.description}` : ''}
-                    </span>
-                    <button
-                      type="button"
-                      className="k8s-btn"
-                      disabled={rev.status === 'deployed'}
-                      title={rev.updated}
-                      onClick={() => {
-                        const rel = releases.find((r) => r.name === history.release)
-                        if (rel) void doRollback(rel, rev.revision)
-                      }}
-                    >
-                      {t('k8sHelmRollback')}
-                    </button>
-                  </div>
-                ))}
-            </div>
+        <DraggableModal className="k8s-modal" onClose={() => setHistory(null)}>
+          <div className="modal-header">
+            <h3>{t('k8sHelmHistoryTitle', { name: history.release })}</h3>
+            <span className="k8s-modal-close" onClick={() => setHistory(null)}>
+              <Icon name="x" size={14} />
+            </span>
           </div>
-        </div>
+          {history.error && <div className="modal-error">{history.error}</div>}
+          <div className="k8s-history">
+            {history.loading && <div className="file-empty">{t('loading')}</div>}
+            {!history.loading && history.rows.length === 0 && (
+              <div className="file-empty">{t('k8sHelmNoHistory')}</div>
+            )}
+            {history.rows
+              .slice()
+              .reverse()
+              .map((rev) => (
+                <div key={rev.revision} className="k8s-history-row">
+                  <span className="k8s-history-rev">r{rev.revision}</span>
+                  <span className={`k8s-chip ${statusTone(rev.status)}`}>{rev.status}</span>
+                  <span className="k8s-history-desc">
+                    {rev.chart}
+                    {rev.description ? ` · ${rev.description}` : ''}
+                  </span>
+                  <button
+                    type="button"
+                    className="k8s-btn"
+                    disabled={rev.status === 'deployed'}
+                    title={rev.updated}
+                    onClick={() => {
+                      const rel = releases.find((r) => r.name === history.release)
+                      if (rel) void doRollback(rel, rev.revision)
+                    }}
+                  >
+                    {t('k8sHelmRollback')}
+                  </button>
+                </div>
+              ))}
+          </div>
+        </DraggableModal>
       )}
 
       {/* Install / upgrade: `helm upgrade --install`, so one dialog covers both. */}
       {installOpen && (
-        <div className="modal-overlay" onMouseDown={() => setInstallOpen(false)}>
-          <div className="modal k8s-modal" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{t('k8sHelmInstallTitle')}</h3>
-              <span className="k8s-modal-close" onClick={() => setInstallOpen(false)}>
-                <Icon name="x" size={14} />
-              </span>
-            </div>
-            <div className="modal-body">
-              <div className="k8s-forward-fields">
-                <label className="k8s-field">
-                  <span>{t('k8sHelmRelease')}</span>
-                  <input
-                    className="k8s-input"
-                    value={installRelease}
-                    onChange={(e) => setInstallRelease(e.target.value)}
-                    placeholder="web"
-                    autoFocus
-                  />
-                </label>
-                <label className="k8s-field">
-                  <span>{t('k8sHelmVersion')}</span>
-                  <input
-                    className="k8s-input"
-                    value={installVersion}
-                    onChange={(e) => setInstallVersion(e.target.value)}
-                    placeholder="1.2.3"
-                  />
-                </label>
-              </div>
+        <DraggableModal className="k8s-modal" onClose={() => setInstallOpen(false)}>
+          <div className="modal-header">
+            <h3>{t('k8sHelmInstallTitle')}</h3>
+            <span className="k8s-modal-close" onClick={() => setInstallOpen(false)}>
+              <Icon name="x" size={14} />
+            </span>
+          </div>
+          <div className="modal-body">
+            <div className="k8s-forward-fields">
               <label className="k8s-field">
-                <span>{t('k8sHelmChart')}</span>
+                <span>{t('k8sHelmRelease')}</span>
                 <input
                   className="k8s-input"
-                  value={installChart}
-                  onChange={(e) => setInstallChart(e.target.value)}
-                  placeholder="bitnami/nginx or oci://host/charts/web"
+                  value={installRelease}
+                  onChange={(e) => setInstallRelease(e.target.value)}
+                  placeholder="web"
+                  autoFocus
                 />
               </label>
               <label className="k8s-field">
-                <span>{t('k8sHelmValuesFile')}</span>
-                <textarea
-                  className="k8s-apply-input"
-                  value={installValues}
-                  onChange={(e) => setInstallValues(e.target.value)}
-                  placeholder={'replicas: 2\nimage:\n  tag: "1.2.3"'}
-                  spellCheck={false}
-                />
-              </label>
-              <label className="k8s-inline k8s-check">
+                <span>{t('k8sHelmVersion')}</span>
                 <input
-                  type="checkbox"
-                  checked={installWait}
-                  onChange={(e) => setInstallWait(e.target.checked)}
+                  className="k8s-input"
+                  value={installVersion}
+                  onChange={(e) => setInstallVersion(e.target.value)}
+                  placeholder="1.2.3"
                 />
-                <span>{t('k8sHelmWait')}</span>
               </label>
-              <label className="k8s-inline k8s-check">
-                <input
-                  type="checkbox"
-                  checked={installCreateNs}
-                  onChange={(e) => setInstallCreateNs(e.target.checked)}
-                />
-                <span>{t('k8sHelmCreateNamespace')}</span>
-              </label>
-              <div className="k8s-note">
-                {t('k8sHelmInstallScope', {
-                  namespace: namespace === ALL_NAMESPACES ? t('k8sAllNamespaces') : namespace,
-                })}
-              </div>
-              {installError && <div className="modal-error">{installError}</div>}
             </div>
-            <div className="modal-footer">
-              <button className="btn-cancel" onClick={() => setInstallOpen(false)}>
-                {t('cancel')}
-              </button>
-              <button
-                className="btn-primary"
-                onClick={() => void doInstall()}
-                disabled={installBusy}
-              >
-                {t('k8sHelmInstall')}
-              </button>
+            <label className="k8s-field">
+              <span>{t('k8sHelmChart')}</span>
+              <input
+                className="k8s-input"
+                value={installChart}
+                onChange={(e) => setInstallChart(e.target.value)}
+                placeholder="bitnami/nginx or oci://host/charts/web"
+              />
+            </label>
+            <label className="k8s-field">
+              <span>{t('k8sHelmValuesFile')}</span>
+              <textarea
+                className="k8s-apply-input"
+                value={installValues}
+                onChange={(e) => setInstallValues(e.target.value)}
+                placeholder={'replicas: 2\nimage:\n  tag: "1.2.3"'}
+                spellCheck={false}
+              />
+            </label>
+            <label className="k8s-inline k8s-check">
+              <input
+                type="checkbox"
+                checked={installWait}
+                onChange={(e) => setInstallWait(e.target.checked)}
+              />
+              <span>{t('k8sHelmWait')}</span>
+            </label>
+            <label className="k8s-inline k8s-check">
+              <input
+                type="checkbox"
+                checked={installCreateNs}
+                onChange={(e) => setInstallCreateNs(e.target.checked)}
+              />
+              <span>{t('k8sHelmCreateNamespace')}</span>
+            </label>
+            <div className="k8s-note">
+              {t('k8sHelmInstallScope', {
+                namespace: namespace === ALL_NAMESPACES ? t('k8sAllNamespaces') : namespace,
+              })}
             </div>
+            {installError && <div className="modal-error">{installError}</div>}
           </div>
-        </div>
+          <div className="modal-footer">
+            <button className="btn-cancel" onClick={() => setInstallOpen(false)}>
+              {t('cancel')}
+            </button>
+            <button className="btn-primary" onClick={() => void doInstall()} disabled={installBusy}>
+              {t('k8sHelmInstall')}
+            </button>
+          </div>
+        </DraggableModal>
       )}
 
       {confirmUninstall && (
         <ConfirmDialog
           danger
+          draggable
           title={t('k8sHelmUninstallTitle')}
           message={t('k8sHelmUninstallConfirm', {
             name: confirmUninstall.name,
@@ -1905,6 +1887,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       {confirmDelete && (
         <ConfirmDialog
           danger
+          draggable
           title={t('k8sDeleteTitle', { kind: confirmDelete.row.kind })}
           message={t('k8sDeleteConfirm', {
             kind: confirmDelete.row.kind,

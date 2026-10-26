@@ -68,6 +68,45 @@ test('the panel lists the current context and shows the row YAML', async ({ page
   expect(named[0]?.args).toMatchObject({ kind: 'pods', namespace: 'apps', context: 'prod' })
 })
 
+// The dialogs sit on top of the list they were opened from, so each one moves: the
+// grab handle is the header and nothing else, and the offset is per opening.
+test('a dialog drags by its header and reopens centred', async ({ page }) => {
+  await boot(page)
+
+  const box = page.locator('.k8s-modal')
+  const at = () =>
+    box.evaluate((el) => {
+      const r = el.getBoundingClientRect()
+      return { x: r.x, y: r.y }
+    })
+
+  await page.locator('.k8s-item').click()
+  await expect(box).toHaveCount(1)
+  const centred = await at()
+
+  const grip = await page.locator('.k8s-modal .modal-header').evaluate((el) => {
+    const r = el.getBoundingClientRect()
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+  })
+  await page.mouse.move(grip.x, grip.y)
+  await page.mouse.down()
+  await page.mouse.move(grip.x + 60, grip.y + 40, { steps: 4 })
+  await page.mouse.up()
+  expect(await at()).toEqual({ x: centred.x + 60, y: centred.y + 40 })
+
+  // The close affordance in that same header still closes rather than drags.
+  await page.locator('.k8s-modal-close').click()
+  await expect(box).toHaveCount(0)
+
+  await page.locator('.k8s-item').click()
+  await expect(box).toHaveCount(1)
+  expect(await at()).toEqual(centred)
+
+  // Backdrop press still dismisses.
+  await page.mouse.click(12, 12)
+  await expect(box).toHaveCount(0)
+})
+
 test('logs stream into the viewer and delete is scoped to its namespace', async ({ page }) => {
   await boot(page)
 

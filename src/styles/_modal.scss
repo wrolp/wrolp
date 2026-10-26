@@ -170,6 +170,15 @@
   }
 }
 
+// Dialogs moved by their header (components/DraggableModal.tsx). The cursor is the
+// only affordance that says "grab here", so it goes on the handle and not on the box,
+// and `user-select` keeps the title out of the clipboard mid-drag — same as a
+// floating pane's header.
+.modal.is-draggable > .modal-header {
+  cursor: move;
+  user-select: none;
+}
+
 // Multi-line paste confirmation (B20 / PasteConfirmDialog)
 .paste-confirm-dialog {
   width: 520px;
