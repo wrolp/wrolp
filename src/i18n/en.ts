@@ -824,6 +824,16 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   aiChatSugHidden: 'Hidden',
   aiChatSugHide: 'Hide',
   aiChatSugRestore: 'Restore',
+  // Groups are the custom categories the templates carry: rename rewrites every
+  // template in the group, delete drops them back to "No category".
+  aiChatSugGroups: 'Groups',
+  aiChatSugGroupsEmpty:
+    'No custom groups yet. Give a template a custom category and it appears here.',
+  aiChatSugGroupCount: '{n} templates',
+  aiChatSugRenameGroup: 'Rename group',
+  aiChatSugDeleteGroup: 'Delete group',
+  aiChatSugDeleteGroupHint: 'Delete the group and move its templates to No category',
+  aiChatSugNewGroup: 'New group',
   sugExplainError: 'Explain this error and how to fix it',
   sugTopProcesses: 'Show the processes using the most CPU and memory, and suggest optimizations',
   sugDiskUsage: 'Find the directories and files consuming the most disk space',

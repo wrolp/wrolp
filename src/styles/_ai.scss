@@ -817,6 +817,15 @@
   }
 }
 
+// Inline rename inside a group row: the row is already a card, so the field only
+// has to read as editable text at the row's own size.
+.ai-tmpl-rename-input {
+  padding: 3px 8px;
+  font-weight: 600;
+  border-radius: var(--r-2);
+  background: $bg-secondary;
+}
+
 .ai-tmpl-form-actions {
   display: flex;
   gap: 8px;
@@ -1716,6 +1725,44 @@
 
     &:hover:not(:disabled) {
       background: $accent-hover;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  // The dropdown footer is one row: the accent "new template" takes the width
+  // and a square ghost button next to it opens the manager.
+  .ai-chat-template-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+
+    .ai-chat-template-new {
+      flex: 1;
+      width: auto;
+      margin-top: 0;
+    }
+  }
+
+  .ai-chat-template-manage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 30px;
+    padding: 6px;
+    background: transparent;
+    border: 1px solid $border;
+    border-radius: var(--r-2);
+    color: $text-secondary;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      color: $text-primary;
+      border-color: $accent;
     }
 
     &:disabled {

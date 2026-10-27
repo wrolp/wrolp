@@ -48,6 +48,8 @@ export interface TauriMockOptions {
    * Provide a full `AiConfig` (with at least one profile) to exercise the AI dock.
    */
   aiConfig?: Record<string, unknown>
+  /** Seeded rows for the stateful prompt-template store (see `save_ai_prompt_template`). */
+  aiPromptTemplates?: Array<Record<string, unknown>>
   /** Value returned by `list_files` (the file panel's directory listing). */
   fileEntries?: unknown[]
   /**
@@ -205,6 +207,11 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     let hostIndex: Array<Record<string, unknown>> = (opts.hostCommands ?? []).map((r) => ({
       ...r,
     }))
+    // Stateful prompt-template store: the AI panel re-reads it after every save,
+    // so a rename that only writes back the same rows would not be visible.
+    const promptTemplates: Array<Record<string, unknown>> = (opts.aiPromptTemplates ?? []).map(
+      (r) => ({ ...r }),
+    )
     // Every invoke is recorded here so tests can assert backend interactions
     // (e.g. "connect was called", "poll_output stopped after connection-closed").
     const invoked: Array<{ cmd: string; args: Record<string, unknown> }> = []
@@ -327,10 +334,28 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_local_drives':
           case 'list_tunnels':
           case 'list_global_variables':
-          case 'list_ai_prompt_templates':
           case 'list_hidden_builtin_templates':
           case 'list_ai_models':
             return []
+          // The AI prompt templates live in the stateful store above, so the
+          // manager's save / delete / group-rename change what the next read
+          // returns instead of replaying the seeded rows.
+          case 'list_ai_prompt_templates':
+            return promptTemplates.map((r) => ({ ...r }))
+          case 'save_ai_prompt_template': {
+            const tpl = args.template as Record<string, unknown>
+            const i = promptTemplates.findIndex((r) => r.id === tpl.id)
+            if (i >= 0) promptTemplates[i] = tpl
+            else promptTemplates.push(tpl)
+            return String(tpl.id ?? '')
+          }
+          case 'delete_ai_prompt_template': {
+            const id = String(args.id)
+            for (let i = promptTemplates.length - 1; i >= 0; i--) {
+              if (promptTemplates[i].id === id) promptTemplates.splice(i, 1)
+            }
+            return null
+          }
           // The recorder's session list (the Sessions rail mode).
           case 'list_sessions':
             return opts.sessions ?? []

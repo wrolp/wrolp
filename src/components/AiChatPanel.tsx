@@ -531,6 +531,61 @@ export default function AiChatPanel({
     [loadUserTemplates],
   )
 
+  // Group (custom category) editing. A group is nothing but the `category`
+  // string its templates carry, so renaming rewrites every member and deleting
+  // drops them back to "no category". Built-in groups are i18n-driven and stay
+  // out of this list on purpose.
+  const [renamingGroup, setRenamingGroup] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [groupBusy, setGroupBusy] = useState(false)
+
+  const applyGroupCategory = useCallback(
+    async (from: string, to: string) => {
+      setGroupBusy(true)
+      try {
+        const now = new Date().toISOString()
+        for (const tpl of userTemplates) {
+          if ((tpl.category ?? '').trim() !== from) continue
+          await saveAiPromptTemplate({ ...tpl, category: to, updatedAt: now })
+        }
+      } catch {
+        // ignore
+      } finally {
+        setGroupBusy(false)
+        await loadUserTemplates()
+      }
+    },
+    [userTemplates, loadUserTemplates],
+  )
+
+  const commitRenameGroup = useCallback(async () => {
+    const from = renamingGroup
+    const to = renameValue.trim()
+    setRenamingGroup(null)
+    if (!from || to.length === 0 || to === from) return
+    await applyGroupCategory(from, to)
+  }, [renamingGroup, renameValue, applyGroupCategory])
+
+  const handleDeleteGroup = useCallback(
+    async (from: string) => {
+      setRenamingGroup(null)
+      await applyGroupCategory(from, '')
+    },
+    [applyGroupCategory],
+  )
+
+  // A group only exists once some template carries its name, so "new group" is
+  // the template form with the custom-category field already picked.
+  const openNewGroup = useCallback(() => {
+    setEditingTemplate(null)
+    setTmplName('')
+    setTmplPrompt('')
+    setTmplCategory('__custom__')
+    setTmplCategoryCustom('')
+    setTmplFormOpen(true)
+    setShowTemplateManager(true)
+  }, [])
+
   // Hide/restore built-in templates (soft delete: persists the i18n key).
   const handleHideBuiltin = useCallback(
     async (key: string) => {
@@ -1940,6 +1995,25 @@ export default function AiChatPanel({
                         </div>
                       )
                     })}
+                    {Array.from(customByBuiltin.otherGroups.entries()).map(([cat, tpls]) => (
+                      <div className="ai-chat-template-group" key={cat}>
+                        <div className="ai-chat-template-group-title">{cat}</div>
+                        {tpls.map((tpl) => (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            className="ai-chat-template-item"
+                            title={tpl.prompt}
+                            onClick={() => {
+                              fillInput(tpl.prompt)
+                              setTemplatePickerOpen(false)
+                            }}
+                          >
+                            {tpl.name}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
                     {customByBuiltin.generic.length > 0 && (
                       <div className="ai-chat-template-group">
                         <div className="ai-chat-template-group-title">{t('aiChatSugCustom')}</div>
@@ -1959,18 +2033,37 @@ export default function AiChatPanel({
                         ))}
                       </div>
                     )}
-                    <button
-                      type="button"
-                      className="ai-chat-template-new"
-                      onClick={() => {
-                        setTemplatePickerOpen(false)
-                        openNewTemplate()
-                      }}
-                      disabled={streaming}
-                    >
-                      <Icon name="plus" size={12} />
-                      {t('aiChatSugNew')}
-                    </button>
+                    <div className="ai-chat-template-actions">
+                      {/* The pencil leads the row: the dropdown is anchored at the
+                          sparkles button and runs off the window edge in a
+                          right-docked inspector, so anything on its right is
+                          unreachable. */}
+                      <button
+                        type="button"
+                        className="ai-chat-template-manage"
+                        onClick={() => {
+                          setTemplatePickerOpen(false)
+                          openTemplateManager()
+                        }}
+                        disabled={streaming}
+                        title={t('aiChatSugManage')}
+                        aria-label={t('aiChatSugManage')}
+                      >
+                        <Icon name="edit" size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ai-chat-template-new"
+                        onClick={() => {
+                          setTemplatePickerOpen(false)
+                          openNewTemplate()
+                        }}
+                        disabled={streaming}
+                      >
+                        <Icon name="plus" size={12} />
+                        {t('aiChatSugNew')}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2146,6 +2239,92 @@ export default function AiChatPanel({
                     ))}
                   </>
                 )}
+
+                <div className="ai-tmpl-section-title">{t('aiChatSugGroups')}</div>
+                {customByBuiltin.otherGroups.size === 0 ? (
+                  <div className="ai-tmpl-empty">{t('aiChatSugGroupsEmpty')}</div>
+                ) : (
+                  Array.from(customByBuiltin.otherGroups.entries()).map(([cat, tpls]) => (
+                    <div className="ai-tmpl-item" key={`group:${cat}`}>
+                      <div className="ai-tmpl-item-body">
+                        {renamingGroup === cat ? (
+                          <input
+                            className="ai-tmpl-input ai-tmpl-rename-input"
+                            value={renameValue}
+                            autoFocus
+                            disabled={groupBusy}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void commitRenameGroup()
+                              if (e.key === 'Escape') setRenamingGroup(null)
+                            }}
+                          />
+                        ) : (
+                          <div className="ai-tmpl-item-name">{cat}</div>
+                        )}
+                        <div className="ai-tmpl-item-prompt">
+                          {t('aiChatSugGroupCount').replace('{n}', String(tpls.length))}
+                        </div>
+                      </div>
+                      <div className="ai-tmpl-item-actions">
+                        {renamingGroup === cat ? (
+                          <>
+                            <button
+                              type="button"
+                              className="ai-tmpl-item-edit"
+                              onClick={() => void commitRenameGroup()}
+                              disabled={groupBusy || renameValue.trim().length === 0}
+                              title={t('save')}
+                            >
+                              <Icon name="check" size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="ai-tmpl-item-edit"
+                              onClick={() => setRenamingGroup(null)}
+                              title={t('cancel')}
+                            >
+                              <Icon name="x" size={12} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="ai-tmpl-item-edit"
+                              onClick={() => {
+                                setRenamingGroup(cat)
+                                setRenameValue(cat)
+                              }}
+                              disabled={groupBusy}
+                              title={t('aiChatSugRenameGroup')}
+                            >
+                              <Icon name="edit" size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="ai-tmpl-item-del"
+                              onClick={() => void handleDeleteGroup(cat)}
+                              disabled={groupBusy}
+                              title={t('aiChatSugDeleteGroupHint')}
+                            >
+                              <Icon name="trash" size={12} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+                <button
+                  type="button"
+                  className="ai-tmpl-add-new"
+                  onClick={openNewGroup}
+                  disabled={groupBusy}
+                >
+                  <Icon name="plus" size={12} />
+                  {t('aiChatSugNewGroup')}
+                </button>
 
                 <div className="ai-tmpl-section-title">{t('aiChatSugCustom')}</div>
                 {userTemplates.length === 0 ? (
