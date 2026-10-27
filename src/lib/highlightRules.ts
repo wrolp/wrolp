@@ -684,6 +684,42 @@ const IPV4_PORT_SPLIT_RE = new RegExp(`^(${IPV4}):(\\d{1,5})$`)
 const IPV6_WILDCARD_SPLIT_RE = /^(::)(:.*)$/
 /** A port field that should take the port color (digits only, like IPv4). */
 const PORT_DIGITS_RE = /^:\d{1,5}$/
+/**
+ * Split a *bare* (unbracketed) IPv6 whose compressed tail is `::<digits>`
+ * (`2408:8215:2a:65c1::5080` → `2408:8215:2a:65c1::` + `5080`). netstat glues
+ * the Local Address column as `addr` + `port`, and an address ending in `::`
+ * already supplies the separator — so that string is *also* a legal IPv6 whose
+ * last hextet is `5080`. The split is therefore only ever correct in socket-table
+ * context (see SOCKET_ROW_HEAD_RE / inSocketRow); nowhere else may it run.
+ * A tail holding more than one group (`2001:db8::1:8080`) cannot match, and
+ * neither can a zone (`…::1%eth0`) or a CIDR (`…::/64`), because the digits must
+ * end the token.
+ */
+const IPV6_ADDR_PORT_SPLIT_RE = /^(.*::)(\d{1,5})$/
+/**
+ * A netstat socket row: the protocol cell (`tcp6`, `udp`, `raw6`, …) opens the
+ * line, followed by Recv-Q. Checked against the text between the line start and
+ * the address token, so a `tcp6` appearing anywhere else on a line is not enough.
+ */
+const SOCKET_ROW_HEAD_RE = /^[ \t]*(?:tcp|udp|raw)[0-9a-z]*(?:to[0-9])?[ \t]/i
+/** The same, anchored at the token's end instead of slicing the tail off: a run
+ *  handed to the streamer can be hundreds of KB, and this runs per IPv6 match. */
+const SOCKET_ROW_FOREIGN_RE = /[ \t]+:::/y
+/**
+ * Is the token spanning [i,end) a netstat Local Address cell? Two signals,
+ * either one is enough:
+ *  - the line it sits on opens with the protocol cell;
+ *  - the next cell is the wildcard Foreign Address (`:::*`), which netstat
+ *    always prints right after the local one. This covers a row whose head was
+ *    cut off by an output-chunk boundary, where the line prefix is no longer in
+ *    the text being colorized.
+ */
+function inSocketRow(text: string, i: number, end: number): boolean {
+  const nl = Math.max(text.lastIndexOf('\n', i - 1), text.lastIndexOf('\r', i - 1))
+  if (SOCKET_ROW_HEAD_RE.test(text.slice(nl + 1, i))) return true
+  SOCKET_ROW_FOREIGN_RE.lastIndex = end
+  return SOCKET_ROW_FOREIGN_RE.test(text)
+}
 
 const CATEGORY_PATTERNS: Record<CategoryKey, RegExp> = {
   url: URL_RE,
@@ -816,6 +852,27 @@ export function compileHighlighter(
           last = i + full.length
           continue
         }
+        // netstat's non-wildcard tcp6 cell (`2408:8215:2a:65c1::5080`): the
+        // address ends in its own `::`, which doubles as the `addr`/`port`
+        // separator, so the port has no colon of its own to be found by
+        // PORT_RE. Only in socket-table rows — anywhere else the digits are a
+        // legitimate last hextet and must keep the address color.
+        if (active.has('port') && inSocketRow(text, i, i + full.length)) {
+          const sm = IPV6_ADDR_PORT_SPLIT_RE.exec(full)
+          if (sm) {
+            const ipPart = sm[1]
+            const portPart = sm[2]
+            units.push({ a: i, b: i + ipPart.length, text: ipPart, color })
+            units.push({
+              a: i + ipPart.length,
+              b: i + full.length,
+              text: portPart,
+              color: active.get('port'),
+            })
+            last = i + full.length
+            continue
+          }
+        }
       }
       const shownEnd = i + shown.length
       if (shown) units.push({ a: i, b: shownEnd, text: shown, color })
@@ -937,4 +994,7 @@ export const HIGHLIGHT_SAMPLE =
   'https://example.com/x?v=1 · /var/log/app.log · v1.21.0 · go1.22.5 · commit a3f8c1e · 0x1F · ' +
   '1.2ms · Wed Sep  9 10:46:20 2026 · C:\\Program Files\\nodejs\\node.exe · ' +
   // netstat tcp6 wildcard address: `:::<port>` (B23) — must NOT read as IPv6.
-  ':::8086 · :::48080 · :::* · error: timeout'
+  // B59: the non-wildcard cell `2408:8215:2a:65c1::5080` — the address ends in
+  // its own `::`, so the digits after it are the port. The `:::*` that follows
+  // is what marks the row as a socket table.
+  ':::8086 · :::48080 · :::* · tcp6 2408:8215:2a:65c1::5080 :::* · error: timeout'

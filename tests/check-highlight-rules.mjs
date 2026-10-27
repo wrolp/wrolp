@@ -1,4 +1,4 @@
-// Self-check for the terminal output highlighting patterns (B23 + regressions).
+// Self-check for the terminal output highlighting patterns (B23 + B59 + regressions).
 //
 // Run with:  node tests/check-highlight-rules.mjs
 //
@@ -70,6 +70,52 @@ check('tcp6 rows split consistently for 4- and 5-digit ports', () => {
       [portField],
     )
   }
+})
+
+// ---------------------------------------------------------------------------
+// B59 — netstat's *non*-wildcard tcp6 cell `2408:8215:2a:65c1::5080`: the
+// address ends in its own `::`, which doubles as the addr/port separator, so
+// the port must still take the port color — but ONLY in a socket-table row.
+// ---------------------------------------------------------------------------
+const SOCKET_ROWS = [
+  'tcp6       0      0 2408:8215:2a:65c1::5080 :::*                    LISTEN',
+  'tcp6       0      0 2408:8215:2a:65c1::5060 :::*                    LISTEN',
+]
+for (const row of SOCKET_ROWS) {
+  check(`socket row splits ${JSON.stringify(row.slice(16, 40))} into addr + port`, () => {
+    const port = row.match(/(\d+) :::/)[1]
+    assert.equal(colorAt(row, `2408:8215:2a:65c1::`), ipColor)
+    assert.equal(colorAt(row, port), portColor)
+  })
+}
+check('a row whose head was cut by a chunk boundary still splits', () => {
+  // No `tcp6` prefix left — the wildcard Foreign Address cell is the signal.
+  const row = ' 0      0 2408:8215:2a:65c1::5080 :::* LISTEN'
+  assert.equal(colorAt(row, '2408:8215:2a:65c1::'), ipColor)
+  assert.equal(colorAt(row, '5080'), portColor)
+})
+check('the same address outside a socket row keeps the port as address color', () => {
+  for (const t of ['2408:8215:2a:65c1::5080', 'ping 2408:8215:2a:65c1::5080 ok']) {
+    assert.equal(colorAt(t, '2408:8215:2a:65c1::5080'), ipColor)
+    assert.equal(hasColor(t, portColor), false)
+  }
+})
+check('a socket row keeps a multi-group or suffixed tail as one address', () => {
+  for (const addr of ['2001:db8::1:8080', 'fe80::1%eth0', '2001:db8::/64', '::ffff:1.2.3.4']) {
+    assert.equal(colorAt(`tcp6  0  0 ${addr}  :::*  LISTEN`, addr), ipColor)
+  }
+})
+check('socket-row split is skipped when the port rule is off', () => {
+  const off = compileHighlighter(
+    cfg.rules.map((r) => (r.key === 'port' ? { ...r, enabled: false } : r)),
+    cfg.custom,
+  )
+  const [row] = SOCKET_ROWS
+  assert.equal(
+    off.annotate(row).some((s) => s.text === '2408:8215:2a:65c1::'),
+    false,
+  )
+  assert.equal(off.annotate(row).find((s) => s.text === '2408:8215:2a:65c1::5080').color, ipColor)
 })
 
 // ---------------------------------------------------------------------------
