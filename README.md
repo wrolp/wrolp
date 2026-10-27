@@ -149,6 +149,7 @@
 - Chat panel (`AiChatPanel`) with two modes:
   - **Chat** (non-streaming `ai_chat_sync`).
   - **Agent** (streaming with tool calling, `run_agent_stream`) — a full agent loop that can call tools on the connected servers.
+- **Two separate chats**: the inspector column's AI tab is the app-level conversation — it belongs to no terminal, opens with zero sessions running, and the backend refuses every shell tool for its runs. Terminal-bound help lives in each pane's own docked AI, where `run_command`, file reads and **Send to terminal** are available.
 - **Multimodal input**: attach images to a message (the backend accepts `content` as structured multi-part via `openai_content`), so the model can reason about screenshots, diagrams, etc. Images can also be pasted straight into the chat input; click a thumbnail for a full-size preview.
 - **Send to terminal**: send AI-generated code blocks or selected text to the active pane, routed by connection type (SSH, local shell, serial, Telnet). The text is inserted without being executed, so you can review it first.
 - **Templates & re-send**: insert prompts from a template dropdown next to the image button; **edit and re-send** any previous message (re-runs from the edited content).

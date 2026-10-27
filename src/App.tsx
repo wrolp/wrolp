@@ -2634,6 +2634,10 @@ export default function App() {
     toolCallFormat: 'nested',
   })
   const [aiConversations, setAiConversations] = useState<Record<number, AiConv>>({})
+  // The inspector column's conversation. It belongs to no terminal: switching
+  // panes or closing every tab leaves this transcript where it is, which is why
+  // it is kept out of the per-tab `aiConversations` record altogether.
+  const [aiGlobalConv, setAiGlobalConv] = useState<AiConv>(emptyConv())
   // Which shell tabs have their AI pane open (docked).
   const [showAiByTab, setShowAiByTab] = useState<Record<number, boolean>>({})
   // Dock side of the AI pane per shell tab: 'right' | 'left' | 'top' | 'bottom'.
@@ -3777,13 +3781,11 @@ export default function App() {
     handleOpenSettings()
   }, [handleOpenSettings])
 
-  // Open AI chat. The conversation belongs to the focused pane (see
-  // `focusedLeafTabId`), and the panel that shows it lives in the inspector
-  // column, so the terminal stays visible while it runs — the reason this
-  // replaced both the full-screen AI tab and the "ask from anywhere lands in a
-  // separate tab" behaviour. `contextText` is handed to that one panel; the
-  // per-pane dock reads the same conversation but never consumes it, otherwise
-  // an open dock and the inspector would each inject the selection once.
+  // Open AI chat. The conversation shown here is the app-level one in the
+  // inspector column — no terminal owns it, so the terminal stays visible while
+  // it runs and it survives closing every tab. `contextText` (a terminal
+  // selection offered by "Ask AI") is injected into that one global panel; the
+  // per-pane dock keeps its own separate conversation and never consumes it.
   const handleOpenAiChat = useCallback(
     (contextText?: string) => {
       if (contextText) setAiContextText(contextText)
@@ -5565,43 +5567,22 @@ export default function App() {
     isTelnet: type === 'telnet',
   })
 
-  // The inspector's AI surface. It binds to the *focused pane* rather than the
-  // top-level tab, because that is the session the assistant reads and writes to
-  // and each split pane owns its own conversation.
-  //
-  // `key` on the tab id is what makes that safe: the conversation itself is App
-  // state, but the panel also holds per-run state locally — the agent run id,
-  // the images staged for the next message, the tool calls the user already
-  // acted on. Reusing one instance across two tabs would leak a live run from
-  // one conversation into the other.
-  const aiTargetTab =
-    focusedLeafTabId != null
-      ? tabs.find((t) => t.tabId === focusedLeafTabId && t.tabType !== 'settings')
-      : undefined
-  const aiPanelNode = !aiTargetTab ? (
-    <div className="inspector-empty">{t('aiNoTarget')}</div>
-  ) : aiTargetTab.tabId === aiFloatingTabId ? (
-    // Same convention as the per-pane dock, which also steps aside while its
-    // tab's chat lives in the floating window — two views of one conversation
-    // would mean two send boxes moving in lockstep.
-    <div className="inspector-empty">{t('aiPoppedOut')}</div>
-  ) : !activeProfile ? (
+  // The inspector's AI surface: the app-level chat. No terminal owns it, so it
+  // renders unbound (`tabId={null}`) and the backend refuses every shell tool for
+  // its runs. A conversation that should type into a session lives in that
+  // pane's own dock instead, and switching panes leaves this one alone.
+  const aiPanelNode = !activeProfile ? (
     <div className="inspector-empty">{t('aiConfigRequired')}</div>
   ) : (
     <AiChatPanel
-      key={aiTargetTab.tabId}
-      tabId={aiTargetTab.tabId}
-      isLocal={connFlagsForType(aiTargetTab.tabType).isLocal}
-      isSerial={connFlagsForType(aiTargetTab.tabType).isSerial}
-      isTelnet={connFlagsForType(aiTargetTab.tabType).isTelnet}
+      tabId={null}
       config={activeProfile}
       profiles={aiConfig?.profiles ?? []}
       onSelectProfile={handleSelectAiProfile}
       onSelectModel={handleSelectAiModel}
-      conv={getAiConv(aiTargetTab.tabId)}
-      setConv={(u) => setAiConv(aiTargetTab.tabId, u)}
+      conv={aiGlobalConv}
+      setConv={setAiGlobalConv}
       floating={false}
-      onToggleFloat={() => setAiFloatingTabId(aiTargetTab.tabId)}
       onClose={hideInspector}
       onAddCommandSnippet={handleAddCommandSnippet}
       initialContext={aiContextText}
@@ -6513,113 +6494,6 @@ export default function App() {
                     <p>{t(settingsPane.desc)}</p>
                   </div>
 
-                  {/* The assistant's own look (bubble style, streaming) sat under
-                      「General」 only because that was the pane that held everything. */}
-                  <AiAppearanceSettingsCard />
-
-                  <div className="settings-card">
-                    <div className="settings-card-header">
-                      <div className="settings-card-icon">
-                        <Icon name="lock" size={16} />
-                      </div>
-                      <div>
-                        <h3 className="settings-card-title">{t('aiModeTitle')}</h3>
-                        <p className="settings-card-sub">{t('aiModeDesc')}</p>
-                      </div>
-                    </div>
-                    <select
-                      className="settings-select"
-                      value={aiConfig?.defaultMode ?? 'command'}
-                      onChange={(e) => {
-                        setAiConfig((prev) => {
-                          if (!prev) return prev
-                          const next = {
-                            ...prev,
-                            defaultMode: e.target.value as 'chat' | 'command' | 'read_only',
-                          }
-                          saveAiConfig(next).catch(() => {})
-                          return next
-                        })
-                      }}
-                    >
-                      <option value="chat">{t('aiModeChat')}</option>
-                      <option value="command">{t('aiModeCommand')}</option>
-                      <option value="read_only">{t('aiModeReadOnly')}</option>
-                    </select>
-                  </div>
-
-                  <div className="settings-card">
-                    <div className="settings-card-header">
-                      <div className="settings-card-icon">
-                        <Icon name="terminal" size={16} />
-                      </div>
-                      <div>
-                        <h3 className="settings-card-title">{t('aiRunInTerminal')}</h3>
-                        <p className="settings-card-sub">{t('aiRunInTerminalDesc')}</p>
-                      </div>
-                    </div>
-                    <label className="settings-checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={aiConfig?.runInTerminal ?? true}
-                        onChange={(e) => {
-                          setAiConfig((prev) => {
-                            if (!prev) return prev
-                            const next = { ...prev, runInTerminal: e.target.checked }
-                            saveAiConfig(next).catch(() => {})
-                            return next
-                          })
-                        }}
-                      />
-                      <span>{t('aiRunInTerminalOn')}</span>
-                    </label>
-                  </div>
-
-                  <div className="settings-card">
-                    <div className="settings-card-header">
-                      <div className="settings-card-icon">
-                        <Icon name="refresh" size={16} />
-                      </div>
-                      <div>
-                        <h3 className="settings-card-title">{t('aiMaxRounds')}</h3>
-                        <p className="settings-card-sub">{t('aiMaxRoundsDesc')}</p>
-                      </div>
-                    </div>
-                    <label className="settings-number-label">
-                      <input
-                        type="number"
-                        min={0}
-                        max={1000}
-                        value={aiMaxRoundsText}
-                        onChange={(e) => {
-                          const raw = e.target.value
-                          setAiMaxRoundsText(raw)
-                          if (raw === '') return
-                          const parsed = parseInt(raw, 10)
-                          const n = Math.max(0, Math.min(1000, Number.isNaN(parsed) ? 200 : parsed))
-                          setAiConfig((prev) => {
-                            if (!prev) return prev
-                            const next = { ...prev, maxAgentRounds: n }
-                            saveAiConfig(next).catch(() => {})
-                            return next
-                          })
-                        }}
-                        onBlur={() => {
-                          if (aiMaxRoundsText.trim() === '') {
-                            setAiMaxRoundsText('200')
-                            setAiConfig((prev) => {
-                              if (!prev) return prev
-                              const next = { ...prev, maxAgentRounds: 200 }
-                              saveAiConfig(next).catch(() => {})
-                              return next
-                            })
-                          }
-                        }}
-                      />
-                      <span>{t('aiMaxRoundsUnit')}</span>
-                    </label>
-                  </div>
-
                   {aiConfig && aiConfig.profiles.length > 0 && (
                     <div className="settings-card">
                       <div className="settings-card-header">
@@ -7044,6 +6918,113 @@ export default function App() {
                       </button>
                     </div>
                   )}
+
+                  {/* The assistant's own look (bubble style, streaming) sat under
+                      「General」 only because that was the pane that held everything. */}
+                  <AiAppearanceSettingsCard />
+
+                  <div className="settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-icon">
+                        <Icon name="lock" size={16} />
+                      </div>
+                      <div>
+                        <h3 className="settings-card-title">{t('aiModeTitle')}</h3>
+                        <p className="settings-card-sub">{t('aiModeDesc')}</p>
+                      </div>
+                    </div>
+                    <select
+                      className="settings-select"
+                      value={aiConfig?.defaultMode ?? 'command'}
+                      onChange={(e) => {
+                        setAiConfig((prev) => {
+                          if (!prev) return prev
+                          const next = {
+                            ...prev,
+                            defaultMode: e.target.value as 'chat' | 'command' | 'read_only',
+                          }
+                          saveAiConfig(next).catch(() => {})
+                          return next
+                        })
+                      }}
+                    >
+                      <option value="chat">{t('aiModeChat')}</option>
+                      <option value="command">{t('aiModeCommand')}</option>
+                      <option value="read_only">{t('aiModeReadOnly')}</option>
+                    </select>
+                  </div>
+
+                  <div className="settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-icon">
+                        <Icon name="terminal" size={16} />
+                      </div>
+                      <div>
+                        <h3 className="settings-card-title">{t('aiRunInTerminal')}</h3>
+                        <p className="settings-card-sub">{t('aiRunInTerminalDesc')}</p>
+                      </div>
+                    </div>
+                    <label className="settings-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={aiConfig?.runInTerminal ?? true}
+                        onChange={(e) => {
+                          setAiConfig((prev) => {
+                            if (!prev) return prev
+                            const next = { ...prev, runInTerminal: e.target.checked }
+                            saveAiConfig(next).catch(() => {})
+                            return next
+                          })
+                        }}
+                      />
+                      <span>{t('aiRunInTerminalOn')}</span>
+                    </label>
+                  </div>
+
+                  <div className="settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-icon">
+                        <Icon name="refresh" size={16} />
+                      </div>
+                      <div>
+                        <h3 className="settings-card-title">{t('aiMaxRounds')}</h3>
+                        <p className="settings-card-sub">{t('aiMaxRoundsDesc')}</p>
+                      </div>
+                    </div>
+                    <label className="settings-number-label">
+                      <input
+                        type="number"
+                        min={0}
+                        max={1000}
+                        value={aiMaxRoundsText}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          setAiMaxRoundsText(raw)
+                          if (raw === '') return
+                          const parsed = parseInt(raw, 10)
+                          const n = Math.max(0, Math.min(1000, Number.isNaN(parsed) ? 200 : parsed))
+                          setAiConfig((prev) => {
+                            if (!prev) return prev
+                            const next = { ...prev, maxAgentRounds: n }
+                            saveAiConfig(next).catch(() => {})
+                            return next
+                          })
+                        }}
+                        onBlur={() => {
+                          if (aiMaxRoundsText.trim() === '') {
+                            setAiMaxRoundsText('200')
+                            setAiConfig((prev) => {
+                              if (!prev) return prev
+                              const next = { ...prev, maxAgentRounds: 200 }
+                              saveAiConfig(next).catch(() => {})
+                              return next
+                            })
+                          }
+                        }}
+                      />
+                      <span>{t('aiMaxRoundsUnit')}</span>
+                    </label>
+                  </div>
                 </div>
               )}
             </div>

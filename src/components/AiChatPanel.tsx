@@ -46,7 +46,7 @@ const CHAT_MODES: { value: ChatMode; icon: IconName; labelKey: TranslationKey }[
 
 // Map markdown elements to our existing chat styles so the look stays
 // consistent with the previous (hand-rolled) renderer.
-function makeMarkdownComponents(onSendToShell: (text: string) => void) {
+function makeMarkdownComponents(onSendToShell: ((text: string) => void) | undefined) {
   return {
     code(props: { className?: string; children?: React.ReactNode }) {
       const { className, children } = props
@@ -180,7 +180,10 @@ interface AiChatPanelProps {
   onSelectProfile: (id: string) => void
   /** Change the model for the current endpoint (persisted by the parent). */
   onSelectModel: (model: string) => void
-  tabId: number
+  /** The shell tab this conversation is bound to. `null` for the global chat in
+   *  the inspector column: it has no terminal, so every shell-facing affordance
+   *  (send-to-terminal, the tool registry the backend offers) is disabled. */
+  tabId: number | null
   /** Conversation state for this tab, owned by App (per-shell persistence). */
   conv: AiConv
   setConv: (updater: AiConv | ((c: AiConv) => AiConv)) => void
@@ -298,6 +301,10 @@ export default function AiChatPanel({
     showSuggestions,
     toolCallFormat,
   } = conv
+
+  // Whether this conversation owns a shell. The global chat has none, so it
+  // must not offer anything that types into one.
+  const shellBound = tabId != null
 
   // AI chat mode: "chat" (plain text only, no tools), "command" (full access,
   // all commands allowed), or "read_only" (inspection commands only).
@@ -554,6 +561,7 @@ export default function AiChatPanel({
   // terminal's own input.
   const handleSendToShell = useCallback(
     (text: string) => {
+      if (tabId == null) return
       const trimmed = text.replace(/\s+$/, '')
       if (trimmed.length === 0) return
       // Only insert the text — never auto-execute. Backends write raw bytes
@@ -581,7 +589,10 @@ export default function AiChatPanel({
   // floating selection toolbar appearing) don't force react-markdown to
   // re-parse and rebuild the DOM — which would wipe the native text selection
   // highlight and make selecting feel sluggish.
-  const mdComponents = useMemo(() => makeMarkdownComponents(handleSendToShell), [handleSendToShell])
+  const mdComponents = useMemo(
+    () => makeMarkdownComponents(shellBound ? handleSendToShell : undefined),
+    [shellBound, handleSendToShell],
+  )
 
   // Right-click context menu for a text selection inside the chat.
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -1523,9 +1534,13 @@ export default function AiChatPanel({
               <Icon name="sparkles" size={32} />
             </div>
             <h3 className="ai-chat-empty-title">{t('aiChatEmptyTitle')}</h3>
-            <p className="ai-chat-empty-text">{t('aiChatEmptyText')}</p>
+            <p className="ai-chat-empty-text">
+              {t(shellBound ? 'aiChatEmptyText' : 'aiChatGlobalEmptyText')}
+            </p>
             <p className="ai-chat-empty-hint">
-              {t('aiChatEmptyHint').replace('“Ask AI”', '“' + t('aiChatAskAi') + '”')}
+              {shellBound
+                ? t('aiChatEmptyHint').replace('“Ask AI”', '“' + t('aiChatAskAi') + '”')
+                : t('aiChatGlobalEmptyHint')}
             </p>
 
             {showSuggestions && (
@@ -1707,10 +1722,12 @@ export default function AiChatPanel({
               {t('copy')}
             </div>
             <div className="context-menu-divider" />
-            <div className="context-menu-item" onClick={handleCtxSend}>
-              <Icon name="send" size={14} />
-              {t('sendToShell')}
-            </div>
+            {shellBound && (
+              <div className="context-menu-item" onClick={handleCtxSend}>
+                <Icon name="send" size={14} />
+                {t('sendToShell')}
+              </div>
+            )}
             <div className="context-menu-item" onClick={handleCtxAdd}>
               <Icon name="plus" size={14} />
               {t('addToCommandList')}
@@ -1974,7 +1991,9 @@ export default function AiChatPanel({
             </button>
           </div>
         </div>
-        <div className="ai-chat-input-hint">{t('aiChatInputHint')}</div>
+        <div className="ai-chat-input-hint">
+          {t(shellBound ? 'aiChatInputHint' : 'aiChatGlobalInputHint')}
+        </div>
       </div>
 
       {/* Template manager modal (Plan B) */}

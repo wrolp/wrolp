@@ -1182,6 +1182,21 @@ pub(crate) async fn execute_one_tool(
     serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
   let tool = call.name.as_str();
 
+  // A conversation with no shell binding cannot reach a shell: not through a
+  // bound tab (there is none), not through a `tabId` the model invents, and not
+  // through the LOCAL-execution fallback further down. The tool list already
+  // hides these for an unbound run; this is the refusal that makes it real.
+  if current_tab_id.is_none() && crate::ai::is_shell_tool(tool) {
+    return Ok(
+      serde_json::json!({
+          "error": "Blocked: this conversation is not bound to a terminal, so shell \
+                    tools are unavailable. Answer without running commands, or ask the \
+                    user to open the AI pane docked inside a terminal session."
+      })
+      .to_string(),
+    );
+  }
+
   let outcome: Result<String, String> = match tool {
     "run_command" => {
       // The model is told "pass 0 to run on the local machine", which would

@@ -354,6 +354,7 @@ pub async fn start_ai_agent(
   // Capture the current server context for the active shell tab (if any) so we
   // can inject it into the system prompt and power the `get_current_server` tool.
   let current_tab_id = tab_id;
+  let shell_bound = current_tab_id.is_some();
   let current_server_context =
     current_tab_id.and_then(|tid| build_current_server_context(&app, tid));
 
@@ -375,10 +376,30 @@ pub async fn start_ai_agent(
     ),
     _ => None,
   };
+  // An unbound conversation (the global chat) has no shell to act on, so it is
+  // told so explicitly — otherwise the model invents a tabId and every call
+  // resolves to nothing.
+  let binding_note = if shell_bound {
+    None
+  } else {
+    Some(
+      "BINDING: this conversation is NOT bound to any terminal or server. Shell tools \
+             (run_command, analyze_server, list_directory, read_file, search_help, \
+             get_current_server) are NOT available to it and will be refused — never call \
+             them and never guess a tabId. Answer from general knowledge and from the tools \
+             you do have (list_connections, the app settings tools). When the user needs a \
+             command actually run, tell them to open the AI pane docked inside a terminal."
+        .to_string(),
+    )
+  };
   let messages_with_context: Vec<crate::ai::AiMessage> = {
     let mut extra = String::new();
     if let Some(ctx) = &current_server_context {
       extra.push_str(ctx);
+      extra.push('\n');
+    }
+    if let Some(note) = &binding_note {
+      extra.push_str(note);
       extra.push('\n');
     }
     if let Some(note) = &mode_note {
@@ -438,10 +459,25 @@ pub async fn start_ai_agent(
     ai_mode,
     on_confirm,
     max_agent_rounds as usize,
-    tools_enabled,
+    agent_tools(tools_enabled, shell_bound),
   );
 
   Ok(chat_id)
+}
+
+/// The tool list for one agent run. `None` means tools are off entirely (chat
+/// mode) — different from "tools on, but no shell access", which is the unbound
+/// registry. Both the start and the confirm/resume path go through here so a
+/// conversation cannot regain shell tools by pausing on a confirmation.
+fn agent_tools(tools_enabled: bool, shell_bound: bool) -> Option<Vec<crate::ai::OpenAiTool>> {
+  if !tools_enabled {
+    return None;
+  }
+  Some(if shell_bound {
+    crate::ai::tool_definitions()
+  } else {
+    crate::ai::tool_definitions_unbound()
+  })
 }
 
 /// Persist an agent-loop pause awaiting user confirmation of a sensitive tool
@@ -499,7 +535,7 @@ fn spawn_agent(
   ai_mode: String,
   on_confirm: impl Fn(Vec<crate::ai::AiMessage>, Vec<crate::ai::OpenAiToolCall>) + Send + 'static,
   max_rounds: usize,
-  tools_enabled: bool,
+  tools: Option<Vec<crate::ai::OpenAiTool>>,
 ) {
   // Parse mode → read_only flag for tool execution.
   let read_only = ai_mode == "read_only";
@@ -529,7 +565,7 @@ fn spawn_agent(
       },
       on_confirm,
       max_rounds,
-      tools_enabled,
+      tools,
     )
     .await;
 
@@ -644,11 +680,13 @@ pub async fn confirm_ai_tool(
     pending.config,
     pending.tool_call_format,
     messages,
-    None,
+    // Keep the conversation's shell binding across the pause: dropping it here
+    // would leave the resumed rounds without a terminal to type into.
+    pending_tab,
     ai_mode,
     on_confirm,
     max_agent_rounds as usize,
-    tools_enabled,
+    agent_tools(tools_enabled, pending_tab.is_some()),
   );
   Ok(())
 }

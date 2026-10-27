@@ -94,3 +94,37 @@ test('the assistant’s own look moved out of General', async ({ page }) => {
   await nav(page).filter({ hasText: 'AI Assistant' }).click()
   await expect(card).toBeVisible()
 })
+
+// The endpoint list is the one thing you must fill in before the assistant does
+// anything, so it leads the pane rather than sitting under the behaviour cards.
+test('the endpoint list leads the AI pane', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await page.setViewportSize({ width: 1100, height: 760 })
+  await installTauriMock(page, {
+    aiConfig: {
+      profiles: [
+        {
+          id: 'p1',
+          name: 'Mock',
+          endpoint: 'https://api.openai.com/v1',
+          apiKeyEnc: 'enc',
+          model: 'gpt-4o',
+          toolCallFormat: 'nested',
+          systemPrompt: '',
+        },
+      ],
+      activeId: 'p1',
+      defaultMode: 'command',
+      runInTerminal: false,
+    },
+  })
+  await page.goto('/')
+  await page.locator('.titlebar-btn.settings-btn').click()
+  await nav(page).filter({ hasText: 'AI Assistant' }).click()
+
+  const titles = page.locator('.settings-pane .settings-card-title')
+  await expect(titles.first()).toHaveText('Endpoints')
+  // Everything the pane used to lead with stays, just behind it.
+  await expect(titles.filter({ hasText: 'AI Mode' })).toHaveCount(1)
+  await expect(titles.filter({ hasText: 'Max rounds per AI run' })).toHaveCount(1)
+})

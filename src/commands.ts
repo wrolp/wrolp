@@ -1148,7 +1148,9 @@ export async function cancelAiChat(chatId: string): Promise<void> {
 
 export async function startAiAgent(
   messages: AiMessage[],
-  tabId?: number,
+  /** The shell tab this conversation is bound to; `null` for the global chat,
+   *  which the backend then keeps away from every shell tool. */
+  tabId?: number | null,
   profile?: AiEndpointProfile,
   aiMode?: string,
   maxAgentRounds?: number,

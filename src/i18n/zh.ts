@@ -320,10 +320,6 @@ const zh: Partial<Record<TranslationKey, string>> = {
   inspDockBack: '停靠回列内',
   inspDockLeft: '停靠到左侧',
   inspDockRight: '停靠到右侧',
-  // The inspector's AI tab is bound to the focused session, so with no session
-  // open there is nothing to answer — say so instead of showing an empty box.
-  aiNoTarget: '打开一个终端后即可与助手对话。',
-  aiPoppedOut: '该对话已在自己的浮动窗口中打开。',
 
   // File panel
   files: '文件',
@@ -700,6 +696,12 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiChatEmptyText:
     '我是面向运维的 AI 助手。我可以在你已连接的服务器上运行只读工具——执行命令、浏览文件、分析系统、排查故障、查看 Docker 与日志——从而给出准确的运维建议。',
   aiChatEmptyHint: '提示：在终端中选中文本，右键并选择“询问 AI”将其作为上下文发送。',
+  // 检查栏里的这份对话不绑定任何终端，所以不能承诺执行命令——它替换上面三条面向终端的文案。
+  aiChatGlobalEmptyText:
+    '我是这个应用与通用运维问题的助手。我可以读取并修改应用设置、列出已保存的连接，但这个对话没有连接任何终端，因此不执行任何命令。',
+  aiChatGlobalEmptyHint:
+    '要让助手在 shell 里干活，请点终端角落的星形按钮，打开那个终端自己的 AI 面板。',
+  aiChatGlobalInputHint: '此对话未绑定终端：不会执行命令，也无法做出破坏性改动。',
   aiChatRoleYou: '你',
   aiChatRoleAi: 'AI',
   copyMessage: '复制',

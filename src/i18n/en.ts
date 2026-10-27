@@ -327,10 +327,6 @@ const en = {
   inspDockBack: 'Dock back into the column',
   inspDockLeft: 'Dock to the left',
   inspDockRight: 'Dock to the right',
-  // The inspector's AI tab is bound to the focused session, so with no session
-  // open there is nothing to answer — say so instead of showing an empty box.
-  aiNoTarget: 'Open a terminal to talk to the assistant.',
-  aiPoppedOut: 'This conversation is open in its own floating window.',
 
   // File panel
   files: 'Files',
@@ -746,6 +742,14 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
     'I am an ops-focused AI assistant. I can run read-only tools on your connected servers — execute commands, browse files, analyze systems, troubleshoot issues, and inspect Docker and logs — to give you accurate operational guidance.',
   aiChatEmptyHint:
     'Tip: select text in the terminal, right-click, and choose “Ask AI” to send it as context.',
+  // The inspector column's chat has no terminal, so it must not promise shell
+  // access — these replace the three bound strings above for that surface.
+  aiChatGlobalEmptyText:
+    'I am your assistant for this app and for general operations questions. I can read and change the app\u2019s settings and list your saved connections, but this chat is not attached to a terminal, so I run no commands here.',
+  aiChatGlobalEmptyHint:
+    'To let the assistant work inside a shell, open that terminal\u2019s own AI pane with the sparkle button in its corner.',
+  aiChatGlobalInputHint:
+    'This chat is not attached to a terminal: no commands are run, and destructive changes are impossible.',
   aiChatRoleYou: 'You',
   aiChatRoleAi: 'AI',
   copyMessage: 'Copy',

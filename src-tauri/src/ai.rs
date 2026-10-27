@@ -330,18 +330,20 @@ struct OpenAiMessage {
   name: Option<String>,
 }
 
+// `pub` because the agent spawner in `commands::ai_chat` threads a chosen
+// registry through `spawn_agent`, which names this type in its signature.
 #[derive(Serialize, Clone)]
-struct OpenAiTool {
+pub struct OpenAiTool {
   #[serde(rename = "type")]
-  tool_type: String,
-  function: OpenAiFunction,
+  pub tool_type: String,
+  pub function: OpenAiFunction,
 }
 
 #[derive(Serialize, Clone)]
-struct OpenAiFunction {
-  name: String,
-  description: String,
-  parameters: serde_json::Value,
+pub struct OpenAiFunction {
+  pub name: String,
+  pub description: String,
+  pub parameters: serde_json::Value,
 }
 
 // Streaming response chunks (also used for tool-call deltas)
@@ -637,6 +639,31 @@ pub fn tool_definitions() -> Vec<OpenAiTool> {
       },
     },
   ]
+}
+
+/// Tools that act on a live shell — they run commands or read from a session,
+/// so they only make sense for a conversation bound to a terminal tab.
+pub const SHELL_TOOL_NAMES: &[&str] = &[
+  "run_command",
+  "analyze_server",
+  "list_directory",
+  "read_file",
+  "search_help",
+  "get_current_server",
+];
+
+pub fn is_shell_tool(name: &str) -> bool {
+  SHELL_TOOL_NAMES.contains(&name)
+}
+
+/// The tool registry for a conversation with no shell binding (the global chat).
+/// Hiding these is advisory — `execute_one_tool` refuses them regardless — but a
+/// model that never sees the schema is far less likely to invent a tab id.
+pub fn tool_definitions_unbound() -> Vec<OpenAiTool> {
+  tool_definitions()
+    .into_iter()
+    .filter(|t| !is_shell_tool(&t.function.name))
+    .collect()
 }
 
 // Non-streaming response
@@ -1250,7 +1277,7 @@ pub async fn run_agent_stream(
   ) -> futures_util::future::BoxFuture<'static, Vec<ToolResult>>,
   mut on_confirm_required: impl FnMut(Vec<AiMessage>, Vec<OpenAiToolCall>),
   max_rounds: usize,
-  tools_enabled: bool,
+  tools: Option<Vec<OpenAiTool>>,
 ) -> Result<AiMessage, String> {
   let api_key = crate::vault::open_secret(&config.api_key_enc)
     .map_err(|e| format!("Failed to decrypt API key: {}", e))?;
@@ -1259,12 +1286,6 @@ pub async fn run_agent_stream(
     .timeout(std::time::Duration::from_secs(180))
     .build()
     .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
-
-  let tools = if tools_enabled {
-    Some(tool_definitions())
-  } else {
-    None
-  };
 
   // Working message list carries the full conversation (incl. tool calls).
   let mut messages: Vec<AiMessage> = initial_messages;
@@ -1533,4 +1554,51 @@ pub async fn run_agent_stream(
   Err(format!(
     "Reached maximum tool-call rounds ({max_rounds}); aborting agent loop."
   ))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn unbound_registry_exposes_no_shell_tool() {
+    let unbound = tool_definitions_unbound();
+    for name in SHELL_TOOL_NAMES {
+      assert!(
+        !unbound.iter().any(|t| t.function.name == *name),
+        "shell tool {} leaked into the unbound registry",
+        name
+      );
+    }
+    // The app-level tools stay: an unbound chat may still read and change
+    // settings, and list the saved connections.
+    for name in [
+      "list_connections",
+      "get_ui_settings",
+      "set_ui_settings",
+      "reset_ui_settings",
+    ] {
+      assert!(
+        unbound.iter().any(|t| t.function.name == name),
+        "{} missing from the unbound registry",
+        name
+      );
+    }
+    assert_eq!(
+      unbound.len() + SHELL_TOOL_NAMES.len(),
+      tool_definitions().len(),
+      "the two registries must partition the tool list"
+    );
+  }
+
+  #[test]
+  fn shell_tool_names_match_real_tools() {
+    let all: Vec<String> = tool_definitions()
+      .into_iter()
+      .map(|t| t.function.name)
+      .collect();
+    for name in SHELL_TOOL_NAMES {
+      assert!(all.iter().any(|t| t == name), "unknown shell tool {}", name);
+    }
+  }
 }
