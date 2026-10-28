@@ -387,7 +387,7 @@ const en = {
   // pane cannot end up named differently in the two places.
   settingsPaneAppearance: 'Appearance',
   settingsPaneAppearanceDesc:
-    'Theme, terminal palette, accent colour, window opacity and language.',
+    'Language, theme, terminal palette, accent colour and window opacity.',
   settingsPaneTerminal: 'Terminal',
   settingsPaneTerminalDesc:
     'Scrollback, recording, keepalive, and how output and pastes are handled.',
@@ -628,11 +628,14 @@ const en = {
     'Wrolp Terminal — an SSH terminal and server-ops tool. Build and repository information:',
   openConfigDir: 'Open config folder',
   language: 'Language',
+  languageSystem: 'Follow system',
   // Help for the language select itself. It used to read `settingsAppearance`
   // (“Application appearance and update preferences”) — a whole-page blurb from
   // before the settings split into panes, which said nothing about languages.
   uiLanguageHelp:
     'Interface language — applies immediately. Text arriving from the remote end is unaffected.',
+  uiLanguageFollowHelp:
+    'Following the system language: {lang}. A change in the OS applies here as well.',
   // Settings: terminal output highlight (pattern highlighting)
   highlightOutput: 'Terminal Output Highlight',
   highlightOutputDesc:

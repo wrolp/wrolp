@@ -373,7 +373,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
 
   // 设置面板各页：侧栏按钮与页头读同两个键，两处不会叫出不同名字。
   settingsPaneAppearance: '外观',
-  settingsPaneAppearanceDesc: '主题、终端调色板、强调色、窗口不透明度与语言。',
+  settingsPaneAppearanceDesc: '语言、主题、终端调色板、强调色与窗口不透明度。',
   settingsPaneTerminal: '终端',
   settingsPaneTerminalDesc: '回滚缓冲、录制、keepalive，以及输出高亮与粘贴处理方式。',
   settingsPaneData: '数据',
@@ -590,9 +590,11 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aboutDesc: 'Wrolp Terminal — 面向运维的 SSH 终端与服务器管理工具。构建与仓库信息：',
   openConfigDir: '打开配置目录',
   language: '语言',
+  languageSystem: '跟随系统',
   // 语言下拉自己的说明。之前这里挂的是 `settingsAppearance`（「应用外观与更新偏好设置」）
   // —— 那是设置页还没拆成多个 pane 时的整页描述，放在语言这一行下面讲不通。
   uiLanguageHelp: '界面文案的语言，切换后立即生效；不影响终端内远端输出的内容。',
+  uiLanguageFollowHelp: '当前跟随系统语言：{lang}。系统语言变更后也会同步生效。',
   // Settings: terminal output highlight (pattern highlighting)
   highlightOutput: '终端输出高亮',
   highlightOutputDesc: '为终端输出中的 IP、URL、邮箱、数字、日期、路径等上色。',

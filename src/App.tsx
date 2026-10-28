@@ -163,7 +163,7 @@ import AiChatPanel from './components/AiChatPanel'
 import type { AiConv } from './aiChatRun'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { detectLanguage } from './editor/languages'
-import { useI18n, LANG_LABELS } from './i18n'
+import { useI18n, LANG_LABELS, type LangPref } from './i18n'
 import type { TranslationKey } from './i18n/en'
 import { highlightStore } from './lib/highlightStore'
 import { loadPasteGuard, savePasteGuard, isWslShell } from './lib/pasteGuard'
@@ -1681,7 +1681,7 @@ function workspaceRootOf(
 }
 
 export default function App() {
-  const { t, lang, setLang } = useI18n()
+  const { t, lang, langPref, setLang } = useI18n()
   // The tooltips that quote a combo (the inspector button) have to follow it
   // when the user rebinds one, so App subscribes to the shortcut table.
   useShortcutsVersion()
@@ -5816,6 +5816,35 @@ export default function App() {
                       <div className="settings-card">
                         <div className="settings-fields">
                           <div className="settings-field">
+                            <label htmlFor="ui-language" className="settings-label">
+                              {t('language')}
+                            </label>
+                            <select
+                              id="ui-language"
+                              className="settings-input"
+                              style={{ width: '200px' }}
+                              value={langPref}
+                              onChange={(e) => setLang(e.target.value as LangPref)}
+                            >
+                              <option value="system">{t('languageSystem')}</option>
+                              {(['en', 'zh'] as const).map((l) => (
+                                <option key={l} value={l}>
+                                  {LANG_LABELS[l]}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="settings-help">
+                              {langPref === 'system'
+                                ? t('uiLanguageFollowHelp', { lang: LANG_LABELS[lang] })
+                                : t('uiLanguageHelp')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="settings-card">
+                        <div className="settings-fields">
+                          <div className="settings-field">
                             <label htmlFor="ui-theme" className="settings-label">
                               {t('themeLabel')}
                             </label>
@@ -5880,26 +5909,6 @@ export default function App() {
                                 ? t('windowOpacityLightDisabled')
                                 : t('currentPercent', { val: Math.round(opacity * 100) })}
                             </span>
-                          </div>
-
-                          <div className="settings-field">
-                            <label htmlFor="ui-language" className="settings-label">
-                              {t('language')}
-                            </label>
-                            <select
-                              id="ui-language"
-                              className="settings-input"
-                              style={{ width: '200px' }}
-                              value={lang}
-                              onChange={(e) => setLang(e.target.value as 'en' | 'zh')}
-                            >
-                              {(['en', 'zh'] as const).map((l) => (
-                                <option key={l} value={l}>
-                                  {LANG_LABELS[l]}
-                                </option>
-                              ))}
-                            </select>
-                            <span className="settings-help">{t('uiLanguageHelp')}</span>
                           </div>
                         </div>
                       </div>

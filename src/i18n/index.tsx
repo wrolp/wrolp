@@ -3,40 +3,65 @@ import en, { type TranslationKey } from './en'
 import zh from './zh'
 
 export type Lang = 'en' | 'zh'
+/** What the user picked: an exact language, or the OS/webview locale. */
+export type LangPref = 'system' | Lang
 
 const DICTS: Record<Lang, Partial<Record<TranslationKey, string>>> = { en, zh }
 
 const STORAGE_KEY = 'wrolp-lang'
 
-// Module-level current language so `t()` works outside React (e.g. in plain
-// modules) without a hook. React consumers re-render via I18nContext.
-let currentLang: Lang = detectInitialLang()
-const listeners = new Set<() => void>()
+function systemLang(): Lang {
+  if (typeof navigator === 'undefined') return 'en'
+  const tags = navigator.languages?.length ? navigator.languages : [navigator.language]
+  return tags.some((tag) => (tag ?? '').toLowerCase().startsWith('zh')) ? 'zh' : 'en'
+}
 
-function detectInitialLang(): Lang {
+function readPref(): LangPref {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved === 'en' || saved === 'zh') return saved
+    if (saved === 'system' || saved === 'en' || saved === 'zh') return saved
   } catch {
     /* ignore */
   }
-  const nav = (typeof navigator !== 'undefined' && navigator.language) || ''
-  return nav.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+  return 'system'
 }
+
+// Module-level current language so `t()` works outside React (e.g. in plain
+// modules) without a hook. React consumers re-render via I18nContext.
+let langPref: LangPref = readPref()
+let currentLang: Lang = langPref === 'system' ? systemLang() : langPref
+const listeners = new Set<() => void>()
 
 export function getLang(): Lang {
   return currentLang
 }
 
-export function setLang(lang: Lang): void {
-  if (lang === currentLang) return
-  currentLang = lang
+export function getLangPref(): LangPref {
+  return langPref
+}
+
+export function setLang(pref: LangPref): void {
+  const previousPref = langPref
+  langPref = pref
   try {
-    localStorage.setItem(STORAGE_KEY, lang)
+    localStorage.setItem(STORAGE_KEY, pref)
   } catch {
     /* ignore */
   }
-  document.documentElement.lang = lang
+  const next = pref === 'system' ? systemLang() : pref
+  if (next === currentLang && pref === previousPref) return
+  currentLang = next
+  document.documentElement.lang = next
+  listeners.forEach((fn) => fn())
+}
+
+/** Re-resolve a `system` preference after the webview locale changes. */
+export function refreshSystemLang(): void {
+  if (langPref !== 'system') return
+  const next = systemLang()
+  if (next === currentLang) return
+  currentLang = next
+  document.documentElement.lang = next
   listeners.forEach((fn) => fn())
 }
 
@@ -59,7 +84,8 @@ export function t(key: TranslationKey, params?: Params): string {
 
 interface I18nContextValue {
   lang: Lang
-  setLang: (lang: Lang) => void
+  langPref: LangPref
+  setLang: (pref: LangPref) => void
   t: (key: TranslationKey, params?: Params) => string
 }
 
@@ -67,20 +93,28 @@ const I18nContext = createContext<I18nContextValue | null>(null)
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [lang, setLangState] = useState<Lang>(currentLang)
+  const [langPref, setPrefState] = useState<LangPref>(getLangPref())
 
   useEffect(() => {
-    const onChange = () => setLangState(currentLang)
+    const onChange = () => {
+      setLangState(currentLang)
+      setPrefState(getLangPref())
+    }
     listeners.add(onChange)
     document.documentElement.lang = currentLang
+    const onSystemLanguage = () => refreshSystemLang()
+    window.addEventListener('languagechange', onSystemLanguage)
     return () => {
       listeners.delete(onChange)
+      window.removeEventListener('languagechange', onSystemLanguage)
     }
   }, [])
 
-  const changeLang = useCallback((l: Lang) => setLang(l), [])
+  const changeLang = useCallback((pref: LangPref) => setLang(pref), [])
 
   const value: I18nContextValue = {
     lang,
+    langPref,
     setLang: changeLang,
     t: (key, params) => t(key, params),
   }
@@ -93,7 +127,7 @@ export function useI18n(): I18nContextValue {
   const ctx = useContext(I18nContext)
   if (!ctx) {
     // Safe fallback when used outside a provider (e.g. in tests).
-    return { lang: currentLang, setLang, t: (key, params) => t(key, params) }
+    return { lang: currentLang, langPref, setLang, t: (key, params) => t(key, params) }
   }
   return ctx
 }
