@@ -1022,11 +1022,29 @@ export type AiFlowPhase =
   | 'error'
   | 'cancelled'
 
+export interface AiFlowToolCall {
+  name: string
+  arguments: string
+}
+
+export interface AiFlowEventDetail {
+  model?: string
+  messages?: number
+  tools?: string[]
+  format?: string
+  maxTokens?: number
+  temperature?: number
+  calls?: AiFlowToolCall[]
+  approved?: boolean
+}
+
 export interface AiFlowEvent {
   seq: number
   round: number
   phase: AiFlowPhase
   elapsedMs: number
+  /** Real request/tool facts for this stage; absent when nothing to expand. */
+  detail?: AiFlowEventDetail
 }
 
 export interface AiRunTrace {

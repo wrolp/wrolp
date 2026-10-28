@@ -828,6 +828,17 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
     'Call stages only, not model reasoning. Times are cumulative values reported by the backend.',
   aiFlowNoEvents: 'No call flow events received.',
   aiFlowCancelNote: 'Commands already executed will not be undone.',
+  aiFlowShowDetail: 'Show parameters',
+  aiFlowHideDetail: 'Hide parameters',
+  aiFlowMessageCount: 'Messages',
+  aiFlowMaxTokens: 'Max tokens',
+  aiFlowTemperature: 'Temperature',
+  aiFlowToolFormat: 'Tool format',
+  aiFlowAvailableTools: 'Available tools',
+  aiFlowNoTools: 'No tools',
+  aiFlowNoCalls: 'No commands in this stage.',
+  aiFlowAllowed: 'Approved',
+  aiFlowDenied: 'Declined',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: 'Troubleshooting',

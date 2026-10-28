@@ -195,6 +195,10 @@ pub struct AiFlowEvent {
   pub round: u32,
   pub phase: String,
   pub elapsed_ms: u64,
+  /// Optional Phase-specific payload (request params, tool calls, ...).
+  /// Must never contain credentials, the system prompt, or message bodies.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub detail: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,6 +230,20 @@ impl AiFlowPhase {
   fn is_terminal(self) -> bool {
     matches!(self, Self::Completed | Self::Error | Self::Cancelled)
   }
+}
+
+/// Flow detail payload for tool batches: names + raw JSON arguments only.
+/// Deliberately omits call ids so the graph stays readable.
+fn tool_calls_detail(calls: &[OpenAiToolCall]) -> serde_json::Value {
+  serde_json::json!({
+    "calls": calls
+      .iter()
+      .map(|call| serde_json::json!({
+        "name": call.name,
+        "arguments": call.arguments,
+      }))
+      .collect::<Vec<_>>(),
+  })
 }
 
 /// Runtime-only trace: draining events must not reset the clock or counters.
@@ -296,6 +314,14 @@ impl AiChatState {
   }
 
   pub fn record_phase(&mut self, phase: AiFlowPhase) {
+    self.record_phase_with_detail(phase, None);
+  }
+
+  pub fn record_phase_with_detail(
+    &mut self,
+    phase: AiFlowPhase,
+    detail: Option<serde_json::Value>,
+  ) {
     if !self.is_active() || self.flow.terminal {
       return;
     }
@@ -313,6 +339,7 @@ impl AiChatState {
         .elapsed()
         .as_millis()
         .min(u64::MAX as u128) as u64,
+      detail,
     });
     if phase.is_terminal() {
       self.flow.terminal = true;
@@ -336,7 +363,7 @@ impl AiChatState {
         error: None,
       });
     }
-    self.record_phase(AiFlowPhase::Confirmation);
+    self.record_phase_with_detail(AiFlowPhase::Confirmation, Some(tool_calls_detail(calls)));
   }
 
   pub fn finish_agent(&mut self, result: Result<AiMessage, String>) {
@@ -462,7 +489,7 @@ struct OpenAiRequest {
   #[serde(skip_serializing_if = "Option::is_none")]
   max_tokens: Option<u32>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  temperature: Option<f32>,
+  temperature: Option<f64>,
   #[serde(skip_serializing_if = "Option::is_none")]
   tools: Option<Vec<OpenAiTool>>,
 }
@@ -1489,7 +1516,7 @@ pub async fn run_agent_stream(
     Vec<OpenAiToolCall>,
   ) -> futures_util::future::BoxFuture<'static, Vec<ToolResult>>,
   mut on_confirm_required: impl FnMut(Vec<AiMessage>, Vec<OpenAiToolCall>) -> Result<(), String>,
-  mut on_phase: impl FnMut(AiFlowPhase),
+  mut on_phase: impl FnMut(AiFlowPhase, Option<serde_json::Value>),
   is_running: impl Fn() -> bool,
   max_rounds: usize,
   tools: Option<Vec<OpenAiTool>>,
@@ -1534,8 +1561,22 @@ pub async fn run_agent_stream(
     let started = std::time::Instant::now();
     log_ai_request(&format!("agent_round{}", round + 1), config, &request_body);
 
+    // Mirror the actual request body so the UI graph never drifts from the wire.
+    let request_detail = serde_json::json!({
+      "model": request_body.model,
+      "messages": request_body.messages.len(),
+      "tools": request_body
+        .tools
+        .as_ref()
+        .map(|tools| tools.iter().map(|tool| tool.function.name.clone()).collect::<Vec<_>>())
+        .unwrap_or_default(),
+      "format": tool_call_format,
+      "maxTokens": request_body.max_tokens,
+      "temperature": request_body.temperature,
+    });
+
     ensure_agent_running(&is_running)?;
-    on_phase(AiFlowPhase::Request);
+    on_phase(AiFlowPhase::Request, Some(request_detail));
     ensure_agent_running(&is_running)?;
     let response = client
       .post(&chat_url(&config.endpoint))
@@ -1659,7 +1700,7 @@ pub async fn run_agent_stream(
                   .is_some_and(|calls| !calls.is_empty());
               if meaningful && !saw_response {
                 saw_response = true;
-                on_phase(AiFlowPhase::Response);
+                on_phase(AiFlowPhase::Response, None);
               }
               if let Some(content) = delta.content {
                 if !content.is_empty() {
@@ -1774,7 +1815,7 @@ pub async fn run_agent_stream(
 
     messages.push(assistant_msg);
     ensure_agent_running(&is_running)?;
-    on_phase(AiFlowPhase::Tools);
+    on_phase(AiFlowPhase::Tools, Some(tool_calls_detail(&calls)));
     let mut pending_calls = Vec::new();
     for call in &calls {
       ensure_agent_running(&is_running)?;
@@ -1877,6 +1918,10 @@ mod tests {
     assert_eq!(pause.3[0].status, "needs-confirmation");
     assert_eq!(flow_phases(&pause.4), ["confirmation"]);
     assert_eq!(pause.4[0].seq, 4);
+    let confirmation_detail = pause.4[0].detail.as_ref().unwrap();
+    assert_eq!(confirmation_detail["calls"][0]["name"], "list_connections");
+    assert_eq!(confirmation_detail["calls"][0]["arguments"], "{}");
+    assert!(confirmation_detail["calls"][0].get("id").is_none());
     assert!(!cs.drain_poll().1);
     cs.record_phase(AiFlowPhase::Resume);
     cs.record_phase(AiFlowPhase::Request);
@@ -2046,7 +2091,7 @@ mod tests {
         *pending.lock().unwrap() = Some((messages, calls));
         Ok(())
       },
-      |phase| cs.lock().unwrap().record_phase(phase),
+      |phase, detail| cs.lock().unwrap().record_phase_with_detail(phase, detail),
       || cs.lock().unwrap().is_active(),
       10,
       tools,
@@ -2386,7 +2431,7 @@ mod tests {
         |_| panic!("text response must not emit tool events"),
         |_| panic!("text response must not execute tools"),
         |_, _| panic!("text response must not request confirmation"),
-        |phase| cs.lock().unwrap().record_phase(phase),
+        |phase, detail| cs.lock().unwrap().record_phase_with_detail(phase, detail),
         || cs.lock().unwrap().is_active(),
         10,
         None,
@@ -2459,6 +2504,48 @@ mod tests {
     let requests = mock.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[1]["messages"].as_array().unwrap().len(), 3);
+    // Request detail mirrors the wire request, without messages or credentials.
+    let request_detail = poll.4[0].detail.as_ref().unwrap();
+    assert_eq!(request_detail["model"], requests[0]["model"]);
+    assert_eq!(
+      request_detail["messages"],
+      requests[0]["messages"].as_array().unwrap().len()
+    );
+    assert_eq!(
+      request_detail["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect::<Vec<_>>(),
+      requests[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect::<Vec<_>>()
+    );
+    assert_eq!(request_detail["format"], "nested");
+    assert_eq!(request_detail["maxTokens"], requests[0]["max_tokens"]);
+    assert_eq!(request_detail["temperature"], requests[0]["temperature"]);
+    assert!(request_detail.get("messages").is_some());
+    // Tools detail carries names + arguments of this round, never call ids.
+    let tools_detail = poll.4[2].detail.as_ref().unwrap();
+    assert_eq!(tools_detail["calls"].as_array().unwrap().len(), 2);
+    assert_eq!(tools_detail["calls"][0]["name"], "list_connections");
+    assert_eq!(tools_detail["calls"][0]["arguments"], "{}");
+    assert!(tools_detail["calls"][0].get("id").is_none());
+    // Response / Completed stay detail-free (index 3 is the second request).
+    assert!(poll.4[1].detail.is_none());
+    assert!(poll.4[4].detail.is_none());
+    assert!(poll.4[5].detail.is_none());
+    let encoded = serde_json::to_string(&poll.4).unwrap();
+    for forbidden in ["apiKey", "Authorization", "Bearer", "system"] {
+      assert!(
+        !encoded.contains(forbidden),
+        "flow detail leaked {forbidden}: {encoded}"
+      );
+    }
   }
 
   #[tokio::test]
@@ -2505,12 +2592,18 @@ mod tests {
       let pause = cs.lock().unwrap().drain_poll();
       assert!(!pause.1);
       assert_eq!(pause.4.last().unwrap().phase, "confirmation");
+      let confirmation_detail = pause.4.last().unwrap().detail.as_ref().unwrap();
+      assert_eq!(confirmation_detail["calls"][0]["name"], "list_connections");
+      assert!(confirmation_detail["calls"][0].get("id").is_none());
       assert!(!cs.lock().unwrap().drain_poll().1);
       let (saved, calls) = pending.lock().unwrap().take().unwrap();
       messages = saved;
       assert_eq!(calls.len(), 1);
       assert_ne!(calls[0].id, "safe");
-      cs.lock().unwrap().record_phase(AiFlowPhase::Resume);
+      cs.lock().unwrap().record_phase_with_detail(
+        AiFlowPhase::Resume,
+        Some(serde_json::json!({ "approved": true })),
+      );
       append_tool_result(&mut messages, &calls[0], "{\"ok\":true}".into());
     }
     let result = mock_run(
@@ -2529,6 +2622,10 @@ mod tests {
       ["resume", "request", "response", "completed"]
     );
     assert_eq!(poll.4.last().unwrap().round, 3);
+    assert_eq!(
+      poll.4[0].detail.as_ref().unwrap(),
+      &serde_json::json!({ "approved": true })
+    );
     assert_eq!(
       *executed.lock().unwrap(),
       ["safe", "sensitive", "sensitive2"]
@@ -2590,9 +2687,9 @@ mod tests {
         |_| {},
         |_| panic!("cancelled tool must not execute"),
         |_, _| panic!("cancelled flow must not pause"),
-        |phase| {
+        |phase, detail| {
           let mut cs = cs.lock().unwrap();
-          cs.record_phase(phase);
+          cs.record_phase_with_detail(phase, detail);
           if phase == cancel_at {
             cs.record_phase(AiFlowPhase::Cancelled);
           }
@@ -2606,6 +2703,7 @@ mod tests {
       let poll = cs.lock().unwrap().drain_poll();
       assert_eq!(poll.4.iter().filter(|e| e.phase == "response").count(), 1);
       assert_eq!(poll.4.last().unwrap().phase, "cancelled");
+      assert!(poll.4.last().unwrap().detail.is_none());
       assert_eq!(mock.requests.lock().unwrap().len(), 1);
     }
   }

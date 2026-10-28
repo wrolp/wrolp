@@ -777,6 +777,17 @@ const zh: Partial<Record<TranslationKey, string>> = {
   aiFlowDescription: '仅展示调用阶段，不是模型思维链。耗时为后端上报的累计值。',
   aiFlowNoEvents: '尚未收到调用流程事件。',
   aiFlowCancelNote: '已执行的命令不会撤销。',
+  aiFlowShowDetail: '查看参数',
+  aiFlowHideDetail: '收起参数',
+  aiFlowMessageCount: '消息数',
+  aiFlowMaxTokens: '最大 tokens',
+  aiFlowTemperature: '温度',
+  aiFlowToolFormat: '工具格式',
+  aiFlowAvailableTools: '可用工具',
+  aiFlowNoTools: '无工具',
+  aiFlowNoCalls: '此阶段没有命令。',
+  aiFlowAllowed: '已允许',
+  aiFlowDenied: '已拒绝',
 
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: '问题排查',

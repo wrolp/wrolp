@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import type { AiFlowEvent, AiPollResult, ToolCallEvent } from '../../src/types'
+import type { AiFlowEvent, AiFlowEventDetail, AiPollResult, ToolCallEvent } from '../../src/types'
 import { test, expect } from './helpers/fixtures'
 import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 
@@ -34,8 +34,13 @@ type MockWindow = Window & {
   }
 }
 
-function flow(seq: number, phase: AiFlowEvent['phase'], round = 1): AiFlowEvent {
-  return { seq, phase, round, elapsedMs: seq * 25 }
+function flow(
+  seq: number,
+  phase: AiFlowEvent['phase'],
+  round = 1,
+  detail?: AiFlowEventDetail,
+): AiFlowEvent {
+  return { seq, phase, round, elapsedMs: seq * 25, detail }
 }
 
 function tool(id: string, status: ToolCallEvent['status']): ToolCallEvent {
@@ -188,6 +193,73 @@ test('real events stay with each reply and preserve endpoint snapshots in a narr
     )
     .toBe(true)
   expect(errors).toEqual([])
+})
+
+test('flow nodes expand to request parameters and the commands they called', async ({ page }) => {
+  await setup(page)
+  await enqueue(page, [
+    'Run done',
+    true,
+    null,
+    [],
+    [
+      flow(1, 'request', 1, {
+        model: 'flow-model',
+        messages: 3,
+        tools: ['run_command', 'read_file'],
+        format: 'nested',
+        maxTokens: 4096,
+        temperature: 0.7,
+      }),
+      flow(2, 'response'),
+      flow(3, 'tools', 1, {
+        calls: [{ name: 'run_command', arguments: '{"command":"ls -la /etc","tabId":1}' }],
+      }),
+      flow(4, 'confirmation', 1, {
+        calls: [{ name: 'run_command', arguments: '{"command":"rm -rf /tmp/cache"}' }],
+      }),
+      flow(5, 'resume', 2, { approved: false }),
+      flow(6, 'completed', 2),
+    ],
+  ])
+  await send(page)
+  await expect(timeline(page)).toHaveAttribute('data-status', 'completed')
+  await timeline(page).locator('.ai-call-flow-toggle').click()
+  await expect(timeline(page).locator('li')).toHaveCount(6)
+  await expect(timeline(page).locator('.ai-call-flow-node')).toHaveCount(6)
+
+  const request = timeline(page).locator('li[data-phase="request"]')
+  await request.locator('.ai-call-flow-detail-toggle').click()
+  await expect(request).toContainText('flow-model')
+  await expect(request).toContainText('run_command')
+  await expect(request).toContainText('4096')
+
+  const tools = timeline(page).locator('li[data-phase="tools"]')
+  await tools.locator('.ai-call-flow-detail-toggle').click()
+  await expect(tools.locator('.ai-call-flow-call-command')).toHaveText('ls -la /etc')
+  await expect(tools.locator('.ai-call-flow-call-args')).toContainText('"tabId": 1')
+
+  const confirmation = timeline(page).locator('li[data-phase="confirmation"]')
+  await expect(confirmation.locator('.ai-call-flow-count')).toHaveText('1')
+  await confirmation.locator('.ai-call-flow-detail-toggle').click()
+  await expect(confirmation).toContainText('rm -rf /tmp/cache')
+
+  const resume = timeline(page).locator('li[data-phase="resume"]')
+  await resume.locator('.ai-call-flow-detail-toggle').click()
+  await expect(resume).toContainText('Declined')
+
+  await expect(timeline(page)).not.toContainText('enc-flow-test')
+  await expect(timeline(page)).not.toContainText('Bearer')
+  await timeline(page).evaluate((node) => node.scrollIntoView({ block: 'start' }))
+  await page.screenshot({ path: test.info().outputPath('ai-call-flow-details.png') })
+  await expect
+    .poll(() =>
+      timeline(page)
+        .locator('.ai-call-flow-call-args')
+        .first()
+        .evaluate((node) => node.scrollWidth <= node.clientWidth + 1),
+    )
+    .toBe(true)
 })
 
 test('multiple confirmation batches resume the same reply without losing text or rounds', async ({

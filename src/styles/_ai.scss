@@ -2102,25 +2102,245 @@
     color: $text-primary;
   }
 
+  // A vertical graph: a connector rail with one node per real stage.
   .ai-call-flow-events {
+    position: relative;
     list-style: none;
     padding: 0;
-    margin: 0;
+    margin: 4px 0 0;
 
     > li {
+      position: relative;
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-columns: 26px minmax(0, 1fr);
       align-items: start;
       gap: 8px;
       min-width: 0;
       margin: 0;
-      padding-block: 8px;
-      border-top: 1px solid $border;
+      padding-block: 6px;
 
-      > svg {
-        margin-top: 3px;
-        color: $text-secondary;
+      &::before {
+        content: '';
+        position: absolute;
+        inset-inline-start: 12px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: $border;
+      }
+
+      &:first-child::before {
+        top: 18px;
+      }
+
+      &:last-child::before {
+        bottom: calc(100% - 18px);
+      }
+
+      &:only-child::before {
+        display: none;
       }
     }
+  }
+
+  .ai-call-flow-node {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid $border;
+    border-radius: 50%;
+    background: $bg-secondary;
+    color: $text-secondary;
+  }
+
+  [data-phase='request'] > .ai-call-flow-node {
+    border-color: $accent;
+    color: $accent;
+  }
+
+  [data-phase='response'] > .ai-call-flow-node {
+    color: $accent;
+  }
+
+  [data-phase='tools'] > .ai-call-flow-node,
+  [data-phase='confirmation'] > .ai-call-flow-node {
+    border-color: $warning;
+    color: $warning;
+  }
+
+  [data-phase='completed'] > .ai-call-flow-node {
+    border-color: $success;
+    color: $success;
+  }
+
+  [data-phase='error'] > .ai-call-flow-node,
+  [data-phase='cancelled'] > .ai-call-flow-node {
+    border-color: $danger;
+    color: $danger;
+  }
+
+  .ai-call-flow-card {
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid $border;
+    border-radius: var(--r-2);
+    background: $bg-primary;
+  }
+
+  .ai-call-flow-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2px 10px;
+    min-width: 0;
+  }
+
+  .ai-call-flow-detail-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    padding: 2px 6px;
+    border: 1px solid transparent;
+    border-radius: var(--r-2);
+    background: transparent;
+    color: $text-secondary;
+    font: inherit;
+    font-size: var(--fs-xs);
+    cursor: pointer;
+
+    &:hover {
+      background: $bg-hover;
+      color: $text-primary;
+    }
+
+    &:focus-visible {
+      outline: 2px solid $border-focus;
+      outline-offset: 1px;
+    }
+
+    &[aria-expanded='false'] > svg {
+      transform: rotate(-90deg);
+    }
+  }
+
+  .ai-call-flow-count {
+    min-width: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: $bg-active;
+    color: $text-primary;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  .ai-call-flow-event-detail {
+    margin-top: 4px;
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  .ai-call-flow-params {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 0;
+
+    > div {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 8px;
+      min-width: 0;
+    }
+
+    dt {
+      color: $text-secondary;
+      font-size: var(--fs-xs);
+    }
+
+    dd {
+      min-width: 0;
+      margin: 0;
+      color: $text-primary;
+      font-size: var(--fs-xs);
+      overflow-wrap: anywhere;
+    }
+  }
+
+  .ai-call-flow-tool-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .ai-call-flow-tool-chip {
+    padding: 0 5px;
+    border: 1px solid $border;
+    border-radius: var(--r-2);
+    background: $bg-input;
+    color: $text-primary;
+    font-size: var(--fs-xs);
+  }
+
+  .ai-call-flow-calls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .ai-call-flow-call {
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid $border;
+    border-radius: var(--r-2);
+    background: $bg-tertiary;
+  }
+
+  .ai-call-flow-call-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .ai-call-flow-call-name {
+    color: $text-primary;
+    font-weight: 600;
+    font-size: var(--fs-xs);
+  }
+
+  .ai-call-flow-call-command {
+    display: block;
+    min-width: 0;
+    padding: 2px 4px;
+    border-radius: var(--r-2);
+    background: rgba($accent, 0.12);
+    color: $text-primary;
+    font-size: var(--fs-xs);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .ai-call-flow-call-args {
+    max-height: 180px;
+    margin: 4px 0 0;
+    overflow: auto;
+    color: $text-secondary;
+    font-size: var(--fs-xs);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .ai-call-flow-approval {
+    margin: 0;
+    color: $text-primary;
+    font-size: var(--fs-xs);
   }
 }

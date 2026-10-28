@@ -25,6 +25,162 @@ const STATUSES = {
   cancelled: PHASES.cancelled,
 } satisfies Record<AiRunTrace['status'], FlowLabel>
 
+function prettyArguments(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
+
+/** `run_command` carries the line it will type; surface it above the raw JSON. */
+function commandOf(raw: string): string | null {
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const command = (value as Record<string, unknown>).command
+      if (typeof command === 'string' && command.trim()) return command.trim()
+    }
+  } catch {
+    // Some tool arguments are free-form text rather than JSON.
+  }
+  return null
+}
+
+function EventDetail({ event }: { event: AiFlowEvent }) {
+  const { t } = useI18n()
+  const detail = event.detail
+  if (!detail) return null
+  if (typeof detail.approved === 'boolean') {
+    return (
+      <p className="ai-call-flow-approval">
+        {t(detail.approved ? 'aiFlowAllowed' : 'aiFlowDenied')}
+      </p>
+    )
+  }
+  if (detail.calls) {
+    return (
+      <div className="ai-call-flow-calls">
+        {detail.calls.length === 0 ? (
+          <p className="ai-call-flow-note">{t('aiFlowNoCalls')}</p>
+        ) : (
+          detail.calls.map((call, index) => {
+            const command = commandOf(call.arguments)
+            return (
+              <div className="ai-call-flow-call" key={`${call.name}-${index}`}>
+                <div className="ai-call-flow-call-head">
+                  <span className="ai-call-flow-call-name">{call.name}</span>
+                  {command && <code className="ai-call-flow-call-command">{command}</code>}
+                </div>
+                <pre className="ai-call-flow-call-args">{prettyArguments(call.arguments)}</pre>
+              </div>
+            )
+          })
+        )}
+      </div>
+    )
+  }
+  return (
+    <dl className="ai-call-flow-params">
+      {detail.model && (
+        <div>
+          <dt>{t('model')}</dt>
+          <dd>{detail.model}</dd>
+        </div>
+      )}
+      {typeof detail.messages === 'number' && (
+        <div>
+          <dt>{t('aiFlowMessageCount')}</dt>
+          <dd>{detail.messages}</dd>
+        </div>
+      )}
+      {typeof detail.maxTokens === 'number' && (
+        <div>
+          <dt>{t('aiFlowMaxTokens')}</dt>
+          <dd>{detail.maxTokens}</dd>
+        </div>
+      )}
+      {typeof detail.temperature === 'number' && (
+        <div>
+          <dt>{t('aiFlowTemperature')}</dt>
+          <dd>{detail.temperature}</dd>
+        </div>
+      )}
+      {detail.format && (
+        <div>
+          <dt>{t('aiFlowToolFormat')}</dt>
+          <dd>{detail.format}</dd>
+        </div>
+      )}
+      {detail.tools && (
+        <div className="ai-call-flow-params-wide">
+          <dt>{t('aiFlowAvailableTools')}</dt>
+          <dd>
+            {detail.tools.length === 0 ? (
+              t('aiFlowNoTools')
+            ) : (
+              <span className="ai-call-flow-tool-chips">
+                {detail.tools.map((tool) => (
+                  <code key={tool} className="ai-call-flow-tool-chip">
+                    {tool}
+                  </code>
+                ))}
+              </span>
+            )}
+          </dd>
+        </div>
+      )}
+    </dl>
+  )
+}
+
+function FlowEvent({ event }: { event: AiFlowEvent }) {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  const detailId = `${id}-detail`
+  const callCount = event.detail?.calls?.length
+
+  return (
+    <li data-phase={event.phase} data-round={event.round}>
+      <span className="ai-call-flow-node" aria-hidden>
+        <Icon name={PHASES[event.phase].icon} size={13} />
+      </span>
+      <div className="ai-call-flow-card">
+        <div className="ai-call-flow-card-head">
+          <span className="ai-call-flow-phase">{t(PHASES[event.phase].label)}</span>
+          <span className="ai-call-flow-event-meta">
+            <span>{t('aiFlowRound', { round: event.round })}</span>
+            <span className="ai-call-flow-elapsed">
+              {t('aiFlowElapsed', { ms: event.elapsedMs })}
+            </span>
+          </span>
+        </div>
+        {event.detail && (
+          <>
+            <button
+              type="button"
+              className="ai-call-flow-detail-toggle"
+              aria-expanded={open}
+              aria-controls={detailId}
+              onClick={() => setOpen((value) => !value)}
+            >
+              <Icon name="chevronDown" size={12} />
+              <span>{t(open ? 'aiFlowHideDetail' : 'aiFlowShowDetail')}</span>
+              {typeof callCount === 'number' && (
+                <span className="ai-call-flow-count">{callCount}</span>
+              )}
+            </button>
+            <div id={detailId} className="ai-call-flow-event-detail" hidden={!open}>
+              <EventDetail event={event} />
+            </div>
+          </>
+        )}
+      </div>
+    </li>
+  )
+}
+
 export default function AiCallFlow({ trace }: { trace: AiRunTrace }) {
   const { t } = useI18n()
   const [expanded, setExpanded] = useState(false)
@@ -94,18 +250,7 @@ export default function AiCallFlow({ trace }: { trace: AiRunTrace }) {
         )}
         <ol className="ai-call-flow-events" aria-labelledby={titleId}>
           {trace.events.map((event) => (
-            <li key={event.seq} data-phase={event.phase}>
-              <Icon name={PHASES[event.phase].icon} size={14} />
-              <div className="ai-call-flow-event-body">
-                <span className="ai-call-flow-phase">{t(PHASES[event.phase].label)}</span>
-                <span className="ai-call-flow-event-meta">
-                  <span>{t('aiFlowRound', { round: event.round })}</span>
-                  <span className="ai-call-flow-elapsed">
-                    {t('aiFlowElapsed', { ms: event.elapsedMs })}
-                  </span>
-                </span>
-              </div>
-            </li>
+            <FlowEvent key={event.seq} event={event} />
           ))}
         </ol>
       </div>

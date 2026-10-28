@@ -557,10 +557,10 @@ fn spawn_agent(
         })
       },
       on_confirm,
-      |phase| {
+      |phase, detail| {
         let state = app.state::<AppState>();
         if let Some(cs) = state.ai_chat_buffers.lock().unwrap().get_mut(&chat_id) {
-          cs.record_phase(phase);
+          cs.record_phase_with_detail(phase, detail);
         };
       },
       || agent_is_running(&app, &chat_id),
@@ -598,7 +598,10 @@ pub async fn confirm_ai_tool(
       .ok_or("Chat is no longer active.")?;
     let mut guard = state.ai_pending.lock().map_err(|e| e.to_string())?;
     let pending = take_pending_for_chat(&mut guard, &chat_id)?;
-    cs.record_phase(ai::AiFlowPhase::Resume);
+    cs.record_phase_with_detail(
+      ai::AiFlowPhase::Resume,
+      Some(serde_json::json!({ "approved": approved })),
+    );
     pending
   };
 
