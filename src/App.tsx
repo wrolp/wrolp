@@ -48,6 +48,7 @@ import type {
   TargetRef,
   ContainerInfo,
   K8sHostRef,
+  K8sScope,
   K8sExecTarget,
   K8sForwardRule,
   WorkspaceLayout,
@@ -239,6 +240,12 @@ const LOCAL_DOCKER_HOST: DockerHostRef = { kind: 'local' }
 // The Kubernetes mode's host for this machine. Same reasoning as above: one shared
 // constant so the panel never sees a fresh identity per paint.
 const LOCAL_K8S_HOST: K8sHostRef = { kind: 'local' }
+const DEFAULT_K8S_SCOPE: K8sScope = {
+  mode: 'resources',
+  context: '',
+  namespace: '',
+  kind: 'pods',
+}
 
 // Pixel gap between adjacent terminal split panes. Panes are inset by half of
 // this on every edge shared with a sibling (see `renderPane`), and the invisible
@@ -2099,6 +2106,26 @@ export default function App() {
       ? { kind: 'ssh', jumpTabId: tab.tabId }
       : null
   }, [focusedLeafTabId, tabs])
+  const [k8sScopes, setK8sScopes] = useState<Record<string, K8sScope>>({})
+  const k8sScopeKey = k8sHost?.kind === 'ssh' ? `ssh:${k8sHost.jumpTabId}` : k8sHost ? 'local' : ''
+  const updateK8sScope = useCallback(
+    (patch: Partial<K8sScope>) => {
+      if (!k8sScopeKey) return
+      setK8sScopes((prev) => {
+        const current = prev[k8sScopeKey] ?? DEFAULT_K8S_SCOPE
+        const next = { ...current, ...patch }
+        if (
+          current.mode === next.mode &&
+          current.context === next.context &&
+          current.namespace === next.namespace &&
+          current.kind === next.kind
+        )
+          return prev
+        return { ...prev, [k8sScopeKey]: next }
+      })
+    },
+    [k8sScopeKey],
+  )
   // The connection behind the panel's host. A saved forward records it (never a tab
   // id, which means nothing to the next session) so it can be reopened later.
   const k8sConnectionId =
@@ -8312,13 +8339,14 @@ export default function App() {
               {t('dockerLocalUnavailable')}
             </button>
           )}
-        {/* Kubernetes — one column, whose host follows the focused terminal just
-            like the Docker group above it. The panel keeps its own context /
-            namespace selection and its log/YAML overlays. */}
+        {/* Keep selections per host while remounting transient dialogs and streams. */}
         {railMode === 'k8s' && k8sHost && (
           <div className="collapsible-section" style={{ flex: 1, overflow: 'hidden' }}>
             <K8sPanel
+              key={k8sScopeKey}
               host={k8sHost}
+              scope={k8sScopes[k8sScopeKey] ?? DEFAULT_K8S_SCOPE}
+              onScopeChange={updateK8sScope}
               filter={navFilter}
               activePod={fileTarget?.kind === 'k8sPod' ? fileTarget.pod : null}
               connectionId={k8sConnectionId}

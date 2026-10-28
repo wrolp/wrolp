@@ -10,6 +10,7 @@ import type {
   K8sNamespace,
   K8sPortForward,
   K8sResource,
+  K8sScope,
 } from '../types'
 import {
   helmListReleases,
@@ -135,6 +136,10 @@ function statusTone(status: string): 'ok' | 'warn' | 'bad' {
 interface K8sPanelProps {
   /** Where kubectl runs: the focused session's jump host, or this machine. */
   host: K8sHostRef
+  /** Owned by App per host; the panel must also be keyed by that host. */
+  scope: K8sScope
+  /** Merge only this patch into the host's latest scope, never a captured snapshot. */
+  onScopeChange: (patch: Partial<K8sScope>) => void
   /** The nav column's shared filter box. */
   filter?: string
   /** Bump to force a reload of the current resource list. */
@@ -179,14 +184,11 @@ interface YamlState {
   loading: boolean
 }
 
-/**
- * Lists one kind in one namespace of the selected context, and offers the actions
- * that are meaningful for that row. Self-contained by design: logs, YAML, apply,
- * scale and delete all render as overlays here, so the App only supplies the host
- * and (optionally) a way to open a pod shell.
- */
+// App retains choices per host; keyed remounts discard transient requests and dialogs.
 export const K8sPanel: React.FC<K8sPanelProps> = ({
   host,
+  scope,
+  onScopeChange,
   filter = '',
   refreshSignal,
   onExecPod,
@@ -197,11 +199,20 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   resolveRuleHost,
 }) => {
   const { t } = useI18n()
+  const { mode, context, namespace } = scope
+  const kind = KINDS.find((k) => k === scope.kind) ?? 'pods'
+  // Read current preferences without reloading lists when unrelated choices change.
+  const scopeRef = useRef(scope)
+  scopeRef.current = scope
+  const onScopeChangeRef = useRef(onScopeChange)
+  onScopeChangeRef.current = onScopeChange
   const [contexts, setContexts] = useState<K8sContext[]>([])
-  const [context, setContext] = useState('')
+  const [contextsHost, setContextsHost] = useState<string | null>(null)
   const [namespaces, setNamespaces] = useState<K8sNamespace[]>([])
-  const [namespace, setNamespace] = useState('')
-  const [kind, setKind] = useState<Kind>('pods')
+  const [namespacesScope, setNamespacesScope] = useState<{
+    hostKey: string
+    context: string
+  } | null>(null)
   const [resources, setResources] = useState<K8sResource[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -256,7 +267,6 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
 
   // Resources and Helm releases share the scope pickers above (context, namespace)
   // but not the list, so one switch decides which of the two is on screen.
-  const [mode, setMode] = useState<'resources' | 'helm'>('resources')
   const [releases, setReleases] = useState<HelmRelease[]>([])
   const [helmInfo, setHelmInfo] = useState<HelmProbe | null>(null)
   const [helmLoading, setHelmLoading] = useState(false)
@@ -290,34 +300,46 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const hostKey = host.kind === 'ssh' ? `ssh:${host.jumpTabId}` : 'local'
   const hostRef = useRef(host)
   hostRef.current = host
-  // Which context the namespace list in state belongs to. Until it matches the
-  // selected context, a resource fetch would pair the new context with the old
-  // namespace (and briefly show an error), so it waits.
-  const namespacesContextRef = useRef('')
+  const contextReady =
+    contextsHost === hostKey && !!context && contexts.some((c) => c.name === context)
+  // State readiness starts both lists even when validation leaves the selection unchanged.
+  const namespaceListReady =
+    contextReady && namespacesScope?.hostKey === hostKey && namespacesScope.context === context
+  const scopeReady =
+    namespaceListReady &&
+    !!namespace &&
+    (namespace === ALL_NAMESPACES || namespaces.some((n) => n.name === namespace))
 
-  // Contexts first: the namespace list depends on the selected client config.
+  // Saved choices cannot drive requests until this host's context list validates them.
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError('')
     setContexts([])
-    setContext('')
+    setContextsHost(null)
+    setNamespacesScope(null)
     setNamespaces([])
-    setNamespace('')
     setResources([])
-    // A different host may have a different helm (or none), so the probe is stale.
     setHelmInfo(null)
     setReleases([])
     k8sListContexts(hostRef.current)
       .then((list) => {
         if (cancelled) return
         setContexts(list)
-        const current = list.find((c) => c.current) ?? list[0]
-        setContext(current?.name ?? '')
+        setContextsHost(hostKey)
+        const saved = scopeRef.current.context
+        const chosen =
+          list.find((c) => c.name && c.name === saved) ??
+          list.find((c) => c.name && c.current) ??
+          list.find((c) => c.name)
+        if (chosen && chosen.name !== saved) {
+          onScopeChangeRef.current({ context: chosen.name, namespace: '' })
+        }
         setLoading(false)
       })
       .catch((e) => {
         if (cancelled) return
+        // Transport failure (or an empty list) must not erase remembered choices.
         setError(String(e))
         setLoading(false)
       })
@@ -326,41 +348,45 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     }
   }, [hostKey])
 
-  // Namespaces for the chosen context; preselect the context's own default when it
-  // names one, otherwise `default` when present.
+  // Explicit context changes clear the saved namespace; unchanged restored contexts keep it.
   useEffect(() => {
-    if (!context) return
+    setNamespacesScope(null)
+    setNamespaces([])
+    setResources([])
+    setReleases([])
+    setHelmLoading(false)
+    if (!contextReady) return
     let cancelled = false
     const known = contexts.find((c) => c.name === context)?.namespace ?? null
-    namespacesContextRef.current = ''
     setLoading(true)
     setError('')
-    setNamespace('')
     k8sListNamespaces(hostRef.current, context)
       .then((list) => {
-        if (cancelled) return
-        namespacesContextRef.current = context
-        setNamespaces(list)
+        if (cancelled || scopeRef.current.context !== context) return
+        const saved = scopeRef.current.namespace
         const preferred =
+          (saved === ALL_NAMESPACES || list.some((n) => n.name === saved) ? saved : null) ??
           (known && list.some((n) => n.name === known) ? known : null) ??
-          (list.some((n) => n.name === 'default') ? 'default' : (list[0]?.name ?? 'default'))
-        setNamespace(preferred)
+          (list.some((n) => n.name === 'default') ? 'default' : list[0]?.name)
+        setNamespaces(list)
+        if (preferred && preferred !== saved) {
+          onScopeChangeRef.current({ namespace: preferred })
+        }
+        setNamespacesScope({ hostKey, context })
         setLoading(false)
       })
       .catch((e) => {
-        if (cancelled) return
+        if (cancelled || scopeRef.current.context !== context) return
         setError(String(e))
-        setNamespaces([])
-        setNamespace('')
         setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [context, contexts, hostKey])
+  }, [context, contextReady, contexts, hostKey])
 
   const loadResources = useCallback(() => {
-    if (!context || !namespace || namespacesContextRef.current !== context) return
+    if (!scopeReady) return
     let cancelled = false
     setLoading(true)
     setError('')
@@ -385,7 +411,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     return () => {
       cancelled = true
     }
-  }, [context, namespace, kind])
+  }, [context, namespace, kind, scopeReady])
 
   // Load on every scope change, and when the App or a local action asks for a refresh.
   useEffect(() => loadResources(), [loadResources, localRefresh, refreshSignal])
@@ -410,11 +436,11 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   }, [mode, helmInfo])
 
   const loadReleases = useCallback(() => {
-    if (!context || !helmInfo?.installed) return
+    if (!scopeReady || !helmInfo?.installed) return
     let cancelled = false
     setHelmLoading(true)
     setHelmError('')
-    helmListReleases(hostRef.current, context || null, namespace)
+    helmListReleases(hostRef.current, context, namespace)
       .then((rows) => {
         if (!cancelled) setReleases(rows)
       })
@@ -430,7 +456,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     return () => {
       cancelled = true
     }
-  }, [context, namespace, helmInfo])
+  }, [context, namespace, helmInfo, scopeReady])
 
   useEffect(() => loadReleases(), [loadReleases, refreshSignal])
 
@@ -1074,7 +1100,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
               setInstallError('')
               setInstallOpen(true)
             }}
-            disabled={!helmInfo?.installed}
+            disabled={!scopeReady || !helmInfo?.installed}
           >
             <Icon name="plus" size={13} />
           </button>
@@ -1088,7 +1114,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
               setApplyError('')
               setApplyOpen(true)
             }}
-            disabled={!context}
+            disabled={!scopeReady}
           >
             <Icon name="edit" size={13} />
           </button>
@@ -1113,7 +1139,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           role="tab"
           aria-selected={mode === 'resources'}
           className={`k8s-mode${mode === 'resources' ? ' active' : ''}`}
-          onClick={() => setMode('resources')}
+          onClick={() => onScopeChange({ mode: 'resources' })}
         >
           {t('k8sModeResources')}
         </button>
@@ -1122,7 +1148,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           role="tab"
           aria-selected={mode === 'helm'}
           className={`k8s-mode${mode === 'helm' ? ' active' : ''}`}
-          onClick={() => setMode('helm')}
+          onClick={() => onScopeChange({ mode: 'helm' })}
         >
           {t('k8sModeHelm')}
         </button>
@@ -1133,12 +1159,12 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           <span>{t('k8sContext')}</span>
           <select
             className="k8s-select"
-            value={context}
-            onChange={(e) => setContext(e.target.value)}
-            disabled={contexts.length === 0}
+            value={contextReady ? context : ''}
+            onChange={(e) => onScopeChange({ context: e.target.value, namespace: '' })}
+            disabled={contextsHost !== hostKey || contexts.length === 0}
             aria-label={t('k8sContext')}
           >
-            {contexts.length === 0 && <option value="">—</option>}
+            {!contextReady && <option value="">—</option>}
             {contexts.map((c) => (
               <option key={c.name} value={c.name}>
                 {c.current ? `● ${c.name}` : c.name}
@@ -1150,11 +1176,12 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           <span>{t('k8sNamespace')}</span>
           <select
             className="k8s-select"
-            value={namespace}
-            onChange={(e) => setNamespace(e.target.value)}
-            disabled={namespaces.length === 0}
+            value={scopeReady ? namespace : ''}
+            onChange={(e) => onScopeChange({ namespace: e.target.value })}
+            disabled={!namespaceListReady}
             aria-label={t('k8sNamespace')}
           >
+            {!scopeReady && <option value="">—</option>}
             <option value={ALL_NAMESPACES}>{t('k8sAllNamespaces')}</option>
             {namespaces.map((n) => (
               <option key={n.name} value={n.name}>
@@ -1169,7 +1196,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
             <select
               className="k8s-select"
               value={kind}
-              onChange={(e) => setKind(e.target.value as Kind)}
+              onChange={(e) => onScopeChange({ kind: e.target.value })}
               aria-label={t('k8sResourceKind')}
             >
               {KINDS.map((k) => (
@@ -1189,26 +1216,36 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           <>
             {error && <div className="file-error">{error}</div>}
             {loading && <div className="file-empty">{t('loading')}</div>}
-            {!loading && !error && !context && contexts.length === 0 && (
+            {!loading && !error && contexts.length === 0 && (
               <div className="file-empty">{t('k8sNoContexts')}</div>
             )}
-            {!loading && !error && context && visible.length === 0 && (
+            {!loading && !error && scopeReady && visible.length === 0 && (
               <div className="file-empty">{t('k8sNoResources', { kind: t(KIND_LABEL[kind]) })}</div>
             )}
           </>
         )}
         {mode === 'helm' && (
           <>
+            {!scopeReady && error && <div className="file-error">{error}</div>}
             {helmError && <div className="file-error">{helmError}</div>}
-            {helmLoading && <div className="file-empty">{t('loading')}</div>}
+            {((!scopeReady && loading) || helmLoading) && (
+              <div className="file-empty">{t('loading')}</div>
+            )}
+            {!loading && !error && contexts.length === 0 && (
+              <div className="file-empty">{t('k8sNoContexts')}</div>
+            )}
             {helmInfo && !helmInfo.installed && (
               <div className="file-empty" title={helmInfo.message || undefined}>
                 {t('k8sNoHelm')}
               </div>
             )}
-            {!helmLoading && helmInfo?.installed && !helmError && visibleReleases.length === 0 && (
-              <div className="file-empty">{t('k8sNoReleases')}</div>
-            )}
+            {!helmLoading &&
+              scopeReady &&
+              helmInfo?.installed &&
+              !helmError &&
+              visibleReleases.length === 0 && (
+                <div className="file-empty">{t('k8sNoReleases')}</div>
+              )}
           </>
         )}
         {mode === 'resources' &&

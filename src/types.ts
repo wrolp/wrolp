@@ -530,6 +530,13 @@ export interface DockerProbe {
  */
 export type K8sHostRef = { kind: 'ssh'; jumpTabId: number } | { kind: 'local' }
 
+export interface K8sScope {
+  mode: 'resources' | 'helm'
+  context: string
+  namespace: string
+  kind: string
+}
+
 /** One kubeconfig context. Mirrors `K8sContext` on the Rust side. */
 export interface K8sContext {
   name: string
