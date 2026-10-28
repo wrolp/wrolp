@@ -385,7 +385,7 @@ test('the container list follows the interface font size', async ({ page }) => {
   await expect(row(page, LOCAL.name)).toBeVisible()
   expect(Number.parseFloat(await sizeOf('.docker-name'))).toBeCloseTo(14.5, 0)
   expect(Number.parseFloat(await sizeOf('.docker-image'))).toBeCloseTo(13.5, 0)
-  expect(Number.parseFloat(await sizeOf('.docker-state'))).toBeCloseTo(13.5, 0)
+  expect(Number.parseFloat(await sizeOf('.docker-id'))).toBeCloseTo(13.5, 0)
 
   // The log viewer is the other surface of the same two partials, and it is the one
   // users stare at longest — its body and header read the same scale.

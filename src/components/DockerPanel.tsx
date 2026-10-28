@@ -1,57 +1,70 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ContainerInfo, DockerHostRef } from '../types'
+import type { ContainerInfo, DockerHostRef, ImageInfo } from '../types'
 import {
   listDockerContainers,
+  listDockerImages,
   removeDockerContainer,
+  removeDockerImage,
   restartDockerContainer,
   startDockerContainer,
   stopDockerContainer,
 } from '../commands'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 import { ConfirmDialog } from './ConfirmDialog'
 import { useI18n } from '../i18n'
+import type { TranslationKey } from '../i18n/en'
+import { copyText } from '../lib/clipboard'
 
 interface DockerPanelProps {
-  /**
-   * Where `docker ps` / `docker exec` runs: a connected jump-host tab, or this machine.
-   * Read as a value, never as an identity — the panel keys its reload on the host's
-   * *shape*, so a caller may pass a fresh object literal each render.
-   */
+  /** Host identity is compared by value: callers may pass a fresh literal each render. */
   host: DockerHostRef
-  /** Currently-opened container name (its filesystem is shown in the Files panel). */
   activeContainer?: string | null
-  /** Absent for a read-only list. */
   onOpenContainer?: (container: ContainerInfo) => void
-  /** Enter a shell inside the container, in a terminal tab of its own. Absent for a
-   * read-only list. */
   onEnterShell?: (container: ContainerInfo) => void
-  /** Analyse a Docker container (opens report in BottomPanel). */
   onAnalyzeContainer?: (container: ContainerInfo) => void
-  /** View container logs (opens in a new tab). */
   onViewLogs?: (container: ContainerInfo) => void
-  /** Restart a running container. */
   onRestartContainer?: (container: ContainerInfo) => void
-  /** Stop a running container. */
   onStopContainer?: (container: ContainerInfo) => void
-  /** Start a stopped container. */
   onStartContainer?: (container: ContainerInfo) => void
-  /** Remove a stopped container. */
   onDeleteContainer?: (container: ContainerInfo) => Promise<void> | void
-  /** Label of the host machine whose containers are listed (shown in header). */
+  /** The parent reports progress/success/errors and rejects on failure. */
+  onDeleteImage?: (imageRef: string) => Promise<void>
   serverLabel?: string
-  /** When this value changes, the container list is reloaded (e.g. after a
-   *  stop/delete/start/restart triggered from the parent). */
+  /** Reload the current view after a parent action. */
   refreshSignal?: number
-  /** The nav column's single filter box, shared with the connection list. */
+  /** The nav column's single filter box. */
   filter?: string
 }
 
-/**
- * Lists the containers of ONE Docker host — which one is the caller's `host`, and the
- * sidebar keeps a single group whose host follows the focused terminal. Clicking a
- * container opens its filesystem in the Files panel via a `docker` / `dockerLocal`
- * TargetRef. Right-clicking a running container shows the lifecycle menu.
- */
+type View = 'containers' | 'images'
+type ContextMenu = {
+  x: number
+  y: number
+  host: DockerHostRef
+  scope: string
+} & ({ kind: 'container'; container: ContainerInfo } | { kind: 'image'; image: ImageInfo })
+type PendingDelete = {
+  kind: 'container' | 'image'
+  name: string
+  tagged?: boolean
+  scope: string
+  remove: () => Promise<void> | void
+}
+
+const STATES: Record<string, { icon: IconName; label: TranslationKey }> = {
+  running: { icon: 'play', label: 'dockerStateRunning' },
+  restarting: { icon: 'refresh', label: 'dockerStateRestarting' },
+  paused: { icon: 'pause', label: 'dockerStatePaused' },
+  exited: { icon: 'stop', label: 'dockerStateExited' },
+  dead: { icon: 'x', label: 'dockerStateDead' },
+  created: { icon: 'plus', label: 'dockerStateCreated' },
+}
+const imageRef = (image: ImageInfo) => `${image.repository}:${image.tag}`
+const isTagged = (image: ImageInfo) =>
+  !!image.repository && image.repository !== '<none>' && !!image.tag && image.tag !== '<none>'
+const shortImageId = (id: string) => id.replace(/^sha256:/, '').slice(0, 12)
+
+/** One daemon, following the focused terminal; only container rows browse files. */
 export const DockerPanel: React.FC<DockerPanelProps> = ({
   host,
   activeContainer,
@@ -63,286 +76,439 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onStopContainer,
   onStartContainer,
   onDeleteContainer,
+  onDeleteImage,
   serverLabel,
   refreshSignal,
   filter = '',
 }) => {
   const { t } = useI18n()
+  const [view, setView] = useState<View>('containers')
   const [containers, setContainers] = useState<ContainerInfo[]>([])
+  const [images, setImages] = useState<ImageInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showAll, setShowAll] = useState(false)
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; container: ContainerInfo } | null>(
-    null,
-  )
-  const [confirmDelete, setConfirmDelete] = useState<ContainerInfo | null>(null)
-  const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
+  const [ctxMenu, setCtxMenu] = useState<ContextMenu | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<PendingDelete | null>(null)
+  const [removing, setRemoving] = useState(false)
+  const removingRef = useRef(false)
+  const [menuStyle, setMenuStyle] = useState({ left: 0, top: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
+  const requestsRef = useRef({ latest: 0 })
 
-  // Reload on the host's *shape*, not its object identity: callers pass a fresh literal
-  // per render, and depending on that would refetch `docker ps` on every paint.
   const hostKey = host.kind === 'ssh' ? `ssh:${host.jumpTabId}` : 'local'
+  const scope = `${hostKey}/${view}`
+  const scopeRef = useRef(scope)
+  scopeRef.current = scope
   const hostRef = useRef(host)
   hostRef.current = host
 
   const load = useCallback(async () => {
+    const requests = requestsRef.current
+    const id = ++requests.latest
+    const requestHost = hostRef.current
+    const isCurrent = () => id === requests.latest && scopeRef.current === scope
     setLoading(true)
     setError('')
     try {
-      setContainers(await listDockerContainers(hostRef.current))
+      if (view === 'images') {
+        const rows = await listDockerImages(requestHost)
+        if (isCurrent()) setImages(rows)
+      } else {
+        const rows = await listDockerContainers(requestHost)
+        if (isCurrent()) setContainers(rows)
+      }
     } catch (e) {
-      setError(String(e))
-      setContainers([])
+      if (isCurrent()) setError(String(e))
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
-    // Reads `hostRef` only, so it stays stable; the reload is driven by `hostKey` below.
-  }, [])
+  }, [scope, view])
 
-  // `hostKey`, not `host`: callers pass a fresh object literal per render, and depending
-  // on the identity would reload `docker ps` on every paint.
+  // Invalidate before paint so old-host rows and destructive callbacks cannot survive.
+  useLayoutEffect(() => {
+    const requests = requestsRef.current
+    scopeRef.current = scope
+    setContainers([])
+    setImages([])
+    setError('')
+    setCtxMenu(null)
+    setConfirmDelete(null)
+    return () => {
+      scopeRef.current = ''
+      requests.latest++
+    }
+  }, [scope])
+
   useEffect(() => {
-    load()
-  }, [load, hostKey, refreshSignal])
+    void load()
+  }, [load, refreshSignal])
 
-  // Close context menu on click elsewhere
   useEffect(() => {
     const close = () => setCtxMenu(null)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+    }
     document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('click', close)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [])
 
-  const handleContextMenu = useCallback((e: React.MouseEvent, container: ContainerInfo) => {
+  const openMenu = (
+    e: React.MouseEvent,
+    item: { kind: 'container'; container: ContainerInfo } | { kind: 'image'; image: ImageInfo },
+  ) => {
     e.preventDefault()
     e.stopPropagation()
-    setCtxMenu({ x: e.clientX, y: e.clientY, container })
+    setCtxMenu({ ...item, x: e.clientX, y: e.clientY, host, scope })
     setMenuStyle({ left: e.clientX, top: e.clientY })
-  }, [])
+  }
 
-  // Adjust menu position when it would overflow the viewport
   useLayoutEffect(() => {
     if (!ctxMenu || !menuRef.current) return
-    const menu = menuRef.current
-    const rect = menu.getBoundingClientRect()
-    const overflowY = ctxMenu.y + rect.height - window.innerHeight
-    const overflowX = ctxMenu.x + rect.width - window.innerWidth
+    const rect = menuRef.current.getBoundingClientRect()
     setMenuStyle({
-      left: overflowX > 0 ? ctxMenu.x - overflowX - 4 : ctxMenu.x,
-      top: overflowY > 0 ? ctxMenu.y - rect.height : ctxMenu.y,
+      left: Math.max(4, Math.min(ctxMenu.x, window.innerWidth - rect.width - 4)),
+      top: Math.max(4, Math.min(ctxMenu.y, window.innerHeight - rect.height - 4)),
     })
   }, [ctxMenu])
 
-  const handleEnterShell = useCallback(() => {
-    if (!ctxMenu || !onEnterShell) return
-    onEnterShell(ctxMenu.container)
+  const runContainerAction = async (verb: 'start' | 'stop' | 'restart') => {
+    if (ctxMenu?.kind !== 'container') return
+    const action = ctxMenu
     setCtxMenu(null)
-  }, [ctxMenu, onEnterShell])
+    const spec = {
+      start: { callback: onStartContainer, command: startDockerContainer },
+      stop: { callback: onStopContainer, command: stopDockerContainer },
+      restart: { callback: onRestartContainer, command: restartDockerContainer },
+    }[verb]
+    try {
+      if (spec.callback) {
+        spec.callback(action.container)
+      } else {
+        await spec.command(action.host, action.container.name)
+        if (scopeRef.current === action.scope) await load()
+      }
+    } catch (e) {
+      if (scopeRef.current === action.scope) setError(String(e))
+    }
+  }
 
-  const handleAnalyzeContainer = useCallback(() => {
-    if (!ctxMenu || !onAnalyzeContainer) return
-    onAnalyzeContainer(ctxMenu.container)
-    setCtxMenu(null)
-  }, [ctxMenu, onAnalyzeContainer])
-
-  const handleViewLogs = useCallback(() => {
-    if (!ctxMenu || !onViewLogs) return
-    onViewLogs(ctxMenu.container)
-    setCtxMenu(null)
-  }, [ctxMenu, onViewLogs])
-
-  const handleRestart = useCallback(() => {
-    if (!ctxMenu) return
-    const container = ctxMenu.container
-    if (onRestartContainer) {
-      onRestartContainer(container)
+  const requestDelete = () => {
+    if (!ctxMenu || removingRef.current) return
+    const action = ctxMenu
+    if (action.kind === 'container') {
+      if (action.container.state === 'running') return
+      setConfirmDelete({
+        kind: 'container',
+        name: action.container.name,
+        scope: action.scope,
+        remove: () =>
+          onDeleteContainer
+            ? onDeleteContainer(action.container)
+            : removeDockerContainer(action.host, action.container.name),
+      })
     } else {
-      // Fallback: restart directly and refresh the list
-      restartDockerContainer(host, container.name)
-        .then(() => load())
-        .catch((e) => setError(String(e)))
+      const tagged = isTagged(action.image)
+      const name = tagged ? imageRef(action.image) : action.image.id
+      // Capture both host and parent callback now, not after an await/focus change.
+      setConfirmDelete({
+        kind: 'image',
+        name,
+        tagged,
+        scope: action.scope,
+        remove: () => (onDeleteImage ? onDeleteImage(name) : removeDockerImage(action.host, name)),
+      })
     }
     setCtxMenu(null)
-  }, [ctxMenu, host, load, onRestartContainer])
+  }
 
-  const handleStop = useCallback(() => {
-    if (!ctxMenu) return
-    const container = ctxMenu.container
-    if (onStopContainer) {
-      onStopContainer(container)
-    } else {
-      // Fallback: stop directly and refresh the list
-      stopDockerContainer(host, container.name)
-        .then(() => load())
-        .catch((e) => setError(String(e)))
+  const confirmRemove = async () => {
+    if (!confirmDelete || removingRef.current) return
+    const action = confirmDelete
+    removingRef.current = true
+    setRemoving(true)
+    // Closing the dialog and a ref guard prevent duplicate submissions in one frame.
+    setConfirmDelete(null)
+    try {
+      await action.remove()
+      if (scopeRef.current === action.scope) await load()
+    } catch (e) {
+      // Keep refused rows visible even when the parent has already toasted the error.
+      if (scopeRef.current === action.scope) setError(String(e))
+    } finally {
+      removingRef.current = false
+      setRemoving(false)
     }
+  }
+
+  const copyField = (value: string) => {
     setCtxMenu(null)
-  }, [ctxMenu, host, load, onStopContainer])
+    // copyText resolves even when both clipboard paths fail; don't claim success.
+    void copyText(value)
+  }
 
-  const handleStart = useCallback(() => {
-    if (!ctxMenu) return
-    const container = ctxMenu.container
-    if (onStartContainer) {
-      onStartContainer(container)
-    } else {
-      // Fallback: start directly and refresh the list
-      startDockerContainer(host, container.name)
-        .then(() => load())
-        .catch((e) => setError(String(e)))
-    }
-    setCtxMenu(null)
-  }, [ctxMenu, host, load, onStartContainer])
-
-  const handleDelete = useCallback(() => {
-    if (!ctxMenu) return
-    // Only stopped containers can be removed (docker rm requires a stopped container)
-    if (ctxMenu.container.state === 'running') return
-    setConfirmDelete(ctxMenu.container)
-    setCtxMenu(null)
-  }, [ctxMenu])
-
-  const confirmRemove = useCallback(() => {
-    if (!confirmDelete) return
-    const container = confirmDelete
-    const doRemove = onDeleteContainer
-      ? onDeleteContainer(container)
-      : removeDockerContainer(host, container.name)
-          .then(() => load())
-          .catch((e) => setError(String(e)))
-    Promise.resolve(doRemove).finally(() => setConfirmDelete(null))
-  }, [confirmDelete, host, load, onDeleteContainer])
-
-  // The nav column's filter box narrows this list too. `image` is matched
-  // because on a host with thirty containers the image is what you remember and
-  // the name is what Docker generated.
   const q = filter.toLowerCase()
   const visible = (showAll ? containers : containers.filter((c) => c.state === 'running')).filter(
     (c) => !q || c.name.toLowerCase().includes(q) || c.image.toLowerCase().includes(q),
   )
+  const visibleImages = images.filter(
+    (image) =>
+      !q || imageRef(image).toLowerCase().includes(q) || image.id.toLowerCase().includes(q),
+  )
+  const count = view === 'containers' ? visible.length : visibleImages.length
+  const menuContainer = ctxMenu?.kind === 'container' ? ctxMenu.container : null
+  const menuImage = ctxMenu?.kind === 'image' ? ctxMenu.image : null
 
   return (
     <div className="docker-panel">
-      {/* A plain label row now: the rail decides whether this panel is in the
-          column at all, so a fold switch here could only hide it from itself. */}
-      <div className="panel-head sec">
-        <span className="panel-title">{t('docker')}</span>
-        {/* One metadata run, count first: the host label is the part that has to
-            give when the column is narrow, and a truncated count would read as a
-            truncated list. */}
-        <span className="cnt" title={serverLabel}>
-          {serverLabel ? `${visible.length} · ${serverLabel}` : visible.length}
-        </span>
-        <label className="docker-filter-toggle" title={t('showAllContainersHint')}>
-          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-          <span className="docker-filter-toggle-text">{t('showAllContainers')}</span>
-        </label>
-        <button
-          type="button"
-          className="icon-btn"
-          title={t('refresh')}
-          aria-label={t('refresh')}
-          onClick={() => load()}
-          disabled={loading}
-        >
-          <Icon name="refresh" size={13} />
-        </button>
+      <div className="panel-head sec docker-head">
+        <div className="docker-head-summary">
+          <span className="panel-title">{t('docker')}</span>
+          <span className="cnt" title={serverLabel}>
+            {serverLabel ? `${count} · ${serverLabel}` : count}
+          </span>
+          {view === 'containers' && (
+            <label className="docker-filter-toggle" title={t('showAllContainersHint')}>
+              <input
+                type="checkbox"
+                checked={showAll}
+                onChange={(e) => setShowAll(e.target.checked)}
+              />
+              <span className="docker-filter-toggle-text">{t('showAllContainers')}</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="icon-btn"
+            title={t('refresh')}
+            aria-label={t('refresh')}
+            onClick={() => void load()}
+            disabled={loading}
+          >
+            <Icon name="refresh" size={13} />
+          </button>
+        </div>
+        <div className="docker-view-seg" role="group" aria-label={t('docker')}>
+          {(['containers', 'images'] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={`docker-view-btn${view === option ? ' active' : ''}`}
+              aria-pressed={view === option}
+              onClick={() => setView(option)}
+            >
+              {t(option === 'containers' ? 'dockerViewContainers' : 'dockerViewImages')}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="docker-list">
+      <div className="docker-list" aria-busy={loading}>
         {error && <div className="file-error">{error}</div>}
         {loading && <div className="file-empty">{t('loading')}</div>}
-        {!loading && !error && visible.length === 0 && (
-          <div className="file-empty">{showAll ? t('noContainers') : t('noRunningContainers')}</div>
+        {!loading && !error && count === 0 && (
+          <div className="file-empty">
+            {view === 'images'
+              ? t('noImages')
+              : showAll
+                ? t('noContainers')
+                : t('noRunningContainers')}
+          </div>
         )}
-        {visible.map((c) => {
-          const isRunning = c.state === 'running'
-          return (
+        {view === 'containers' &&
+          visible.map((c) => {
+            const isRunning = c.state === 'running'
+            const state = Object.prototype.hasOwnProperty.call(STATES, c.state)
+              ? STATES[c.state]
+              : undefined
+            const label = state ? t(state.label) : c.state.trim() || t('dockerStateUnknown')
+            return (
+              <div
+                key={c.id}
+                className={`docker-item${activeContainer === c.name ? ' active' : ''}${isRunning ? '' : ' stopped'}`}
+                onClick={() => {
+                  if (isRunning) onOpenContainer?.(c)
+                }}
+                onContextMenu={(e) => openMenu(e, { kind: 'container', container: c })}
+                title={`${c.name}\n${c.image}\n${c.status}${
+                  isRunning ? '\n\n' + t('rightClickShell') : '\n\n' + t('rightClickStart')
+                }${
+                  isRunning && onOpenContainer
+                    ? `\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}`
+                    : ''
+                }`}
+              >
+                <span className="docker-icon">
+                  <Icon name="container" />
+                </span>
+                <div className="docker-info">
+                  <div className="docker-name">{c.name}</div>
+                  <div className="docker-meta">
+                    <span className="docker-image">{c.image}</span>
+                    {c.id && (
+                      <span
+                        className="docker-id"
+                        title={`${t('containerId')}: ${c.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {c.id.slice(0, 12)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <span
+                  className={`docker-state-mark ${c.state}`}
+                  role="img"
+                  title={label}
+                  aria-label={label}
+                >
+                  <Icon name={state?.icon ?? 'container'} size={13} />
+                </span>
+              </div>
+            )
+          })}
+        {view === 'images' &&
+          visibleImages.map((image) => (
             <div
-              key={c.id}
-              className={`docker-item${activeContainer === c.name ? ' active' : ''}${isRunning ? '' : ' stopped'}`}
-              onClick={() => {
-                if (isRunning) onOpenContainer?.(c)
-              }}
-              onContextMenu={(e) => handleContextMenu(e, c)}
-              title={`${c.name}\n${c.image}\n${c.status}${
-                isRunning ? '\n\n' + t('rightClickShell') : '\n\n' + t('rightClickStart')
-              }${
-                isRunning && onOpenContainer
-                  ? `\n\n${t('clickTo')} ${activeContainer === c.name ? t('close') : t('browse')} ${t('files')}`
-                  : ''
-              }`}
+              key={JSON.stringify([image.repository, image.tag, image.id])}
+              className="docker-item image"
+              title={`${imageRef(image)}\n${image.id}\n${image.size} · ${image.created}`}
+              onContextMenu={(e) => openMenu(e, { kind: 'image', image })}
             >
               <span className="docker-icon">
-                <Icon name="container" />
+                <Icon name="image" />
               </span>
               <div className="docker-info">
-                <div className="docker-name">{c.name}</div>
-                <div className="docker-image">{c.image}</div>
+                <div className="docker-name">{imageRef(image)}</div>
+                <div className="docker-meta">
+                  <span className="docker-id" title={`${t('imageId')}: ${image.id}`}>
+                    {shortImageId(image.id)}
+                  </span>
+                  <span className="docker-size">{image.size}</span>
+                </div>
+                <div className="docker-age" title={image.created}>
+                  {image.created}
+                </div>
               </div>
-              {c.id && (
-                <span
-                  className="docker-id"
-                  title={`${t('containerId')}: ${c.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {c.id.slice(0, 12)}
-                </span>
-              )}
-              <span className={`docker-state ${c.state}`}>{c.state}</span>
             </div>
-          )
-        })}
+          ))}
       </div>
 
-      {/* Context menu */}
       {ctxMenu && (
         <div
           ref={menuRef}
-          className="context-menu"
-          style={{ left: menuStyle.left, top: menuStyle.top }}
+          className="context-menu docker-context-menu"
+          style={menuStyle}
           onClick={(e) => e.stopPropagation()}
         >
-          {ctxMenu.container.state === 'running' ? (
+          {menuContainer && (
             <>
-              {/* Gated like its siblings, on the caller having a way in: a jump-host
-                  container gets a pane of that session with `docker exec` typed into
-                  it, a local one a PTY of its own. */}
-              {onEnterShell && (
-                <div className="context-menu-item" onClick={handleEnterShell}>
-                  <Icon name="terminal" size={14} />
-                  {t('enterShell')}
+              {menuContainer.state === 'running' ? (
+                <>
+                  {onEnterShell && (
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        onEnterShell(menuContainer)
+                        setCtxMenu(null)
+                      }}
+                    >
+                      <Icon name="terminal" size={14} />
+                      {t('enterShell')}
+                    </div>
+                  )}
+                  {onAnalyzeContainer && (
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        onAnalyzeContainer(menuContainer)
+                        setCtxMenu(null)
+                      }}
+                    >
+                      <Icon name="search" size={14} />
+                      {t('analyzeContainer')}
+                    </div>
+                  )}
+                  <div
+                    className="context-menu-item"
+                    onClick={() => void runContainerAction('restart')}
+                  >
+                    <Icon name="refresh" size={14} />
+                    {t('dockerRestart')}
+                  </div>
+                  <div
+                    className="context-menu-item ctx-danger"
+                    onClick={() => void runContainerAction('stop')}
+                  >
+                    <Icon name="stop" size={14} />
+                    {t('dockerStop')}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div
+                    className="context-menu-item"
+                    onClick={() => void runContainerAction('start')}
+                  >
+                    <Icon name="play" size={14} />
+                    {t('dockerStart')}
+                  </div>
+                  <div
+                    className="context-menu-item ctx-danger"
+                    aria-disabled={removing}
+                    onClick={requestDelete}
+                  >
+                    <Icon name="trash" size={14} />
+                    {t('dockerDelete')}
+                  </div>
+                </>
+              )}
+              {onViewLogs && (
+                <div
+                  className="context-menu-item"
+                  onClick={() => {
+                    onViewLogs(menuContainer)
+                    setCtxMenu(null)
+                  }}
+                >
+                  <Icon name="file" size={14} />
+                  {t('viewLogs')}
                 </div>
               )}
-              {onAnalyzeContainer && (
-                <div className="context-menu-item" onClick={handleAnalyzeContainer}>
-                  <Icon name="search" size={14} />
-                  {t('analyzeContainer')}
-                </div>
-              )}
-              <div className="context-menu-item" onClick={handleRestart}>
-                <Icon name="refresh" size={14} />
-                {t('dockerRestart')}
+              <div className="context-menu-divider" />
+              <div className="context-menu-item" onClick={() => copyField(menuContainer.name)}>
+                <Icon name="copy" size={14} />
+                {t('copyContainerName')}
               </div>
-              <div className="context-menu-item ctx-danger" onClick={handleStop}>
-                <Icon name="stop" size={14} />
-                {t('dockerStop')}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="context-menu-item" onClick={handleStart}>
-                <Icon name="play" size={14} />
-                {t('dockerStart')}
-              </div>
-              <div className="context-menu-item ctx-danger" onClick={handleDelete}>
-                <Icon name="trash" size={14} />
-                {t('dockerDelete')}
+              <div className="context-menu-item" onClick={() => copyField(menuContainer.id)}>
+                <Icon name="copy" size={14} />
+                {t('copyContainerId')}
               </div>
             </>
           )}
-          {onViewLogs && (
-            <div className="context-menu-item" onClick={handleViewLogs}>
-              <Icon name="file" size={14} />
-              {t('viewLogs')}
-            </div>
+          {menuImage && (
+            <>
+              <div className="context-menu-item" onClick={() => copyField(imageRef(menuImage))}>
+                <Icon name="copy" size={14} />
+                {t('copyImageRef')}
+              </div>
+              <div className="context-menu-item" onClick={() => copyField(menuImage.id)}>
+                <Icon name="copy" size={14} />
+                {t('copyImageId')}
+              </div>
+              <div className="context-menu-divider" />
+              <div
+                className="context-menu-item ctx-danger"
+                aria-disabled={removing}
+                onClick={requestDelete}
+              >
+                <Icon name="trash" size={14} />
+                {t('dockerDeleteImage')}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -350,11 +516,18 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
       {confirmDelete && (
         <ConfirmDialog
           danger
-          title={t('dockerDeleteTitle')}
-          message={t('dockerDeleteConfirm', { name: confirmDelete.name })}
+          title={t(confirmDelete.kind === 'image' ? 'dockerDeleteImageTitle' : 'dockerDeleteTitle')}
+          message={t(
+            confirmDelete.kind === 'container'
+              ? 'dockerDeleteConfirm'
+              : confirmDelete.tagged
+                ? 'dockerDeleteImageConfirm'
+                : 'dockerDeleteDanglingImageConfirm',
+            { name: confirmDelete.name },
+          )}
           confirmLabel={t('delete')}
           cancelLabel={t('cancel')}
-          onConfirm={confirmRemove}
+          onConfirm={() => void confirmRemove()}
           onCancel={() => setConfirmDelete(null)}
         />
       )}

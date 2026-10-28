@@ -297,6 +297,8 @@ pub fn run() {
       commands::target_copy_file,
       commands::target_path_exists,
       commands::list_docker_containers,
+      commands::list_docker_images,
+      commands::remove_docker_image,
       commands::probe_local_docker,
       commands::save_window_config,
       commands::load_window_config,

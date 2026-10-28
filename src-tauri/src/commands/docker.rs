@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::docker_host::{DockerHostRef, DockerProbe};
+use crate::ssh_session::ImageInfo;
 
 /// What this machine has: is a CLI installed, is its daemon reachable, which binary do
 /// local commands exec. Cached in `AppState::local_docker` because the sidebar probes on
@@ -42,6 +43,75 @@ pub async fn list_docker_containers(
   host: DockerHostRef,
 ) -> Result<Vec<ContainerInfo>, String> {
   crate::docker_fs::list_docker_containers(&state, &host).await
+}
+
+// Reject malformed output rather than expose an invalid deletion target.
+fn parse_docker_images(text: &str) -> Result<Vec<ImageInfo>, String> {
+  let mut images = Vec::new();
+  for (index, line) in text.lines().enumerate() {
+    if line.is_empty() {
+      continue;
+    }
+    let fields: Vec<&str> = line.split('\t').collect();
+    if fields.len() != 5 || fields[0].trim().is_empty() {
+      return Err(format!(
+        "invalid docker images output at line {}: expected 5 tab-separated fields and a nonempty ID",
+        index + 1
+      ));
+    }
+    images.push(ImageInfo {
+      id: fields[0].to_string(),
+      repository: fields[1].to_string(),
+      tag: fields[2].to_string(),
+      size: fields[3].to_string(),
+      created: fields[4].to_string(),
+    });
+  }
+  Ok(images)
+}
+
+/// List images on the selected daemon without truncating IDs or merging tags.
+#[tauri::command]
+pub async fn list_docker_images(
+  state: tauri::State<'_, AppState>,
+  host: DockerHostRef,
+) -> Result<Vec<ImageInfo>, String> {
+  let argv = vec![
+    "docker".into(),
+    "images".into(),
+    "--no-trunc".into(),
+    "--format".into(),
+    "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}".into(),
+  ];
+  let out = crate::docker_host::exec_docker_ok(&state, &host, &argv).await?;
+  parse_docker_images(&String::from_utf8_lossy(&out))
+}
+
+fn remove_docker_image_argv(image_ref: &str) -> Result<Vec<String>, String> {
+  let image_ref = image_ref.trim();
+  if image_ref.is_empty() || image_ref.starts_with('-') {
+    return Err("image reference must be nonempty and must not start with '-'".into());
+  }
+  // Keep the reference as one argument on both transports; never force or prune.
+  Ok(vec![
+    "docker".into(),
+    "rmi".into(),
+    "--".into(),
+    image_ref.into(),
+  ])
+}
+
+/// Remove exactly the requested image reference, respecting Docker's conflict checks.
+#[tauri::command]
+pub async fn remove_docker_image(
+  state: tauri::State<'_, AppState>,
+  host: DockerHostRef,
+  image_ref: String,
+) -> Result<(), String> {
+  let argv = remove_docker_image_argv(&image_ref)?;
+  crate::docker_host::exec_docker_ok(&state, &host, &argv)
+    .await
+    .map(|_| ())
 }
 
 /// Analyse a Docker container — the three-layer report (inspect / in-container probe /
@@ -323,6 +393,100 @@ pub async fn open_local_docker_shell(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  const IMAGE_ID: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  #[test]
+  fn docker_images_parser_accepts_empty_output() {
+    for text in ["", "\n", "\r\n\n"] {
+      assert!(parse_docker_images(text).unwrap().is_empty());
+    }
+  }
+
+  #[test]
+  fn docker_images_parser_preserves_fields_and_full_ids() {
+    let text = format!("{IMAGE_ID}\tregistry.example:5000/team/app\tv1\t123.4MB\t2 weeks ago\r\n");
+    let images = parse_docker_images(&text).unwrap();
+    assert_eq!(images.len(), 1);
+    assert_eq!(
+      serde_json::to_value(&images[0]).unwrap(),
+      serde_json::json!({
+        "id": IMAGE_ID,
+        "repository": "registry.example:5000/team/app",
+        "tag": "v1",
+        "size": "123.4MB",
+        "created": "2 weeks ago",
+      })
+    );
+  }
+
+  #[test]
+  fn docker_images_parser_keeps_dangling_images() {
+    let text = format!("{IMAGE_ID}\t<none>\t<none>\t0B\tAbout a minute ago\n");
+    let images = parse_docker_images(&text).unwrap();
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].id, IMAGE_ID);
+    assert_eq!(images[0].repository, "<none>");
+    assert_eq!(images[0].tag, "<none>");
+  }
+
+  #[test]
+  fn docker_images_parser_keeps_multiple_tags_for_one_id() {
+    let text =
+      format!("{IMAGE_ID}\tapp\tv1\t10MB\t1 day ago\n{IMAGE_ID}\tapp\tlatest\t10MB\t1 day ago\n");
+    let images = parse_docker_images(&text).unwrap();
+    assert_eq!(images.len(), 2);
+    assert_eq!(images[0].id, IMAGE_ID);
+    assert_eq!(images[1].id, IMAGE_ID);
+    assert_eq!(images[0].tag, "v1");
+    assert_eq!(images[1].tag, "latest");
+  }
+
+  #[test]
+  fn docker_images_parser_rejects_malformed_rows_without_partial_results() {
+    for row in [
+      "not a formatted image row",
+      "abc\tapp\tv1\t10MB",
+      "abc\tapp\tv1\t10MB\t1 day ago\textra",
+      "\tapp\tv1\t10MB\t1 day ago",
+      "   \tapp\tv1\t10MB\t1 day ago",
+      "\t\t\t\t",
+    ] {
+      assert!(parse_docker_images(row).is_err(), "{row:?}");
+      let text = format!("{IMAGE_ID}\tapp\tv1\t10MB\t1 day ago\n{row}\n");
+      let err = parse_docker_images(&text).unwrap_err();
+      assert!(err.contains("line 2"), "{err}");
+    }
+  }
+
+  #[test]
+  fn docker_image_removal_uses_exactly_one_reference_without_force() {
+    for image_ref in [
+      "registry.example:5000/team/app:v1",
+      IMAGE_ID,
+      "0123456789ab",
+      "app:v1; docker rmi other:latest",
+    ] {
+      assert_eq!(
+        remove_docker_image_argv(image_ref).unwrap(),
+        vec!["docker", "rmi", "--", image_ref]
+      );
+    }
+    assert_eq!(
+      remove_docker_image_argv("  app:v1 \r\n").unwrap(),
+      vec!["docker", "rmi", "--", "app:v1"]
+    );
+  }
+
+  #[test]
+  fn docker_image_removal_rejects_empty_and_option_like_references() {
+    for image_ref in ["", " \r\n\t", "-", "--", "-f", "--force", " --force "] {
+      assert!(
+        remove_docker_image_argv(image_ref).is_err(),
+        "{image_ref:?}"
+      );
+    }
+  }
 
   #[test]
   fn a_container_with_bash_gets_bash() {

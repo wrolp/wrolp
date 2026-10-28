@@ -246,6 +246,14 @@ fn normalize_state(status: &str) -> String {
     .unwrap_or("")
     .to_lowercase();
   match word.as_str() {
+    // Docker still prefixes paused containers with "Up"; inspect the marker first.
+    "up"
+      if status
+        .split_whitespace()
+        .any(|part| part.eq_ignore_ascii_case("(paused)")) =>
+    {
+      "paused".into()
+    }
     "up" => "running".into(),
     "exited" => "exited".into(),
     "paused" => "paused".into(),
@@ -253,5 +261,35 @@ fn normalize_state(status: &str) -> String {
     "created" => "created".into(),
     "restarting" => "restarting".into(),
     other => other.to_string(),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::normalize_state;
+
+  #[test]
+  fn normalize_state_recognizes_paused_up_containers() {
+    for status in ["Up 3 hours (Paused)", "Up 1 minute (paused)", "Paused"] {
+      assert_eq!(normalize_state(status), "paused", "{status}");
+    }
+  }
+
+  #[test]
+  fn normalize_state_preserves_other_states() {
+    for (status, expected) in [
+      ("Up 3 hours", "running"),
+      ("Up 3 hours (healthy)", "running"),
+      ("Up 3 hours (unhealthy)", "running"),
+      ("Restarting (1) 10 seconds ago", "restarting"),
+      ("Exited (0) 2 days ago", "exited"),
+      ("Created", "created"),
+      ("Dead", "dead"),
+      ("Unknown state", "unknown"),
+      ("Removing", "removing"),
+      ("", ""),
+    ] {
+      assert_eq!(normalize_state(status), expected, "{status}");
+    }
   }
 }

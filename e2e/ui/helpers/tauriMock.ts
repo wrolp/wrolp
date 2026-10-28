@@ -3,6 +3,7 @@ import type {
   CommandHistoryEntry,
   CommandSetDto,
   HostCommandDto,
+  ImageInfo,
   RecentConnectionEntry,
 } from '../../../src/types'
 
@@ -101,6 +102,8 @@ export interface TauriMockOptions {
   }
   /** Containers listed for the **local** host (falls back to `dockerContainers`). */
   localDockerContainers?: unknown[]
+  dockerImages?: ImageInfo[]
+  localDockerImages?: ImageInfo[]
   /**
    * Answer for a **refresh** probe (`{ refresh: true }`, i.e. the retry row). Lets a spec
    * play "the user started Docker Desktop since the app booted".
@@ -185,6 +188,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
   await page.addInitScript((opts) => {
     const callbacks = new Map<number, (payload: unknown) => void>()
     const listeners = new Map<string, Array<(event: { id: number; payload: unknown }) => void>>()
+    const dockerImagesByHost = new Map<string, ImageInfo[]>()
     let counter = 1
 
     // Stateful connection store so save -> refresh reflects new entries.
@@ -439,6 +443,33 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
               return opts.localDockerContainers ?? opts.dockerContainers ?? []
             }
             return opts.dockerContainers ?? []
+          }
+          case 'list_docker_images': {
+            const host = args.host as { kind?: string; jumpTabId?: number }
+            const key = host.kind === 'local' ? 'local' : `ssh:${host.jumpTabId}`
+            if (!dockerImagesByHost.has(key)) {
+              dockerImagesByHost.set(key, [
+                ...(host.kind === 'local'
+                  ? (opts.localDockerImages ?? opts.dockerImages ?? [])
+                  : (opts.dockerImages ?? [])),
+              ])
+            }
+            return dockerImagesByHost.get(key)
+          }
+          case 'remove_docker_image': {
+            const host = args.host as { kind?: string; jumpTabId?: number }
+            const key = host.kind === 'local' ? 'local' : `ssh:${host.jumpTabId}`
+            dockerImagesByHost.set(
+              key,
+              (dockerImagesByHost.get(key) ?? []).filter((image) => {
+                const ref =
+                  image.repository !== '<none>' && image.tag !== '<none>'
+                    ? `${image.repository}:${image.tag}`
+                    : image.id
+                return ref !== args.imageRef
+              }),
+            )
+            return null
           }
           // The lifecycle verbs answer "ok" — a spec asserts what was *sent* through
           // `invokedCalls()`, which is the part that changed in P1 (a `DockerHostRef`

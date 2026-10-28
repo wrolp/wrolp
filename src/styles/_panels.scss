@@ -951,7 +951,74 @@
   }
 }
 
-// The header itself is `.panel-head.sec` now; only this switch is docker's own.
+// A second row keeps both view labels visible at 240px with 15px UI type.
+.panel-head.sec.docker-head {
+  height: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding-top: 4px;
+  padding-bottom: 6px;
+  letter-spacing: normal;
+}
+
+.docker-head-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  min-height: 26px;
+
+  .icon-btn {
+    flex-shrink: 0;
+  }
+}
+
+.docker-view-seg {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-2);
+  background: $bg-secondary;
+  border: 1px solid $border;
+}
+
+.docker-view-btn {
+  flex: 1 0 auto;
+  padding: 3px 6px;
+  border: none;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: $text-secondary;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.active {
+    background: $bg-active;
+    color: $text-primary;
+  }
+
+  &:focus-visible {
+    outline: 1px solid $accent;
+    outline-offset: -1px;
+  }
+}
+
+.docker-context-menu .ctx-danger {
+  color: var(--danger-soft-40);
+}
+
+.docker-context-menu .context-menu-item[aria-disabled='true'] {
+  cursor: not-allowed;
+  color: $text-muted;
+}
+
 .docker-filter-toggle {
   display: inline-flex;
   align-items: center;
@@ -1033,11 +1100,7 @@
   }
 }
 
-// The container row. Every text size here is a token, not a px value: the 界面字号
-// setting drives `--fs-ui` and the scale derived from it, and this partial never got
-// that pass — so the section header above (`.panel-head`, `--fs-sm`) grew while the
-// rows under it stayed put. `xs` is the secondary line and the two chips, `sm` the
-// name; the icon is an SVG sized by its own prop, so it is not part of the scale.
+// Text follows the interface type scale; the SVG state mark stays fixed at 13px.
 .docker-item {
   position: relative;
   display: flex;
@@ -1071,12 +1134,10 @@
       background: $accent;
     }
   }
-  &.stopped {
-    opacity: 0.55;
-
-    &:hover {
-      opacity: 0.9;
-    }
+  // Stopped is a state, not a disabled row: retain readable text contrast.
+  &.stopped,
+  &.image {
+    cursor: default;
   }
 
   .docker-icon {
@@ -1102,12 +1163,17 @@
     text-overflow: ellipsis;
   }
 
-  // Short (12-char) container ID. Sits as a direct child of `.docker-item`
-  // (next to the state badge) so the row's `align-items: center` centers it
-  // against the whole item — the same vertical position as the `running` badge —
-  // instead of nesting it in the name/image column.
+  // Only the image name yields width to the selectable ID, not the container name.
+  .docker-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+
   .docker-id {
     flex-shrink: 0;
+    white-space: nowrap;
     font-family: $font-mono;
     font-size: var(--fs-xs);
     line-height: 15px;
@@ -1127,6 +1193,8 @@
   }
 
   .docker-image {
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: var(--fs-xs);
     font-family: $font-mono;
     // `muted`, not `dim`: `--text-dim` is 3.2:1 on this panel, and the rule declares
@@ -1137,29 +1205,37 @@
     text-overflow: ellipsis;
   }
 
-  .docker-state {
+  .docker-size,
+  .docker-age {
+    min-width: 0;
     font-size: var(--fs-xs);
-    padding: 1px 6px;
-    border-radius: var(--r-pill);
+    color: $text-muted;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .docker-size {
+    margin-left: auto;
+  }
+
+  .docker-state-mark {
+    width: 13px;
+    height: 13px;
+    display: inline-flex;
     flex-shrink: 0;
-    text-transform: lowercase;
-    background: $bg-secondary;
-    border: 1px solid $border;
     color: $text-secondary;
 
-    // Two dark-theme-only hexes before (`#4ec9b0` / `#f48771`), which left these
-    // chips teal-and-salmon on the light theme's white.
     &.running {
       color: var(--success-soft-40);
-      border-color: rgba($success, 0.35);
-      background: rgba($success, 0.1);
+    }
+    &.paused,
+    &.restarting {
+      color: var(--warning-soft-40);
     }
     &.exited,
-    &.dead,
-    &.paused {
+    &.dead {
       color: var(--danger-soft-40);
-      border-color: rgba($danger, 0.35);
-      background: rgba($danger, 0.08);
     }
   }
 }

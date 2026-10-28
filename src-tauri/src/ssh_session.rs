@@ -717,6 +717,17 @@ pub struct ContainerInfo {
   pub status: String,
 }
 
+/// One repository/tag entry returned by `docker images` on the selected host.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInfo {
+  pub id: String,
+  pub repository: String,
+  pub tag: String,
+  pub size: String,
+  pub created: String,
+}
+
 /// File metadata for a remote target.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

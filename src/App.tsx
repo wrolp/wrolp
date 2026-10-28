@@ -113,6 +113,7 @@ import {
   restartDockerContainer,
   probeLocalDocker,
   removeDockerContainer,
+  removeDockerImage,
   startDockerContainer,
   stopDockerContainer,
   k8sPodExecCommand,
@@ -2495,6 +2496,24 @@ export default function App() {
         const msg = String(e)
         console.error(`Docker ${verb} failed: ${msg}`)
         setToast({ kind: 'error', text: t(spec.keys[2], { name: container.name, err: msg }) })
+      }
+    },
+    [t],
+  )
+
+  const runDockerImageRmi = useCallback(
+    async (host: DockerHostRef, imageRef: string): Promise<void> => {
+      setToast({ kind: 'progress', text: t('dockerDeletingImage', { name: imageRef }) })
+      try {
+        await removeDockerImage(host, imageRef)
+        setToast({ kind: 'success', text: t('dockerImageDeleted', { name: imageRef }) })
+        setDockerRefreshKey((key) => key + 1)
+      } catch (error) {
+        setToast({
+          kind: 'error',
+          text: t('dockerImageDeleteFailed', { name: imageRef, err: String(error) }),
+        })
+        throw error
       }
     },
     [t],
@@ -8314,6 +8333,7 @@ export default function App() {
                     onStopContainer={(c) => runDockerVerb(host, c, 'stop')}
                     onStartContainer={(c) => runDockerVerb(host, c, 'start')}
                     onDeleteContainer={(c) => runDockerVerb(host, c, 'rm')}
+                    onDeleteImage={(imageRef) => runDockerImageRmi(host, imageRef)}
                   />
                 </div>
               </>

@@ -19,6 +19,7 @@ import type {
   BaudCandidate,
   TelnetConfig,
   ContainerInfo,
+  ImageInfo,
   DockerHostRef,
   DockerProbe,
   K8sHostRef,
@@ -834,6 +835,14 @@ export async function restoreBuiltinTemplate(key: string): Promise<void> {
 
 export async function listDockerContainers(host: DockerHostRef): Promise<ContainerInfo[]> {
   return await invoke<ContainerInfo[]>('list_docker_containers', { host })
+}
+
+export async function listDockerImages(host: DockerHostRef): Promise<ImageInfo[]> {
+  return await invoke<ImageInfo[]>('list_docker_images', { host })
+}
+
+export async function removeDockerImage(host: DockerHostRef, imageRef: string): Promise<void> {
+  return await invoke('remove_docker_image', { host, imageRef })
 }
 
 /**

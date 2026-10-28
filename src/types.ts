@@ -501,6 +501,14 @@ export interface ContainerInfo {
   status: string
 }
 
+export interface ImageInfo {
+  id: string
+  repository: string
+  tag: string
+  size: string
+  created: string
+}
+
 /**
  * Where a Docker command runs: a connected jump-host tab, or this machine.
  * Mirrors `DockerHostRef` in `src-tauri/src/docker_host.rs`.
