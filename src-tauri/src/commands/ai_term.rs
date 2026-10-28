@@ -1182,10 +1182,7 @@ pub(crate) async fn execute_one_tool(
     serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
   let tool = call.name.as_str();
 
-  // A conversation with no shell binding cannot reach a shell: not through a
-  // bound tab (there is none), not through a `tabId` the model invents, and not
-  // through the LOCAL-execution fallback further down. The tool list already
-  // hides these for an unbound run; this is the refusal that makes it real.
+  // Model-supplied tab IDs cannot grant an unbound conversation shell access.
   if current_tab_id.is_none() && crate::ai::is_shell_tool(tool) {
     return Ok(
       serde_json::json!({
@@ -1259,39 +1256,18 @@ pub(crate) async fn execute_one_tool(
         }
       }
       // Local shell tab: run the command on the local machine.
-      let local_cwd = {
-        match state.local_shells.lock() {
-          Ok(g) => g.get(&tab_id).map(|sh| sh.cwd.clone()).unwrap_or(None),
-          Err(_) => None,
-        }
-      };
-      if local_cwd.is_some() {
-        let output = run_local_command(command, local_cwd).await?;
-        return Ok(output);
+      let local_cwd = state
+        .local_shells
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&tab_id)
+        .map(|sh| sh.cwd.clone());
+      if let Some(cwd) = local_cwd {
+        return run_local_command(command, cwd).await;
       }
-      // Remote shell: execute via the SSH jump handle.
-      match crate::remote_fs::get_jump_handle(state, tab_id) {
-        Ok(handle) => {
-          let output = crate::host_analysis::exec_on_handle(&*handle, &command).await?;
-          Ok(output)
-        }
-        // The tab isn't bound to any shell (e.g. a standalone AI tab):
-        // fall back to running the command on the LOCAL machine so the
-        // agent is still useful without an SSH connection.
-        Err(e) => {
-          eprintln!(
-            "[run_command] no remote handle for tab {tab_id} ({}); falling back to LOCAL execution",
-            e
-          );
-          let mut output = run_local_command(command, None).await?;
-          // Wrap so the model knows the result came from the local machine.
-          let v: serde_json::Value =
-            serde_json::from_str(&output).unwrap_or(serde_json::json!({ "output": output }));
-          let note = "NOTE: this command ran on the USER'S LOCAL MACHINE (no remote shell was attached to this tab).";
-          output = serde_json::json!({ "ranOnLocal": true, "note": note, "exitCode": v["exitCode"].as_i64().unwrap_or(-1), "output": v["output"].as_str().unwrap_or("") }).to_string();
-          Ok(output)
-        }
-      }
+      // A closed remote target must never redirect a command to the local machine.
+      let handle = crate::remote_fs::get_jump_handle(state, tab_id)?;
+      crate::host_analysis::exec_on_handle(&*handle, &command).await
     }
     "analyze_server" => {
       let tab_id = args

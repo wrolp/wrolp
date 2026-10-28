@@ -33,7 +33,7 @@ import type {
   HelmRevision,
   HelmProbe,
   K8sExecTarget,
-  ToolCallEvent,
+  AiPollResult,
   AiEndpointProfile,
   LocalShellDir,
   LocalTerminalEntry,
@@ -1143,12 +1143,8 @@ export async function startAiChatStream(messages: AiMessage[]): Promise<string> 
   return await invoke<string>('start_ai_chat_stream', { messages })
 }
 
-export async function pollAiChunks(
-  chatId: string,
-): Promise<[string, boolean, string | null, ToolCallEvent[]] | null> {
-  return await invoke<[string, boolean, string | null, ToolCallEvent[]] | null>('poll_ai_chunks', {
-    chatId,
-  })
+export async function pollAiChunks(chatId: string): Promise<AiPollResult | null> {
+  return await invoke<AiPollResult | null>('poll_ai_chunks', { chatId })
 }
 
 export async function cancelAiChat(chatId: string): Promise<void> {

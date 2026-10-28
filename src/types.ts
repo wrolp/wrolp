@@ -1012,6 +1012,33 @@ export interface ToolCallEvent {
   error?: string
 }
 
+export type AiFlowPhase =
+  | 'request'
+  | 'response'
+  | 'tools'
+  | 'confirmation'
+  | 'resume'
+  | 'completed'
+  | 'error'
+  | 'cancelled'
+
+export interface AiFlowEvent {
+  seq: number
+  round: number
+  phase: AiFlowPhase
+  elapsedMs: number
+}
+
+export interface AiRunTrace {
+  profileName: string
+  model: string
+  tabId: number | null
+  events: AiFlowEvent[]
+  status: 'running' | 'waiting' | 'completed' | 'error' | 'cancelled'
+}
+
+export type AiPollResult = [string, boolean, string | null, ToolCallEvent[], AiFlowEvent[]]
+
 export interface AiChatChunk {
   newText: string
   done: boolean

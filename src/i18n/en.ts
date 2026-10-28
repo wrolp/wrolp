@@ -800,6 +800,35 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   aiChatViewImage: 'View image',
   aiChatEditMessage: 'Edit message',
 
+  // Per-reply call flow: metadata only, never model reasoning or request content.
+  aiFlowTitle: 'Call flow',
+  aiFlowSubmitting: 'Submitting…',
+  aiFlowInterrupted: 'The AI response stream was interrupted. The call did not complete.',
+  aiFlowWaiting: 'Waiting for confirmation',
+  aiFlowCloseBlocked: 'The terminal was not closed because its AI call could not be stopped.',
+  aiFlowStopFailed:
+    'Failed to stop the AI call. It may still be running. Commands already executed will not be undone.',
+  aiFlowRunning: 'Running',
+  aiFlowCompleted: 'Completed',
+  aiFlowError: 'Call failed',
+  aiFlowCancelled: 'Cancelled',
+  aiFlowRequest: 'Sending request',
+  aiFlowResponse: 'Response received',
+  aiFlowTools: 'Calling tools',
+  aiFlowResume: 'Resuming call',
+  aiFlowRound: 'Round {round}',
+  aiFlowElapsed: 'Backend elapsed: {ms} ms',
+  aiFlowElapsedPending: 'Elapsed time not yet reported',
+  aiFlowSnapshot: 'Snapshot of this call',
+  aiFlowEndpoint: 'Endpoint',
+  aiFlowScope: 'Scope',
+  aiFlowGlobal: 'Global (no terminal)',
+  aiFlowTerminal: 'Terminal #{id}',
+  aiFlowDescription:
+    'Call stages only, not model reasoning. Times are cumulative values reported by the backend.',
+  aiFlowNoEvents: 'No call flow events received.',
+  aiFlowCancelNote: 'Commands already executed will not be undone.',
+
   // AI chat suggestion groups (server ops)
   aiChatSugTroubleshoot: 'Troubleshooting',
   aiChatSugSecurity: 'Security',

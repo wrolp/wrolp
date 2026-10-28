@@ -190,6 +190,76 @@ pub struct AiMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiFlowEvent {
+  pub seq: u32,
+  pub round: u32,
+  pub phase: String,
+  pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiFlowPhase {
+  Request,
+  Response,
+  Tools,
+  Confirmation,
+  Resume,
+  Completed,
+  Error,
+  Cancelled,
+}
+
+impl AiFlowPhase {
+  fn as_str(self) -> &'static str {
+    match self {
+      Self::Request => "request",
+      Self::Response => "response",
+      Self::Tools => "tools",
+      Self::Confirmation => "confirmation",
+      Self::Resume => "resume",
+      Self::Completed => "completed",
+      Self::Error => "error",
+      Self::Cancelled => "cancelled",
+    }
+  }
+
+  fn is_terminal(self) -> bool {
+    matches!(self, Self::Completed | Self::Error | Self::Cancelled)
+  }
+}
+
+/// Runtime-only trace: draining events must not reset the clock or counters.
+#[derive(Debug, Clone)]
+pub struct AiFlowTrace {
+  started: std::time::Instant,
+  seq: u32,
+  round: u32,
+  terminal: bool,
+  events: Vec<AiFlowEvent>,
+}
+
+impl Default for AiFlowTrace {
+  fn default() -> Self {
+    Self {
+      started: std::time::Instant::now(),
+      seq: 0,
+      round: 0,
+      terminal: false,
+      events: Vec::new(),
+    }
+  }
+}
+
+pub type AiChatPoll = (
+  String,
+  bool,
+  Option<String>,
+  Vec<ToolCallEvent>,
+  Vec<AiFlowEvent>,
+);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiChatState {
   pub chat_id: String,
   /// Accumulated text chunks received from the streaming response.
@@ -201,10 +271,98 @@ pub struct AiChatState {
   /// Tool-call events emitted during the agent loop (for UI display).
   #[serde(default)]
   pub tool_events: Vec<ToolCallEvent>,
-  /// Set when the user pauses/stops the stream; the frontend stops polling and
-  /// the background task aborts early.
+  /// Cancellation prevents further requests/tools, but cannot undo a running command.
   #[serde(default)]
   pub cancelled: bool,
+  #[serde(skip)]
+  pub flow: AiFlowTrace,
+}
+
+impl AiChatState {
+  pub fn new(chat_id: String) -> Self {
+    Self {
+      chat_id,
+      chunks: Vec::new(),
+      done: false,
+      error: None,
+      tool_events: Vec::new(),
+      cancelled: false,
+      flow: AiFlowTrace::default(),
+    }
+  }
+
+  pub fn is_active(&self) -> bool {
+    !self.done && !self.cancelled
+  }
+
+  pub fn record_phase(&mut self, phase: AiFlowPhase) {
+    if !self.is_active() || self.flow.terminal {
+      return;
+    }
+    if phase == AiFlowPhase::Request {
+      self.flow.round = self.flow.round.saturating_add(1);
+    }
+    self.flow.seq = self.flow.seq.saturating_add(1);
+    self.flow.events.push(AiFlowEvent {
+      seq: self.flow.seq,
+      round: self.flow.round,
+      phase: phase.as_str().into(),
+      elapsed_ms: self
+        .flow
+        .started
+        .elapsed()
+        .as_millis()
+        .min(u64::MAX as u128) as u64,
+    });
+    if phase.is_terminal() {
+      self.flow.terminal = true;
+      self.done = true;
+      self.cancelled = phase == AiFlowPhase::Cancelled;
+    }
+  }
+
+  pub fn pause_for_confirmation(&mut self, calls: &[OpenAiToolCall]) {
+    if !self.is_active() {
+      return;
+    }
+    // Executing events may already have been polled; always enqueue new events.
+    for call in calls {
+      self.tool_events.push(ToolCallEvent {
+        id: call.id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments.clone(),
+        status: "needs-confirmation".into(),
+        result: None,
+        error: None,
+      });
+    }
+    self.record_phase(AiFlowPhase::Confirmation);
+  }
+
+  pub fn finish_agent(&mut self, result: Result<AiMessage, String>) {
+    if !self.is_active() {
+      return;
+    }
+    match result {
+      Ok(_) => self.record_phase(AiFlowPhase::Completed),
+      Err(e) if e == "__confirmation__" => {}
+      Err(e) if e == "__cancelled__" => self.record_phase(AiFlowPhase::Cancelled),
+      Err(e) => {
+        self.error = Some(e);
+        self.record_phase(AiFlowPhase::Error);
+      }
+    }
+  }
+
+  pub fn drain_poll(&mut self) -> AiChatPoll {
+    (
+      self.chunks.drain(..).collect(),
+      self.done || self.cancelled,
+      self.error.clone(),
+      std::mem::take(&mut self.tool_events),
+      std::mem::take(&mut self.flow.events),
+    )
+  }
 }
 
 // ---- Path helpers ----
@@ -1158,6 +1316,58 @@ pub async fn execute_streaming_chat(
 /// Result returned by the tool executor: `(tool_call_id, result_text)`.
 pub type ToolResult = (String, String);
 
+pub fn tool_needs_confirmation(result: &str) -> bool {
+  serde_json::from_str::<serde_json::Value>(result)
+    .ok()
+    .and_then(|v| v.get("needsConfirmation").and_then(|b| b.as_bool()))
+    == Some(true)
+}
+
+pub fn tool_result_event(call: &OpenAiToolCall, result: String, denied: bool) -> ToolCallEvent {
+  let error = serde_json::from_str::<serde_json::Value>(&result)
+    .ok()
+    .and_then(|v| v.get("error").filter(|e| !e.is_null()).cloned())
+    .map(|e| {
+      e.as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| e.to_string())
+    });
+  ToolCallEvent {
+    id: call.id.clone(),
+    name: call.name.clone(),
+    arguments: call.arguments.clone(),
+    status: if denied {
+      "denied"
+    } else if error.is_some() {
+      "error"
+    } else {
+      "done"
+    }
+    .into(),
+    result: Some(result),
+    error,
+  }
+}
+
+pub fn append_tool_result(messages: &mut Vec<AiMessage>, call: &OpenAiToolCall, result: String) {
+  messages.push(AiMessage {
+    role: "tool".into(),
+    content: Some(result),
+    tool_calls: None,
+    tool_call_id: Some(call.id.clone()),
+    name: Some(call.name.clone()),
+    images: None,
+  });
+}
+
+fn ensure_agent_running(is_running: &impl Fn() -> bool) -> Result<(), String> {
+  if is_running() {
+    Ok(())
+  } else {
+    Err("__cancelled__".into())
+  }
+}
+
 /// Convert a public `AiMessage` into the OpenAI wire format, preserving
 /// assistant tool-calls and tool-result messages.
 /// Build the OpenAI `content` value for a message. Plain text messages use a
@@ -1256,9 +1466,12 @@ fn to_openai_messages(messages: &[AiMessage], tool_call_format: &str) -> Vec<Ope
 /// * `on_chunk` receives assistant text deltas (for live display).
 /// * `on_tool` receives tool-call lifecycle events (`pending` → `executing` →
 ///   `done`/`error`) so the UI can render tool cards.
-/// * `execute_tool` is invoked with the aggregated tool calls for one round and
-///   must return `(tool_call_id, result_text)` pairs. It is implemented in
-///   `commands.rs` because it needs `AppState`. It is async (tools do remote IO).
+/// * `execute_tool` receives one call at a time so cancellation is checked
+///   before each execution. It returns `(tool_call_id, result_text)` pairs.
+/// * `on_phase` marks actual HTTP requests, first response deltas, and tool batches.
+/// * `on_confirm_required` atomically saves only unresolved calls and publishes
+///   the confirmation phase; completed tool results are already in the messages.
+/// * `is_running` also returns false when the caller's buffer no longer exists.
 ///
 /// Returns the final assistant message (with any tool_calls cleared) so the
 /// caller can persist it to history.
@@ -1275,12 +1488,20 @@ pub async fn run_agent_stream(
   mut execute_tool: impl FnMut(
     Vec<OpenAiToolCall>,
   ) -> futures_util::future::BoxFuture<'static, Vec<ToolResult>>,
-  mut on_confirm_required: impl FnMut(Vec<AiMessage>, Vec<OpenAiToolCall>),
+  mut on_confirm_required: impl FnMut(Vec<AiMessage>, Vec<OpenAiToolCall>) -> Result<(), String>,
+  mut on_phase: impl FnMut(AiFlowPhase),
+  is_running: impl Fn() -> bool,
   max_rounds: usize,
   tools: Option<Vec<OpenAiTool>>,
 ) -> Result<AiMessage, String> {
-  let api_key = crate::vault::open_secret(&config.api_key_enc)
-    .map_err(|e| format!("Failed to decrypt API key: {}", e))?;
+  ensure_agent_running(&is_running)?;
+  // Keyless endpoints must not load/create a vault key (also keeps mock tests isolated).
+  let api_key = if config.api_key_enc.is_empty() {
+    String::new()
+  } else {
+    crate::vault::open_secret(&config.api_key_enc)
+      .map_err(|e| format!("Failed to decrypt API key: {}", e))?
+  };
 
   let client = reqwest::ClientBuilder::new()
     .timeout(std::time::Duration::from_secs(180))
@@ -1313,6 +1534,9 @@ pub async fn run_agent_stream(
     let started = std::time::Instant::now();
     log_ai_request(&format!("agent_round{}", round + 1), config, &request_body);
 
+    ensure_agent_running(&is_running)?;
+    on_phase(AiFlowPhase::Request);
+    ensure_agent_running(&is_running)?;
     let response = client
       .post(&chat_url(&config.endpoint))
       .header("Authorization", format!("Bearer {}", api_key))
@@ -1355,30 +1579,88 @@ pub async fn run_agent_stream(
     let mut tool_acc: std::collections::BTreeMap<usize, (Option<String>, Option<String>, String)> =
       std::collections::BTreeMap::new();
     let mut saw_tool_call = false;
+    let mut saw_response = false;
 
     let mut byte_stream = response.bytes_stream();
-    let mut line_buf = String::new();
+    // Decode complete lines, not network chunks: a UTF-8 character can span chunks.
+    let mut line_buf = Vec::new();
+    let mut saw_normal_end = false;
 
-    while let Some(chunk_result) = byte_stream.next().await {
-      let chunk = chunk_result.map_err(|e| format!("Stream read error: {}", e))?;
-      let text = String::from_utf8_lossy(&chunk);
-      line_buf.push_str(&text);
+    'read_stream: loop {
+      ensure_agent_running(&is_running)?;
+      let eof = match byte_stream.next().await {
+        Some(chunk_result) => {
+          let chunk = chunk_result.map_err(|e| format!("Stream read error: {}", e))?;
+          line_buf.extend_from_slice(&chunk);
+          false
+        }
+        None => true,
+      };
 
-      while let Some(nl) = line_buf.find('\n') {
-        let line = line_buf[..nl].trim().to_string();
-        line_buf = line_buf[nl + 1..].to_string();
+      loop {
+        ensure_agent_running(&is_running)?;
+        let line_end = match line_buf.iter().position(|&b| b == b'\n') {
+          Some(nl) => nl + 1,
+          None => {
+            // Accept an unterminated final line at EOF. The exact [DONE] sentinel
+            // is self-delimiting, so it need not wait for a newline or EOF.
+            let done = std::str::from_utf8(&line_buf)
+              .ok()
+              .and_then(|line| line.trim().strip_prefix("data:"))
+              .is_some_and(|data| data.trim() == "[DONE]");
+            if line_buf.is_empty() || (!eof && !done) {
+              break;
+            }
+            line_buf.len()
+          }
+        };
+        let line = String::from_utf8(line_buf.drain(..line_end).collect())
+          .map_err(|e| format!("Invalid UTF-8 in SSE stream: {}", e))?;
 
-        if let Some(data) = line.strip_prefix("data: ") {
+        if let Some(data) = line.trim().strip_prefix("data:") {
           let data = data.trim();
           if data == "[DONE]" {
+            saw_normal_end = true;
+            // All preceding deltas are already accumulated; do not wait for EOF.
+            break 'read_stream;
+          }
+          if data.is_empty() {
             continue;
           }
-          if let Ok(parsed) = serde_json::from_str::<OpenAiStreamChunk>(data) {
-            if let Some(delta) = parsed
-              .choices
-              .and_then(|cs| cs.first().cloned())
-              .and_then(|c| c.delta)
-            {
+          let value: serde_json::Value =
+            serde_json::from_str(data).map_err(|e| format!("Invalid SSE data: {}", e))?;
+          if let Some(error) = value.get("error").filter(|e| !e.is_null()) {
+            let message = error
+              .get("message")
+              .and_then(|m| m.as_str())
+              .or_else(|| error.as_str())
+              .map(str::to_owned)
+              .unwrap_or_else(|| error.to_string());
+            return Err(format!("API stream error: {}", message));
+          }
+          let parsed: OpenAiStreamChunk =
+            serde_json::from_value(value).map_err(|e| format!("Invalid SSE chunk: {}", e))?;
+          if let Some(choice) = parsed.choices.and_then(|cs| cs.into_iter().next()) {
+            // `stop` is also used for tool responses by some compatible services.
+            // Keep reading after a finish reason to catch subsequent SSE errors.
+            match choice.finish_reason.as_deref() {
+              Some("stop" | "tool_calls" | "function_call") => saw_normal_end = true,
+              None | Some("") => {}
+              Some(reason) => {
+                return Err(format!("AI stream ended with finish_reason: {}", reason));
+              }
+            }
+            // The final chunk can carry both a finish reason and the last delta.
+            if let Some(delta) = choice.delta {
+              let meaningful = delta.content.as_ref().is_some_and(|c| !c.is_empty())
+                || delta
+                  .tool_calls
+                  .as_ref()
+                  .is_some_and(|calls| !calls.is_empty());
+              if meaningful && !saw_response {
+                saw_response = true;
+                on_phase(AiFlowPhase::Response);
+              }
               if let Some(content) = delta.content {
                 if !content.is_empty() {
                   assistant_content.push_str(&content);
@@ -1386,7 +1668,7 @@ pub async fn run_agent_stream(
                 }
               }
               if let Some(tool_deltas) = delta.tool_calls {
-                saw_tool_call = true;
+                saw_tool_call |= !tool_deltas.is_empty();
                 for td in tool_deltas {
                   let entry = tool_acc
                     .entry(td.index)
@@ -1419,6 +1701,14 @@ pub async fn run_agent_stream(
           }
         }
       }
+      if eof {
+        break;
+      }
+    }
+    if !saw_normal_end {
+      return Err(
+        "AI stream ended without [DONE] or a normal finish_reason (truncated response).".into(),
+      );
     }
 
     // Build the assistant message for this round.
@@ -1435,9 +1725,17 @@ pub async fn run_agent_stream(
       images: None,
     };
 
-    // Assemble aggregated tool calls.
+    // Validate the entire batch before executing any call, even with a terminator.
     let mut calls: Vec<OpenAiToolCall> = Vec::new();
     for (_idx, (id, name, args)) in &tool_acc {
+      if id.as_deref().is_none_or(str::is_empty)
+        || name.as_deref().is_none_or(str::is_empty)
+        || !serde_json::from_str::<serde_json::Value>(args).is_ok_and(|v| v.is_object())
+      {
+        return Err(
+          "Incomplete tool call in AI stream (missing id/name or invalid JSON arguments).".into(),
+        );
+      }
       calls.push(OpenAiToolCall {
         id: id.clone().unwrap_or_default(),
         name: name.clone().unwrap_or_default(),
@@ -1462,16 +1760,24 @@ pub async fn run_agent_stream(
       calls.len(),
     );
 
+    ensure_agent_running(&is_running)?;
     if !saw_tool_call {
       // No tool calls → conversation finished.
+      assistant_msg.tool_calls = None;
       return Ok(assistant_msg);
     }
+    // Omitting the registry from HTTP is not a security boundary: refuse an
+    // unexpected tool response in chat mode before invoking any executor.
+    if tools.is_none() {
+      return Err("Tool execution is disabled in chat mode.".into());
+    }
 
-    // Append assistant message (with tool_calls) to history.
     messages.push(assistant_msg);
-
-    // Emit pending events, execute tools.
+    ensure_agent_running(&is_running)?;
+    on_phase(AiFlowPhase::Tools);
+    let mut pending_calls = Vec::new();
     for call in &calls {
+      ensure_agent_running(&is_running)?;
       on_tool(ToolCallEvent {
         id: call.id.clone(),
         name: call.name.clone(),
@@ -1480,22 +1786,28 @@ pub async fn run_agent_stream(
         result: None,
         error: None,
       });
-    }
-
-    let results = execute_tool(calls.clone()).await;
-
-    // If any tool result asks for user confirmation (e.g. a sensitive
-    // command), pause the agent loop: hand the current context to the
-    // caller so it can persist the pending call and ask the user. We do
-    // NOT yet append tool results in this case — `confirm_ai_tool` will
-    // resume the loop with the resolved results.
-    for (_, r) in &results {
-      if let Ok(v) = serde_json::from_str::<serde_json::Value>(r) {
-        if v.get("needsConfirmation").and_then(|b| b.as_bool()) == Some(true) {
-          on_confirm_required(messages.clone(), calls.clone());
-          return Err("__confirmation__".to_string());
-        }
+      // One call at a time gives cancellation a boundary before every tool.
+      ensure_agent_running(&is_running)?;
+      let results = execute_tool(vec![call.clone()]).await;
+      ensure_agent_running(&is_running)?;
+      let result = results
+        .into_iter()
+        .find(|(id, _)| id == &call.id)
+        .map(|(_, r)| r)
+        .unwrap_or_else(|| "{\"error\":\"no result\"}".into());
+      if tool_needs_confirmation(&result) {
+        pending_calls.push(call.clone());
+      } else {
+        // Retain completed results before pausing; never run these calls twice.
+        append_tool_result(&mut messages, call, result.clone());
+        on_tool(tool_result_event(call, result, false));
       }
+    }
+    if !pending_calls.is_empty() {
+      ensure_agent_running(&is_running)?;
+      // The caller atomically saves pending calls and publishes confirmation.
+      on_confirm_required(messages, pending_calls)?;
+      return Err("__confirmation__".into());
     }
 
     // Log the executed tool calls: names + their original JSON arguments
@@ -1524,30 +1836,6 @@ pub async fn run_agent_stream(
       eprintln!("{}", colorize_json(&args_pretty));
     }
 
-    // Append tool-result messages and emit done events.
-    for call in &calls {
-      let result = results
-        .iter()
-        .find(|(id, _)| id == &call.id)
-        .map(|(_, r)| r.clone())
-        .unwrap_or_else(|| "{\"error\":\"no result\"}".into());
-      messages.push(AiMessage {
-        role: "tool".into(),
-        content: Some(result.clone()),
-        tool_calls: None,
-        tool_call_id: Some(call.id.clone()),
-        name: Some(call.name.clone()),
-        images: None,
-      });
-      on_tool(ToolCallEvent {
-        id: call.id.clone(),
-        name: call.name.clone(),
-        arguments: call.arguments.clone(),
-        status: "done".into(),
-        result: Some(result),
-        error: None,
-      });
-    }
     // Continue the loop for the next round.
   }
 
@@ -1559,6 +1847,807 @@ pub async fn run_agent_stream(
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::sync::{Arc, Mutex};
+
+  fn flow_phases(events: &[AiFlowEvent]) -> Vec<&str> {
+    events.iter().map(|e| e.phase.as_str()).collect()
+  }
+
+  fn test_call(id: &str) -> OpenAiToolCall {
+    OpenAiToolCall {
+      id: id.into(),
+      name: "list_connections".into(),
+      arguments: "{}".into(),
+    }
+  }
+
+  #[test]
+  fn ai_flow_round_and_clock_survive_drain_and_confirmation() {
+    let mut cs = AiChatState::new("test".into());
+    cs.record_phase(AiFlowPhase::Request);
+    cs.record_phase(AiFlowPhase::Response);
+    cs.record_phase(AiFlowPhase::Tools);
+    let first = cs.drain_poll();
+    assert_eq!(flow_phases(&first.4), ["request", "response", "tools"]);
+    let started = cs.flow.started;
+    cs.pause_for_confirmation(&[test_call("sensitive")]);
+    cs.finish_agent(Err("__confirmation__".into()));
+    let pause = cs.drain_poll();
+    assert!(!pause.1);
+    assert_eq!(pause.3[0].status, "needs-confirmation");
+    assert_eq!(flow_phases(&pause.4), ["confirmation"]);
+    assert_eq!(pause.4[0].seq, 4);
+    assert!(!cs.drain_poll().1);
+    cs.record_phase(AiFlowPhase::Resume);
+    cs.record_phase(AiFlowPhase::Request);
+    cs.record_phase(AiFlowPhase::Response);
+    cs.record_phase(AiFlowPhase::Completed);
+    let end = cs.drain_poll();
+    assert!(end.1);
+    assert_eq!(cs.flow.started, started);
+    assert_eq!(
+      flow_phases(&end.4),
+      ["resume", "request", "response", "completed"]
+    );
+    assert_eq!(
+      end.4.iter().map(|e| (e.seq, e.round)).collect::<Vec<_>>(),
+      [(5, 1), (6, 2), (7, 2), (8, 2)]
+    );
+    assert!(end.4[0].elapsed_ms >= first.4[2].elapsed_ms);
+    let value = serde_json::to_value(&end.4[0]).unwrap();
+    assert_eq!(value.as_object().unwrap().len(), 4);
+    assert!(value.get("elapsedMs").is_some());
+  }
+
+  #[test]
+  fn ai_flow_terminal_emitted_only_once_even_after_drain() {
+    for phase in [
+      AiFlowPhase::Completed,
+      AiFlowPhase::Error,
+      AiFlowPhase::Cancelled,
+    ] {
+      let mut cs = AiChatState::new("test".into());
+      cs.record_phase(phase);
+      assert_eq!(cs.drain_poll().4.len(), 1);
+      cs.record_phase(AiFlowPhase::Cancelled);
+      cs.record_phase(AiFlowPhase::Request);
+      cs.finish_agent(Err("late error".into()));
+      cs.pause_for_confirmation(&[test_call("late")]);
+      let poll = cs.drain_poll();
+      assert!(poll.1);
+      assert!(poll.3.is_empty() && poll.4.is_empty());
+      assert!(poll.2.is_none());
+    }
+  }
+
+  #[test]
+  fn ai_flow_tool_errors_are_not_done() {
+    let call = test_call("one");
+    assert_eq!(
+      tool_result_event(&call, "{\"error\":\"failed\"}".into(), false).status,
+      "error"
+    );
+    assert_eq!(
+      tool_result_event(&call, "{\"error\":{\"code\":1}}".into(), false)
+        .error
+        .as_deref(),
+      Some("{\"code\":1}")
+    );
+    assert_eq!(
+      tool_result_event(&call, "{\"error\":\"declined\"}".into(), true).status,
+      "denied"
+    );
+    assert_eq!(
+      tool_result_event(&call, "{\"output\":\"error text\"}".into(), false).status,
+      "done"
+    );
+    assert!(!tool_needs_confirmation(
+      "{\"output\":{\"needsConfirmation\":true}}"
+    ));
+  }
+
+  struct MockAi {
+    profile: AiEndpointProfile,
+    requests: Arc<Mutex<Vec<serde_json::Value>>>,
+    server: tokio::task::JoinHandle<()>,
+  }
+
+  impl Drop for MockAi {
+    fn drop(&mut self) {
+      self.server.abort();
+    }
+  }
+
+  impl MockAi {
+    async fn start(responses: Vec<(axum::http::StatusCode, String)>) -> Self {
+      Self::start_streams(
+        responses
+          .into_iter()
+          .map(|(status, body)| (status, axum::body::Body::from(body)))
+          .collect(),
+      )
+      .await
+    }
+
+    async fn start_streams(responses: Vec<(axum::http::StatusCode, axum::body::Body)>) -> Self {
+      let requests = Arc::new(Mutex::new(Vec::new()));
+      let captured = requests.clone();
+      let responses = Arc::new(Mutex::new(std::collections::VecDeque::from(responses)));
+      let router = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+          let captured = captured.clone();
+          let responses = responses.clone();
+          async move {
+            captured.lock().unwrap().push(body);
+            let (status, body) = responses.lock().unwrap().pop_front().unwrap_or((
+              axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+              "unexpected request".into(),
+            ));
+            (status, [("content-type", "text/event-stream")], body)
+          }
+        }),
+      );
+      let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+      let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+      let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+      });
+      Self {
+        profile: AiEndpointProfile::new("mock".into(), endpoint),
+        requests,
+        server,
+      }
+    }
+  }
+
+  fn sse(delta: serde_json::Value) -> (axum::http::StatusCode, String) {
+    let reason = if delta.get("tool_calls").is_some() {
+      "tool_calls"
+    } else {
+      "stop"
+    };
+    (axum::http::StatusCode::OK, format!(
+      "data: {{\"choices\":[{{\"delta\":{{\"role\":\"assistant\"}}}}]}}\n\ndata: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+      serde_json::json!({ "choices": [{ "delta": delta }] }),
+      serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": reason }] })
+    ))
+  }
+
+  fn tool_sse(ids: &[&str]) -> (axum::http::StatusCode, String) {
+    sse(
+      serde_json::json!({ "tool_calls": ids.iter().enumerate().map(|(i, id)| {
+      serde_json::json!({ "index": i, "id": id, "function": { "name": "list_connections", "arguments": "{}" } })
+    }).collect::<Vec<_>>() }),
+    )
+  }
+
+  type TestPending = Mutex<Option<(Vec<AiMessage>, Vec<OpenAiToolCall>)>>;
+
+  async fn mock_run(
+    mock: &MockAi,
+    cs: &Mutex<AiChatState>,
+    pending: &TestPending,
+    messages: Vec<AiMessage>,
+    execute: impl FnMut(
+      Vec<OpenAiToolCall>,
+    ) -> futures_util::future::BoxFuture<'static, Vec<ToolResult>>,
+    tools: Option<Vec<OpenAiTool>>,
+  ) -> Result<AiMessage, String> {
+    run_agent_stream(
+      &mock.profile,
+      "nested",
+      messages,
+      |chunk| cs.lock().unwrap().chunks.push(chunk),
+      |event| cs.lock().unwrap().tool_events.push(event),
+      execute,
+      |messages, calls| {
+        cs.lock().unwrap().pause_for_confirmation(&calls);
+        *pending.lock().unwrap() = Some((messages, calls));
+        Ok(())
+      },
+      |phase| cs.lock().unwrap().record_phase(phase),
+      || cs.lock().unwrap().is_active(),
+      10,
+      tools,
+    )
+    .await
+  }
+
+  fn sse_frame(value: serde_json::Value) -> String {
+    format!("data:{}\n\n", value)
+  }
+
+  async fn assert_ai_flow_stream_error(body: String, error: &str, text: &str) {
+    let mock = MockAi::start(vec![(axum::http::StatusCode::OK, body)]).await;
+    let cs = Mutex::new(AiChatState::new("test".into()));
+    let pending = Mutex::new(None);
+    let mut executions = 0;
+    let result = mock_run(
+      &mock,
+      &cs,
+      &pending,
+      vec![],
+      |_| {
+        executions += 1;
+        Box::pin(async { vec![] })
+      },
+      Some(tool_definitions_unbound()),
+    )
+    .await;
+    assert_eq!(
+      executions, 0,
+      "incomplete/error responses must not execute tools"
+    );
+    assert!(result.as_ref().unwrap_err().contains(error), "{:?}", result);
+    let expected_error = result.as_ref().unwrap_err().clone();
+    cs.lock().unwrap().finish_agent(result);
+    let poll = cs.lock().unwrap().drain_poll();
+    assert_eq!(poll.0, text);
+    assert!(poll.1);
+    assert_eq!(poll.2.as_deref(), Some(expected_error.as_str()));
+    assert!(poll.3.is_empty());
+    assert_eq!(poll.4.first().unwrap().phase, "request");
+    assert_eq!(poll.4.last().unwrap().phase, "error");
+    assert!(!poll
+      .4
+      .iter()
+      .any(|e| matches!(e.phase.as_str(), "completed" | "tools" | "confirmation")));
+    assert!(pending.lock().unwrap().is_none());
+    assert_eq!(mock.requests.lock().unwrap().len(), 1);
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_sse_errors_are_not_completed() {
+    let prefix = sse_frame(serde_json::json!({"choices":[{"delta":{
+      "content":"partial", "tool_calls":[{"index":0,"id":"blocked",
+        "function":{"name":"list_connections","arguments":"{"}}]
+    }}]}));
+    for error in [
+      serde_json::json!({"message":"provider failed","type":"server_error"}),
+      serde_json::json!("provider failed"),
+      serde_json::json!({"code":"provider failed"}),
+    ] {
+      for finish in ["", "data:{\"choices\":[{\"finish_reason\":\"stop\"}]}\n\n"] {
+        let body = format!(
+          "{}{}{}data:[DONE]\n\n",
+          prefix,
+          finish,
+          sse_frame(serde_json::json!({"error":error}))
+        );
+        assert_ai_flow_stream_error(body, "provider failed", "partial").await;
+      }
+    }
+    // An error in the final, unterminated line is still an error.
+    assert_ai_flow_stream_error(
+      "data:{\"error\":{\"message\":\"no newline\"}}".into(),
+      "no newline",
+      "",
+    )
+    .await;
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_truncated_text_is_not_completed() {
+    assert_ai_flow_stream_error(String::new(), "truncated response", "").await;
+    for reason in [serde_json::Value::Null, serde_json::json!("")] {
+      let body = sse_frame(serde_json::json!({"choices":[{
+        "delta":{"content":"partial"}, "finish_reason":reason
+      }]}));
+      for body in [body.clone(), body.trim_end().to_string()] {
+        assert_ai_flow_stream_error(body, "truncated response", "partial").await;
+      }
+    }
+    let prefix = sse_frame(serde_json::json!({"choices":[{"delta":{"content":"partial"}}]}));
+    assert_ai_flow_stream_error(
+      format!("{}data:{{\"choices\":[", prefix),
+      "Invalid SSE data",
+      "partial",
+    )
+    .await;
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_truncated_tools_never_execute() {
+    // Even fully parseable arguments are unsafe without a normal turn boundary.
+    for arguments in ["{", "{}"] {
+      let body = sse_frame(serde_json::json!({"choices":[{"delta":{"tool_calls":[
+        {"index":0,"id":"complete","function":{"name":"list_connections","arguments":"{}"}},
+        {"index":1,"id":"blocked","function":{"name":"list_connections","arguments":arguments}}
+      ]}}]}));
+      assert_ai_flow_stream_error(body, "truncated response", "").await;
+    }
+    // Validate the whole batch before executing its first, otherwise valid call.
+    let body = sse_frame(serde_json::json!({"choices":[{"delta":{"tool_calls":[
+      {"index":0,"id":"complete","function":{"name":"list_connections","arguments":"{}"}},
+      {"index":1,"id":"blocked","function":{"name":"list_connections","arguments":"{"}}
+    ]},"finish_reason":"tool_calls"}]}));
+    assert_ai_flow_stream_error(
+      format!("{}data:[DONE]\n\n", body),
+      "Incomplete tool call",
+      "",
+    )
+    .await;
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_abnormal_finish_reasons_never_complete_or_execute() {
+    for reason in ["length", "content_filter", "unknown_reason"] {
+      for delta in [
+        serde_json::json!({"content":"partial"}),
+        serde_json::json!({"content":"partial","tool_calls":[{"index":0,"id":"blocked",
+          "function":{"name":"list_connections","arguments":"{"}}]}),
+      ] {
+        let prefix = sse_frame(serde_json::json!({"choices":[{"delta":delta}]}));
+        let finish =
+          sse_frame(serde_json::json!({"choices":[{"delta":{},"finish_reason":reason}]}));
+        for ending in ["", "data:[DONE]\n\n"] {
+          assert_ai_flow_stream_error(format!("{}{}{}", prefix, finish, ending), reason, "partial")
+            .await;
+        }
+      }
+    }
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_normal_text_endings_preserve_final_delta() {
+    let first = sse_frame(serde_json::json!({"choices":[{"delta":{"content":"你好"}}]}));
+    let final_delta = sse_frame(serde_json::json!({"choices":[{
+      "delta":{"content":"世界"},"finish_reason":"stop"
+    }]}));
+    for ending in [
+      final_delta.clone(),
+      final_delta.trim_end().to_string(),
+      format!("{}data:[DONE]\n\n", final_delta),
+      format!("{}data:[DONE]", final_delta),
+    ] {
+      let mock = MockAi::start(vec![(
+        axum::http::StatusCode::OK,
+        format!("{}{}", first, ending),
+      )])
+      .await;
+      let cs = Mutex::new(AiChatState::new("test".into()));
+      let result = mock_run(
+        &mock,
+        &cs,
+        &Mutex::new(None),
+        vec![],
+        |_| panic!("text response must not execute tools"),
+        None,
+      )
+      .await;
+      assert_eq!(
+        result.as_ref().unwrap().content.as_deref(),
+        Some("你好世界")
+      );
+      cs.lock().unwrap().finish_agent(result);
+      let poll = cs.lock().unwrap().drain_poll();
+      assert_eq!(poll.0, "你好世界");
+      assert!(poll.1 && poll.2.is_none());
+      assert!(poll.3.is_empty());
+      assert_eq!(flow_phases(&poll.4), ["request", "response", "completed"]);
+      assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    }
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_normal_tool_endings_preserve_final_arguments() {
+    for reason in [
+      None,
+      Some("stop"),
+      Some("tool_calls"),
+      Some("function_call"),
+    ] {
+      let first = sse_frame(serde_json::json!({"choices":[{"delta":{"tool_calls":[{
+        "index":0,"id":"one","function":{"name":"list_connections","arguments":"{\"label\":\"中"}
+      }]}}]}));
+      let last = sse_frame(serde_json::json!({"choices":[{"delta":{"tool_calls":[{
+        "index":0,"function":{"arguments":"文\"}"}
+      }]},"finish_reason":reason}]}));
+      let ending = if reason.is_none() { "data:[DONE]" } else { "" };
+      let mock = MockAi::start(vec![
+        (
+          axum::http::StatusCode::OK,
+          format!("{}{}{}", first, last, ending),
+        ),
+        sse(serde_json::json!({"content":"answer"})),
+      ])
+      .await;
+      let cs = Mutex::new(AiChatState::new("test".into()));
+      let mut executions = 0;
+      let result = mock_run(
+        &mock,
+        &cs,
+        &Mutex::new(None),
+        vec![],
+        |calls| {
+          executions += 1;
+          assert_eq!(calls.len(), 1);
+          assert_eq!(calls[0].id, "one");
+          assert_eq!(calls[0].name, "list_connections");
+          assert_eq!(calls[0].arguments, "{\"label\":\"中文\"}");
+          Box::pin(async { vec![("one".into(), "{\"ok\":true}".into())] })
+        },
+        Some(tool_definitions_unbound()),
+      )
+      .await;
+      assert_eq!(executions, 1);
+      assert_eq!(result.as_ref().unwrap().content.as_deref(), Some("answer"));
+      cs.lock().unwrap().finish_agent(result);
+      let poll = cs.lock().unwrap().drain_poll();
+      assert!(poll.1 && poll.2.is_none());
+      assert_eq!(
+        flow_phases(&poll.4),
+        [
+          "request",
+          "response",
+          "tools",
+          "request",
+          "response",
+          "completed"
+        ]
+      );
+      assert_eq!(
+        poll.3.iter().map(|e| e.status.as_str()).collect::<Vec<_>>(),
+        ["executing", "done"]
+      );
+      let requests = mock.requests.lock().unwrap();
+      assert_eq!(requests.len(), 2);
+      assert_eq!(
+        requests[1]["messages"][0]["tool_calls"][0]["function"]["arguments"],
+        "{\"label\":\"中文\"}"
+      );
+    }
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_done_does_not_wait_for_connection_close() {
+    for ending in ["data:[DONE]\n\n", "data: [DONE]\r\n\r\n", "data:[DONE]"] {
+      let body = format!(
+        "{}{}",
+        sse_frame(serde_json::json!({"choices":[{"delta":{"content":"answer"}}]})),
+        ending,
+      );
+      let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(body)])
+        .chain(futures_util::stream::pending());
+      let mock = MockAi::start_streams(vec![(
+        axum::http::StatusCode::OK,
+        axum::body::Body::from_stream(stream),
+      )])
+      .await;
+      let cs = Mutex::new(AiChatState::new("test".into()));
+      let pending = Mutex::new(None);
+      let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        mock_run(
+          &mock,
+          &cs,
+          &pending,
+          vec![],
+          |_| panic!("text response must not execute tools"),
+          None,
+        ),
+      )
+      .await
+      .expect("[DONE] must finish without waiting for the open response body");
+      assert_eq!(result.as_ref().unwrap().content.as_deref(), Some("answer"));
+      cs.lock().unwrap().finish_agent(result);
+      let poll = cs.lock().unwrap().drain_poll();
+      assert_eq!(poll.0, "answer");
+      assert!(poll.1 && poll.2.is_none());
+      assert_eq!(flow_phases(&poll.4), ["request", "response", "completed"]);
+    }
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_utf8_chunk_boundary_and_final_frame_without_newline() {
+    let ready = Arc::new(tokio::sync::Notify::new());
+    let first = sse_frame(serde_json::json!({"choices":[{"delta":{"content":"prefix"}}]}));
+    let last = format!(
+      "data:{}",
+      serde_json::json!({"choices":[{
+        "delta":{"content":"中文"},"finish_reason":"stop"
+      }]})
+    );
+    let split = last.find('中').unwrap() + 1;
+    let mut first_bytes = first.into_bytes();
+    first_bytes.extend_from_slice(&last.as_bytes()[..split]);
+    let pieces = std::collections::VecDeque::from([first_bytes, last.as_bytes()[split..].to_vec()]);
+    let signal = ready.clone();
+    let stream = futures_util::stream::unfold((pieces, false), move |(mut pieces, wait)| {
+      let signal = signal.clone();
+      async move {
+        let bytes = pieces.pop_front()?;
+        if wait {
+          // Do not send the continuation until the client has consumed chunk one.
+          signal.notified().await;
+        }
+        Some((Ok::<_, std::io::Error>(bytes), (pieces, true)))
+      }
+    });
+    let mock = MockAi::start_streams(vec![(
+      axum::http::StatusCode::OK,
+      axum::body::Body::from_stream(stream),
+    )])
+    .await;
+    let cs = Mutex::new(AiChatState::new("test".into()));
+    let result = tokio::time::timeout(
+      std::time::Duration::from_secs(2),
+      run_agent_stream(
+        &mock.profile,
+        "nested",
+        vec![],
+        |chunk| {
+          if chunk == "prefix" {
+            ready.notify_one();
+          }
+          cs.lock().unwrap().chunks.push(chunk);
+        },
+        |_| panic!("text response must not emit tool events"),
+        |_| panic!("text response must not execute tools"),
+        |_, _| panic!("text response must not request confirmation"),
+        |phase| cs.lock().unwrap().record_phase(phase),
+        || cs.lock().unwrap().is_active(),
+        10,
+        None,
+      ),
+    )
+    .await
+    .expect("split UTF-8 response must finish");
+    assert_eq!(
+      result.as_ref().unwrap().content.as_deref(),
+      Some("prefix中文")
+    );
+    cs.lock().unwrap().finish_agent(result);
+    let poll = cs.lock().unwrap().drain_poll();
+    assert_eq!(poll.0, "prefix中文");
+    assert!(poll.1 && poll.2.is_none());
+    assert_eq!(flow_phases(&poll.4), ["request", "response", "completed"]);
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_tools_then_response_and_error_status() {
+    let mock = MockAi::start(vec![
+      tool_sse(&["ok", "bad"]),
+      sse(serde_json::json!({"content":"answer"})),
+    ])
+    .await;
+    let cs = Mutex::new(AiChatState::new("test".into()));
+    let pending = Mutex::new(None);
+    let result = mock_run(
+      &mock,
+      &cs,
+      &pending,
+      vec![],
+      |calls| {
+        Box::pin(async move {
+          calls
+            .into_iter()
+            .map(|c| {
+              let result = if c.id == "bad" {
+                "{\"error\":\"failed\"}"
+              } else {
+                "{\"ok\":true}"
+              };
+              (c.id, result.into())
+            })
+            .collect()
+        })
+      },
+      Some(tool_definitions_unbound()),
+    )
+    .await;
+    cs.lock().unwrap().finish_agent(result);
+    let poll = cs.lock().unwrap().drain_poll();
+    assert_eq!(poll.0, "answer");
+    assert!(poll.1 && poll.2.is_none());
+    assert_eq!(
+      flow_phases(&poll.4),
+      [
+        "request",
+        "response",
+        "tools",
+        "request",
+        "response",
+        "completed"
+      ]
+    );
+    assert_eq!(
+      poll.3.iter().map(|e| e.status.as_str()).collect::<Vec<_>>(),
+      ["executing", "done", "executing", "error"]
+    );
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["messages"].as_array().unwrap().len(), 3);
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_confirmation_resume_never_reexecutes_completed_tools() {
+    let mock = MockAi::start(vec![
+      tool_sse(&["safe", "sensitive"]),
+      tool_sse(&["sensitive2"]),
+      sse(serde_json::json!({"content":"done"})),
+    ])
+    .await;
+    let cs = Mutex::new(AiChatState::new("test".into()));
+    let pending = Mutex::new(None);
+    let executed = Arc::new(Mutex::new(Vec::new()));
+    let mut messages = vec![];
+    for _ in 0..2 {
+      let executed = executed.clone();
+      let result = mock_run(
+        &mock,
+        &cs,
+        &pending,
+        messages,
+        move |calls| {
+          let executed = executed.clone();
+          Box::pin(async move {
+            calls
+              .into_iter()
+              .map(|c| {
+                executed.lock().unwrap().push(c.id.clone());
+                let result = if c.id == "safe" {
+                  "{\"ok\":true}"
+                } else {
+                  "{\"needsConfirmation\":true}"
+                };
+                (c.id, result.into())
+              })
+              .collect()
+          })
+        },
+        Some(tool_definitions_unbound()),
+      )
+      .await;
+      assert_eq!(result.as_ref().unwrap_err(), "__confirmation__");
+      cs.lock().unwrap().finish_agent(result);
+      let pause = cs.lock().unwrap().drain_poll();
+      assert!(!pause.1);
+      assert_eq!(pause.4.last().unwrap().phase, "confirmation");
+      assert!(!cs.lock().unwrap().drain_poll().1);
+      let (saved, calls) = pending.lock().unwrap().take().unwrap();
+      messages = saved;
+      assert_eq!(calls.len(), 1);
+      assert_ne!(calls[0].id, "safe");
+      cs.lock().unwrap().record_phase(AiFlowPhase::Resume);
+      append_tool_result(&mut messages, &calls[0], "{\"ok\":true}".into());
+    }
+    let result = mock_run(
+      &mock,
+      &cs,
+      &pending,
+      messages,
+      |_| panic!("no tool expected"),
+      Some(tool_definitions_unbound()),
+    )
+    .await;
+    cs.lock().unwrap().finish_agent(result);
+    let poll = cs.lock().unwrap().drain_poll();
+    assert_eq!(
+      flow_phases(&poll.4),
+      ["resume", "request", "response", "completed"]
+    );
+    assert_eq!(poll.4.last().unwrap().round, 3);
+    assert_eq!(
+      *executed.lock().unwrap(),
+      ["safe", "sensitive", "sensitive2"]
+    );
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+      requests[2]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["tool_call_id"] == "safe")
+        .count(),
+      1
+    );
+  }
+
+  #[tokio::test]
+  async fn ai_flow_http_chat_mode_refuses_unexpected_tools_and_http_error() {
+    for response in [
+      tool_sse(&["unexpected"]),
+      (axum::http::StatusCode::BAD_GATEWAY, "mock failure".into()),
+    ] {
+      let mock = MockAi::start(vec![response]).await;
+      let cs = Mutex::new(AiChatState::new("test".into()));
+      let result = mock_run(
+        &mock,
+        &cs,
+        &Mutex::new(None),
+        vec![],
+        |_| panic!("tools are disabled"),
+        None,
+      )
+      .await;
+      assert!(result.is_err());
+      cs.lock().unwrap().finish_agent(result);
+      let poll = cs.lock().unwrap().drain_poll();
+      assert!(poll.1 && poll.2.is_some());
+      assert_eq!(poll.4.last().unwrap().phase, "error");
+      assert!(!poll.4.iter().any(|e| e.phase == "tools"));
+      assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    }
+  }
+
+  #[tokio::test]
+  async fn ai_flow_response_once_and_cancel_at_stream_or_tool_boundary() {
+    let (status, tools) = tool_sse(&["blocked"]);
+    let content = serde_json::json!({"choices":[{"delta":{"content":"first"}}]});
+    let content2 = serde_json::json!({"choices":[{"delta":{"content":"second"}}]});
+    let body = format!("data: {}\n\ndata: {}\n\n{}", content, content2, tools);
+    for cancel_at in [AiFlowPhase::Response, AiFlowPhase::Tools] {
+      let mock = MockAi::start(vec![(status, body.clone())]).await;
+      let cs = Mutex::new(AiChatState::new("test".into()));
+      let result = run_agent_stream(
+        &mock.profile,
+        "nested",
+        vec![],
+        |_| {},
+        |_| {},
+        |_| panic!("cancelled tool must not execute"),
+        |_, _| panic!("cancelled flow must not pause"),
+        |phase| {
+          let mut cs = cs.lock().unwrap();
+          cs.record_phase(phase);
+          if phase == cancel_at {
+            cs.record_phase(AiFlowPhase::Cancelled);
+          }
+        },
+        || cs.lock().unwrap().is_active(),
+        10,
+        Some(tool_definitions_unbound()),
+      )
+      .await;
+      assert_eq!(result.unwrap_err(), "__cancelled__");
+      let poll = cs.lock().unwrap().drain_poll();
+      assert_eq!(poll.4.iter().filter(|e| e.phase == "response").count(), 1);
+      assert_eq!(poll.4.last().unwrap().phase, "cancelled");
+      assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    }
+  }
+
+  #[tokio::test]
+  async fn ai_flow_cancel_blocks_later_tools_and_requests() {
+    let mock = MockAi::start(vec![tool_sse(&["first", "must-not-run"])]).await;
+    let cs = Arc::new(Mutex::new(AiChatState::new("test".into())));
+    let cancel = cs.clone();
+    let result = mock_run(
+      &mock,
+      &cs,
+      &Mutex::new(None),
+      vec![],
+      move |calls| {
+        assert_eq!(calls[0].id, "first");
+        cancel.lock().unwrap().record_phase(AiFlowPhase::Cancelled);
+        Box::pin(async { vec![] })
+      },
+      Some(tool_definitions_unbound()),
+    )
+    .await;
+    assert_eq!(result.as_ref().unwrap_err(), "__cancelled__");
+    cs.lock().unwrap().finish_agent(result);
+    let poll = cs.lock().unwrap().drain_poll();
+    assert_eq!(
+      flow_phases(&poll.4),
+      ["request", "response", "tools", "cancelled"]
+    );
+    assert!(poll.1 && poll.2.is_none());
+    let result = mock_run(
+      &mock,
+      &cs,
+      &Mutex::new(None),
+      vec![],
+      |_| panic!("cancelled"),
+      Some(tool_definitions_unbound()),
+    )
+    .await;
+    assert_eq!(result.unwrap_err(), "__cancelled__");
+    assert_eq!(mock.requests.lock().unwrap().len(), 1);
+  }
 
   #[test]
   fn unbound_registry_exposes_no_shell_tool() {

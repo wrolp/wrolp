@@ -1958,3 +1958,169 @@
   color: $text-dim;
   text-align: center;
 }
+
+// Per-reply call metadata, independent of the message's markdown and tool cards.
+.ai-call-flow {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-block: 6px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: $bg-secondary;
+  color: $text-primary;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+
+  .ai-call-flow-toggle {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    color: $text-primary;
+    font: inherit;
+    text-align: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+
+    > svg {
+      margin-top: 3px;
+    }
+
+    &:hover {
+      background: $bg-hover;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--border-focus);
+      outline-offset: -2px;
+    }
+
+    &[aria-expanded='false'] .ai-call-flow-chevron {
+      transform: rotate(-90deg);
+    }
+  }
+
+  .ai-call-flow-heading,
+  .ai-call-flow-event-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .ai-call-flow-title,
+  .ai-call-flow-phase {
+    color: $text-primary;
+    font-weight: 600;
+  }
+
+  .ai-call-flow-summary,
+  .ai-call-flow-event-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    color: $text-secondary;
+    font-size: var(--fs-xs);
+
+    > span {
+      min-width: 0;
+      max-width: 100%;
+    }
+  }
+
+  .ai-call-flow-status {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    color: $text-primary;
+
+    > span {
+      min-width: 0;
+    }
+  }
+
+  .ai-call-flow-elapsed {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ai-call-flow-details {
+    min-width: 0;
+    padding: 10px;
+    border-top: 1px solid $border;
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  .ai-call-flow-snapshot {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0 0 8px;
+
+    > div {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 8px;
+      min-width: 0;
+    }
+
+    dt {
+      color: $text-secondary;
+    }
+
+    dd {
+      min-width: 0;
+      margin: 0;
+      color: $text-primary;
+    }
+  }
+
+  .ai-call-flow-note,
+  .ai-call-flow-cancel-note {
+    margin: 0 0 8px;
+    color: $text-secondary;
+    font-size: var(--fs-xs);
+  }
+
+  .ai-call-flow-cancel-note {
+    margin: 0;
+    padding: 0 10px 8px;
+    color: $text-primary;
+  }
+
+  .ai-call-flow-events {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+
+    > li {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: 8px;
+      min-width: 0;
+      margin: 0;
+      padding-block: 8px;
+      border-top: 1px solid $border;
+
+      > svg {
+        margin-top: 3px;
+        color: $text-secondary;
+      }
+    }
+  }
+}

@@ -11,11 +11,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AiEndpointProfile, AiMessage, ToolCallEvent, AiPromptTemplate } from '../types'
 import {
-  startAiAgent,
-  pollAiChunks,
-  cancelAiChat,
   listAiModels,
-  confirmAiTool,
   sendInput,
   localSendInput,
   serialSendInput,
@@ -33,6 +29,8 @@ import type { TranslationKey } from '../i18n/en'
 import { focusTerminal } from './Terminal'
 import { handleMarkdownLinkClick } from '../lib/externalLink'
 import { copyText } from '../lib/clipboard'
+import { createAiChatRun, type AiConv, type ChatMessage } from '../aiChatRun'
+import AiCallFlow from './AiCallFlow'
 
 type ChatMode = 'chat' | 'command' | 'read_only'
 
@@ -145,31 +143,6 @@ function CodeBlock({
       <code>{code}</code>
     </pre>
   )
-}
-
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  /** Images attached to a user message (Base64 data URLs), shown in the chat. */
-  images?: string[]
-  /** Tool calls used by the assistant to produce this reply (shown inside the
-      assistant message bubble, grouped with its answer). */
-  toolCalls?: ToolCallEvent[]
-}
-
-interface AiConv {
-  messages: ChatMessage[]
-  input: string
-  streaming: boolean
-  streamingText: string
-  error: string | null
-  toolCalls: ToolCallEvent[]
-  showSuggestions: boolean
-  /** Tool-call wire format for this conversation: "nested" (standard OpenAI
-   *  `tool_calls[].function.{name,arguments}`) or "flat" (`tool_calls[]`
-   *  carrying `name`/`arguments` directly). Defaults to "nested". */
-  toolCallFormat: 'flat' | 'nested'
 }
 
 interface AiChatPanelProps {
@@ -300,6 +273,8 @@ export default function AiChatPanel({
     toolCalls,
     showSuggestions,
     toolCallFormat,
+    flow,
+    run,
   } = conv
 
   // Whether this conversation owns a shell. The global chat has none, so it
@@ -734,10 +709,6 @@ export default function AiChatPanel({
     setConv((c) => ({ ...c, messages: typeof u === 'function' ? u(c.messages) : u }))
   const setInput = (u: string | ((p: string) => string)) =>
     setConv((c) => ({ ...c, input: typeof u === 'function' ? u(c.input) : u }))
-  const setStreaming = (u: boolean | ((p: boolean) => boolean)) =>
-    setConv((c) => ({ ...c, streaming: typeof u === 'function' ? u(c.streaming) : u }))
-  const setStreamingText = (u: string | ((p: string) => string)) =>
-    setConv((c) => ({ ...c, streamingText: typeof u === 'function' ? u(c.streamingText) : u }))
   const setError = (u: string | null | ((p: string | null) => string | null)) =>
     setConv((c) => ({ ...c, error: typeof u === 'function' ? u(c.error) : u }))
   const setToolCalls = (u: ToolCallEvent[] | ((p: ToolCallEvent[]) => ToolCallEvent[])) =>
@@ -745,10 +716,6 @@ export default function AiChatPanel({
   const setShowSuggestions = (u: boolean | ((p: boolean) => boolean)) =>
     setConv((c) => ({ ...c, showSuggestions: typeof u === 'function' ? u(c.showSuggestions) : u }))
   const setToolCallFormat = (u: 'flat' | 'nested') => setConv((c) => ({ ...c, toolCallFormat: u }))
-
-  // Active agent chat id (set once a run starts); used to resume after a
-  // sensitive-tool confirmation.
-  const [chatId, setChatId] = useState<string | null>(null)
 
   // "Copy whole message" feedback: id of the message currently marked copied.
   const [msgCopied, setMsgCopied] = useState<string | null>(null)
@@ -764,15 +731,8 @@ export default function AiChatPanel({
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const pollRef = useRef<number>(0)
   const templatePickerRef = useRef<HTMLDivElement>(null)
   const modePickerRef = useRef<HTMLDivElement>(null)
-  // Guard against double-firing confirmAndResume.
-  const confirmingRef = useRef(false)
-  // Synchronously track tool IDs the user has already acted on (Allow/Deny).
-  // A stale in-flight poll can deliver a needs-confirmation event *before* React
-  // commits the optimistic state update, so we cannot rely on state.status alone.
-  const confirmedToolIdsRef = useRef<Set<string>>(new Set())
 
   // Pending images selected via the "add image" button (data URLs).
   const [pendingImages, setPendingImages] = useState<string[]>([])
@@ -856,213 +816,44 @@ export default function AiChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingText, toolCalls])
 
-  // Merge incoming tool events into the displayed list (by id, latest status wins).
-  // Block stale poll events that revive needs-confirmation after the user has
-  // already clicked Allow/Deny.  We use a **synchronous ref** (not React state)
-  // because state updates are batched: an in-flight poll's mergeToolEvents may
-  // read prev *before* the optimistic confirmAndResume update is committed.
-  const mergeToolEvents = useCallback((incoming: ToolCallEvent[]) => {
-    if (incoming.length === 0) return
-    const confirmed = confirmedToolIdsRef.current
-    setToolCalls((prev) => {
-      const byId = new Map(prev.map((t) => [t.id, t]))
-      for (const ev of incoming) {
-        // Primary guard: synchronous ref — always reflects the user's click.
-        if (ev.status === 'needs-confirmation' && confirmed.has(ev.id)) continue
-        // Secondary safety net: if state somehow progressed past confirmation,
-        // don't let a stale event revert it.
-        const existing = byId.get(ev.id)
-        if (
-          ev.status === 'needs-confirmation' &&
-          existing &&
-          (existing.status === 'executing' || existing.status === 'denied')
-        ) {
-          continue
-        }
-        byId.set(ev.id, ev)
-      }
-      const order = [...prev.map((t) => t.id), ...incoming.map((t) => t.id)]
-      const seen = new Set<string>()
-      const ordered: ToolCallEvent[] = []
-      for (const id of order) {
-        if (seen.has(id)) continue
-        seen.add(id)
-        if (byId.has(id)) ordered.push(byId.get(id)!)
-      }
-      return ordered
-    })
-  }, [])
-
-  // Commit the assistant reply as a message, attaching the tool calls that
-  // were used during this turn. The tool calls are moved out of the global
-  // list (which is only used for the live/in-progress display) into the
-  // message itself, so each answer renders together with its tools.
-  const finalizeAssistant = useCallback((text: string, err?: string | null) => {
-    setToolCalls((prev) => {
-      if (prev.length === 0) {
-        if (text) {
-          setMessages((ms) => [...ms, { id: nextId(), role: 'assistant', content: text }])
-        } else if (err) {
-          setMessages((ms) => [
-            ...ms,
-            { id: nextId(), role: 'assistant', content: 'Error: ' + err },
-          ])
-        }
-        return prev
-      }
-      const tools = prev.slice()
-      // Always attach the tools to a message — even when there was no text
-      // reply (a tool-only turn still shows its tool calls).
-      setMessages((ms) => [
-        ...ms,
-        {
-          id: nextId(),
-          role: 'assistant',
-          content: text || (err ? 'Error: ' + err : ''),
-          toolCalls: tools,
-        },
-      ])
-      return []
-    })
-  }, [])
-
-  // Poll the backend for streamed chunks until the agent run finishes.
-  const startPolling = useCallback(
-    (id: string) => {
-      let accumulated = ''
-      const poll = () => {
-        pollAiChunks(id)
-          .then((result) => {
-            if (result === null) {
-              setStreaming(false)
-              finalizeAssistant(accumulated)
-              requestAnimationFrame(() => {
-                const el = inputRef.current
-                if (el) {
-                  el.focus()
-                  const pos = el.value.length
-                  el.setSelectionRange(pos, pos)
-                }
-              })
-              return
-            }
-            const [newText, done, err, events] = result
-            if (events && events.length) mergeToolEvents(events)
-            if (newText) {
-              accumulated += newText
-              setStreamingText(accumulated.replace(/^\s+/, ''))
-            }
-            if (done || err) {
-              setStreaming(false)
-              finalizeAssistant(accumulated.trim(), err)
-              setStreamingText('')
-              if (err) setError(err)
-              // Return focus to the input box so the user can continue the
-              // conversation without clicking.
-              requestAnimationFrame(() => {
-                const el = inputRef.current
-                if (el) {
-                  el.focus()
-                  const pos = el.value.length
-                  el.setSelectionRange(pos, pos)
-                }
-              })
-              return
-            }
-            pollRef.current = window.setTimeout(poll, 100)
-          })
-          .catch((e) => {
-            setStreaming(false)
-            setError(String(e))
-            finalizeAssistant(accumulated.trim(), String(e))
-            setStreamingText('')
-          })
-      }
-      poll()
-    },
-    [finalizeAssistant, mergeToolEvents, setStreaming, setStreamingText, setError],
-  )
-
-  // Resume the agent after the user approves/declines a sensitive tool call.
-  // NOTE: One confirm_ai_tool call on the Rust side resolves ALL pending tool
-  // calls at once (the entire AiPendingConfirm batch).  The UI shows one
-  // Allow/Deny bar per card, but clicking ANY of them confirms the whole
-  // batch.  confirmingRef is NOT reset here — it stays true until a brand-new
-  // agent round starts (runAgent), so any extra clicks on sibling cards are
-  // silently ignored instead of hitting "No pending tool confirmation."
-  const confirmAndResume = useCallback(
-    (approved: boolean) => {
-      if (!chatId || confirmingRef.current) return
-      confirmingRef.current = true
-      const id = chatId
-      // Kill the stale poll cycle — it may revive needs-confirmation
-      // events from the buffer and overwrite the optimistic update below.
-      if (pollRef.current) clearTimeout(pollRef.current)
-      // Synchronously record which tool IDs the user is acting on, so that
-      // any in-flight poll delivering a stale needs-confirmation event will
-      // be blocked (React state updates are batched / async).
-      setToolCalls((prev) => {
-        for (const tc of prev) {
-          if (tc.status === 'needs-confirmation') confirmedToolIdsRef.current.add(tc.id)
-        }
-        return prev.map((tc) =>
-          tc.status === 'needs-confirmation'
-            ? { ...tc, status: approved ? 'executing' : 'denied' }
-            : tc,
-        )
-      })
-      confirmAiTool(id, approved, chatMode, maxAgentRounds)
-        .then(() => startPolling(id))
-        .catch((e) => setError(String(e)))
-    },
-    [chatId, setToolCalls, setError, startPolling, chatMode],
-  )
+  const confirmAndResume = useCallback((approved: boolean) => run?.confirm(approved), [run])
 
   const runAgent = useCallback(
     (apiMessages: AiMessage[], userDisplay: string, userImages?: string[]) => {
-      setShowSuggestions(false)
-      setStreaming(true)
-      setStreamingText('')
-      // Kill any still-running poll chain from a previous agent round so a stale
-      // `startPolling` timeout can't finalize/overwrite this new round's output.
-      if (pollRef.current) {
-        clearTimeout(pollRef.current)
-        pollRef.current = 0
-      }
-      // Reset per-run confirmation tracking.
-      confirmedToolIdsRef.current.clear()
-      confirmingRef.current = false
-      // NOTE: tool calls from previous turns are intentionally NOT cleared here
-      // — they belong to their own conversation turns and are kept alongside
-      // the messages. Clearing only happens on "clear conversation" or when
-      // editing a message (startEditMessage).
-      setError(null)
-      if (userDisplay) {
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: 'user', content: userDisplay, images: userImages },
-        ])
-      }
-
-      startAiAgent(
-        apiMessages,
-        tabId,
-        config ?? undefined,
-        chatMode,
-        maxAgentRounds,
-        toolCallFormat,
+      if (!config) return
+      const { run: nextRun, trace } = createAiChatRun(
+        {
+          messages: apiMessages,
+          tabId,
+          profile: { ...config },
+          mode: chatMode,
+          maxRounds: maxAgentRounds,
+          toolCallFormat,
+          interruptedMessage: t('aiFlowInterrupted'),
+          stopFailedMessage: t('aiFlowStopFailed'),
+        },
+        setConv,
       )
-        .then((id: string) => {
-          setChatId(id)
-          startPolling(id)
-        })
-        .catch((e) => {
-          setStreaming(false)
-          setError(String(e))
-          finalizeAssistant('', String(e))
-        })
+      const message: ChatMessage = {
+        id: nextId(),
+        role: 'user',
+        content: userDisplay,
+        images: userImages,
+      }
+      setConv((c) => ({
+        ...c,
+        messages: [...c.messages, message],
+        streaming: true,
+        streamingText: '',
+        toolCalls: [],
+        error: null,
+        showSuggestions: false,
+        flow: trace,
+        run: nextRun,
+      }))
+      nextRun.start()
     },
-    [mergeToolEvents, finalizeAssistant, tabId, config, toolCallFormat, chatMode, maxAgentRounds],
+    [tabId, config, toolCallFormat, chatMode, maxAgentRounds, setConv, t],
   )
 
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1277,13 +1068,6 @@ export default function AiChatPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialContext])
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearTimeout(pollRef.current)
-    }
-  }, [])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1714,13 +1498,15 @@ export default function AiChatPanel({
               </span>
             </div>
             <div className="ai-chat-msg-body">
+              {msg.flow && <AiCallFlow trace={msg.flow} />}
               <div className="ai-chat-msg-content">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                   {msg.content}
                 </ReactMarkdown>
               </div>
+              {msg.error && <div className="ai-chat-error">{msg.error}</div>}
               {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
-                <ToolCallList tools={msg.toolCalls} onConfirm={confirmAndResume} />
+                <ToolCallList tools={msg.toolCalls} />
               )}
               {msg.images && msg.images.length > 0 && (
                 <div className="ai-chat-msg-images">
@@ -1798,11 +1584,14 @@ export default function AiChatPanel({
                 <Icon name="sparkles" size={14} />
               </div>
               <span className="ai-chat-msg-role">{t('aiChatRoleAi')}</span>
-              <span className="ai-chat-running" title={t('aiRunning')}>
-                <span className="ai-chat-running-text">{t('aiRunning')}</span>
+              <span className="ai-chat-running">
+                <span className="ai-chat-running-text">
+                  {t(flow?.status === 'waiting' ? 'aiFlowWaiting' : 'aiRunning')}
+                </span>
               </span>
             </div>
             <div className="ai-chat-msg-body">
+              {flow && <AiCallFlow trace={flow} />}
               {toolCalls.length > 0 && (
                 <ToolCallList tools={toolCalls} onConfirm={confirmAndResume} />
               )}
@@ -1825,7 +1614,7 @@ export default function AiChatPanel({
           </div>
         )}
 
-        {error && !streaming && (
+        {error && streaming && (
           <div className="ai-chat-error">
             <Icon name="x" size={13} /> {error}
           </div>
@@ -2072,7 +1861,7 @@ export default function AiChatPanel({
               className="ai-chat-send-btn"
               onClick={() => {
                 if (streaming) {
-                  if (chatId) void cancelAiChat(chatId).catch(() => {})
+                  void run?.cancel().catch(() => {})
                 } else {
                   handleSend()
                 }
@@ -2422,7 +2211,7 @@ function ToolCallList({
   onConfirm,
 }: {
   tools: ToolCallEvent[]
-  onConfirm: (approved: boolean) => void
+  onConfirm?: (approved: boolean) => void
 }) {
   const [collapsed, setCollapsed] = useState(true)
   const { t } = useI18n()
@@ -2522,7 +2311,7 @@ function ToolCallCard({
   onConfirm,
 }: {
   tool: ToolCallEvent
-  onConfirm: (approved: boolean) => void
+  onConfirm?: (approved: boolean) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const { t } = useI18n()
@@ -2603,7 +2392,7 @@ function ToolCallCard({
           ) : null}
         </div>
       )}
-      {isConfirmation && (
+      {isConfirmation && onConfirm && (
         <div className="ai-tool-confirm-bar">
           <span className="ai-tool-confirm-text">{t('aiToolConfirm')}</span>
           <div className="ai-tool-confirm-actions">

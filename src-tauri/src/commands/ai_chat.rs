@@ -185,17 +185,11 @@ pub async fn start_ai_chat_stream(
   let chat_id = {
     let state = app.state::<AppState>();
     let cid = Uuid::new_v4().to_string();
-    state.ai_chat_buffers.lock().unwrap().insert(
-      cid.clone(),
-      AiChatState {
-        chat_id: cid.clone(),
-        chunks: Vec::new(),
-        done: false,
-        error: None,
-        tool_events: Vec::new(),
-        cancelled: false,
-      },
-    );
+    state
+      .ai_chat_buffers
+      .lock()
+      .unwrap()
+      .insert(cid.clone(), AiChatState::new(cid.clone()));
     cid
   };
 
@@ -222,7 +216,7 @@ pub async fn start_ai_chat_stream(
     let result = ai::execute_streaming_chat(&profile, &messages, |chunk| {
       let state = app_clone.state::<AppState>();
       let mut guard = state.ai_chat_buffers.lock().unwrap();
-      if let Some(cs) = guard.get_mut(&cid) {
+      if let Some(cs) = guard.get_mut(&cid).filter(|cs| cs.is_active()) {
         cs.chunks.push(chunk);
       }
     })
@@ -230,7 +224,8 @@ pub async fn start_ai_chat_stream(
 
     let state = app_clone.state::<AppState>();
     let mut guard = state.ai_chat_buffers.lock().unwrap();
-    if let Some(cs) = guard.get_mut(&cid) {
+    // Legacy text-only streaming keeps an empty flow and its original result.
+    if let Some(cs) = guard.get_mut(&cid).filter(|cs| cs.is_active()) {
       cs.done = true;
       if let Err(e) = result {
         cs.error = Some(e);
@@ -241,52 +236,44 @@ pub async fn start_ai_chat_stream(
   Ok(chat_id)
 }
 
-/// Poll for new streaming chunks from an active AI chat.
-/// Returns `(new_text, done, error)`. The entry is removed when done.
+/// Returns `(new_text, done, error, tool_events, flow_events)`; only terminal
+/// entries are removed. A confirmation pause stays alive across empty polls.
 #[tauri::command]
 pub async fn poll_ai_chunks(
   state: tauri::State<'_, AppState>,
   chat_id: String,
-) -> Result<Option<(String, bool, Option<String>, Vec<crate::ai::ToolCallEvent>)>, String> {
+) -> Result<Option<ai::AiChatPoll>, String> {
   let mut guard = state.ai_chat_buffers.lock().unwrap();
-  match guard.get_mut(&chat_id) {
-    Some(cs) => {
-      if cs.cancelled && cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
-        // User paused the stream — end polling with whatever text already
-        // arrived (there is none left to drain here).
-        guard.remove(&chat_id);
-        return Ok(Some((String::new(), true, None, Vec::new())));
-      }
-      if cs.chunks.is_empty() && !cs.done && cs.tool_events.is_empty() {
-        return Ok(Some((String::new(), false, None, Vec::new())));
-      }
-      let new_text: String = cs.chunks.drain(..).collect();
-      let done = cs.done || cs.cancelled;
-      let error = if cs.cancelled && !cs.done {
-        None
-      } else {
-        cs.error.clone()
-      };
-      let tool_events = std::mem::take(&mut cs.tool_events);
-      if done {
-        guard.remove(&chat_id);
-      }
-      Ok(Some((new_text, done, error, tool_events)))
-    }
-    None => Ok(None),
+  let result = guard.get_mut(&chat_id).map(AiChatState::drain_poll);
+  if result.as_ref().is_some_and(|r| r.1) {
+    guard.remove(&chat_id);
   }
+  Ok(result)
 }
 
-/// Pause/stop an in-flight AI chat. The stream is marked cancelled; the next
-/// `poll_ai_chunks` returns whatever text accumulated so far as done, so the
-/// frontend stops polling. The background task aborts on its next chunk.
+/// Stop future requests/tools and publish one terminal event. A system command
+/// that is already executing is not killed or rolled back.
 #[tauri::command]
 pub fn cancel_ai_chat(state: tauri::State<'_, AppState>, chat_id: String) -> Result<(), String> {
+  // All paths that need both locks use buffers -> pending, including save/resume.
   let mut guard = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
+  let mut pending = state.ai_pending.lock().map_err(|e| e.to_string())?;
   if let Some(cs) = guard.get_mut(&chat_id) {
-    cs.cancelled = true;
+    cs.record_phase(ai::AiFlowPhase::Cancelled);
+  }
+  if pending.as_ref().is_some_and(|p| p.chat_id == chat_id) {
+    *pending = None;
   }
   Ok(())
+}
+
+fn agent_is_running(app: &tauri::AppHandle, chat_id: &str) -> bool {
+  app
+    .state::<AppState>()
+    .ai_chat_buffers
+    .lock()
+    .map(|g| g.get(chat_id).is_some_and(AiChatState::is_active))
+    .unwrap_or(false)
 }
 
 /// Start an AI chat that may call tools (agent loop). Streams assistant text
@@ -317,17 +304,11 @@ pub async fn start_ai_agent(
   let chat_id = {
     let state = app.state::<AppState>();
     let cid = Uuid::new_v4().to_string();
-    state.ai_chat_buffers.lock().unwrap().insert(
-      cid.clone(),
-      crate::ai::AiChatState {
-        chat_id: cid.clone(),
-        chunks: Vec::new(),
-        done: false,
-        error: None,
-        tool_events: Vec::new(),
-        cancelled: false,
-      },
-    );
+    state
+      .ai_chat_buffers
+      .lock()
+      .unwrap()
+      .insert(cid.clone(), AiChatState::new(cid.clone()));
     cid
   };
 
@@ -446,7 +427,7 @@ pub async fn start_ai_agent(
     let tab = current_tab_id;
     let mode = ai_mode.clone();
     move |msgs: Vec<crate::ai::AiMessage>, calls: Vec<crate::ai::OpenAiToolCall>| {
-      save_pending(&app2, &cid2, &conf2, msgs, calls, mode.clone(), &fmt, tab);
+      save_pending(&app2, &cid2, &conf2, msgs, calls, mode.clone(), &fmt, tab)
     }
   };
   spawn_agent(
@@ -480,9 +461,8 @@ fn agent_tools(tools_enabled: bool, shell_bound: bool) -> Option<Vec<crate::ai::
   })
 }
 
-/// Persist an agent-loop pause awaiting user confirmation of a sensitive tool
-/// call, and flag the in-flight tool events as `needs-confirmation` so the
-/// frontend can render an approval prompt.
+/// Atomically persist a pause and enqueue fresh `needs-confirmation` events,
+/// even if the earlier executing events have already been polled.
 fn save_pending(
   app: &tauri::AppHandle,
   chat_id: &str,
@@ -492,34 +472,38 @@ fn save_pending(
   ai_mode: String,
   tool_call_format: &str,
   current_tab_id: Option<u32>,
-) {
-  {
-    let st = app.state::<AppState>();
-    let guard = st.ai_pending.lock();
-    if let Ok(mut g) = guard {
-      *g = Some(crate::ssh_session::AiPendingConfirm {
-        chat_id: chat_id.to_string(),
-        config: config.clone(),
-        messages,
-        calls,
-        ai_mode,
-        tool_call_format: tool_call_format.to_string(),
-        current_tab_id,
-      });
-    }
+) -> Result<(), String> {
+  let st = app.state::<AppState>();
+  let mut buffers = st.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
+  let cs = buffers
+    .get_mut(chat_id)
+    .filter(|cs| cs.is_active())
+    .ok_or("__cancelled__")?;
+  let mut pending = st.ai_pending.lock().map_err(|e| e.to_string())?;
+  if pending.as_ref().is_some_and(|p| p.chat_id != chat_id) {
+    return Err("Another chat is awaiting tool confirmation.".into());
   }
-  {
-    let st = app.state::<AppState>();
-    let guard = st.ai_chat_buffers.lock();
-    if let Ok(mut g) = guard {
-      if let Some(cs) = g.get_mut(chat_id) {
-        for ev in &mut cs.tool_events {
-          if ev.status == "executing" {
-            ev.status = "needs-confirmation".to_string();
-          }
-        }
-      }
-    }
+  cs.pause_for_confirmation(&calls);
+  *pending = Some(crate::ssh_session::AiPendingConfirm {
+    chat_id: chat_id.to_string(),
+    config: config.clone(),
+    messages,
+    calls,
+    ai_mode,
+    tool_call_format: tool_call_format.to_string(),
+    current_tab_id,
+  });
+  Ok(())
+}
+
+fn take_pending_for_chat(
+  pending: &mut Option<crate::ssh_session::AiPendingConfirm>,
+  chat_id: &str,
+) -> Result<crate::ssh_session::AiPendingConfirm, String> {
+  match pending.as_ref() {
+    None => Err("No pending tool confirmation.".into()),
+    Some(p) if p.chat_id != chat_id => Err("Chat id mismatch for pending confirmation.".into()),
+    Some(_) => Ok(pending.take().unwrap()),
   }
 }
 
@@ -533,7 +517,9 @@ fn spawn_agent(
   messages: Vec<crate::ai::AiMessage>,
   current_tab_id: Option<u32>,
   ai_mode: String,
-  on_confirm: impl Fn(Vec<crate::ai::AiMessage>, Vec<crate::ai::OpenAiToolCall>) + Send + 'static,
+  on_confirm: impl Fn(Vec<crate::ai::AiMessage>, Vec<crate::ai::OpenAiToolCall>) -> Result<(), String>
+    + Send
+    + 'static,
   max_rounds: usize,
   tools: Option<Vec<crate::ai::OpenAiTool>>,
 ) {
@@ -547,23 +533,37 @@ fn spawn_agent(
       |chunk| {
         let state = app.state::<AppState>();
         let mut guard = state.ai_chat_buffers.lock().unwrap();
-        if let Some(cs) = guard.get_mut(&chat_id) {
+        if let Some(cs) = guard.get_mut(&chat_id).filter(|cs| cs.is_active()) {
           cs.chunks.push(chunk);
         }
       },
       |event| {
         let state = app.state::<AppState>();
         let mut guard = state.ai_chat_buffers.lock().unwrap();
-        if let Some(cs) = guard.get_mut(&chat_id) {
+        if let Some(cs) = guard.get_mut(&chat_id).filter(|cs| cs.is_active()) {
           cs.tool_events.push(event);
         }
       },
       |calls| -> futures_util::future::BoxFuture<'static, Vec<crate::ai::ToolResult>> {
         let app = app.clone();
+        let cid = chat_id.clone();
         let tab = current_tab_id;
-        Box::pin(async move { execute_ai_tools(&app, calls, tab, read_only).await })
+        Box::pin(async move {
+          // run_agent_stream supplies one call at a time; recheck on async entry.
+          if !agent_is_running(&app, &cid) {
+            return Vec::new();
+          }
+          execute_ai_tools(&app, calls, tab, read_only).await
+        })
       },
       on_confirm,
+      |phase| {
+        let state = app.state::<AppState>();
+        if let Some(cs) = state.ai_chat_buffers.lock().unwrap().get_mut(&chat_id) {
+          cs.record_phase(phase);
+        };
+      },
+      || agent_is_running(&app, &chat_id),
       max_rounds,
       tools,
     )
@@ -572,13 +572,7 @@ fn spawn_agent(
     let state = app.state::<AppState>();
     let mut guard = state.ai_chat_buffers.lock().unwrap();
     if let Some(cs) = guard.get_mut(&chat_id) {
-      cs.done = true;
-      if let Err(e) = result {
-        // A confirmation pause is expected — don't surface it as an error.
-        if e != "__confirmation__" {
-          cs.error = Some(e);
-        }
-      }
+      cs.finish_agent(result);
     }
   });
 }
@@ -597,60 +591,77 @@ pub async fn confirm_ai_tool(
 ) -> Result<(), String> {
   let state = app.state::<AppState>();
   let pending = {
+    let mut buffers = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
+    let cs = buffers
+      .get_mut(&chat_id)
+      .filter(|cs| cs.is_active())
+      .ok_or("Chat is no longer active.")?;
     let mut guard = state.ai_pending.lock().map_err(|e| e.to_string())?;
-    guard.take().ok_or("No pending tool confirmation.")?
+    let pending = take_pending_for_chat(&mut guard, &chat_id)?;
+    cs.record_phase(ai::AiFlowPhase::Resume);
+    pending
   };
-  if pending.chat_id != chat_id {
-    return Err("Chat id mismatch for pending confirmation.".into());
-  }
 
-  // Parse mode → read_only flag.
+  // A mode change may restrict execution but cannot lift the saved run's guard.
+  let ai_mode = if ai_mode == "chat" || pending.ai_mode == "chat" {
+    "chat".to_string()
+  } else if ai_mode == "read_only" || pending.ai_mode == "read_only" {
+    "read_only".to_string()
+  } else {
+    "command".to_string()
+  };
   let read_only = ai_mode == "read_only";
-  // tools_enabled: in chat mode tools should never have been called, but handle gracefully.
   let tools_enabled = ai_mode != "chat";
-
-  // Resolve each pending call: execute if approved (force), else reject.
-  // Note: read-only mode still blocks modifying commands even when approved —
-  // the guard in `execute_one_tool` is independent of `force`.
-  let mut results: Vec<crate::ai::ToolResult> = Vec::new();
+  let mut messages = pending.messages;
+  let mut still_pending = Vec::new();
   for call in &pending.calls {
-    let result = if approved {
-      // Pass the conversation's bound tab so `run_command` can type into the
-      // terminal (and show the status badge) instead of silently executing.
+    if !agent_is_running(&app, &chat_id) {
+      return Ok(());
+    }
+    let result = if !approved {
+      serde_json::json!({ "error": "User declined to execute this command." }).to_string()
+    } else if !tools_enabled {
+      serde_json::json!({ "error": "Tool execution is disabled in chat mode." }).to_string()
+    } else {
+      // No lock spans tool IO. The unbound/read-only gates remain in execute_one_tool.
       execute_one_tool(&app, &state, call, pending.current_tab_id, true, read_only)
         .await
         .unwrap_or_else(|e| serde_json::json!({ "error": e }).to_string())
-    } else {
-      serde_json::json!({ "error": "User declined to execute this command." }).to_string()
     };
-    results.push((call.id.clone(), result));
-  }
-
-  // Append tool-result messages (mirrors run_agent_stream) and resume.
-  let mut messages = pending.messages;
-  for call in &pending.calls {
-    let result = results
-      .iter()
-      .find(|(id, _)| id == &call.id)
-      .map(|(_, r)| r.clone())
-      .unwrap_or_else(|| "{\"error\":\"no result\"}".into());
-    messages.push(crate::ai::AiMessage {
-      role: "tool".into(),
-      content: Some(result),
-      tool_calls: None,
-      tool_call_id: Some(call.id.clone()),
-      name: Some(call.name.clone()),
-      images: None,
-    });
-  }
-
-  // Reset the chat buffer so the resumed loop can append cleanly.
-  {
-    let mut guard = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
-    if let Some(cs) = guard.get_mut(&chat_id) {
-      cs.done = false;
-      cs.error = None;
+    if !agent_is_running(&app, &chat_id) {
+      return Ok(());
     }
+    if ai::tool_needs_confirmation(&result) {
+      still_pending.push(call.clone());
+      continue;
+    }
+    ai::append_tool_result(&mut messages, call, result.clone());
+    let mut buffers = state.ai_chat_buffers.lock().map_err(|e| e.to_string())?;
+    if let Some(cs) = buffers.get_mut(&chat_id).filter(|cs| cs.is_active()) {
+      cs.tool_events
+        .push(ai::tool_result_event(call, result, !approved));
+    }
+  }
+  if !still_pending.is_empty() {
+    let result = save_pending(
+      &app,
+      &chat_id,
+      &pending.config,
+      messages,
+      still_pending,
+      ai_mode,
+      &pending.tool_call_format,
+      pending.current_tab_id,
+    );
+    if let Err(e) = &result {
+      if let Some(cs) = state.ai_chat_buffers.lock().unwrap().get_mut(&chat_id) {
+        cs.finish_agent(Err(e.clone()));
+      }
+    }
+    return result;
+  }
+  if !agent_is_running(&app, &chat_id) {
+    return Ok(());
   }
 
   // Reuse the same pause handler so chained sensitive calls keep asking.
@@ -671,7 +682,7 @@ pub async fn confirm_ai_tool(
         mode.clone(),
         &fmt,
         pending_tab,
-      );
+      )
     }
   };
   spawn_agent(
@@ -689,4 +700,37 @@ pub async fn confirm_ai_tool(
     agent_tools(tools_enabled, pending_tab.is_some()),
   );
   Ok(())
+}
+
+#[cfg(test)]
+mod ai_flow_tests {
+  use super::*;
+
+  #[test]
+  fn ai_flow_mismatched_confirm_keeps_other_chat_pending() {
+    let mut pending = Some(crate::ssh_session::AiPendingConfirm {
+      chat_id: "owner".into(),
+      config: ai::AiEndpointProfile::new("test".into(), "http://127.0.0.1".into()),
+      messages: Vec::new(),
+      calls: Vec::new(),
+      ai_mode: "command".into(),
+      tool_call_format: "nested".into(),
+      current_tab_id: None,
+    });
+    assert!(take_pending_for_chat(&mut pending, "other").is_err());
+    assert_eq!(pending.as_ref().unwrap().chat_id, "owner");
+    assert!(take_pending_for_chat(&mut pending, "owner").is_ok());
+    assert!(pending.is_none());
+    assert!(take_pending_for_chat(&mut pending, "owner").is_err());
+  }
+
+  #[test]
+  fn ai_flow_chat_and_unbound_registries_stay_restricted() {
+    assert!(agent_tools(false, true).is_none());
+    assert!(agent_tools(false, false).is_none());
+    assert!(agent_tools(true, false)
+      .unwrap()
+      .iter()
+      .all(|tool| !ai::is_shell_tool(&tool.function.name)));
+  }
 }

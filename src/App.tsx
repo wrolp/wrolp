@@ -145,7 +145,6 @@ import type {
   AppVersion,
   AiConfig,
   AiEndpointProfile,
-  ToolCallEvent,
   TunnelInfo,
   TunnelConfig,
   WorkspaceInfo,
@@ -160,7 +159,8 @@ import type {
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import AiChatPanel, { type ChatMessage } from './components/AiChatPanel'
+import AiChatPanel from './components/AiChatPanel'
+import type { AiConv } from './aiChatRun'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { detectLanguage } from './editor/languages'
 import { useI18n, LANG_LABELS } from './i18n'
@@ -2656,19 +2656,6 @@ export default function App() {
   const didInitExpand = useRef(false)
   // AI conversation state is keyed per tab (tabId) so each shell tab keeps its
   // own conversation, and survives tab switches / panel remounts.
-  type AiConv = {
-    messages: ChatMessage[]
-    input: string
-    streaming: boolean
-    streamingText: string
-    error: string | null
-    toolCalls: ToolCallEvent[]
-    showSuggestions: boolean
-    /** Tool-call wire format for this conversation: "nested" (standard OpenAI
-     *  `tool_calls[].function.{name,arguments}`) or "flat" (`tool_calls[]`
-     *  carrying `name`/`arguments` directly). Defaults to "nested". */
-    toolCallFormat: 'flat' | 'nested'
-  }
   const emptyConv = (): AiConv => ({
     messages: [],
     input: '',
@@ -2678,8 +2665,12 @@ export default function App() {
     toolCalls: [],
     showSuggestions: true,
     toolCallFormat: 'nested',
+    flow: null,
+    run: null,
   })
   const [aiConversations, setAiConversations] = useState<Record<number, AiConv>>({})
+  const aiConversationsRef = useRef(aiConversations)
+  aiConversationsRef.current = aiConversations
   // The inspector column's conversation. It belongs to no terminal: switching
   // panes or closing every tab leaves this transcript where it is, which is why
   // it is kept out of the per-tab `aiConversations` record altogether.
@@ -3871,6 +3862,19 @@ export default function App() {
     [t],
   )
 
+  const cancelAiForTabs = useCallback(
+    async (ids: number[]) => {
+      try {
+        await Promise.all(ids.map((id) => aiConversationsRef.current[id]?.run?.cancel()))
+        return true
+      } catch (error) {
+        setToast({ kind: 'error', text: `${t('aiFlowCloseBlocked')} ${String(error)}` })
+        return false
+      }
+    },
+    [t],
+  )
+
   // Close a top-level tab (workspace): disconnect and remove its own session
   // plus every embedded session created by splitting inside it, and drop its
   // tree.
@@ -3908,6 +3912,7 @@ export default function App() {
           return
         }
       }
+      if (!(await cancelAiForTabs(sessionIds))) return
       for (const sid of sessionIds) {
         const s = tabsRef.current.find((t) => t.tabId === sid)
         if (s?.tabType === 'terminal') {
@@ -3961,7 +3966,7 @@ export default function App() {
         return remaining.length ? remaining[0].tabId : null
       })
     },
-    [dropSessionFiles, setHomePinned],
+    [dropSessionFiles, setHomePinned, cancelAiForTabs],
   )
 
   // Select connection — always open a new tab
@@ -4486,7 +4491,7 @@ export default function App() {
   // than tearing down the whole workspace. Only when the last pane is closed
   // does the whole workspace close.
   const closePane = useCallback(
-    (leafId: string, opts?: { force?: boolean }) => {
+    async (leafId: string, opts?: { force?: boolean }) => {
       const disconnectTab = (id: number) => {
         const tab = tabsRef.current.find((t) => t.tabId === id)
         if (tab?.tabType === 'terminal') {
@@ -4551,6 +4556,7 @@ export default function App() {
       }
       // Tear down only the closed session's tab.
       if (closedTabId != null) {
+        if (!(await cancelAiForTabs([closedTabId]))) return
         if (closedTabId === rootId) {
           // The workspace's identity pane closed, but others remain. Keep the
           // rootId tab as the workspace entry (now disconnected) so the top tab
@@ -4597,7 +4603,7 @@ export default function App() {
         return next
       })
     },
-    [newLeafId, closeTab, dropSessionFiles],
+    [newLeafId, closeTab, dropSessionFiles, cancelAiForTabs],
   )
 
   // ---- Ask-before-close confirm handlers ------------------------------------
