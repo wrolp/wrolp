@@ -138,7 +138,7 @@ import {
   isNestedSessionExit,
 } from './terminal/lsCapture'
 import type { LsCaptureState, LsClickableEntry, LsLinkCandidate } from './terminal/lsCapture'
-import { pickLsLinkEntry, resolveLsEntryPath } from './terminal/lsCapture'
+import { pickLsLinkEntry, resolveLsEntryPath, parseMvMove, type MvMove } from './terminal/lsCapture'
 import { fixLowContrastSgr } from './terminal/sgrContrast'
 import { createCwdQueryStripper } from './terminal/cwdQuery'
 import type { CwdQueryStripper } from './terminal/cwdQuery'
@@ -311,6 +311,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // for `[root@host lac724]#`). We keep the real (absolute) cwd by querying the
   // shell's actual directory (see fetchRemoteCwd) and by following `cd` commands.
   const cwdRef = useRef<string | null>(localCwd ?? null)
+  // Recent `mv` destinations (B22). An `ls` listing stays clickable after the
+  // move; when its captured path is gone, these let the click follow the file.
+  const mvMovesRef = useRef<MvMove[]>([])
   // Depth of nested interactive sessions (docker exec shell / nested interactive
   // ssh). Inside one, the tracked cwd and any hidden `pwd` query describe the
   // OUTER shell, not the session shown on screen — so `ls` link bases must come
@@ -828,6 +831,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       name: entry.name,
       cwd: cwdRef.current,
       nested: nestedShellRef.current,
+      moves: mvMovesRef.current,
       exists: (p) => fsFileExists(lsFsTarget(), p),
     })
     // Plain `ls` (multi format) carries no type info — resolve dir-vs-file at
@@ -2550,6 +2554,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 cwdRef.current = null
               }
               const trimmedCmd = command.trim()
+              // Follow `mv` inside the host shell so a listing made before the
+              // move still opens the file at its new location (B22).
+              if (!nestedShellRef.current) {
+                const move = parseMvMove(trimmedCmd, cwdRef.current)
+                if (move) mvMovesRef.current = [...mvMovesRef.current, move].slice(-20)
+              }
               const t0 = trimmedCmd.split(/\s+/)[0]?.toLowerCase() ?? ''
               const isCdCmd = t0 === 'cd' || t0 === 'chdir' || t0 === 'set-location' || t0 === 'sl'
               // Windows drive switch — `D:` on its own (cmd / PowerShell) changes
@@ -2982,6 +2992,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             nestedDepthRef.current = 0 // fresh shell: no nested session carry-over
+            mvMovesRef.current = []
             seedInitialRemoteCwd()
             // Same deferred-fit-then-poll rationale as the local shell path:
             // ensure correct geometry before any output is rendered.
@@ -3365,6 +3376,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           connectedRef.current = true
           onStatusChangeRef.current('connected')
           nestedDepthRef.current = 0 // fresh shell: no nested session carry-over
+          mvMovesRef.current = []
           seedInitialRemoteCwd()
           // Defer polling + post-connect fit so geometry is correct before any
           // output is rendered.

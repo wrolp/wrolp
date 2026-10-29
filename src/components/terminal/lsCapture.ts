@@ -129,6 +129,9 @@ export interface LsEntryResolveCtx {
   cwd: string | null
   nested: boolean
   exists: (abs: string) => Promise<boolean>
+  /** Recent `mv` destinations, newest last. Consulted only after the captured
+   *  path is confirmed gone, so a moved file still opens at its new home. */
+  moves?: readonly MvMove[]
 }
 
 export interface LsEntryResolveResult {
@@ -137,7 +140,7 @@ export interface LsEntryResolveResult {
 }
 
 export async function resolveLsEntryPath(ctx: LsEntryResolveCtx): Promise<LsEntryResolveResult> {
-  const { capturedBase, name, cwd, nested, exists } = ctx
+  const { capturedBase, name, cwd, nested, exists, moves } = ctx
   const capturedAbs = capturedBase ? joinPath(capturedBase, name) : name
   if (!nested && capturedBase) {
     let capturedExists = false
@@ -146,16 +149,168 @@ export async function resolveLsEntryPath(ctx: LsEntryResolveCtx): Promise<LsEntr
     } catch {
       capturedExists = true // on error, trust the captured path
     }
-    if (!capturedExists && cwd) {
-      const cwdAbs = joinPath(cwd, name)
-      try {
-        if (await exists(cwdAbs)) return { abs: cwdAbs, base: cwd }
-      } catch {
-        /* keep the captured path */
+    if (!capturedExists) {
+      if (cwd) {
+        const cwdAbs = joinPath(cwd, name)
+        try {
+          if (await exists(cwdAbs)) return { abs: cwdAbs, base: cwd }
+        } catch {
+          /* keep looking */
+        }
+      }
+      if (moves) {
+        for (let i = moves.length - 1; i >= 0; i--) {
+          const move = moves[i]
+          try {
+            const atDest = joinPath(move.destDir, name)
+            if (await exists(atDest)) return { abs: atDest, base: move.destDir }
+            if (move.renamedFrom === name && move.renamedTo && (await exists(move.renamedTo))) {
+              return { abs: move.renamedTo, base: parentDir(move.renamedTo) }
+            }
+          } catch {
+            /* try the next move */
+          }
+        }
       }
     }
   }
   return { abs: capturedAbs, base: capturedBase }
+}
+
+/** One `mv` observed in this session, enough to follow a moved listing entry. */
+export interface MvMove {
+  /** The move's destination path (a directory, or the new file name). */
+  destDir: string
+  /** Old basename when a single file was renamed into `renamedTo`. */
+  renamedFrom: string | null
+  renamedTo: string | null
+}
+
+function normalizePath(p: string): string {
+  const windows = /^[A-Za-z]:[\\/]/.test(p)
+  const sep = windows ? '\\' : '/'
+  const rest = windows ? p.slice(2) : p
+  const parts: string[] = []
+  for (const part of rest.split(/[\\/]/)) {
+    if (!part || part === '.') continue
+    if (part === '..') {
+      if (parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop()
+      else if (!windows && !p.startsWith('/')) parts.push('..')
+      continue
+    }
+    parts.push(part)
+  }
+  const root = windows ? `${p.slice(0, 2)}${sep}` : p.startsWith('/') ? '/' : ''
+  return root + parts.join(sep) || root || '.'
+}
+
+function parentDir(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  if (idx < 0) return ''
+  if (idx === 0) return trimmed.slice(0, 1)
+  if (/^[A-Za-z]:$/.test(trimmed.slice(0, idx))) return trimmed.slice(0, idx + 1)
+  return trimmed.slice(0, idx)
+}
+
+function basename(p: string): string {
+  const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts[parts.length - 1] ?? ''
+}
+
+/** Split a simple shell command into words, honouring quotes and backslashes.
+ *  Returns null for compound lines (`|`, `;`, `&&`, redirections), where a
+ *  destination cannot be attributed to one `mv`. */
+function splitWords(command: string): string[] | null {
+  const words: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  let hasToken = false
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]
+    if (quote) {
+      if (ch === quote) quote = null
+      else current += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      hasToken = true
+      continue
+    }
+    if (ch === '\\') {
+      i += 1
+      if (i < command.length) current += command[i]
+      hasToken = true
+      continue
+    }
+    if (ch === ' ' || ch === '\t') {
+      if (hasToken) words.push(current)
+      current = ''
+      hasToken = false
+      continue
+    }
+    if ('|;&<>`'.includes(ch)) return null
+    current += ch
+    hasToken = true
+  }
+  if (quote) return null
+  if (hasToken) words.push(current)
+  return words
+}
+
+/**
+ * Parse the destination of an `mv` so `ls` links against a listing made before
+ * the move can follow the file (B22). Returns null for anything we cannot
+ * attribute confidently: compound commands, `~` destinations (no home here),
+ * a relative destination without a known cwd, or too few operands.
+ */
+export function parseMvMove(command: string, cwd: string | null): MvMove | null {
+  const words = splitWords(command.trim())
+  if (!words) return null
+  let i = 0
+  while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i++
+  if (words[i] === 'sudo') i++
+  if (words[i] !== 'mv') return null
+  i++
+
+  let target: string | null = null
+  const sources: string[] = []
+  for (let j = i; j < words.length; j++) {
+    const word = words[j]
+    if (word === '--') {
+      sources.push(...words.slice(j + 1))
+      break
+    }
+    if (word === '-t' || word === '--target-directory') {
+      target = words[++j] ?? null
+      continue
+    }
+    if (word.startsWith('--target-directory=')) {
+      target = word.slice('--target-directory='.length)
+      continue
+    }
+    if (word.startsWith('-') && word !== '-') continue
+    sources.push(word)
+  }
+  if (!target) {
+    if (sources.length < 2) return null
+    target = sources.pop() ?? null
+  }
+  if (!target || sources.length === 0) return null
+
+  const absolute = target.startsWith('/') || /^[A-Za-z]:[\\/]/.test(target)
+  if (target.startsWith('~')) return null
+  const dest = (absolute ? target : cwd ? joinPath(cwd, target) : null)?.replace(/[\\/]+$/, '')
+  if (!dest) return null
+  const normalized = normalizePath(dest)
+
+  const renamedFrom =
+    sources.length === 1 && !/[*?[\]{}]/.test(sources[0]) ? basename(sources[0]) : null
+  // A trailing separator always means a directory; without one, the same path
+  // may also be the new file name, which the resolver tries second.
+  const renamedTo = renamedFrom && !/[\\/]$/.test(target) ? normalized : null
+  return { destDir: normalized, renamedFrom, renamedTo }
 }
 
 /** Extract a single non-flag path argument from an `ls`-style command, if any. */
