@@ -122,6 +122,8 @@ export function createCwdQueryStripper(
   let resultPos = 0 // chars of `end` matched inside that line
   let body = '' // result text seen between `beg` and `end`
   let swallowEol = false // a hidden line was swallowed — eat its line break too
+  let swallowEolFromResult = false // …and a CR must replace it (see below)
+  let emittedResultCr = false // that CR already went out (CR/LF may split across chunks)
   let carry = '' // undecided range handed over to the next chunk
   let carryConsumed = 0 // how many chars of `carry` the attempt already ate
   let armed = false // a query is in flight: an ambiguous prefix may be held
@@ -163,14 +165,34 @@ export function createCwdQueryStripper(
       const ch = text[i]
 
       // 1. A hidden line was fully swallowed: also eat the line break that ended
-      //    it, so the terminal does not gain a blank row in its place.
+      //    it, so the terminal does not gain a blank row in its place. After the
+      //    RESULT line, leave a carriage return: some shells (a container's
+      //    `sh-5.0# `) print the next prompt without a leading CR, so without
+      //    this the prompt would concatenate onto the prompt line the query was
+      //    typed on (`sh-5.0# sh-5.0#`, B60).
       if (swallowEol) {
-        if (isCrLf(ch)) {
+        if (ch === '\r') {
           dropUntil(i + 1)
           i++
+          if (swallowEolFromResult) {
+            out += '\r'
+            emittedResultCr = true
+          }
           continue
         }
+        if (ch === '\n') {
+          dropUntil(i + 1)
+          i++
+          if (swallowEolFromResult && !emittedResultCr) out += '\r'
+          swallowEol = false
+          swallowEolFromResult = false
+          emittedResultCr = false
+          continue
+        }
+        if (swallowEolFromResult && !emittedResultCr) out += '\r'
         swallowEol = false
+        swallowEolFromResult = false
+        emittedResultCr = false
       }
 
       // 2. Inside the echoed command, `command` matched up to `echoPos`.
@@ -180,6 +202,8 @@ export function createCwdQueryStripper(
           if (echoPos === command.length) {
             echoPos = 0
             swallowEol = true // its trailing quote is part of `command`
+            swallowEolFromResult = false
+            emittedResultCr = false
             dropUntil(i + 1)
           }
           i++
@@ -206,6 +230,8 @@ export function createCwdQueryStripper(
             inResult = false
             resultPos = 0
             swallowEol = true
+            swallowEolFromResult = true
+            emittedResultCr = false
             dropUntil(i + 1)
             if (looksLikePath(body)) path = body
             body = ''

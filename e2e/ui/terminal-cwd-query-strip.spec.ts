@@ -46,8 +46,11 @@ function feed(
 test.describe('hidden pwd query strip', () => {
   test('keeps the prompt, drops the echo + result, captures the cwd', () => {
     const { out, paths } = feed([PROMPT, `${ECHO}\r\n${RESULT}\r\n${AT_PROMPT}`])
-    // Nothing of the query is left, and no blank row is gained for it.
-    expect(out).toBe(PROMPT + AT_PROMPT)
+    // Nothing of the query is left, and no blank row is gained for it. The
+    // result's newline becomes a CR (B60) so a prompt printed without a leading
+    // CR — a container `sh-5.0# ` — overwrites the prompt line instead of
+    // concatenating onto it.
+    expect(out).toBe(PROMPT + '\r' + AT_PROMPT)
     expect(paths).toEqual(['/tmp/ffmpeg-src'])
   })
 
@@ -59,7 +62,7 @@ test.describe('hidden pwd query strip', () => {
         ECHO.slice(cut) + '\r\n',
         `${RESULT}\r\n`,
       ])
-      expect(out, `split at ${cut}`).toBe(PROMPT)
+      expect(out, `split at ${cut}`).toBe(PROMPT + '\r')
       expect(paths, `split at ${cut}`).toEqual(['/tmp/ffmpeg-src'])
     }
   })
@@ -73,7 +76,7 @@ test.describe('hidden pwd query strip', () => {
       `${RESULT}\r\n`,
       AT_PROMPT,
     ])
-    expect(out).toBe(PROMPT + AT_PROMPT)
+    expect(out).toBe(PROMPT + '\r' + AT_PROMPT)
     expect(paths).toEqual(['/tmp/ffmpeg-src'])
   })
 
@@ -86,19 +89,19 @@ test.describe('hidden pwd query strip', () => {
       '\r\n',
       AT_PROMPT,
     ])
-    expect(out).toBe(PROMPT + AT_PROMPT)
+    expect(out).toBe(PROMPT + '\r' + AT_PROMPT)
     expect(paths).toEqual(['/tmp/ffmpeg-src'])
   })
 
   test('the result is captured even when its marker and path are split', () => {
     const { out, paths } = feed([RESULT.slice(0, 30), `${RESULT.slice(30)}\r\n`])
-    expect(out).toBe('')
+    expect(out).toBe('\r')
     expect(paths).toEqual(['/tmp/ffmpeg-src'])
   })
 
   test('a redrawn echo (readline repaint) is dropped as well', () => {
     const { out } = feed([PROMPT, `${ECHO}\r`, `${ECHO}\r\n`, `${RESULT}\r\n`])
-    expect(out).toBe(PROMPT)
+    expect(out).toBe(PROMPT + '\r')
   })
 
   test('ordinary output is untouched', () => {
@@ -139,7 +142,7 @@ test.describe('hidden pwd query strip', () => {
     // The query's own output is dropped whether or not a query is currently in flight:
     // a result line that completes inside one chunk is unambiguous.
     const { out, paths } = feed([PROMPT, `${ECHO}\r\n${RESULT}\r\n${AT_PROMPT}`], { armed: false })
-    expect(out).toBe(PROMPT + AT_PROMPT)
+    expect(out).toBe(PROMPT + '\r' + AT_PROMPT)
     expect(paths).toEqual(['/tmp/ffmpeg-src'])
   })
 
@@ -173,7 +176,7 @@ test.describe('hidden pwd query strip', () => {
     // A syntax-highlighting prompt can split the echo so the marker pair is seen
     // on its own, leaving the un-expanded `$(pwd)` between the markers.
     const { out, paths } = feed([`${BEG}$(pwd)${END}\r\n`])
-    expect(out).toBe('')
+    expect(out).toBe('\r')
     expect(paths).toEqual([])
   })
 
@@ -197,7 +200,7 @@ test.describe('hidden pwd query strip', () => {
       out += res.text
       path = res.path ?? path
     }
-    expect(out).toBe(PROMPT + AT_PROMPT)
+    expect(out).toBe(PROMPT + '\r' + AT_PROMPT)
     expect(path).toBe('/srv/app')
   })
 })

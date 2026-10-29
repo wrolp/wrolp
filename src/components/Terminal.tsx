@@ -319,6 +319,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // OUTER shell, not the session shown on screen — so `ls` link bases must come
   // from the prompt alone (see startLsCaptureIfMatch).
   const nestedDepthRef = useRef(0)
+  // Container/remote-shell cwd while nested (docker exec / nested ssh). Unlike
+  // `cwdRef` this describes the INNER shell; caching it means `ls` does not have
+  // to inject a hidden `pwd` query on every single listing (B60).
+  const nestedCwdRef = useRef<string | null>(null)
   // Non-null when this session was opened as a `docker exec` shell from the
   // Docker sidebar (the docker exec itself is sent programmatically, so the
   // Enter-handler nested tracking never fires — see prop docs).
@@ -865,6 +869,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (!nestedShellRef.current) {
         const next = resolveCdTarget(abs, cwdRef.current)
         if (next) setCwd(next)
+      } else if (abs.startsWith('/')) {
+        // Container-side absolute path: remember it so the next `ls` reuses the
+        // base instead of injecting another hidden query.
+        nestedCwdRef.current = abs
       }
       // The click was on the floating tooltip card (or a ctrl+click on the link),
       // both of which can steal keyboard focus from xterm — give it back so the
@@ -1199,7 +1207,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           // (`cd -- 'x'`) resolved by the nested shell.
           // `fetchRemoteCwd` itself defers the injection by a macrotask, so it
           // can never splice into the command line the user just submitted.
-          if (nested) return fetchRemoteCwd()
+          if (nested) {
+            if (nestedCwdRef.current) return nestedCwdRef.current
+            const real = await fetchRemoteCwd()
+            if (real) nestedCwdRef.current = real
+            return real
+          }
           if (cwdRef.current) return cwdRef.current
           const real = await fetchRemoteCwd()
           if (real) {
@@ -2539,6 +2552,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
               // fall back to the prompt-derived cwd (see startLsCaptureIfMatch).
               if (isNestedSessionEntry(command)) {
                 nestedDepthRef.current += 1
+                nestedCwdRef.current = null
                 // A manually typed `docker exec` shell — remember the container so
                 // `ls` click type resolution queries the CONTAINER filesystem (not
                 // the host SFTP) and cwd tracking stays container-relative.
@@ -2550,6 +2564,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 // shell back to the host — drop the nested state so `ls` link
                 // bases fall back to the host cwd again.
                 if (nestedDepthRef.current > 0) nestedDepthRef.current -= 1
+                nestedCwdRef.current = null
                 dockerContainerRef.current = null
                 cwdRef.current = null
               }
@@ -2589,10 +2604,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 const arg = cdRaw.split(/\s+/)[0] ?? ''
                 void (async () => {
                   // Docker exec shells: `cd` runs inside the container — the
-                  // host-tracked cwd can't describe container paths, so skip both
-                  // the `pwd` seed and the cwd tracking (ls links resolve from the
-                  // container's prompt instead).
-                  if (nestedShellRef.current) return
+                  // host-tracked cwd can't describe container paths, so track the
+                  // inner shell's cwd separately (seeded by the hidden `pwd` query
+                  // on the first listing) and let an unknowable target (`cd ~`,
+                  // `cd -`, bare `cd`) drop it so the next listing asks again.
+                  if (nestedShellRef.current) {
+                    nestedCwdRef.current = resolveCdTarget(arg, nestedCwdRef.current)
+                    return
+                  }
                   // SSH: seed the cwd from the shell's real directory (a hidden
                   // `pwd` query) when we don't yet track an absolute cwd. We never
                   // guess from $HOME, since the dir need not live under it. Inside
