@@ -299,12 +299,10 @@ async fn recording_an_unknown_connection_is_refused() {
       .await
       .expect("record")
   );
-  assert!(
-    commands::list_recent_connections(app.state(), None)
-      .await
-      .expect("list")
-      .is_empty()
-  );
+  assert!(commands::list_recent_connections(app.state(), None)
+    .await
+    .expect("list")
+    .is_empty());
 }
 
 #[tokio::test]

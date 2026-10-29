@@ -113,9 +113,7 @@ pub async fn list_recent_connections(
       // against this workspace's connections. Anything that resolves to nothing —
       // deleted, moved, or a local entry since removed — drops out here.
       .filter(|r| match db::local_recent_entry_id(&r.connection_id) {
-        Some(entry_id) => {
-          entry_id == db::DEFAULT_LOCAL_ENTRY_ID || live_local.contains(entry_id)
-        }
+        Some(entry_id) => entry_id == db::DEFAULT_LOCAL_ENTRY_ID || live_local.contains(entry_id),
         None => live.contains(&r.connection_id),
       })
       .take(limit.unwrap_or(db::RECENT_CONNECTIONS_KEEP).max(0) as usize)
@@ -137,7 +135,10 @@ pub(crate) async fn forget_recent(state: &AppState, connection_id: &str) {
   match result {
     Ok(Ok(removed)) => {
       if removed > 0 {
-        eprintln!("[connection_recents] forgot {} row(s) for {}", removed, connection_id);
+        eprintln!(
+          "[connection_recents] forgot {} row(s) for {}",
+          removed, connection_id
+        );
       }
     }
     Ok(Err(e)) => eprintln!("[connection_recents] forget failed: {}", e),
