@@ -1417,6 +1417,44 @@ export default function AiChatPanel({
 
             {showSuggestions && (
               <div className="ai-chat-suggestions">
+                {customByBuiltin.generic.length > 0 && (
+                  <div className="ai-chat-suggestion-group">
+                    <div className="ai-chat-suggestion-group-title">{t('aiChatSugCustom')}</div>
+                    <div className="ai-chat-suggestion-chips">
+                      {customByBuiltin.generic.map((tpl) => (
+                        <button
+                          key={tpl.id}
+                          className="ai-chat-suggestion ai-chat-suggestion-custom"
+                          onClick={() => fillInput(tpl.prompt)}
+                          disabled={streaming}
+                          title={tpl.prompt}
+                        >
+                          {tpl.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {Array.from(customByBuiltin.otherGroups.entries()).map(([cat, tpls]) => (
+                  <div className="ai-chat-suggestion-group" key={cat}>
+                    <div className="ai-chat-suggestion-group-title">{cat}</div>
+                    <div className="ai-chat-suggestion-chips">
+                      {tpls.map((tpl) => (
+                        <button
+                          key={tpl.id}
+                          className="ai-chat-suggestion ai-chat-suggestion-custom"
+                          onClick={() => fillInput(tpl.prompt)}
+                          disabled={streaming}
+                          title={tpl.prompt}
+                        >
+                          {tpl.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
                 {SUGGESTION_GROUPS.map((group) => {
                   const visibleKeys = group.keys.filter((key) => !hiddenBuiltins.includes(key))
                   const customInGroup = customByBuiltin.map.get(group.id) ?? []
@@ -1450,44 +1488,6 @@ export default function AiChatPanel({
                     </div>
                   )
                 })}
-
-                {Array.from(customByBuiltin.otherGroups.entries()).map(([cat, tpls]) => (
-                  <div className="ai-chat-suggestion-group" key={cat}>
-                    <div className="ai-chat-suggestion-group-title">{cat}</div>
-                    <div className="ai-chat-suggestion-chips">
-                      {tpls.map((tpl) => (
-                        <button
-                          key={tpl.id}
-                          className="ai-chat-suggestion ai-chat-suggestion-custom"
-                          onClick={() => fillInput(tpl.prompt)}
-                          disabled={streaming}
-                          title={tpl.prompt}
-                        >
-                          {tpl.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-
-                {customByBuiltin.generic.length > 0 && (
-                  <div className="ai-chat-suggestion-group">
-                    <div className="ai-chat-suggestion-group-title">{t('aiChatSugCustom')}</div>
-                    <div className="ai-chat-suggestion-chips">
-                      {customByBuiltin.generic.map((tpl) => (
-                        <button
-                          key={tpl.id}
-                          className="ai-chat-suggestion ai-chat-suggestion-custom"
-                          onClick={() => fillInput(tpl.prompt)}
-                          disabled={streaming}
-                          title={tpl.prompt}
-                        >
-                          {tpl.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 <div className="ai-chat-suggestion-manage-row">
                   <button
@@ -1778,6 +1778,75 @@ export default function AiChatPanel({
                 </button>
                 {templatePickerOpen && (
                   <div className="ai-chat-template-dropdown">
+                    <div className="ai-chat-template-actions">
+                      {/* The pencil leads the row: the dropdown is anchored at the
+                          sparkles button and runs off the window edge in a
+                          right-docked inspector, so anything on its right is
+                          unreachable. */}
+                      <button
+                        type="button"
+                        className="ai-chat-template-manage"
+                        onClick={() => {
+                          setTemplatePickerOpen(false)
+                          openTemplateManager()
+                        }}
+                        disabled={streaming}
+                        title={t('aiChatSugManage')}
+                        aria-label={t('aiChatSugManage')}
+                      >
+                        <Icon name="edit" size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ai-chat-template-new"
+                        onClick={() => {
+                          setTemplatePickerOpen(false)
+                          openNewTemplate()
+                        }}
+                        disabled={streaming}
+                      >
+                        <Icon name="plus" size={12} />
+                        {t('aiChatSugNew')}
+                      </button>
+                    </div>
+                    {customByBuiltin.generic.length > 0 && (
+                      <div className="ai-chat-template-group">
+                        <div className="ai-chat-template-group-title">{t('aiChatSugCustom')}</div>
+                        {customByBuiltin.generic.map((tpl) => (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            className="ai-chat-template-item"
+                            title={tpl.prompt}
+                            onClick={() => {
+                              fillInput(tpl.prompt)
+                              setTemplatePickerOpen(false)
+                            }}
+                          >
+                            {tpl.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {Array.from(customByBuiltin.otherGroups.entries()).map(([cat, tpls]) => (
+                      <div className="ai-chat-template-group" key={cat}>
+                        <div className="ai-chat-template-group-title">{cat}</div>
+                        {tpls.map((tpl) => (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            className="ai-chat-template-item"
+                            title={tpl.prompt}
+                            onClick={() => {
+                              fillInput(tpl.prompt)
+                              setTemplatePickerOpen(false)
+                            }}
+                          >
+                            {tpl.name}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
                     {SUGGESTION_GROUPS.map((group) => {
                       const visibleKeys = group.keys.filter((key) => !hiddenBuiltins.includes(key))
                       const customInGroup = customByBuiltin.map.get(group.id) ?? []
@@ -1815,75 +1884,6 @@ export default function AiChatPanel({
                         </div>
                       )
                     })}
-                    {Array.from(customByBuiltin.otherGroups.entries()).map(([cat, tpls]) => (
-                      <div className="ai-chat-template-group" key={cat}>
-                        <div className="ai-chat-template-group-title">{cat}</div>
-                        {tpls.map((tpl) => (
-                          <button
-                            key={tpl.id}
-                            type="button"
-                            className="ai-chat-template-item"
-                            title={tpl.prompt}
-                            onClick={() => {
-                              fillInput(tpl.prompt)
-                              setTemplatePickerOpen(false)
-                            }}
-                          >
-                            {tpl.name}
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                    {customByBuiltin.generic.length > 0 && (
-                      <div className="ai-chat-template-group">
-                        <div className="ai-chat-template-group-title">{t('aiChatSugCustom')}</div>
-                        {customByBuiltin.generic.map((tpl) => (
-                          <button
-                            key={tpl.id}
-                            type="button"
-                            className="ai-chat-template-item"
-                            title={tpl.prompt}
-                            onClick={() => {
-                              fillInput(tpl.prompt)
-                              setTemplatePickerOpen(false)
-                            }}
-                          >
-                            {tpl.name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <div className="ai-chat-template-actions">
-                      {/* The pencil leads the row: the dropdown is anchored at the
-                          sparkles button and runs off the window edge in a
-                          right-docked inspector, so anything on its right is
-                          unreachable. */}
-                      <button
-                        type="button"
-                        className="ai-chat-template-manage"
-                        onClick={() => {
-                          setTemplatePickerOpen(false)
-                          openTemplateManager()
-                        }}
-                        disabled={streaming}
-                        title={t('aiChatSugManage')}
-                        aria-label={t('aiChatSugManage')}
-                      >
-                        <Icon name="edit" size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        className="ai-chat-template-new"
-                        onClick={() => {
-                          setTemplatePickerOpen(false)
-                          openNewTemplate()
-                        }}
-                        disabled={streaming}
-                      >
-                        <Icon name="plus" size={12} />
-                        {t('aiChatSugNew')}
-                      </button>
-                    </div>
                   </div>
                 )}
               </div>
