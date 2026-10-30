@@ -651,6 +651,25 @@ export default function AiChatPanel({
     setCtxMenu({ x: e.clientX, y: e.clientY, text })
   }, [])
 
+  // A wheel up is the user's explicit intent to leave the bottom; mark it
+  // immediately (before the ensuing scroll event) so a token arriving in the
+  // same frame can't snap the view back down once.
+  const handleMessagesWheel = useCallback((e: React.WheelEvent) => {
+    if (e.deltaY < 0) stickToBottomRef.current = false
+  }, [])
+
+  // Derive "pinned to bottom" from the actual scroll position on every scroll
+  // event. This covers wheels, scrollbar dragging and keyboard scrolling alike,
+  // and resumes auto-follow once the user reaches the bottom again.
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesRef.current
+    if (el) {
+      // 5px threshold — tiny enough not to miss the real bottom.
+      stickToBottomRef.current = el.scrollTop + el.clientHeight + 5 >= el.scrollHeight
+    }
+    setCtxMenu(null)
+  }, [])
+
   // Close the context menu on any outside interaction.
   useEffect(() => {
     if (!ctxMenu) return
@@ -728,7 +747,11 @@ export default function AiChatPanel({
     })
   }, [])
 
-  const bottomRef = useRef<HTMLDivElement>(null)
+  // Whether the messages pane is pinned to the bottom. Maintained by the scroll
+  // handler from the real scroll position, and consulted by the auto-scroll
+  // effect so new stream content only pulls the view down while the user is
+  // already at the bottom.
+  const stickToBottomRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const templatePickerRef = useRef<HTMLDivElement>(null)
@@ -811,9 +834,15 @@ export default function AiChatPanel({
     }
   }, [config?.id, config?.endpoint, config?.apiKeyEnc])
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom while new content streams in, but only when the user
+  // is already pinned to the bottom. The instant scrollTop assignment (no
+  // smooth animation) matters: a smooth scrollIntoView would keep animating
+  // after the user scrolls up and yank them back down on every token.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (stickToBottomRef.current) {
+      const el = messagesRef.current
+      if (el) el.scrollTop = el.scrollHeight
+    }
   }, [messages, streamingText, toolCalls])
 
   const confirmAndResume = useCallback((approved: boolean) => run?.confirm(approved), [run])
@@ -821,6 +850,9 @@ export default function AiChatPanel({
   const runAgent = useCallback(
     (apiMessages: AiMessage[], userDisplay: string, userImages?: string[]) => {
       if (!config) return
+      // A new turn means the user wants to follow the fresh answer, so resume
+      // auto-scrolling even if they had scrolled up while reading previously.
+      stickToBottomRef.current = true
       const { run: nextRun, trace } = createAiChatRun(
         {
           messages: apiMessages,
@@ -1365,7 +1397,8 @@ export default function AiChatPanel({
         className="ai-chat-messages"
         ref={messagesRef}
         onContextMenu={handleMessagesContextMenu}
-        onScroll={() => setCtxMenu(null)}
+        onWheel={handleMessagesWheel}
+        onScroll={handleMessagesScroll}
       >
         {!hasContent && (
           <div className="ai-chat-empty">
@@ -1619,8 +1652,6 @@ export default function AiChatPanel({
             <Icon name="x" size={13} /> {error}
           </div>
         )}
-
-        <div ref={bottomRef} />
       </div>
 
       {/* Input */}
