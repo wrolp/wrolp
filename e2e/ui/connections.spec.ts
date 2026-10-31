@@ -102,3 +102,34 @@ test('deletes a connection after confirmation', async ({ page }) => {
   await expect(connRows(page)).toHaveCount(1)
   await expect(connRows(page)).not.toContainText('Web Server')
 })
+
+test('a row keeps its actions out of the flow until hovered', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: [
+      {
+        id: 'c1',
+        name: 'Production web server (eu-west-1)',
+        host: 'prod-web-01.eu-west-1.internal',
+        port: 22,
+        username: 'root',
+      },
+    ],
+  })
+  await page.goto('/')
+  const row = connRows(page).first()
+  await expect(row).toBeVisible()
+
+  // Unhovered the buttons take no room, so the name gets the whole row; hovering
+  // brings them back and the name is squeezed (it truncates).
+  await page.mouse.move(5, 5)
+  await expect(row.locator('.conn-item-edit')).toBeHidden()
+  const name = row.locator('.conn-name')
+  const idleWidth = await name.evaluate((el) => el.clientWidth)
+
+  await row.hover()
+  await expect(row.locator('.conn-item-edit')).toBeVisible()
+  await expect(row.locator('.conn-item-del')).toBeVisible()
+  const hoverWidth = await name.evaluate((el) => el.clientWidth)
+
+  expect(hoverWidth).toBeLessThan(idleWidth)
+})

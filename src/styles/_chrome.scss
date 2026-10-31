@@ -760,12 +760,18 @@
 
   &:hover {
     background: $bg-hover;
+  }
 
-    .conn-item-edit,
-    .conn-item-del,
-    .conn-item-btn {
-      opacity: 1;
-    }
+  // The row's actions are out of the flow until the row is hovered or focused, so
+  // the name/host get the full row width and only truncate once the buttons
+  // actually take space. (Same rule as the AI Conversations list.)
+  &:hover .conn-item-edit,
+  &:hover .conn-item-del,
+  &:hover .conn-item-btn,
+  &:focus-within .conn-item-edit,
+  &:focus-within .conn-item-del,
+  &:focus-within .conn-item-btn {
+    display: flex;
   }
 
   &.active {
@@ -879,13 +885,11 @@
 
   .conn-item-edit,
   .conn-item-del {
+    display: none;
     flex-shrink: 0;
-    opacity: 0;
     cursor: pointer;
     color: $text-dim;
-    transition:
-      opacity var(--d-1),
-      color var(--d-1);
+    transition: color var(--d-1);
 
     &:hover {
       color: $text-primary;
