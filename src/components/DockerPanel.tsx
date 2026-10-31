@@ -346,17 +346,19 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
                 </span>
                 <div className="docker-info">
                   <div className="docker-name">{c.name}</div>
+                  {/* The ID sits on its own line between the name and the image
+                      rather than sharing the image line. */}
+                  {c.id && (
+                    <span
+                      className="docker-id"
+                      title={`${t('containerId')}: ${c.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {c.id.slice(0, 12)}
+                    </span>
+                  )}
                   <div className="docker-meta">
                     <span className="docker-image">{c.image}</span>
-                    {c.id && (
-                      <span
-                        className="docker-id"
-                        title={`${t('containerId')}: ${c.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {c.id.slice(0, 12)}
-                      </span>
-                    )}
                   </div>
                 </div>
                 <span

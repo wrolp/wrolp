@@ -68,15 +68,17 @@ async function boot(page: Page, lang: 'en' | 'zh' = 'en', width = 260) {
 const apiRow = (page: Page) => page.locator('.docker-item').filter({ hasText: API.name })
 
 for (const lang of ['en', 'zh'] as const) {
-  test(`container ID is nested, selectable, copyable and does not browse (${lang})`, async ({
+  test(`container ID owns the line between name and image, selectable, copyable and does not browse (${lang})`, async ({
     page,
   }) => {
     await boot(page, lang)
     const row = apiRow(page)
-    const id = row.locator('.docker-info .docker-meta .docker-id')
+    const id = row.locator('.docker-info > .docker-id')
     await expect(id).toHaveText(API.id.slice(0, 12))
     await expect(id).toHaveAttribute('title', new RegExp(API.id))
-    await expect(row.locator(':scope > .docker-id')).toHaveCount(0)
+    // It left the image line for a line of its own, so it must not be a child of
+    // the meta row any more.
+    await expect(row.locator('.docker-meta .docker-id')).toHaveCount(0)
     expect(await id.evaluate((el) => getComputedStyle(el).userSelect)).toBe('all')
     await id.click()
     await expect(row).not.toHaveClass(/active/)
@@ -151,9 +153,12 @@ for (const lang of ['en', 'zh'] as const) {
           rowScroll: el.scrollWidth,
           infoWidth: info.getBoundingClientRect().width,
           nameWidth: name.getBoundingClientRect().width,
+          nameBottom: name.getBoundingClientRect().bottom,
           imageWidth: image.getBoundingClientRect().width,
-          idRight: id.getBoundingClientRect().right,
-          infoRight: info.getBoundingClientRect().right,
+          imageTop: image.getBoundingClientRect().top,
+          idTop: id.getBoundingClientRect().top,
+          idBottom: id.getBoundingClientRect().bottom,
+          idWidth: id.getBoundingClientRect().width,
           markWidth: mark.getBoundingClientRect().width,
           idClipped: id.scrollWidth > id.clientWidth + 1,
           nameFont: getComputedStyle(name).fontSize,
@@ -164,7 +169,11 @@ for (const lang of ['en', 'zh'] as const) {
       expect(geometry.infoWidth).toBeGreaterThan(130)
       expect(geometry.nameWidth).toBeCloseTo(geometry.infoWidth, 0)
       expect(geometry.imageWidth).toBeGreaterThan(20)
-      expect(geometry.idRight).toBeLessThanOrEqual(geometry.infoRight + 1)
+      // The ID owns the line between the name and the image, and hugs its own
+      // 12 characters instead of stretching across the column.
+      expect(geometry.idTop).toBeGreaterThanOrEqual(geometry.nameBottom - 1)
+      expect(geometry.idBottom).toBeLessThanOrEqual(geometry.imageTop + 1)
+      expect(geometry.idWidth).toBeLessThan(geometry.infoWidth + 1)
       expect(geometry.idClipped).toBe(false)
       expect(geometry.markWidth).toBe(13)
       expect(parseFloat(geometry.nameFont)).toBeCloseTo(14.5, 0)

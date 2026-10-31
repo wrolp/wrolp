@@ -1192,6 +1192,13 @@
     }
   }
 
+  // On the containers view the ID has a line of its own between the name and the
+  // image, so it must hug its content instead of stretching to the column width.
+  .docker-info > .docker-id {
+    align-self: flex-start;
+    margin: 1px 0 2px;
+  }
+
   .docker-image {
     flex: 1 1 auto;
     min-width: 0;
