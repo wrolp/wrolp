@@ -1527,22 +1527,18 @@
     line-height: 1;
     user-select: none;
 
-    .term-pane-record-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: var(--r-circle);
-      background: $text-dim;
-      transition: background var(--d-2) ease;
-    }
-
     &:hover {
       background: rgba(255, 255, 255, 0.1);
+      color: $text-primary;
     }
 
+    // Recording is red and blinking, the way a record control reads everywhere.
+    // The glyph itself (ring + hub) is what distinguishes this button from the
+    // bare status pips used elsewhere — a green dot looked like a running state.
     &.active {
-      .term-pane-record-dot {
-        background: #4caf50;
-        box-shadow: 0 0 4px rgba(76, 175, 80, 0.7);
+      color: var(--danger-soft-40);
+
+      svg {
         animation: term-record-blink 1.2s ease-in-out infinite;
       }
     }

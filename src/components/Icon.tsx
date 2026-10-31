@@ -95,6 +95,8 @@ export type IconName =
   // Docker state marks: a status LED rather than an action glyph.
   | 'circle'
   | 'statusDot'
+  // The pane header's recording control: a record button, not a status pip.
+  | 'recordButton'
 
 const PATHS: Record<IconName, ReactNode> = {
   // lucide: refresh-cw
@@ -337,6 +339,15 @@ const PATHS: Record<IconName, ReactNode> = {
   // Recording dot: deliberately smaller than lucide's circle-dot (r10) — in a
   // session row it is a status pip, not a button.
   record: <circle cx="12" cy="12" r="7" />,
+  // lucide: disc — a ring with a filled hub, i.e. the ● record control. The hub is
+  // enlarged from lucide's r=2 so it still reads at 12px; the ring is what tells a
+  // button apart from the bare status pip above.
+  recordButton: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="5" fill="currentColor" stroke="none" />
+    </>
+  ),
   // lucide: eye
   eye: (
     <>

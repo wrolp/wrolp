@@ -623,6 +623,8 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return opts.fileContent ?? null
           case 'get_recording_enabled':
             return true
+          case 'set_recording_enabled':
+            return args.enabled
           case 'get_auto_record':
             return true
           case 'get_data_root':

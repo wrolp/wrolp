@@ -7527,7 +7527,7 @@ export default function App() {
               }}
               title={recordingByTab[leaf.tabId] ? t('stopRecording') : t('startRecording')}
             >
-              <span className="term-pane-record-dot" />
+              <Icon name="recordButton" size={12} />
             </button>
           )}
           {(tab?.tabType === 'terminal' ||
