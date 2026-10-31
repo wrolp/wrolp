@@ -706,6 +706,15 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   noModelsAvailable: 'No models available',
   fetchModels: 'Fetch models',
   fetchModelsFromV1: 'Fetch models from /v1/models',
+  aiSessionStorage: 'Conversation history',
+  aiSessionStorageDesc:
+    'Persist AI conversations to disk and reopen them later, per connection or terminal.',
+  aiSessionPersist: 'Save conversations',
+  aiSessionPersistDesc:
+    'Automatically save each AI conversation (its messages and tool calls) as you chat. History is stored locally.',
+  aiSessionRestore: 'Restore last conversation',
+  aiSessionRestoreDesc:
+    'Reopen the last conversation for each connection or terminal when you start a new AI chat.',
 
   // Bottom panel
   recordings: 'Recordings',
@@ -802,6 +811,24 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   aiChatPickTemplate: 'Pick template',
   aiChatViewImage: 'View image',
   aiChatEditMessage: 'Edit message',
+  aiSessionNew: 'New conversation',
+  aiSessions: 'Conversations',
+  aiSessionSearchPlaceholder: 'Search conversations…',
+  aiSessionLoading: 'Loading…',
+  aiSessionEmpty: 'No conversations yet',
+  aiSessionUntitled: 'Untitled',
+  aiSessionGlobal: 'Global',
+  aiSessionMsgs: 'messages',
+  aiSessionPin: 'Pin',
+  aiSessionUnpin: 'Unpin',
+  aiSessionTitlePlaceholder: 'Conversation title',
+  aiSessionExport: 'Export conversation',
+  aiSessionCopy: 'Copy conversation',
+  aiSessionExportTitle: 'Export conversation',
+  aiSessionRebuild: 'Rebuild index',
+  aiSessionRebuildDone: 'Index rebuilt: {restored} restored, {updated} updated, {failed} failed',
+  aiSessionRebuildNone: 'Index is already up to date',
+  aiSessionRebuildFailed: 'Index rebuild failed',
 
   // Per-reply call flow: metadata only, never model reasoning or request content.
   aiFlowTitle: 'Call flow',

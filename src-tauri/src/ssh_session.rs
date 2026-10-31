@@ -865,6 +865,11 @@ pub struct AppState {
   pub db: DbConn,
   /// Active recordings: tab_id → recording buffer
   pub recordings: StdMutex<HashMap<u32, ActiveRecording>>,
+  /// Serializes AI-session file appends (`ai_session_file::append_lines`) so two
+  /// concurrent `save_ai_session` calls for the same session cannot interleave
+  /// O_APPEND writes (same rationale as `recordings`). A plain unit guard — the
+  /// real state lives in the files + `ai_sessions` index.
+  pub ai_sessions_write: StdMutex<()>,
   /// Docker log streaming: stream_id → pending text chunks
   pub docker_log_buffers: StdMutex<HashMap<String, Vec<String>>>,
   /// Docker log streaming: stream_id → shutdown sender
@@ -1043,6 +1048,7 @@ impl AppState {
       next_session_id: AtomicU64::new(1),
       db,
       recordings: StdMutex::new(HashMap::new()),
+      ai_sessions_write: StdMutex::new(()),
       docker_log_buffers: StdMutex::new(HashMap::new()),
       docker_log_streams: StdMutex::new(HashMap::new()),
       next_docker_log_stream_id: AtomicU64::new(1),

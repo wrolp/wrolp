@@ -1589,6 +1589,280 @@ pub fn host_commands_cleared_at(conn: &Connection, fingerprint: &str) -> Result<
   )
 }
 
+// ==================== AI conversations (session storage) ====================
+
+/// Index row for one AI conversation (no messages — those live in the NDJSON
+/// file). This is what the history list reads; `session_file` is the absolute
+/// path to the message file (None = the file was removed out from under us).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSessionSummary {
+  pub id: String,
+  pub title: String,
+  pub tab_id: Option<i64>,
+  pub connection_id: Option<String>,
+  pub connection_name: Option<String>,
+  pub workspace_id: Option<String>,
+  pub profile_id: Option<String>,
+  pub model: Option<String>,
+  pub mode: String,
+  pub tool_call_format: String,
+  pub pinned: bool,
+  pub message_count: i64,
+  pub session_file: Option<String>,
+  pub created_at: String,
+  pub updated_at: String,
+}
+
+/// The payload the frontend sends to `save_ai_session`. `messages` is an opaque
+/// JSON array of durable message objects — the backend does line-level transport
+/// only (no `ChatMessage` struct), so message-shape changes never touch Rust.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSessionSave {
+  pub id: String,
+  #[serde(default)]
+  pub title: String,
+  pub tab_id: Option<i64>,
+  pub connection_id: Option<String>,
+  pub connection_name: Option<String>,
+  pub workspace_id: Option<String>,
+  pub profile_id: Option<String>,
+  pub model: Option<String>,
+  #[serde(default = "default_ai_mode")]
+  pub mode: String,
+  #[serde(default = "default_tool_call_format")]
+  pub tool_call_format: String,
+  #[serde(default)]
+  pub pinned: bool,
+  #[serde(default)]
+  pub messages: serde_json::Value,
+  /// Frontend-generated ISO timestamp; absent → the backend stamps "now".
+  pub created_at: Option<String>,
+}
+
+fn default_ai_mode() -> String {
+  "chat".to_string()
+}
+fn default_tool_call_format() -> String {
+  "nested".to_string()
+}
+
+/// A loaded conversation: the index row plus the visible message array.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSession {
+  pub id: String,
+  pub title: String,
+  pub connection_id: Option<String>,
+  pub connection_name: Option<String>,
+  pub workspace_id: Option<String>,
+  pub profile_id: Option<String>,
+  pub model: Option<String>,
+  pub mode: String,
+  pub tool_call_format: String,
+  pub pinned: bool,
+  pub message_count: i64,
+  pub created_at: String,
+  pub updated_at: String,
+  pub messages: serde_json::Value,
+}
+
+fn map_ai_session_row(row: &rusqlite::Row) -> rusqlite::Result<AiSessionSummary> {
+  Ok(AiSessionSummary {
+    id: row.get(0)?,
+    title: row.get(1)?,
+    tab_id: row.get(2)?,
+    connection_id: row.get(3)?,
+    connection_name: row.get(4)?,
+    workspace_id: row.get(5)?,
+    profile_id: row.get(6)?,
+    model: row.get(7)?,
+    mode: row.get(8)?,
+    tool_call_format: row.get(9)?,
+    pinned: row.get::<_, i64>(10)? != 0,
+    message_count: row.get(11)?,
+    session_file: row.get(12)?,
+    created_at: row.get(13)?,
+    updated_at: row.get(14)?,
+  })
+}
+
+const AI_SESSION_COLS: &str = "id, title, tab_id, connection_id, connection_name, workspace_id, \
+  profile_id, model, mode, tool_call_format, pinned, message_count, session_file, created_at, updated_at";
+
+/// List AI-session index rows, pinned first then newest-updated. `connection_id`
+/// scopes to one connection (None = all). The caller enriches `session_file`
+/// (existence check → "file missing" state) like `list_sessions` does.
+pub fn list_ai_sessions(
+  conn: &Connection,
+  connection_id: Option<&str>,
+  limit: u32,
+) -> Result<Vec<AiSessionSummary>, String> {
+  let mut sql = String::from("SELECT ");
+  sql.push_str(AI_SESSION_COLS);
+  sql.push_str(" FROM ai_sessions");
+  if connection_id.is_some() {
+    sql.push_str(" WHERE connection_id = ?1");
+  }
+  sql.push_str(" ORDER BY pinned DESC, updated_at DESC LIMIT ?");
+  let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+  let rows = if let Some(cid) = connection_id {
+    stmt
+      .query_map(params![cid, limit as i64], map_ai_session_row)
+      .map_err(|e| e.to_string())?
+      .collect::<Result<Vec<_>, _>>()
+      .map_err(|e| e.to_string())?
+  } else {
+    stmt
+      .query_map(params![limit as i64], map_ai_session_row)
+      .map_err(|e| e.to_string())?
+      .collect::<Result<Vec<_>, _>>()
+      .map_err(|e| e.to_string())?
+  };
+  Ok(rows)
+}
+
+/// Read one index row (for `load_ai_session` to find the message file and meta).
+pub fn get_ai_session(conn: &Connection, id: &str) -> Result<Option<AiSessionSummary>, String> {
+  let mut stmt = conn
+    .prepare(&format!("SELECT {AI_SESSION_COLS} FROM ai_sessions WHERE id = ?1"))
+    .map_err(|e| e.to_string())?;
+  let row = stmt
+    .query_map(params![id], map_ai_session_row)
+    .map_err(|e| e.to_string())?
+    .next()
+    .transpose()
+    .map_err(|e| e.to_string())?;
+  Ok(row)
+}
+
+/// Upsert the index row after a save. `session_file` is the absolute message-file
+/// path (the caller always resolves one before saving); `message_count` is the
+/// visible-message count after the alignment; `now` is the ISO update timestamp.
+pub fn upsert_ai_session(
+  conn: &Connection,
+  save: &AiSessionSave,
+  session_file: &str,
+  message_count: i64,
+  now: &str,
+) -> Result<(), String> {
+  let created = save.created_at.as_deref().unwrap_or(now);
+  conn
+    .execute(
+      "INSERT INTO ai_sessions \
+       (id, title, tab_id, connection_id, connection_name, workspace_id, profile_id, model, \
+        mode, tool_call_format, pinned, message_count, session_file, created_at, updated_at) \
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
+       ON CONFLICT(id) DO UPDATE SET \
+        title = ?2, tab_id = ?3, connection_id = ?4, connection_name = ?5, workspace_id = ?6, \
+        profile_id = ?7, model = ?8, mode = ?9, tool_call_format = ?10, pinned = ?11, \
+        message_count = ?12, session_file = COALESCE(?13, session_file), updated_at = ?15",
+      params![
+        save.id,
+        save.title,
+        save.tab_id,
+        save.connection_id,
+        save.connection_name,
+        save.workspace_id,
+        save.profile_id,
+        save.model,
+        save.mode,
+        save.tool_call_format,
+        save.pinned as i64,
+        message_count,
+        session_file,
+        created,
+        now,
+      ],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Delete one AI-session index row and return its message-file path so the
+/// caller can remove the file and prune empty folders.
+pub fn delete_ai_session(conn: &Connection, id: &str) -> Result<Option<String>, String> {
+  let file = get_ai_session(conn, id)?.and_then(|s| s.session_file);
+  conn
+    .execute("DELETE FROM ai_sessions WHERE id = ?1", params![id])
+    .map_err(|e| e.to_string())?;
+  Ok(file)
+}
+
+/// Rename an AI session (index only — the file is untouched).
+pub fn rename_ai_session(conn: &Connection, id: &str, title: &str) -> Result<(), String> {
+  conn
+    .execute(
+      "UPDATE ai_sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
+      params![title, chrono::Utc::now().to_rfc3339(), id],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Pin / unpin an AI session (index only).
+pub fn pin_ai_session(conn: &Connection, id: &str, pinned: bool) -> Result<(), String> {
+  conn
+    .execute(
+      "UPDATE ai_sessions SET pinned = ?1, updated_at = ?2 WHERE id = ?3",
+      params![pinned as i64, chrono::Utc::now().to_rfc3339(), id],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Upsert an index row during `rebuild_ai_sessions`. Unlike `upsert_ai_session`,
+/// an existing row's **title and pinned are preserved** (they are user-editable
+/// and the file cannot recover a rename/unpin); the rest is refreshed from the
+/// file. `created_at` is also preserved on conflict.
+pub fn rebuild_ai_session(
+  conn: &Connection,
+  save: &AiSessionSave,
+  session_file: &str,
+  message_count: i64,
+  created_at: &str,
+  updated_at: &str,
+) -> Result<(), String> {
+  conn
+    .execute(
+      "INSERT INTO ai_sessions \
+       (id, title, tab_id, connection_id, connection_name, workspace_id, profile_id, model, \
+        mode, tool_call_format, pinned, message_count, session_file, created_at, updated_at) \
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
+       ON CONFLICT(id) DO UPDATE SET \
+        connection_id = ?4, connection_name = ?5, workspace_id = ?6, profile_id = ?7, model = ?8, \
+        mode = ?9, tool_call_format = ?10, message_count = ?12, \
+        session_file = COALESCE(?13, session_file), updated_at = ?15",
+      params![
+        save.id,
+        save.title,
+        save.tab_id,
+        save.connection_id,
+        save.connection_name,
+        save.workspace_id,
+        save.profile_id,
+        save.model,
+        save.mode,
+        save.tool_call_format,
+        save.pinned as i64,
+        message_count,
+        session_file,
+        created_at,
+        updated_at,
+      ],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+/// Total number of AI-session index rows (for the retention cap check).
+pub fn count_ai_sessions(conn: &Connection) -> Result<i64, String> {
+  conn
+    .query_row("SELECT COUNT(*) FROM ai_sessions", [], |r| r.get(0))
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod host_identity_tests {
   use super::*;
@@ -1930,5 +2204,119 @@ mod recent_connections_tests {
     // Forgetting something that is not there is not an error — the delete may
     // have raced a row that was never written.
     assert_eq!(forget_connection(&conn, "c1").unwrap(), 0);
+  }
+}
+
+#[cfg(test)]
+mod ai_sessions_tests {
+  use super::*;
+
+  fn conn_with_schema() -> Connection {
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    conn
+      .execute_batch(include_str!("schema.sql"))
+      .expect("create schema");
+    conn
+  }
+
+  fn save(id: &str, title: &str, conn_id: Option<&str>, count: i64) -> AiSessionSave {
+    AiSessionSave {
+      id: id.to_string(),
+      title: title.to_string(),
+      tab_id: None,
+      connection_id: conn_id.map(str::to_string),
+      connection_name: None,
+      workspace_id: None,
+      profile_id: None,
+      model: None,
+      mode: "command".to_string(),
+      tool_call_format: "nested".to_string(),
+      pinned: false,
+      messages: serde_json::Value::Array(Vec::new()),
+      created_at: None,
+    }
+  }
+
+  #[test]
+  fn upsert_preserves_created_at_but_moves_updated_at() {
+    let conn = conn_with_schema();
+    upsert_ai_session(&conn, &save("a", "first", None, 1), "/tmp/a.jsonl", 1, "2026-10-31T00:00:00Z")
+      .unwrap();
+    let row = get_ai_session(&conn, "a").unwrap().unwrap();
+    assert_eq!(row.created_at, "2026-10-31T00:00:00Z");
+    assert_eq!(row.message_count, 1);
+
+    // Second save: created_at stays, updated_at / count move.
+    upsert_ai_session(&conn, &save("a", "renamed", None, 5), "/tmp/a.jsonl", 5, "2026-10-31T01:00:00Z")
+      .unwrap();
+    let row = get_ai_session(&conn, "a").unwrap().unwrap();
+    assert_eq!(row.created_at, "2026-10-31T00:00:00Z");
+    assert_eq!(row.updated_at, "2026-10-31T01:00:00Z");
+    assert_eq!(row.message_count, 5);
+    assert_eq!(row.title, "renamed");
+  }
+
+  #[test]
+  fn list_orders_pinned_first_then_newest_and_scopes_by_connection() {
+    let conn = conn_with_schema();
+    upsert_ai_session(&conn, &save("a", "A", Some("c1"), 1), "/a.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
+    upsert_ai_session(&conn, &save("b", "B", Some("c2"), 1), "/b.jsonl", 1, "2026-10-31T01:00:00Z").unwrap();
+    upsert_ai_session(&conn, &save("c", "C", Some("c1"), 1), "/c.jsonl", 1, "2026-10-31T02:00:00Z").unwrap();
+
+    let all = list_ai_sessions(&conn, None, 100).unwrap();
+    assert_eq!(all.len(), 3);
+    assert_eq!(all[0].id, "c", "newest first");
+
+    let scoped = list_ai_sessions(&conn, Some("c1"), 100).unwrap();
+    assert_eq!(scoped.len(), 2);
+    assert!(scoped.iter().all(|s| s.connection_id.as_deref() == Some("c1")));
+
+    // Pin B → it jumps to the front regardless of recency.
+    pin_ai_session(&conn, "b", true).unwrap();
+    let all = list_ai_sessions(&conn, None, 100).unwrap();
+    assert_eq!(all[0].id, "b", "pinned rows sort first");
+  }
+
+  #[test]
+  fn delete_returns_the_file_and_load_unknown_is_none() {
+    let conn = conn_with_schema();
+    upsert_ai_session(&conn, &save("a", "A", None, 1), "/tmp/a.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
+    assert_eq!(get_ai_session(&conn, "missing").unwrap().is_none(), true);
+    assert_eq!(delete_ai_session(&conn, "a").unwrap().as_deref(), Some("/tmp/a.jsonl"));
+    assert!(get_ai_session(&conn, "a").unwrap().is_none());
+  }
+
+  #[test]
+  fn rebuild_preserves_title_and_pin_but_refreshes_count() {
+    let conn = conn_with_schema();
+    // First save establishes the row, then the user renames and pins it.
+    upsert_ai_session(&conn, &save("a", "original", None, 1), "/tmp/a.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
+    rename_ai_session(&conn, "a", "user-renamed").unwrap();
+    pin_ai_session(&conn, "a", true).unwrap();
+
+    // Rebuild (fresh title from the file's first user message) must not clobber
+    // the rename or the pin, but must refresh message_count / updated_at.
+    rebuild_ai_session(&conn, &save("a", "derived-from-file", None, 0), "/tmp/a.jsonl", 9, "2026-10-31T00:00:00Z", "2026-11-01T00:00:00Z").unwrap();
+    let row = get_ai_session(&conn, "a").unwrap().unwrap();
+    assert_eq!(row.title, "user-renamed");
+    assert!(row.pinned);
+    assert_eq!(row.message_count, 9);
+    assert_eq!(row.updated_at, "2026-11-01T00:00:00Z");
+    assert_eq!(row.created_at, "2026-10-31T00:00:00Z", "created_at preserved");
+
+    // A fresh rebuild row (unknown id) takes the derived title and defaults.
+    rebuild_ai_session(&conn, &save("b", "derived-b", None, 0), "/tmp/b.jsonl", 2, "2026-10-31T00:00:00Z", "2026-10-31T00:00:00Z").unwrap();
+    let b = get_ai_session(&conn, "b").unwrap().unwrap();
+    assert_eq!(b.title, "derived-b");
+    assert!(!b.pinned);
+  }
+
+  #[test]
+  fn count_ai_sessions_counts_rows() {
+    let conn = conn_with_schema();
+    assert_eq!(count_ai_sessions(&conn).unwrap(), 0);
+    upsert_ai_session(&conn, &save("a", "A", None, 1), "/a.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
+    upsert_ai_session(&conn, &save("b", "B", None, 1), "/b.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
+    assert_eq!(count_ai_sessions(&conn).unwrap(), 2);
   }
 }

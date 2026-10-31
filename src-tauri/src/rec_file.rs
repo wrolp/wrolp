@@ -297,9 +297,18 @@ pub fn remove_events_file(abs: &Path) {
 /// After a file under `recordings/` is removed, prune now-empty ancestor
 /// folders (connection → group → workspace) but never the `recordings` root.
 pub fn prune_empty_dirs(file: &Path) {
+  prune_empty_dirs_below(file, "recordings");
+}
+
+/// Prune now-empty ancestor folders of `file`, stopping at (and never
+/// removing) the first directory whose name is `stop_dir`. Shared by the
+/// recordings tree (`stop_dir == "recordings"`) and the AI-session tree
+/// (`stop_dir == "ai-sessions"`) — without the stop guard, a delete under one
+/// tree would climb past its root and remove sibling folders above it.
+pub fn prune_empty_dirs_below(file: &Path, stop_dir: &str) {
   let mut dir = file.parent();
   while let Some(d) = dir {
-    if d.file_name().is_some_and(|n| n == "recordings") {
+    if d.file_name().is_some_and(|n| n == stop_dir) {
       break;
     }
     if fs::remove_dir(d).is_err() {

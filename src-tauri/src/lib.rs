@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai;
+mod ai_session_file;
 mod cmd_fs;
 // `commands`/`db`/`ssh_session` are `pub` so `src-tauri/tests/` integration
 // tests can drive the `#[tauri::command]` handlers via `tauri::test`.
@@ -400,6 +401,14 @@ pub fn run() {
       commands::start_ai_agent,
       commands::confirm_ai_tool,
       commands::ai_ui_tool_result,
+      commands::list_ai_sessions,
+      commands::load_ai_session,
+      commands::save_ai_session,
+      commands::delete_ai_session,
+      commands::rename_ai_session,
+      commands::pin_ai_session,
+      commands::write_text_file,
+      commands::rebuild_ai_sessions,
       commands::start_tunnel,
       commands::stop_tunnel,
       commands::list_tunnels,

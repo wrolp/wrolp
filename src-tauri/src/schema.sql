@@ -185,3 +185,30 @@ CREATE TABLE IF NOT EXISTS host_commands (
   collected_at INTEGER NOT NULL,
   PRIMARY KEY (fingerprint, command)
 );
+
+-- AI assistant conversations: the message stream lives in an append-only
+-- NDJSON file (`session_file`, see ai_session_file.rs); this table is only the
+-- index/search layer, mirroring how `sessions` indexes recordings. Mutable
+-- metadata (title / pinned / updated_at) lives here, never in the file.
+CREATE TABLE IF NOT EXISTS ai_sessions (
+  id               TEXT PRIMARY KEY,
+  title            TEXT NOT NULL DEFAULT '',
+  tab_id           INTEGER,
+  connection_id    TEXT,
+  connection_name  TEXT,
+  workspace_id     TEXT,
+  profile_id       TEXT,
+  model            TEXT,
+  mode             TEXT NOT NULL DEFAULT 'chat',
+  tool_call_format TEXT NOT NULL DEFAULT 'nested',
+  pinned           INTEGER NOT NULL DEFAULT 0,
+  message_count    INTEGER NOT NULL DEFAULT 0,
+  -- Absolute path to the session's NDJSON message file; NULL = file was
+  -- removed out from under us (row kept so the failure is visible).
+  session_file     TEXT,
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_updated ON ai_sessions(pinned DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_sessions_conn ON ai_sessions(connection_id, updated_at DESC);

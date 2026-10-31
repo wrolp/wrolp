@@ -1063,6 +1063,80 @@ export interface AiChatChunk {
   error: string | null
 }
 
+// ===== AI conversation persistence =====
+
+/** The durable subset of a chat message persisted to disk. Transient fields
+ *  (`flow`, `error`) are deliberately left out — they are rebuilt on restore. */
+export interface AiStoredMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  images?: string[]
+  toolCalls?: ToolCallEvent[]
+}
+
+/** Index row for one saved AI conversation (no messages — those live in the
+ *  NDJSON file). Mirrors the backend `db::AiSessionSummary`. */
+export interface AiSessionSummary {
+  id: string
+  title: string
+  tabId: number | null
+  connectionId: string | null
+  connectionName: string | null
+  workspaceId: string | null
+  profileId: string | null
+  model: string | null
+  mode: string
+  toolCallFormat: 'flat' | 'nested'
+  pinned: boolean
+  messageCount: number
+  sessionFile: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** A loaded conversation: the index fields plus the visible messages. */
+export interface AiSession {
+  id: string
+  title: string
+  connectionId: string | null
+  connectionName: string | null
+  workspaceId: string | null
+  profileId: string | null
+  model: string | null
+  mode: string
+  toolCallFormat: 'flat' | 'nested'
+  pinned: boolean
+  messageCount: number
+  createdAt: string
+  updatedAt: string
+  messages: AiStoredMessage[]
+}
+
+/** Payload sent to `save_ai_session`. */
+export interface AiSessionSave {
+  id: string
+  title: string
+  tabId: number | null
+  connectionId: string | null
+  connectionName: string | null
+  workspaceId: string | null
+  profileId: string | null
+  model: string | null
+  mode: string
+  toolCallFormat: 'flat' | 'nested'
+  pinned: boolean
+  messages: AiStoredMessage[]
+  createdAt: string | null
+}
+
+/** Result of a `rebuild_ai_sessions` index scan. */
+export interface AiSessionRebuildSummary {
+  restored: number
+  updated: number
+  failed: number
+}
+
 /**
  * Boundary marker emitted by `run_command_on_terminal` so the frontend can
  * colorize the AI-issued command line (`begin`) and its output (until `end`)

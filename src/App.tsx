@@ -140,6 +140,12 @@ import {
   clearHostCommands,
   listCommandSets,
   listCommandSnippets,
+  saveAiSession,
+  loadAiSession,
+  listAiSessions,
+  deleteAiSession,
+  renameAiSession,
+  pinAiSession,
 } from './commands'
 import type {
   AppVersion,
@@ -156,11 +162,14 @@ import type {
   DockerAnalysisTarget,
   SessionSummary,
   CommandHistoryEntry,
+  AiSessionSave,
+  AiSessionSummary,
+  AiStoredMessage,
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import AiChatPanel from './components/AiChatPanel'
-import type { AiConv } from './aiChatRun'
+import type { AiConv, ChatMessage } from './aiChatRun'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { detectLanguage } from './editor/languages'
 import { useI18n, LANG_LABELS, type LangPref } from './i18n'
@@ -169,6 +178,19 @@ import { highlightStore } from './lib/highlightStore'
 import { loadPasteGuard, savePasteGuard, isWslShell } from './lib/pasteGuard'
 import type { PasteGuardConfig, PasteMode } from './lib/pasteGuard'
 import { loadConfirmCloseTerminal, saveConfirmCloseTerminal } from './lib/closeGuard'
+import {
+  loadAiSessionPersist,
+  saveAiSessionPersist,
+  loadAiSessionRestore,
+  saveAiSessionRestore,
+  loadActiveAiSession,
+  saveActiveAiSession,
+  toStoredMessage,
+  fromStoredMessage,
+  firstUserMessage,
+  aiScopeKey,
+  aiConvContext,
+} from './lib/aiSessionStore'
 import {
   clearAppearanceHistory,
   listAppearanceHistory,
@@ -508,6 +530,52 @@ function CloseGuardSettingsCard({
         </label>
         <span className="settings-help">{t('closeGuardHint')}</span>
       </div>
+    </div>
+  )
+}
+
+/** AI conversation persistence toggles (Settings → AI). Backed by localStorage
+ *  (not `aiConfig` — these are display prefs, not endpoint config), matching the
+ *  close-guard / paste-guard cards. */
+function AiSessionStorageSettingsCard() {
+  const { t } = useI18n()
+  const [persist, setPersist] = useState<boolean>(() => loadAiSessionPersist())
+  const [restore, setRestore] = useState<boolean>(() => loadAiSessionRestore())
+  return (
+    <div className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-icon">
+          <Icon name="history" size={16} />
+        </div>
+        <div>
+          <h3 className="settings-card-title">{t('aiSessionStorage')}</h3>
+          <p className="settings-card-sub">{t('aiSessionStorageDesc')}</p>
+        </div>
+      </div>
+      <label className="settings-checkbox-label">
+        <input
+          type="checkbox"
+          checked={persist}
+          onChange={(e) => {
+            setPersist(e.target.checked)
+            saveAiSessionPersist(e.target.checked)
+          }}
+        />
+        <span>{t('aiSessionPersist')}</span>
+      </label>
+      <span className="settings-help">{t('aiSessionPersistDesc')}</span>
+      <label className="settings-checkbox-label">
+        <input
+          type="checkbox"
+          checked={restore}
+          onChange={(e) => {
+            setRestore(e.target.checked)
+            saveAiSessionRestore(e.target.checked)
+          }}
+        />
+        <span>{t('aiSessionRestore')}</span>
+      </label>
+      <span className="settings-help">{t('aiSessionRestoreDesc')}</span>
     </div>
   )
 }
@@ -2657,6 +2725,8 @@ export default function App() {
   // AI conversation state is keyed per tab (tabId) so each shell tab keeps its
   // own conversation, and survives tab switches / panel remounts.
   const emptyConv = (): AiConv => ({
+    sessionId: crypto.randomUUID(),
+    sessionTitle: '',
     messages: [],
     input: '',
     streaming: false,
@@ -2665,6 +2735,7 @@ export default function App() {
     toolCalls: [],
     showSuggestions: true,
     toolCallFormat: 'nested',
+    mode: 'command',
     flow: null,
     run: null,
   })
@@ -2675,6 +2746,8 @@ export default function App() {
   // panes or closing every tab leaves this transcript where it is, which is why
   // it is kept out of the per-tab `aiConversations` record altogether.
   const [aiGlobalConv, setAiGlobalConv] = useState<AiConv>(emptyConv())
+  const aiGlobalConvRef = useRef(aiGlobalConv)
+  aiGlobalConvRef.current = aiGlobalConv
   // Which shell tabs have their AI pane open (docked).
   const [showAiByTab, setShowAiByTab] = useState<Record<number, boolean>>({})
   // Dock side of the AI pane per shell tab: 'right' | 'left' | 'top' | 'bottom'.
@@ -3046,6 +3119,142 @@ export default function App() {
       return next
     })
   }, [])
+
+  // ==================== AI conversation persistence ====================
+  // Ref snapshots so the auto-save effect only re-runs when a *conversation*
+  // changes (not when the connection list / profile does — switching profiles
+  // must not rewrite every session's recorded profile).
+  const activeProfileRef = useRef(activeProfile)
+  activeProfileRef.current = activeProfile
+  // `tabsRef` is already declared above (used by other callbacks).
+  const connectionsRef = useRef(connections)
+  connectionsRef.current = connections
+
+  // Persist one conversation. Empty conversations are never written (a session
+  // is only created on the first message). Streaming convs are *not* skipped:
+  // the user's message is already in `messages` the moment it is sent (the
+  // in-progress assistant text lives in `streamingText`, not `messages`), so a
+  // mid-stream save still captures a consistent prefix — and the send→streaming
+  // transition is what makes the user message durable immediately.
+  const persistAiConv = useCallback((tabId: number | null, conv: AiConv) => {
+    if (conv.messages.length === 0) return
+    const ctx = aiConvContext(tabId, tabsRef.current, connectionsRef.current)
+    const payload: AiSessionSave = {
+      id: conv.sessionId,
+      title: conv.sessionTitle || firstUserMessage(conv.messages),
+      tabId: ctx.tabId,
+      connectionId: ctx.connectionId,
+      connectionName: ctx.connectionName,
+      workspaceId: ctx.workspaceId,
+      profileId: activeProfileRef.current?.id ?? null,
+      model: activeProfileRef.current?.model ?? null,
+      mode: conv.mode,
+      toolCallFormat: conv.toolCallFormat,
+      pinned: false,
+      messages: conv.messages.map(toStoredMessage),
+      createdAt: null,
+    }
+    const scope = aiScopeKey(tabId, tabsRef.current)
+    void saveAiSession(payload)
+      .then(() => saveActiveAiSession(scope, conv.sessionId))
+      .catch(() => {})
+  }, [])
+
+  // Restore the conversation bound to `tabId` (null = the global chat) from the
+  // last active session, when persistence + restore are both on and the conv is
+  // still empty (the guard inside `apply` protects against a message sent while
+  // the load was in flight).
+  const restoreAiConv = useCallback((tabId: number | null) => {
+    if (!loadAiSessionPersist() || !loadAiSessionRestore()) return
+    const scope = aiScopeKey(tabId, tabsRef.current)
+    const sessionId = loadActiveAiSession()[scope]
+    if (!sessionId) return
+    void loadAiSession(sessionId)
+      .then((sess) => {
+        if (!sess) return
+        const apply = (c: AiConv): AiConv => {
+          if (c.messages.length > 0) return c
+          return {
+            ...c,
+            sessionId: sess.id,
+            sessionTitle: sess.title,
+            messages: sess.messages.map(fromStoredMessage),
+            toolCallFormat: sess.toolCallFormat,
+            mode:
+              sess.mode === 'chat' || sess.mode === 'command' || sess.mode === 'read_only'
+                ? sess.mode
+                : 'command',
+            streaming: false,
+            streamingText: '',
+            flow: null,
+            run: null,
+            error: null,
+            input: '',
+          }
+        }
+        if (tabId == null) setAiGlobalConv(apply)
+        else setAiConv(tabId, apply)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Debounced auto-save. A streaming→idle transition saves immediately so the
+  // final assistant message is never stranded in the debounce window; otherwise
+  // an 800 ms debounce coalesces typing pauses and tool-call updates.
+  const aiSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const aiStreamingRef = useRef<Record<string, boolean>>({})
+  useEffect(() => {
+    if (!loadAiSessionPersist()) return
+    const entries: Array<[number | null, AiConv]> = [
+      [null, aiGlobalConv],
+      ...Object.entries(aiConversations).map(([k, v]) => [Number(k), v] as [number | null, AiConv]),
+    ]
+    let immediate = false
+    for (const [tabId, conv] of entries) {
+      const key = tabId == null ? 'global' : String(tabId)
+      const was = aiStreamingRef.current[key] ?? false
+      aiStreamingRef.current[key] = conv.streaming
+      // Any streaming transition (send → streaming, streaming → done) saves
+      // immediately; otherwise the 800 ms debounce coalesces typing/tool updates.
+      if (was !== conv.streaming) immediate = true
+    }
+    const run = () => {
+      const now: Array<[number | null, AiConv]> = [
+        [null, aiGlobalConvRef.current],
+        ...Object.entries(aiConversationsRef.current).map(
+          ([k, v]) => [Number(k), v] as [number | null, AiConv],
+        ),
+      ]
+      for (const [tabId, conv] of now) persistAiConv(tabId, conv)
+    }
+    if (aiSaveTimer.current) clearTimeout(aiSaveTimer.current)
+    aiSaveTimer.current = setTimeout(run, immediate ? 0 : 800)
+    return () => {
+      if (aiSaveTimer.current) clearTimeout(aiSaveTimer.current)
+    }
+  }, [aiConversations, aiGlobalConv, persistAiConv])
+
+  // Restore the global chat once, on mount.
+  const didRestoreGlobalRef = useRef(false)
+  useEffect(() => {
+    if (didRestoreGlobalRef.current) return
+    didRestoreGlobalRef.current = true
+    restoreAiConv(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Restore a per-tab conversation the first time its AI pane opens.
+  const restoredTabsRef = useRef<Set<number>>(new Set())
+  useEffect(() => {
+    for (const key of Object.keys(showAiByTab)) {
+      const tid = Number(key)
+      if (!showAiByTab[tid] || restoredTabsRef.current.has(tid)) continue
+      restoredTabsRef.current.add(tid)
+      const conv = aiConversationsRef.current[tid]
+      if (!conv || conv.messages.length === 0) restoreAiConv(tid)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAiByTab])
 
   // Reload the key input from the *expanded* (being-edited) profile's encrypted
   // key whenever the expanded profile changes, so each endpoint keeps and shows
@@ -7041,6 +7250,8 @@ export default function App() {
                       <span>{t('aiRunInTerminalOn')}</span>
                     </label>
                   </div>
+
+                  <AiSessionStorageSettingsCard />
 
                   <div className="settings-card">
                     <div className="settings-card-header">

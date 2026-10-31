@@ -1193,6 +1193,44 @@ export async function aiUiToolResult(id: number, result: string): Promise<void> 
   return await invoke<void>('ai_ui_tool_result', { id, result })
 }
 
+// ===== AI conversation persistence =====
+
+import type { AiSession, AiSessionRebuildSummary, AiSessionSave, AiSessionSummary } from './types'
+
+export async function listAiSessions(connectionId?: string | null): Promise<AiSessionSummary[]> {
+  return await invoke<AiSessionSummary[]>('list_ai_sessions', {
+    connectionId: connectionId ?? null,
+  })
+}
+
+export async function loadAiSession(id: string): Promise<AiSession | null> {
+  return await invoke<AiSession | null>('load_ai_session', { id })
+}
+
+export async function saveAiSession(session: AiSessionSave): Promise<AiSessionSummary> {
+  return await invoke<AiSessionSummary>('save_ai_session', { session })
+}
+
+export async function deleteAiSession(id: string): Promise<boolean> {
+  return await invoke<boolean>('delete_ai_session', { id })
+}
+
+export async function renameAiSession(id: string, title: string): Promise<boolean> {
+  return await invoke<boolean>('rename_ai_session', { id, title })
+}
+
+export async function pinAiSession(id: string, pinned: boolean): Promise<boolean> {
+  return await invoke<boolean>('pin_ai_session', { id, pinned })
+}
+
+export async function writeTextFile(path: string, content: string): Promise<void> {
+  return await invoke<void>('write_text_file', { path, content })
+}
+
+export async function rebuildAiSessions(): Promise<AiSessionRebuildSummary> {
+  return await invoke<AiSessionRebuildSummary>('rebuild_ai_sessions')
+}
+
 // ===== Kubernetes panel =====
 
 /** kubeconfig contexts on the selected host, current one flagged. */

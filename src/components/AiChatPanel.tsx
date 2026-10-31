@@ -9,7 +9,14 @@ import {
 } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AiEndpointProfile, AiMessage, ToolCallEvent, AiPromptTemplate } from '../types'
+import type {
+  AiEndpointProfile,
+  AiMessage,
+  AiSessionSummary,
+  AiStoredMessage,
+  ToolCallEvent,
+  AiPromptTemplate,
+} from '../types'
 import {
   listAiModels,
   sendInput,
@@ -22,7 +29,15 @@ import {
   listHiddenBuiltinTemplates,
   hideBuiltinTemplate,
   restoreBuiltinTemplate,
+  listAiSessions,
+  loadAiSession,
+  deleteAiSession,
+  renameAiSession,
+  pinAiSession,
+  writeTextFile,
+  rebuildAiSessions,
 } from '../commands'
+import { save as saveDialog } from '@tauri-apps/plugin-dialog'
 import { Icon, type IconName } from './Icon'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
@@ -30,7 +45,17 @@ import { focusTerminal } from './Terminal'
 import { handleMarkdownLinkClick } from '../lib/externalLink'
 import { copyText } from '../lib/clipboard'
 import { createAiChatRun, type AiConv, type ChatMessage } from '../aiChatRun'
+import { fromStoredMessage, toStoredMessage } from '../lib/aiSessionStore'
+import { aiSessionMarkdown, aiSessionJson } from '../lib/aiExport'
+import { formatRelativeTime } from '../lib/format'
+import { createPortal } from 'react-dom'
 import AiCallFlow from './AiCallFlow'
+import { useFloatResize } from '../hooks/useFloatResize'
+
+// Must match .ai-session-menu-panel's width in styles/_ai.scss: the history
+// panel is right-aligned to the button that opens it, and JS needs the width to
+// keep that anchor (and the drag) inside the viewport.
+const SESSION_MENU_WIDTH = 340
 
 type ChatMode = 'chat' | 'command' | 'read_only'
 
@@ -283,7 +308,7 @@ export default function AiChatPanel({
 
   // AI chat mode: "chat" (plain text only, no tools), "command" (full access,
   // all commands allowed), or "read_only" (inspection commands only).
-  const [chatMode, setChatMode] = useState<ChatMode>(defaultMode ?? 'command')
+  const [chatMode, setChatMode] = useState<ChatMode>(conv.mode ?? defaultMode ?? 'command')
   const activeChatMode = CHAT_MODES.find((mode) => mode.value === chatMode) ?? CHAT_MODES[0]
 
   // Maximum agent-loop rounds for a single run. Starts from the global default.
@@ -1145,6 +1170,267 @@ export default function AiChatPanel({
 
   const hasContent = messages.length > 0 || streaming || toolCalls.length > 0
 
+  // ==================== Session list (history) ====================
+  const [sessionsOpen, setSessionsOpen] = useState(false)
+  const [sessions, setSessions] = useState<AiSessionSummary[]>([])
+  const [sessionSearch, setSessionSearch] = useState('')
+  const [sessionLoading, setSessionLoading] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [sessionRenameValue, setSessionRenameValue] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const sessionMenuRef = useRef<HTMLDivElement>(null)
+  const sessionBtnRef = useRef<HTMLButtonElement>(null)
+
+  // The history panel is portaled to <body>. It opens hanging under its own
+  // header button; dragging its header then layers a translate offset on top of
+  // that anchor.
+  const [sessionMenuAnchor, setSessionMenuAnchor] = useState({ top: 12, right: 16 })
+  const [sessionMenuOffset, setSessionMenuOffset] = useState({ x: 0, y: 0 })
+  const sessionMenuSizeRef = useRef({ w: SESSION_MENU_WIDTH, h: 420 })
+  const { startDrag: startSessionMenuDrag } = useFloatResize({
+    geometry: () => {
+      const rect = sessionMenuRef.current?.getBoundingClientRect()
+      if (rect) sessionMenuSizeRef.current = { w: rect.width, h: rect.height }
+      return { x: sessionMenuOffset.x, y: sessionMenuOffset.y, w: 0, h: 0 }
+    },
+    onMove: (x, y) => {
+      // Keep the panel on screen whatever anchor the button handed us.
+      const { w, h } = sessionMenuSizeRef.current
+      const baseLeft = window.innerWidth - sessionMenuAnchor.right - w
+      const minX = 8 - baseLeft
+      const maxX = window.innerWidth - 8 - w - baseLeft
+      const minY = 8 - sessionMenuAnchor.top
+      const maxY = window.innerHeight - 8 - h - sessionMenuAnchor.top
+      setSessionMenuOffset({
+        x: Math.min(maxX, Math.max(minX, x)),
+        y: Math.min(maxY, Math.max(minY, y)),
+      })
+    },
+    onResize: () => {},
+  })
+
+  const loadSessions = useCallback(() => {
+    setSessionLoading(true)
+    listAiSessions(null)
+      .then(setSessions)
+      .catch(() => setSessions([]))
+      .finally(() => setSessionLoading(false))
+  }, [])
+
+  const openSessions = useCallback(() => {
+    setSessionsOpen((v) => {
+      const next = !v
+      if (next) {
+        // Anchor under the history button, right edges aligned; clamp the right
+        // offset so a narrow docked header cannot push the panel off the left.
+        const rect = sessionBtnRef.current?.getBoundingClientRect()
+        if (rect) {
+          setSessionMenuAnchor({
+            top: Math.round(rect.bottom + 6),
+            right: Math.max(
+              8,
+              Math.min(window.innerWidth - rect.right, window.innerWidth - SESSION_MENU_WIDTH - 8),
+            ),
+          })
+        }
+        setSessionMenuOffset({ x: 0, y: 0 })
+        setSessionSearch('')
+        loadSessions()
+      }
+      return next
+    })
+  }, [loadSessions])
+
+  // Close the session menu on outside click / Esc.
+  useEffect(() => {
+    if (!sessionsOpen) return
+    const onDown = (e: MouseEvent) => {
+      const el = e.target as Node
+      if (!sessionMenuRef.current?.contains(el) && !sessionBtnRef.current?.contains(el)) {
+        setSessionsOpen(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSessionsOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [sessionsOpen])
+
+  const filteredSessions = useMemo(() => {
+    const q = sessionSearch.trim().toLowerCase()
+    if (!q) return sessions
+    return sessions.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) || (s.connectionName ?? '').toLowerCase().includes(q),
+    )
+  }, [sessions, sessionSearch])
+
+  // Switch to an existing session: load its messages into this conversation.
+  const handleSwitchSession = useCallback(
+    (id: string) => {
+      if (streaming) return
+      void loadAiSession(id)
+        .then((sess) => {
+          if (!sess) return
+          setConv((c) => ({
+            ...c,
+            sessionId: sess.id,
+            sessionTitle: sess.title,
+            messages: sess.messages.map(fromStoredMessage),
+            toolCallFormat: sess.toolCallFormat,
+            mode:
+              sess.mode === 'chat' || sess.mode === 'command' || sess.mode === 'read_only'
+                ? sess.mode
+                : c.mode,
+            streaming: false,
+            streamingText: '',
+            flow: null,
+            run: null,
+            error: null,
+            toolCalls: [],
+            input: '',
+            showSuggestions: false,
+          }))
+        })
+        .catch(() => {})
+        .finally(() => setSessionsOpen(false))
+    },
+    [streaming, setConv],
+  )
+
+  // Start a fresh conversation (new sessionId; the next send persists it).
+  const handleNewSession = useCallback(() => {
+    if (streaming) return
+    setConv((c) => ({
+      ...c,
+      sessionId: crypto.randomUUID(),
+      sessionTitle: '',
+      messages: [],
+      toolCalls: [],
+      flow: null,
+      run: null,
+      streaming: false,
+      streamingText: '',
+      error: null,
+      input: '',
+      showSuggestions: true,
+    }))
+    setSessionsOpen(false)
+  }, [streaming, setConv])
+
+  const startRename = useCallback((s: AiSessionSummary) => {
+    setRenamingId(s.id)
+    setSessionRenameValue(s.title)
+  }, [])
+
+  const commitRename = useCallback(() => {
+    const id = renamingId
+    if (!id) return
+    const title = sessionRenameValue.trim()
+    void renameAiSession(id, title).then(() => {
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)))
+      // Keep the live conversation's title in sync if it is the renamed one.
+      setConv((c) => (c.sessionId === id ? { ...c, sessionTitle: title } : c))
+      loadSessions()
+    })
+    setRenamingId(null)
+  }, [renamingId, sessionRenameValue, setConv, loadSessions])
+
+  const confirmDelete = useCallback((id: string) => {
+    void deleteAiSession(id).then(() => {
+      setSessions((prev) => prev.filter((s) => s.id !== id))
+    })
+    setDeletingId(null)
+  }, [])
+
+  const togglePin = useCallback(
+    (s: AiSessionSummary) => {
+      void pinAiSession(s.id, !s.pinned).then(() => loadSessions())
+    },
+    [loadSessions],
+  )
+
+  // Resolve the export/copy source: the in-memory conversation when it is the
+  // target (so an unsaved edit is included), otherwise load the stored session.
+  const resolveSessionSource = useCallback(
+    async (s: AiSessionSummary): Promise<AiStoredMessage[] | null> => {
+      if (s.id === conv.sessionId) {
+        return conv.messages.map(toStoredMessage)
+      }
+      const loaded = await loadAiSession(s.id)
+      return loaded ? loaded.messages : null
+    },
+    [conv.sessionId, conv.messages],
+  )
+
+  const handleExport = useCallback(
+    async (s: AiSessionSummary) => {
+      if (streaming) return
+      const messages = await resolveSessionSource(s)
+      if (!messages) return
+      const target = await saveDialog({
+        title: t('aiSessionExportTitle'),
+        defaultPath: `ai-session-${s.updatedAt.slice(0, 10)}.md`,
+        filters: [
+          { name: 'Markdown', extensions: ['md'] },
+          { name: 'JSON', extensions: ['json'] },
+        ],
+      })
+      if (!target) return
+      const json = target.toLowerCase().endsWith('.json')
+      const text = json
+        ? aiSessionJson(messages, s.title, s.connectionName)
+        : aiSessionMarkdown(messages, s.title, s.connectionName)
+      try {
+        await writeTextFile(target, text)
+        setSessionsOpen(false)
+      } catch (e) {
+        console.error('AI session export failed:', e)
+      }
+    },
+    [streaming, resolveSessionSource, t],
+  )
+
+  const handleCopy = useCallback(
+    async (s: AiSessionSummary) => {
+      if (streaming) return
+      const messages = await resolveSessionSource(s)
+      if (!messages) return
+      await copyText(aiSessionMarkdown(messages, s.title, s.connectionName))
+      setSessionsOpen(false)
+    },
+    [streaming, resolveSessionSource],
+  )
+
+  const [rebuildMsg, setRebuildMsg] = useState<string | null>(null)
+  const [rebuilding, setRebuilding] = useState(false)
+  const handleRebuild = useCallback(async () => {
+    setRebuilding(true)
+    try {
+      const r = await rebuildAiSessions()
+      setRebuildMsg(
+        r.restored === 0 && r.updated === 0 && r.failed === 0
+          ? t('aiSessionRebuildNone')
+          : t('aiSessionRebuildDone', {
+              restored: r.restored,
+              updated: r.updated,
+              failed: r.failed,
+            }),
+      )
+      loadSessions()
+    } catch (e) {
+      console.error('AI session rebuild failed:', e)
+      setRebuildMsg(t('aiSessionRebuildFailed'))
+    } finally {
+      setRebuilding(false)
+    }
+  }, [t, loadSessions])
+
   // Split user templates by category:
   //  - `category` matching a built-in group id → join that built-in group.
   //  - empty category → the generic "custom" group.
@@ -1225,6 +1511,26 @@ export default function AiChatPanel({
 
         {/* --- right group (always right-aligned, close at very end) --- */}
         <div className="ai-chat-header-right">
+          {/* New conversation */}
+          <button
+            className="ai-chat-clear-btn"
+            onClick={handleNewSession}
+            disabled={streaming}
+            title={t('aiSessionNew')}
+            aria-label={t('aiSessionNew')}
+          >
+            <Icon name="plus" size={13} />
+          </button>
+          {/* Session history */}
+          <button
+            ref={sessionBtnRef}
+            className={`ai-chat-clear-btn${sessionsOpen ? ' is-active' : ''}`}
+            onClick={openSessions}
+            title={t('aiSessions')}
+            aria-label={t('aiSessions')}
+          >
+            <Icon name="history" size={13} />
+          </button>
           {/* Each control is independently visible / folded based on header
               width.  The More dropdown collects *only* the compacted ones. */}
           {/* toolCallFormat */}
@@ -1739,6 +2045,7 @@ export default function AiChatPanel({
                         className={`ai-chat-mode-item${chatMode === mode.value ? ' is-active' : ''}`}
                         onClick={() => {
                           setChatMode(mode.value)
+                          setConv((c) => ({ ...c, mode: mode.value }))
                           setModePickerOpen(false)
                         }}
                       >
@@ -2230,6 +2537,198 @@ export default function AiChatPanel({
           />
         </div>
       )}
+
+      {/* Session history (floating, portaled to document.body) */}
+      {sessionsOpen &&
+        createPortal(
+          <div className="ai-session-menu">
+            <div
+              className="ai-session-menu-panel"
+              ref={sessionMenuRef}
+              style={{
+                top: sessionMenuAnchor.top,
+                right: sessionMenuAnchor.right,
+                transform: `translate(${sessionMenuOffset.x}px, ${sessionMenuOffset.y}px)`,
+              }}
+            >
+              <div className="ai-session-menu-header" onMouseDown={startSessionMenuDrag}>
+                <span className="ai-session-menu-title">{t('aiSessions')}</span>
+                <button
+                  type="button"
+                  className="ai-session-menu-close"
+                  onClick={() => setSessionsOpen(false)}
+                  title={t('close')}
+                >
+                  <Icon name="x" size={13} />
+                </button>
+              </div>
+              <div className="ai-session-search">
+                <Icon name="search" size={13} />
+                <input
+                  value={sessionSearch}
+                  onChange={(e) => setSessionSearch(e.target.value)}
+                  placeholder={t('aiSessionSearchPlaceholder')}
+                  autoFocus
+                />
+              </div>
+              <div className="ai-session-list">
+                {sessionLoading ? (
+                  <div className="ai-session-empty">{t('aiSessionLoading')}</div>
+                ) : filteredSessions.length === 0 ? (
+                  <div className="ai-session-empty">{t('aiSessionEmpty')}</div>
+                ) : (
+                  filteredSessions.map((s) => (
+                    <div
+                      className={`ai-session-item${s.id === conv.sessionId ? ' is-current' : ''}${
+                        deletingId === s.id ? ' is-actions-open' : ''
+                      }`}
+                      key={s.id}
+                    >
+                      {renamingId === s.id ? (
+                        <div className="ai-session-rename-row">
+                          <input
+                            className="ai-session-rename-input"
+                            value={sessionRenameValue}
+                            autoFocus
+                            onChange={(e) => setSessionRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitRename()
+                              if (e.key === 'Escape') setRenamingId(null)
+                            }}
+                            placeholder={t('aiSessionTitlePlaceholder')}
+                          />
+                          <button
+                            type="button"
+                            className="ai-session-item-edit"
+                            onClick={commitRename}
+                            disabled={sessionRenameValue.trim().length === 0}
+                            title={t('save')}
+                          >
+                            <Icon name="check" size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            className="ai-session-item-edit"
+                            onClick={() => setRenamingId(null)}
+                            title={t('cancel')}
+                          >
+                            <Icon name="x" size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="ai-session-item-main"
+                          onClick={() => handleSwitchSession(s.id)}
+                          disabled={streaming}
+                          title={s.connectionName ?? undefined}
+                        >
+                          <span className="ai-session-item-title-row">
+                            <span className="ai-session-item-title">
+                              {s.title || t('aiSessionUntitled')}
+                            </span>
+                            {s.pinned && (
+                              <Icon name="pin" size={11} className="ai-session-item-pin" />
+                            )}
+                          </span>
+                          <span className="ai-session-item-meta">
+                            {s.connectionName ?? t('aiSessionGlobal')} · {s.messageCount}{' '}
+                            {t('aiSessionMsgs')} ·{' '}
+                            {formatRelativeTime(new Date(s.updatedAt).getTime(), t)}
+                          </span>
+                        </button>
+                      )}
+                      <div className="ai-session-item-actions">
+                        {deletingId === s.id ? (
+                          <>
+                            <button
+                              type="button"
+                              className="ai-session-item-del-confirm"
+                              onClick={() => confirmDelete(s.id)}
+                              title={t('delete')}
+                            >
+                              <Icon name="check" size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="ai-session-item-edit"
+                              onClick={() => setDeletingId(null)}
+                              title={t('cancel')}
+                            >
+                              <Icon name="x" size={12} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="ai-session-item-edit"
+                              onClick={() => togglePin(s)}
+                              disabled={streaming}
+                              title={s.pinned ? t('aiSessionUnpin') : t('aiSessionPin')}
+                            >
+                              <Icon name="pin" size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="ai-session-item-edit"
+                              onClick={() => startRename(s)}
+                              disabled={streaming}
+                              title={t('rename')}
+                            >
+                              <Icon name="edit" size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="ai-session-item-edit"
+                              onClick={() => void handleCopy(s)}
+                              disabled={streaming}
+                              title={t('aiSessionCopy')}
+                            >
+                              <Icon name="copy" size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="ai-session-item-edit"
+                              onClick={() => void handleExport(s)}
+                              disabled={streaming}
+                              title={t('aiSessionExport')}
+                            >
+                              <Icon name="download" size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="ai-session-item-del"
+                              onClick={() => setDeletingId(s.id)}
+                              disabled={streaming}
+                              title={t('delete')}
+                            >
+                              <Icon name="trash" size={12} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="ai-session-footer">
+                <button
+                  type="button"
+                  className="ai-session-rebuild"
+                  onClick={() => void handleRebuild()}
+                  disabled={rebuilding}
+                  title={t('aiSessionRebuild')}
+                >
+                  <Icon name="refresh" size={12} />
+                  {t('aiSessionRebuild')}
+                </button>
+                {rebuildMsg && <span className="ai-session-rebuild-msg">{rebuildMsg}</span>}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

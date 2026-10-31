@@ -12,6 +12,10 @@ export interface ChatMessage {
 }
 
 export interface AiConv {
+  /** Stable id of the persisted conversation (the session id on disk). */
+  sessionId: string
+  /** User-visible title; empty = auto-generate from the first user message. */
+  sessionTitle: string
   messages: ChatMessage[]
   input: string
   streaming: boolean
@@ -20,6 +24,8 @@ export interface AiConv {
   toolCalls: ToolCallEvent[]
   showSuggestions: boolean
   toolCallFormat: 'flat' | 'nested'
+  /** Chat mode this conversation is currently in (persisted with the session). */
+  mode: 'chat' | 'command' | 'read_only'
   flow: AiRunTrace | null
   run: AiChatRun | null
 }

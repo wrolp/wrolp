@@ -285,6 +285,7 @@ pub(crate) fn shell_quote_arg(s: &str) -> String {
 // --- Submodules -----------------------------------------------------------
 
 pub(crate) mod ai_chat;
+pub(crate) mod ai_sessions;
 pub(crate) mod ai_term;
 pub(crate) mod command_history;
 pub(crate) mod connection_recents;
@@ -312,6 +313,7 @@ pub(crate) mod window;
 
 // Re-export every command so `crate::commands::<name>` keeps working from lib.rs.
 pub use ai_chat::*;
+pub use ai_sessions::*;
 pub use ai_term::*;
 pub use command_history::*;
 pub use connection_recents::*;

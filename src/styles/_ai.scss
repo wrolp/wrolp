@@ -2344,3 +2344,283 @@
     font-size: var(--fs-xs);
   }
 }
+
+// ===== AI session history (floating list, portaled to body) =====
+.ai-session-menu {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-above-float);
+  pointer-events: none;
+}
+
+.ai-session-menu-panel {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: var(--r-3);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.ai-session-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid $border;
+  // The header doubles as the drag handle for the floating history panel.
+  cursor: move;
+  user-select: none;
+
+  .ai-session-menu-title {
+    color: $text-primary;
+    font-size: var(--fs-md);
+    font-weight: 600;
+  }
+
+  .ai-session-menu-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--r-2);
+    color: $text-secondary;
+    cursor: pointer;
+
+    &:hover {
+      color: $text-primary;
+      background: $bg-hover;
+    }
+  }
+}
+
+.ai-session-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px;
+  padding: 6px 8px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: $bg-input;
+  color: $text-dim;
+
+  input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: $text-primary;
+    font-family: inherit;
+    font-size: var(--fs-md);
+
+    &:focus {
+      outline: none;
+    }
+
+    &::placeholder {
+      color: $text-dim;
+    }
+  }
+}
+
+.ai-session-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.ai-session-empty {
+  padding: 20px 12px;
+  color: $text-dim;
+  font-size: var(--fs-md);
+  text-align: center;
+}
+
+.ai-session-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.is-current {
+    background: rgba($accent, 0.1);
+  }
+
+  .ai-session-item-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+
+    &:disabled {
+      cursor: default;
+    }
+  }
+
+  .ai-session-item-title-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .ai-session-item-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: $text-primary;
+    font-size: var(--fs-md);
+  }
+
+  .ai-session-item-pin {
+    flex-shrink: 0;
+    color: $accent;
+  }
+
+  .ai-session-item-meta {
+    color: $text-dim;
+    font-size: var(--fs-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // The action strip is out of the flow until the row is hovered/focused, so
+  // the title and meta get the full row width and only truncate once the
+  // buttons actually take space.
+  .ai-session-item-actions {
+    display: none;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+
+    .ai-session-item-edit,
+    .ai-session-item-del,
+    .ai-session-item-del-confirm {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: var(--r-2);
+      color: $text-secondary;
+      cursor: pointer;
+
+      &:hover:not(:disabled) {
+        color: $text-primary;
+        background: $bg-hover;
+      }
+
+      &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+    }
+
+    .ai-session-item-del,
+    .ai-session-item-del-confirm {
+      &:hover:not(:disabled) {
+        color: $danger;
+      }
+    }
+  }
+
+  &:hover .ai-session-item-actions,
+  &:focus-within .ai-session-item-actions,
+  &.is-actions-open .ai-session-item-actions {
+    display: flex;
+  }
+
+  .ai-session-rename-row {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .ai-session-rename-input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 6px;
+    border: 1px solid $accent;
+    border-radius: var(--r-2);
+    background: $bg-input;
+    color: $text-primary;
+    font-family: inherit;
+    font-size: var(--fs-md);
+
+    &:focus {
+      outline: none;
+    }
+  }
+}
+
+.ai-session-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid $border;
+
+  .ai-session-rebuild {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    background: transparent;
+    border: 1px solid $border;
+    border-radius: var(--r-2);
+    color: $text-secondary;
+    font-family: inherit;
+    font-size: var(--fs-xs);
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      color: $text-primary;
+      border-color: $accent;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  .ai-session-rebuild-msg {
+    flex: 1;
+    min-width: 0;
+    color: $text-dim;
+    font-size: var(--fs-xs);
+    overflow-wrap: anywhere;
+  }
+}

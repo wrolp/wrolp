@@ -51,6 +51,12 @@ export interface TauriMockOptions {
   aiConfig?: Record<string, unknown>
   /** Seeded rows for the stateful prompt-template store (see `save_ai_prompt_template`). */
   aiPromptTemplates?: Array<Record<string, unknown>>
+  /**
+   * Rows returned by `list_ai_sessions` (the Conversations panel). Omitted —
+   * the default — is an empty list; the component maps over the answer, so the
+   * `default: return null` fallthrough would throw.
+   */
+  aiSessions?: unknown[]
   /** Value returned by `list_files` (the file panel's directory listing). */
   fileEntries?: unknown[]
   /**
@@ -332,6 +338,8 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             }
           case 'load_ai_config':
             return opts.aiConfig ?? {}
+          case 'list_ai_sessions':
+            return opts.aiSessions ?? []
           case 'get_local_terminals':
             return opts.localTerminals ?? []
           case 'get_local_shell_dirs':
