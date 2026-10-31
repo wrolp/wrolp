@@ -106,6 +106,9 @@ for (const lang of ['en', 'zh'] as const) {
     await expect(page.locator('.docker-state')).toHaveCount(0)
     for (let index = 0; index < STATES.length; index++) {
       const mark = rows.nth(index).locator('.docker-state-mark')
+      // State leads the row: scanning down the list, it is the first thing read.
+      const firstChild = await rows.nth(index).evaluate((el) => el.firstElementChild?.className)
+      expect(firstChild).toContain('docker-state-mark')
       await expect(mark).toHaveText('')
       await expect(mark).toHaveAttribute('title', LABELS[lang][index])
       await expect(mark).toHaveAttribute('aria-label', LABELS[lang][index])

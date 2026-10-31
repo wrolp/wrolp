@@ -51,13 +51,16 @@ type PendingDelete = {
   remove: () => Promise<void> | void
 }
 
+// State glyphs, not action glyphs: a green ▶ reads as "press me to start", which
+// is why running is a filled dot (a status LED), created a hollow ring, paused the
+// pause bars and exited the filled square.
 const STATES: Record<string, { icon: IconName; label: TranslationKey }> = {
-  running: { icon: 'play', label: 'dockerStateRunning' },
+  running: { icon: 'statusDot', label: 'dockerStateRunning' },
   restarting: { icon: 'refresh', label: 'dockerStateRestarting' },
   paused: { icon: 'pause', label: 'dockerStatePaused' },
   exited: { icon: 'stop', label: 'dockerStateExited' },
   dead: { icon: 'x', label: 'dockerStateDead' },
-  created: { icon: 'plus', label: 'dockerStateCreated' },
+  created: { icon: 'circle', label: 'dockerStateCreated' },
 }
 const imageRef = (image: ImageInfo) => `${image.repository}:${image.tag}`
 const isTagged = (image: ImageInfo) =>
@@ -341,6 +344,16 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
                     : ''
                 }`}
               >
+                {/* State leads the row: it is the first thing scanned for when
+                    looking down a list of containers. */}
+                <span
+                  className={`docker-state-mark ${c.state}`}
+                  role="img"
+                  title={label}
+                  aria-label={label}
+                >
+                  <Icon name={state?.icon ?? 'circle'} size={13} />
+                </span>
                 <span className="docker-icon">
                   <Icon name="container" />
                 </span>
@@ -361,14 +374,6 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
                     <span className="docker-image">{c.image}</span>
                   </div>
                 </div>
-                <span
-                  className={`docker-state-mark ${c.state}`}
-                  role="img"
-                  title={label}
-                  aria-label={label}
-                >
-                  <Icon name={state?.icon ?? 'container'} size={13} />
-                </span>
               </div>
             )
           })}

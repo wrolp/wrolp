@@ -92,6 +92,9 @@ export type IconName =
   | 'shellBash'
   | 'shellWsl'
   | 'shellGitBash'
+  // Docker state marks: a status LED rather than an action glyph.
+  | 'circle'
+  | 'statusDot'
 
 const PATHS: Record<IconName, ReactNode> = {
   // lucide: refresh-cw
@@ -216,6 +219,12 @@ const PATHS: Record<IconName, ReactNode> = {
   // No lucide stop equivalent in the design; a filled square stays filled so the
   // recording row's stop reads at 14px the way the old feather glyph did.
   stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" />,
+  // lucide: circle — a hollow ring, i.e. "exists but was never started".
+  circle: <circle cx="12" cy="12" r="10" />,
+  // lucide: circle, filled. The Docker row's running state is a status LED, not
+  // an action, so it is a solid dot rather than the play triangle; the fill is
+  // the only deviation from the source icon, and it is what stays legible at 13px.
+  statusDot: <circle cx="12" cy="12" r="5.5" fill="currentColor" stroke="none" />,
   // lucide: skip-back
   stepBack: (
     <>
