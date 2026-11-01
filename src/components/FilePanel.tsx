@@ -50,8 +50,12 @@ import { useI18n } from '../i18n'
 /** How many file transfers run at once for a multi-file upload batch. */
 const UPLOAD_CONCURRENCY = 8
 
-/** How long the transfer list stays up once nothing is in flight any more. */
+/** How long a finished transfer row stays visible before it is dropped. */
 const TRANSFER_DISMISS_MS = 5000
+
+/** A row is "live" while it is running or waiting to run. Only these must stay
+ *  visible; everything else is a finished row on its way out of the list. */
+const isLiveTransfer = (r: TransferRow) => r.status === 'active' || r.status === 'queued'
 
 /**
  * Run `worker` over `items` with at most `limit` tasks in flight at once.
@@ -1766,26 +1770,45 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   } = useCustomScrollbar()
 
   /* ---- transfers list: auto-close ---- */
-  // A settled list is only clutter: it steals height from the file tree and has
-  // nothing left to watch, so it closes itself a few seconds after the last row
-  // finishes. It *hides* rather than clears — the rows belong to the app-wide
-  // queue and the drawer's transfer tab is where a finished list is reviewed
-  // (v8-P4). Hovering holds it open so it can't vanish mid-read; the next
-  // transfer reopens it.
-  const [transfersDismissed, setTransfersDismissed] = useState(false)
+  // A finished row is only clutter: it steals height from the file tree and has
+  // nothing left to watch. Each row is therefore dropped from the *panel* (not
+  // from the app-wide queue) a few seconds after it settles, whether or not other
+  // transfers are still running — a done row next to an active one used to linger
+  // until the whole list settled, which is the "completed item never disappears"
+  // report. The drawer's transfer tab still holds the rows for review (v8-P4).
+  // Hovering postpones the drop so nothing vanishes mid-read; a new transfer with
+  // the same key re-shows its row.
   const [transfersHovered, setTransfersHovered] = useState(false)
-  const transfersSettled =
-    transferRows.length > 0 &&
-    transferRows.every((r) => r.status !== 'active' && r.status !== 'queued')
+  const [hiddenTransferKeys, setHiddenTransferKeys] = useState<Set<string>>(new Set())
+  const visibleTransferRows = transferRows.filter(
+    (r) => isLiveTransfer(r) || !hiddenTransferKeys.has(r.key),
+  )
+  // A row that is live again (its key was reused by a new transfer) must show,
+  // even if a previous run with that key had been dropped.
   useEffect(() => {
-    if (!transfersSettled) {
-      setTransfersDismissed(false)
-      return
-    }
-    if (transfersDismissed || transfersHovered) return
-    const timer = window.setTimeout(() => setTransfersDismissed(true), TRANSFER_DISMISS_MS)
+    setHiddenTransferKeys((prev) => {
+      let changed = false
+      const next = new Set(prev)
+      for (const r of transferRows) {
+        if (isLiveTransfer(r) && next.delete(r.key)) changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [transferRows])
+  // Drop rows that have settled (and are still visible) after the delay.
+  useEffect(() => {
+    if (transfersHovered) return
+    const settled = transferRows.filter((r) => !isLiveTransfer(r) && !hiddenTransferKeys.has(r.key))
+    if (settled.length === 0) return
+    const timer = window.setTimeout(() => {
+      setHiddenTransferKeys((prev) => {
+        const next = new Set(prev)
+        for (const r of settled) next.add(r.key)
+        return next
+      })
+    }, TRANSFER_DISMISS_MS)
     return () => window.clearTimeout(timer)
-  }, [transfersSettled, transfersDismissed, transfersHovered])
+  }, [transferRows, hiddenTransferKeys, transfersHovered])
 
   /* ---- transfers panel drag-to-resize ---- */
   const transfersDragRef = useRef<{ startY: number; startH: number } | null>(null)
@@ -2249,7 +2272,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
           {/* Multi-file transfer progress list. Height is user-adjustable via the
               drag handle on its top edge; rows scroll internally when they overflow. */}
-          {showTransfers && transferRows.length > 0 && !transfersDismissed && (
+          {showTransfers && visibleTransferRows.length > 0 && (
             <div
               className="file-transfers"
               style={{ height: transfersPanelHeight }}
@@ -2263,14 +2286,12 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               />
               <div className="file-transfers-head">
                 <span className="file-transfers-title">
-                  {transferRows.some((r) => r.status === 'active' || r.status === 'queued')
+                  {visibleTransferRows.some(isLiveTransfer)
                     ? t('transfers')
                     : t('transfersComplete')}
                 </span>
                 {sessionTabId != null &&
-                  transferRows.some(
-                    (r) => r.op !== 'delete' && (r.status === 'active' || r.status === 'queued'),
-                  ) && (
+                  visibleTransferRows.some((r) => r.op !== 'delete' && isLiveTransfer(r)) && (
                     <button
                       className="file-pause-btn"
                       onClick={togglePause}
@@ -2288,7 +2309,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
                   onMouseEnter={onTransfersMouseEnter}
                   onMouseLeave={onTransfersMouseLeave}
                 >
-                  {transferRows.map((row) => (
+                  {visibleTransferRows.map((row) => (
                     <div key={row.key} className={`file-transfer-row ${row.status}`}>
                       <div className="file-transfer-info">
                         <div className="file-transfer-name" title={row.filename}>

@@ -119,7 +119,11 @@ const pickRow = (candidates: TransferRow[], transferred: number): TransferRow | 
   candidates.find((r) => r.status === 'active') ??
   (candidates.length === 1 ? candidates[0] : null)
 
-const live = (r: TransferRow) => r.status !== 'done' && r.status !== 'error'
+// Only a running/waiting row may be matched by a progress event. A
+// cancelled/done/errored row is terminal: letting a late event hit a cancelled
+// row would flip it back to `active` with no transfer left to settle it, which
+// keeps the panel's "is anything in flight" check true forever.
+const live = (r: TransferRow) => r.status === 'active' || r.status === 'queued'
 
 /**
  * Rows are matched across the whole queue, so the tab the event names is used as

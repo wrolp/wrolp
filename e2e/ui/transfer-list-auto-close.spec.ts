@@ -17,6 +17,15 @@ const REMOTE_FILE = {
   mode: '-rw-r--r--',
   modified: '',
 }
+// A second file so one transfer can stay queued while another has finished.
+const SECOND_FILE = {
+  name: 'b.log',
+  path: '/home/root/b.log',
+  isDir: false,
+  size: 10,
+  mode: '-rw-r--r--',
+  modified: '',
+}
 
 const list = (page: Page) => page.locator('.file-panel .file-transfers')
 const queueTab = (page: Page) =>
@@ -27,7 +36,7 @@ async function boot(page: Page) {
   await installTauriMock(page, {
     connections: [DEMO_CONN],
     pollOutputChunks: [['root@demo:~$ ']],
-    fileEntries: [REMOTE_FILE],
+    fileEntries: [REMOTE_FILE, SECOND_FILE],
     // The save dialog is what names the local target; without an answer the
     // download never starts and there is no list to close.
     dialogPath: 'C:/downloads/app.log',
@@ -49,6 +58,13 @@ async function downloadTheFile(page: Page) {
   await page.locator('.context-menu-item', { hasText: 'Download' }).click()
   // Park the pointer away from the list: hovering is what holds it open, and a
   // click that happens to land on it would make every assertion below a lie.
+  await page.mouse.move(4, 4)
+}
+
+/** Same, but for a named file (used when two transfers must coexist). */
+async function downloadNamedFile(page: Page, name: string) {
+  await page.locator('.tree-row.file', { hasText: name }).click({ button: 'right' })
+  await page.locator('.context-menu-item', { hasText: 'Download' }).click()
   await page.mouse.move(4, 4)
 }
 
@@ -100,4 +116,23 @@ test('the next transfer brings the list back', async ({ page }) => {
   await downloadTheFile(page)
   await expect(list(page)).toBeVisible()
   await expect(list(page).locator('.file-transfer-row')).toHaveCount(1)
+})
+
+// The regression this guards: a finished row used to stay visible as long as any
+// other transfer was still in flight, because the whole list only closed once it
+// had *fully* settled ("the completed download item never goes away").
+test('a finished row drops while another transfer is still queued', async ({ page }) => {
+  await boot(page)
+  await downloadNamedFile(page, 'app.log')
+  await resolvePendingCall(page)
+  await expect(list(page).locator('.file-transfer-row.done')).toHaveCount(1)
+
+  // A second transfer stays queued (the mock holds it), so the panel stays open.
+  await downloadNamedFile(page, 'b.log')
+  await expect(list(page).locator('.file-transfer-row.queued')).toHaveCount(1)
+
+  // The finished row leaves on its own timer; the queued one keeps the panel up.
+  await expect(list(page).locator('.file-transfer-row.done')).toHaveCount(0, { timeout: 12_000 })
+  await expect(list(page).locator('.file-transfer-row.queued')).toHaveCount(1)
+  await expect(list(page)).toBeVisible()
 })
