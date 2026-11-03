@@ -6630,9 +6630,7 @@ export default function App() {
                   {settingsActiveTab === 'about' && appVersion && (
                     <div className="settings-card">
                       <div className="settings-card-header">
-                        <div className="settings-card-icon">
-                          <Icon name="link" size={16} />
-                        </div>
+                        <img src="/icon-256.png" alt="" className="about-logo" />
                         <div>
                           <h3 className="settings-card-title">{t('about')}</h3>
                           <p className="settings-card-sub">{t('aboutDesc')}</p>

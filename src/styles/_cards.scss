@@ -37,6 +37,17 @@
   box-shadow: 0 2px 8px rgba($accent, 0.25);
 }
 
+// The About card leads with the real app icon instead of a glyph in the accent
+// tile: the bitmap carries its own dark plate, so stacking it on the gradient
+// (as `.settings-card-icon` would) gives it a halo.
+.about-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-3);
+  flex-shrink: 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
 .settings-card-title {
   margin: 0;
   font-size: var(--fs-xl);
