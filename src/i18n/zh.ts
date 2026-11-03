@@ -169,6 +169,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   addSshConnectionHint: '点击 + 添加一个新的 SSH 连接',
   editConnection: '编辑连接',
   deleteConnection: '删除连接',
+  duplicateConnection: '复制连接',
+  /** 追加到复制出来的连接 / 本地终端名称后面。 */
+  duplicateNameSuffix: ' 副本',
   selectSshKey: '选择 SSH 私钥',
   fillHost: '请填写主机地址',
   splitRight: '右侧拆分',
@@ -1027,6 +1030,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   localTerminalShell: '终端类型',
   localTermFieldsRequired: '请填写目录',
   editLocalTerminal: '编辑本地终端',
+  duplicateLocalTerminal: '复制本地终端',
   deleteLocalTerminal: '删除本地终端',
   deleteLocalTerminalConfirm: '删除本地终端“{name}”？',
   shellCmd: '命令提示符 (cmd)',

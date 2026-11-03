@@ -766,9 +766,11 @@
   // the name/host get the full row width and only truncate once the buttons
   // actually take space. (Same rule as the AI Conversations list.)
   &:hover .conn-item-edit,
+  &:hover .conn-item-copy,
   &:hover .conn-item-del,
   &:hover .conn-item-btn,
   &:focus-within .conn-item-edit,
+  &:focus-within .conn-item-copy,
   &:focus-within .conn-item-del,
   &:focus-within .conn-item-btn {
     display: flex;
@@ -878,12 +880,16 @@
   .conn-item-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    // Matches the row's own gap: a local-terminal row places its buttons as
+    // direct flex children, so a tighter gap here made the remote row's pencil
+    // and × look like one shape while the local row's read as two.
+    gap: 9px;
     margin-left: auto;
     flex-shrink: 0;
   }
 
   .conn-item-edit,
+  .conn-item-copy,
   .conn-item-del {
     display: none;
     flex-shrink: 0;

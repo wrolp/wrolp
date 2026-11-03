@@ -169,6 +169,9 @@ const en = {
   addSshConnectionHint: 'Click + to add a new SSH connection',
   editConnection: 'Edit Connection',
   deleteConnection: 'Delete Connection',
+  duplicateConnection: 'Duplicate Connection',
+  /** Appended to the name of a duplicated connection / local terminal. */
+  duplicateNameSuffix: ' copy',
   selectSshKey: 'Select SSH Private Key',
   fillHost: 'Please fill in host',
   splitRight: 'Split Right',
@@ -1086,6 +1089,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   localTerminalShell: 'Shell',
   localTermFieldsRequired: 'Directory is required',
   editLocalTerminal: 'Edit Local Terminal',
+  duplicateLocalTerminal: 'Duplicate Local Terminal',
   deleteLocalTerminal: 'Delete Local Terminal',
   deleteLocalTerminalConfirm: 'Delete local terminal "{name}"?',
   shellCmd: 'Command Prompt (cmd)',

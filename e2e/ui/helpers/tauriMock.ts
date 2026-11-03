@@ -199,6 +199,9 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
 
     // Stateful connection store so save -> refresh reflects new entries.
     const conns: MockConnection[] = (opts.connections ?? []).map((c) => ({ ...c }))
+    // Stateful local-terminal store: the section duplicates by writing the whole
+    // list and re-reading it, so the mock has to answer with what was written.
+    const localTerminals: unknown[] = [...(opts.localTerminals ?? [])]
     // Stateful command-snippet store so the editor's save -> reload works.
     const snippets: Array<Record<string, unknown>> = (opts.commandSnippets ?? []).map((s) => ({
       ...(s as Record<string, unknown>),
@@ -341,7 +344,12 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_ai_sessions':
             return opts.aiSessions ?? []
           case 'get_local_terminals':
-            return opts.localTerminals ?? []
+            return localTerminals
+          case 'save_local_terminals': {
+            const entries = (args.entries ?? []) as unknown[]
+            localTerminals.splice(0, localTerminals.length, ...entries)
+            return null
+          }
           case 'get_local_shell_dirs':
           case 'list_local_drives':
           case 'list_tunnels':

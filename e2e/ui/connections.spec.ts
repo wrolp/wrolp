@@ -128,8 +128,71 @@ test('a row keeps its actions out of the flow until hovered', async ({ page }) =
 
   await row.hover()
   await expect(row.locator('.conn-item-edit')).toBeVisible()
+  await expect(row.locator('.conn-item-copy')).toBeVisible()
   await expect(row.locator('.conn-item-del')).toBeVisible()
   const hoverWidth = await name.evaluate((el) => el.clientWidth)
 
   expect(hoverWidth).toBeLessThan(idleWidth)
+})
+
+test('a row spaces its actions like the local-terminal row does', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: BASE_CONNS,
+    localTerminals: [{ id: 'lt1', name: 'repo', cwd: 'C:/repo', shell: 'cmd' }],
+  })
+  await page.goto('/')
+
+  // The local row puts its buttons straight into the row's flex container, so
+  // their spacing is the row's gap. The remote row wraps them in
+  // `.conn-item-actions`, which used to pin its own 2px gap and made the pencil
+  // and × read as one shape.
+  const gaps = await connRows(page)
+    .first()
+    .evaluate((el) => {
+      const actions = el.querySelector('.conn-item-actions') as HTMLElement
+      return [getComputedStyle(el).gap, getComputedStyle(actions).gap]
+    })
+  expect(gaps[1]).toBe(gaps[0])
+})
+
+test('duplicates a connection into a prefilled new row', async ({ page }) => {
+  await installTauriMock(page, { connections: BASE_CONNS })
+  await page.goto('/')
+
+  const row = connRows(page).first()
+  await row.hover()
+  await row.locator('.conn-item-copy').click()
+
+  const modal = page.locator('.modal')
+  await expect(modal).toContainText('Duplicate Connection')
+  await expect(page.locator('input[placeholder="192.168.1.100"]')).toHaveValue('192.168.1.10')
+  await expect(page.locator('input[placeholder="22"]')).toHaveValue('22')
+  await expect(page.locator('input[placeholder="root"]')).toHaveValue('root')
+  await expect(page.locator('input[placeholder="My Server"]')).toHaveValue('Web Server copy')
+
+  await modal.locator('.btn-primary').click()
+  await expect(modal).toBeHidden()
+
+  // A copy is a create, not an overwrite: the list grows and the original stays.
+  await expect(connRows(page)).toHaveCount(3)
+  const copyRow = connRows(page).last()
+  await expect(copyRow.locator('.conn-name')).toHaveText('Web Server copy')
+  await expect(copyRow.locator('.conn-host')).toHaveText('192.168.1.10:22')
+})
+
+test('duplicates a saved local terminal right below its source', async ({ page }) => {
+  await installTauriMock(page, {
+    localTerminals: [{ id: 'lt1', name: 'repo', cwd: 'C:/repo', shell: 'cmd' }],
+  })
+  await page.goto('/')
+
+  const entry = page.locator('.local-term-item').filter({ hasText: 'repo' })
+  await expect(entry).toHaveCount(1)
+  await entry.hover()
+  await entry.locator('.conn-item-copy').click()
+
+  const rows = page.locator('.local-term-item').filter({ hasText: 'repo' })
+  await expect(rows).toHaveCount(2)
+  await expect(rows.first().locator('.conn-item-name')).toHaveText('repo')
+  await expect(rows.last().locator('.conn-item-name')).toHaveText('repo copy')
 })

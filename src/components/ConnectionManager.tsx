@@ -123,6 +123,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const { t } = useI18n()
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ConnectionConfig | null>(null)
+  // `editing` doubles as the template when duplicating: the modal prefills every
+  // field from it but saves under a fresh id, so near-identical connections don't
+  // have to be re-typed.
+  const [duplicating, setDuplicating] = useState(false)
   const [defaultGroup, setDefaultGroup] = useState<string>('')
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -300,6 +304,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
   const handleEdit = (conn: ConnectionConfig) => {
     setEditing(conn)
+    setDuplicating(false)
+    setShowModal(true)
+  }
+
+  const handleDuplicate = (conn: ConnectionConfig) => {
+    setEditing(conn)
+    setDuplicating(true)
     setShowModal(true)
   }
 
@@ -535,6 +546,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             className="icon-btn"
             onClick={() => {
               setEditing(null)
+              setDuplicating(false)
               setShowModal(true)
             }}
             title={t('newConnection')}
@@ -611,6 +623,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                       dragOverTarget?.key === `conn:${conn.id}` ? dragOverTarget.position : null
                     }
                     onEdit={(c) => handleEdit(c)}
+                    onDuplicate={(c) => handleDuplicate(c)}
                     onDelete={(c) => handleDelete(c)}
                   />
                   {renderTunnels(conn)}
@@ -680,6 +693,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                         onClick={(e) => {
                           e.stopPropagation()
                           setEditing(null)
+                          setDuplicating(false)
                           setDefaultGroup(isUngrouped ? '' : key)
                           setShowModal(true)
                         }}
@@ -727,6 +741,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                                 : null
                             }
                             onEdit={(c) => handleEdit(c)}
+                            onDuplicate={(c) => handleDuplicate(c)}
                             onDelete={(c) => handleDelete(c)}
                           />
                           {renderTunnels(conn)}
@@ -753,6 +768,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
       {showModal && (
         <ConnectionModal
           connection={editing}
+          duplicate={duplicating}
           defaultGroup={defaultGroup}
           existingGroups={Array.from(
             new Set(connections.map((c) => c.group?.trim()).filter((g): g is string => !!g)),
@@ -760,6 +776,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           onClose={() => {
             setShowModal(false)
             setEditing(null)
+            setDuplicating(false)
             setDefaultGroup('')
           }}
           onSave={async (config) => {
@@ -776,6 +793,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             onConnectionChange()
             setShowModal(false)
             setEditing(null)
+            setDuplicating(false)
             setDefaultGroup('')
           }}
         />
@@ -799,6 +817,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           }}
           onEdit={() => {
             handleEdit(contextMenu.conn)
+            setContextMenu(null)
+          }}
+          onDuplicate={() => {
+            handleDuplicate(contextMenu.conn)
             setContextMenu(null)
           }}
           onDelete={() => handleDelete(contextMenu.conn)}
@@ -1071,6 +1093,22 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
     setConfirmLocalDelete(null)
   }
 
+  // Insert the copy directly below its source, so the two stay side by side in
+  // the list instead of the copy landing at the end.
+  const handleDuplicate = async (entry: LocalTerminalEntry) => {
+    const current = await getLocalTerminals().catch(() => entries)
+    const idx = current.findIndex((e) => e.id === entry.id)
+    const copy: LocalTerminalEntry = {
+      ...entry,
+      id: `lt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: `${entry.name}${t('duplicateNameSuffix')}`,
+    }
+    const next = [...current]
+    next.splice(idx < 0 ? current.length : idx + 1, 0, copy)
+    await persist(next)
+    setLocalMenu(null)
+  }
+
   const shellLabel = (s: string) => {
     const preset = SHELL_PRESETS.find((p) => p.value === s)
     return preset ? t(preset.labelKey) : s
@@ -1156,6 +1194,16 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
                   }}
                 >
                   <Icon name="edit" size={12} />
+                </span>
+                <span
+                  className="conn-item-copy"
+                  title={t('duplicateLocalTerminal')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void handleDuplicate(entry)
+                  }}
+                >
+                  <Icon name="copy" size={12} />
                 </span>
                 <span
                   className="conn-item-del"
@@ -1310,6 +1358,14 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
             <Icon name="edit" /> {t('edit')}
           </div>
           <div
+            className="context-menu-item"
+            onClick={() => {
+              void handleDuplicate(localMenu.entry)
+            }}
+          >
+            <Icon name="copy" /> {t('duplicateLocalTerminal')}
+          </div>
+          <div
             className="context-menu-item danger"
             onClick={() => {
               setConfirmLocalDelete(localMenu.entry)
@@ -1355,6 +1411,7 @@ interface ConnectionItemProps {
   onDragEnd: () => void
   isDragOver: 'before' | 'after' | null
   onEdit: (conn: ConnectionConfig) => void
+  onDuplicate: (conn: ConnectionConfig) => void
   onDelete: (conn: ConnectionConfig) => void
 }
 
@@ -1370,6 +1427,7 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
   onDragEnd,
   isDragOver,
   onEdit,
+  onDuplicate,
   onDelete,
 }) => {
   const { t } = useI18n()
@@ -1426,6 +1484,16 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
           <Icon name="edit" size={12} />
         </span>
         <span
+          className="conn-item-copy"
+          title={t('duplicateConnection')}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDuplicate(conn)
+          }}
+        >
+          <Icon name="copy" size={12} />
+        </span>
+        <span
           className="conn-item-del"
           title={t('deleteConnection')}
           onClick={(e) => {
@@ -1444,6 +1512,8 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
 
 interface ConnectionModalProps {
   connection: ConnectionConfig | null
+  /** Prefill from `connection` but save as a new connection (duplicate). */
+  duplicate?: boolean
   defaultGroup?: string
   existingGroups: string[]
   onClose: () => void
@@ -1480,13 +1550,20 @@ const COMMON_BAUD_RATES: { value: number; note?: string }[] = [
 
 export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   connection,
+  duplicate = false,
   defaultGroup = '',
   existingGroups,
   onClose,
   onSave,
 }) => {
   const { t } = useI18n()
-  const [name, setName] = useState(connection?.name || '')
+  const [name, setName] = useState(
+    connection?.name
+      ? duplicate
+        ? `${connection.name}${t('duplicateNameSuffix')}`
+        : connection.name
+      : '',
+  )
   const [host, setHost] = useState(connection?.host || '')
   const [port, setPort] = useState(connection?.port || 22)
   const [username, setUsername] = useState(connection?.username || '')
@@ -1627,7 +1704,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
       return
     }
     const config: ConnectionConfig = {
-      id: connection?.id || uuidv4(),
+      id: duplicate ? uuidv4() : connection?.id || uuidv4(),
       name: finalName,
       host: isSerial ? portName.trim() : host.trim(),
       // The port field can be cleared while typing; fall back to the kind's
@@ -1664,7 +1741,13 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     <div className="modal-overlay">
       <div className="modal">
         <div className="modal-header">
-          <h3>{connection ? t('editConnection') : t('newConnection')}</h3>
+          <h3>
+            {duplicate
+              ? t('duplicateConnection')
+              : connection
+                ? t('editConnection')
+                : t('newConnection')}
+          </h3>
           <span onClick={onClose} style={{ cursor: 'pointer', fontSize: '18px', color: '#888' }}>
             ✕
           </span>
@@ -2160,7 +2243,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
             {t('cancel')}
           </button>
           <button className="btn-primary" onClick={handleSave}>
-            {connection ? t('update') : t('create')}
+            {connection && !duplicate ? t('update') : t('create')}
           </button>
         </div>
       </div>
@@ -2177,6 +2260,7 @@ interface ContextMenuProps {
   onSplitDown?: () => void
   onAddTunnel?: () => void
   onEdit: () => void
+  onDuplicate: () => void
   onDelete: () => void
   onClose: () => void
 }
@@ -2188,6 +2272,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
   onSplitDown,
   onAddTunnel,
   onEdit,
+  onDuplicate,
   onDelete,
   onClose,
 }) => {
@@ -2225,6 +2310,9 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
       )}
       <div className="context-menu-item" onClick={onEdit}>
         <Icon name="edit" /> {t('edit')}
+      </div>
+      <div className="context-menu-item" onClick={onDuplicate}>
+        <Icon name="copy" /> {t('duplicateConnection')}
       </div>
       <div className="context-menu-item" onClick={onDelete}>
         <Icon name="trash" /> {t('delete')}
