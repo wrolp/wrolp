@@ -144,6 +144,16 @@ fn auth_fail() -> Response {
     .into_response()
 }
 
+fn human_bytes(size: u64) -> String {
+  if size >= 1024 * 1024 {
+    format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+  } else if size >= 1024 {
+    format!("{:.1} KB", size as f64 / 1024.0)
+  } else {
+    format!("{size} B")
+  }
+}
+
 fn page_html(srv: &Srv, rel: &str, entries: Vec<(bool, String, u64)>, token_q: &str) -> String {
   let mut rows = String::new();
   for (is_dir, name, size) in entries {
@@ -157,13 +167,7 @@ fn page_html(srv: &Srv, rel: &str, entries: Vec<(bool, String, u64)>, token_q: &
         enc
       ));
     } else {
-      let sz = if size >= 1024 * 1024 {
-        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-      } else if size >= 1024 {
-        format!("{:.1} KB", size as f64 / 1024.0)
-      } else {
-        format!("{size} B")
-      };
+      let sz = human_bytes(size);
       rows.push_str(&format!(
         "<tr><td><a href=\"{}/{}{}\">📄 {}</a></td><td>{}</td></tr>",
         if rel.is_empty() { "" } else { rel },
@@ -189,8 +193,10 @@ fn page_html(srv: &Srv, rel: &str, entries: Vec<(bool, String, u64)>, token_q: &
   let upload_form = if srv.read_only {
     "".to_string()
   } else {
-    "<section class=card><h2>Upload files</h2><input type=file id=files multiple><button onclick=\"up()\">Upload</button><div id=log></div></section>"
-      .to_string()
+    format!(
+      "<section class=card><h2>Upload files</h2><div class=tag>Max {limit} per file</div><input type=file id=files multiple><button onclick=\"up()\">Upload</button><div id=log></div></section>",
+      limit = human_bytes(srv.max_bytes)
+    )
   };
   let root_name = html_escape(&srv.root.to_string_lossy());
   format!(
@@ -207,26 +213,52 @@ fn page_html(srv: &Srv, rel: &str, entries: Vec<(bool, String, u64)>, token_q: &
      {upload_form}
      <div class=card><h2>Files</h2><table>{rows}</table></div>
      <script>
+     const MAX_BYTES={max_bytes};
+     const fmt=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':n>=1024?(n/1024).toFixed(1)+' KB':n+' B';
+     const logEl=()=>document.getElementById('log');
+     function tooLargeMsg(files){{
+       return 'Too large (max '+fmt(MAX_BYTES)+' per file): '+files.map(f=>f.name+' ('+fmt(f.size)+')').join(', ')
+     }}
+     // Warn as soon as an oversized file is picked, before anything is sent.
+     document.getElementById('files').addEventListener('change',()=>{{
+       const files=[...document.getElementById('files').files];
+       const big=files.filter(f=>f.size>MAX_BYTES);
+       logEl().style.color=big.length?'#e5c078':'';
+       logEl().textContent=big.length?tooLargeMsg(big):'';
+     }});
      async function up(){{
        const files=[...document.getElementById('files').files];
-       const log=document.getElementById('log');
+       const log=logEl();
        if(!files.length){{return}}
-       let done=0; const failed=[]; const queue=files.slice();
+       const queue=[], big=[];
+       for(const f of files){{(f.size>MAX_BYTES?big:queue).push(f)}}
+       const total=queue.length;
+       let done=0; const failed=[];
+       log.style.color='';
        async function worker(){{
          for(;;){{
            const file=queue.shift();
            if(!file){{return}}
            try{{
              const r=await fetch('/upload?token='+encodeURIComponent('__TOK__'),{{method:'POST',body:file,headers:{{'X-File-Name':encodeURIComponent(file.name)}}}});
-             if(r.ok){{done++}}else{{failed.push(file.name+' ('+r.status+')')}}
+             if(r.ok){{done++}}
+             else if(r.status===413){{big.push(file)}}
+             else{{failed.push(file.name+' ('+r.status+')')}}
            }}catch(e){{failed.push(file.name)}}
-           log.textContent='Uploaded '+done+'/'+files.length+(failed.length?' · failed: '+failed.length:'');
+           log.textContent='Uploaded '+done+'/'+total+(failed.length?' · failed: '+failed.length:'');
          }}
        }}
        // Three at a time: a batch of files no longer leaves the link idle
        // between requests.
-       await Promise.all(files.slice(0,3).map(()=>worker()));
-       if(failed.length){{log.textContent='Failed: '+failed.join(', ');return}}
+       await Promise.all(queue.slice(0,3).map(()=>worker()));
+       const parts=[];
+       if(big.length){{parts.push(tooLargeMsg(big))}}
+       if(failed.length){{parts.push('Failed: '+failed.join(', '))}}
+       if(parts.length){{
+         log.style.color='#e5c078';
+         log.textContent=parts.join(' · ')+(done?' — reload to see the uploaded files':'');
+         return
+       }}
        log.textContent='✅ All uploads complete'; location.reload();
      }}
      </script></body></html>",
@@ -235,6 +267,7 @@ fn page_html(srv: &Srv, rel: &str, entries: Vec<(bool, String, u64)>, token_q: &
     up = up,
     upload_form = upload_form,
     rows = rows,
+    max_bytes = srv.max_bytes,
   )
   .replace("__TOK__", srv.token.as_deref().unwrap_or(""))
 }
@@ -714,5 +747,27 @@ mod tests {
     assert!(!dir.path().join("too-big.bin").exists());
     let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().collect();
     assert!(leftovers.is_empty(), "temp file was left behind");
+  }
+
+  // The page must carry the cap it enforces: without MAX_BYTES the browser
+  // cannot warn before sending, and an oversized file only fails as a bare 413.
+  #[tokio::test]
+  async fn upload_page_states_the_size_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let req = axum::http::Request::builder()
+      .uri("/")
+      .body(Body::empty())
+      .unwrap();
+    let res = router_at(dir.path(), 8 * 1024 * 1024)
+      .oneshot(req)
+      .await
+      .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), 1 << 20)
+      .await
+      .unwrap();
+    let html = String::from_utf8_lossy(&body);
+    assert!(html.contains("const MAX_BYTES=8388608"), "{html}");
+    assert!(html.contains("Max 8.0 MB per file"), "{html}");
   }
 }
