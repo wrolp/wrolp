@@ -16,7 +16,7 @@ export default function HttpServerPanel() {
   const [enableTls, setEnableTls] = useState(false)
   const [certPath, setCertPath] = useState('')
   const [keyPath, setKeyPath] = useState('')
-  const [maxUpload, setMaxUpload] = useState('1024')
+  const [maxUpload, setMaxUpload] = useState('256')
   const [status, setStatus] = useState<AppServerStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -71,7 +71,7 @@ export default function HttpServerPanel() {
         enableTls,
         certPath: enableTls ? certPath.trim() || undefined : undefined,
         keyPath: enableTls ? keyPath.trim() || undefined : undefined,
-        maxUploadSize: Math.max(1, Math.round(Number(maxUpload) || 1024)),
+        maxUploadSize: Math.max(1, Math.round(Number(maxUpload) || 256)) * 1024 * 1024,
       })
       setStatus(st)
     } catch (e) {

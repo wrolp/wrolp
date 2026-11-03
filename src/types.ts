@@ -1308,6 +1308,7 @@ export interface HttpServerArgs {
   enableTls: boolean
   certPath?: string
   keyPath?: string
+  /** Upload cap in bytes. */
   maxUploadSize?: number
 }
 

@@ -19,8 +19,10 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, put};
 use axum::Router;
+use futures_util::StreamExt;
 use rcgen::{CertificateParams, DnType, Ia5String, KeyPair, SanType};
 use time::{Duration, OffsetDateTime};
+use tokio::io::AsyncWriteExt;
 
 use crate::ssh_session::{AppServerStatus, AppState};
 
@@ -206,13 +208,25 @@ fn page_html(srv: &Srv, rel: &str, entries: Vec<(bool, String, u64)>, token_q: &
      <div class=card><h2>Files</h2><table>{rows}</table></div>
      <script>
      async function up(){{
-       const f=document.getElementById('files').files;
-       const log=document.getElementById('log'); log.textContent='';
-       for(const file of f){{
-         log.textContent='Uploading ' + file.name + ' …';
-         const r=await fetch('/upload?token='+encodeURIComponent('__TOK__'),{{method:'POST',body:file,headers:{{'X-File-Name':encodeURIComponent(file.name)}}}});
-         if(!r.ok){{log.textContent='Failed: '+file.name+' '+r.status;return}}
+       const files=[...document.getElementById('files').files];
+       const log=document.getElementById('log');
+       if(!files.length){{return}}
+       let done=0; const failed=[]; const queue=files.slice();
+       async function worker(){{
+         for(;;){{
+           const file=queue.shift();
+           if(!file){{return}}
+           try{{
+             const r=await fetch('/upload?token='+encodeURIComponent('__TOK__'),{{method:'POST',body:file,headers:{{'X-File-Name':encodeURIComponent(file.name)}}}});
+             if(r.ok){{done++}}else{{failed.push(file.name+' ('+r.status+')')}}
+           }}catch(e){{failed.push(file.name)}}
+           log.textContent='Uploaded '+done+'/'+files.length+(failed.length?' · failed: '+failed.length:'');
+         }}
        }}
+       // Three at a time: a batch of files no longer leaves the link idle
+       // between requests.
+       await Promise.all(files.slice(0,3).map(()=>worker()));
+       if(failed.length){{log.textContent='Failed: '+failed.join(', ');return}}
        log.textContent='✅ All uploads complete'; location.reload();
      }}
      </script></body></html>",
@@ -315,7 +329,7 @@ async fn handle_upload_put(
   headers: HeaderMap,
   Query(query): Query<HashMap<String, String>>,
   UrlPath(rel): UrlPath<String>,
-  body: axum::body::Bytes,
+  body: Body,
 ) -> Response {
   if srv.read_only {
     return (StatusCode::FORBIDDEN, "server is read-only").into_response();
@@ -323,32 +337,20 @@ async fn handle_upload_put(
   if !auth_ok(&srv, &headers, &query) {
     return auth_fail();
   }
-  if body.len() as u64 > srv.max_bytes {
-    return (
-      StatusCode::PAYLOAD_TOO_LARGE,
-      format!("file exceeds {}-byte upload limit", srv.max_bytes),
-    )
-      .into_response();
+  if declared_too_large(&srv, &headers) {
+    return too_large(srv.max_bytes);
   }
   let Some(path) = safe_path(&srv.root, &rel) else {
     return (StatusCode::FORBIDDEN, "Forbidden path").into_response();
   };
-  if let Some(parent) = path.parent() {
-    if tokio::fs::create_dir_all(parent).await.is_err() {
-      return (StatusCode::INTERNAL_SERVER_ERROR, "cannot create dir").into_response();
-    }
-  }
-  match tokio::fs::write(&path, &body).await {
-    Ok(()) => (StatusCode::OK, format!("{} bytes written", body.len())).into_response(),
-    Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
-  }
+  upload_body(&srv, &path, body).await
 }
 
 async fn handle_upload_raw(
   State(srv): State<Srv>,
   headers: HeaderMap,
   Query(query): Query<HashMap<String, String>>,
-  body: axum::body::Bytes,
+  body: Body,
 ) -> Response {
   if srv.read_only {
     return (StatusCode::FORBIDDEN, "server is read-only").into_response();
@@ -356,12 +358,8 @@ async fn handle_upload_raw(
   if !auth_ok(&srv, &headers, &query) {
     return auth_fail();
   }
-  if body.len() as u64 > srv.max_bytes {
-    return (
-      StatusCode::PAYLOAD_TOO_LARGE,
-      format!("file exceeds {}-byte upload limit", srv.max_bytes),
-    )
-      .into_response();
+  if declared_too_large(&srv, &headers) {
+    return too_large(srv.max_bytes);
   }
   // Browser sends the file name either in the `X-File-Name` header or as a
   // `file` query parameter; both are URL-encoded.
@@ -376,12 +374,97 @@ async fn handle_upload_raw(
   let Some(path) = safe_path(&srv.root, &name) else {
     return (StatusCode::FORBIDDEN, "Forbidden path").into_response();
   };
-  if let Some(parent) = path.parent() {
-    let _ = tokio::fs::create_dir_all(parent).await;
+  upload_body(&srv, &path, body).await
+}
+
+fn declared_too_large(srv: &Srv, headers: &HeaderMap) -> bool {
+  headers
+    .get(header::CONTENT_LENGTH)
+    .and_then(|v| v.to_str().ok())
+    .and_then(|v| v.parse::<u64>().ok())
+    .is_some_and(|len| len > srv.max_bytes)
+}
+
+fn too_large(max: u64) -> Response {
+  (
+    StatusCode::PAYLOAD_TOO_LARGE,
+    format!("file exceeds {max}-byte upload limit"),
+  )
+    .into_response()
+}
+
+/// Stream the body to a temp file and rename it into place: disk writes overlap
+/// the transfer, a whole file never sits on the heap, and a failed upload
+/// cannot truncate an existing file.
+async fn upload_body(srv: &Srv, dest: &Path, body: Body) -> Response {
+  if let Some(parent) = dest.parent() {
+    if tokio::fs::create_dir_all(parent).await.is_err() {
+      return (StatusCode::INTERNAL_SERVER_ERROR, "cannot create dir").into_response();
+    }
   }
-  match tokio::fs::write(&path, &body).await {
-    Ok(()) => (StatusCode::OK, format!("{} bytes written", body.len())).into_response(),
-    Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+  let name = dest
+    .file_name()
+    .map(|n| n.to_string_lossy().into_owned())
+    .unwrap_or_else(|| "upload.bin".into());
+  let tmp = dest.with_file_name(format!(".{name}.{}.part", uuid::Uuid::new_v4()));
+  let file = match tokio::fs::File::create(&tmp).await {
+    Ok(f) => f,
+    Err(e) => {
+      return (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("cannot create file: {e}"),
+      )
+        .into_response()
+    }
+  };
+  let mut file = tokio::io::BufWriter::with_capacity(256 * 1024, file);
+  let mut stream = body.into_data_stream();
+  let mut written: u64 = 0;
+  while let Some(chunk) = stream.next().await {
+    let chunk = match chunk {
+      Ok(c) => c,
+      Err(_) => {
+        drop(file);
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return (StatusCode::BAD_REQUEST, "request body read failed").into_response();
+      }
+    };
+    written += chunk.len() as u64;
+    if written > srv.max_bytes {
+      drop(file);
+      let _ = tokio::fs::remove_file(&tmp).await;
+      return too_large(srv.max_bytes);
+    }
+    if let Err(e) = file.write_all(&chunk).await {
+      drop(file);
+      let _ = tokio::fs::remove_file(&tmp).await;
+      return (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("write failed: {e}"),
+      )
+        .into_response();
+    }
+  }
+  if let Err(e) = file.flush().await {
+    drop(file);
+    let _ = tokio::fs::remove_file(&tmp).await;
+    return (
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("write failed: {e}"),
+    )
+      .into_response();
+  }
+  drop(file);
+  match tokio::fs::rename(&tmp, dest).await {
+    Ok(()) => (StatusCode::OK, format!("{written} bytes written")).into_response(),
+    Err(e) => {
+      let _ = tokio::fs::remove_file(&tmp).await;
+      (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("finalize failed: {e}"),
+      )
+        .into_response()
+    }
   }
 }
 
@@ -582,4 +665,54 @@ pub fn http_generate_cert(state: tauri::State<'_, AppState>) -> Result<Generated
     cert_path: cert_path.to_string_lossy().into_owned(),
     key_path: key_path.to_string_lossy().into_owned(),
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use tower::ServiceExt;
+
+  fn router_at(root: &Path, max_bytes: u64) -> Router {
+    build_router(Srv {
+      root: root.to_path_buf(),
+      read_only: false,
+      token: None,
+      max_bytes,
+    })
+  }
+
+  // 3 MB body: larger than axum's 2 MB `Bytes` default limit, so this fails
+  // again if uploads go back to a buffered extractor.
+  #[tokio::test]
+  async fn upload_streams_body_past_two_megabytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let payload = vec![7u8; 3 * 1024 * 1024];
+    let req = axum::http::Request::builder()
+      .method("PUT")
+      .uri("/upload/big.bin")
+      .body(Body::from(payload.clone()))
+      .unwrap();
+    let res = router_at(dir.path(), 8 * 1024 * 1024)
+      .oneshot(req)
+      .await
+      .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(std::fs::read(dir.path().join("big.bin")).unwrap(), payload);
+  }
+
+  #[tokio::test]
+  async fn upload_over_limit_leaves_no_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let req = axum::http::Request::builder()
+      .method("POST")
+      .uri("/upload")
+      .header("x-file-name", "too-big.bin")
+      .body(Body::from(vec![0u8; 4096]))
+      .unwrap();
+    let res = router_at(dir.path(), 1024).oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(!dir.path().join("too-big.bin").exists());
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().collect();
+    assert!(leftovers.is_empty(), "temp file was left behind");
+  }
 }
