@@ -207,6 +207,18 @@ test('a host without git says so instead of failing every command', async ({ pag
   await expect
     .poll(async () => (await invokedCalls(page)).filter((c) => c.cmd === 'git_repo_info').length)
     .toBe(0)
+
+  // D5: a manual executable path is handed to the probe instead of being ignored.
+  const BIN = 'C:\\Program Files\\Git\\cmd\\git.exe'
+  await page.locator('.git-empty .git-path-row input').fill(BIN)
+  await page.locator('.git-empty .git-path-row button[type="submit"]').click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'git_probe')
+        .map((c) => c.args.bin),
+    )
+    .toContain(BIN)
 })
 
 test('a folder that is not a repository reports it and stays in the picker', async ({ page }) => {

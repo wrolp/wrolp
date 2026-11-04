@@ -221,10 +221,17 @@ async fn local_git_bin(cli: &GitState) -> Result<String, String> {
 
 /// Probe whether the host has git. Never an `Err`: "not installed" is a state the
 /// panel renders, not a failed call.
+///
+/// `override_bin` is the user-configured executable for this machine (D5: a GUI
+/// process on Windows often has no Git in `PATH`). It is ignored for SSH hosts,
+/// where the login shell's PATH is the source of truth. A configured path that
+/// does not answer `--version` is reported as not installed, with the reason, so
+/// a typo is visible instead of silently falling back.
 pub async fn probe_git(
   state: &tauri::State<'_, AppState>,
   cli: &GitState,
   host: &GitHostRef,
+  override_bin: Option<&str>,
 ) -> GitProbe {
   let args = vec!["--version".to_string()];
   match host {
@@ -258,6 +265,27 @@ pub async fn probe_git(
       }
     }
     GitHostRef::Local => {
+      if let Some(bin) = override_bin.map(str::trim).filter(|b| !b.is_empty()) {
+        return match version_of(bin).await {
+          Some(version) => {
+            if let Ok(mut cache) = cli.local_bin.lock() {
+              *cache = Some(bin.to_string());
+            }
+            GitProbe {
+              installed: true,
+              version: Some(version),
+              bin: Some(bin.to_string()),
+              message: String::new(),
+            }
+          }
+          None => GitProbe {
+            installed: false,
+            version: None,
+            bin: Some(bin.to_string()),
+            message: format!("`{bin}` did not answer `--version`; check the configured git path"),
+          },
+        };
+      }
       let mut found = None;
       for bin in local_candidates() {
         if let Some(v) = version_of(&bin).await {

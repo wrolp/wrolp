@@ -1448,6 +1448,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   gitOursShort: 'ours',
   gitTheirsShort: 'theirs',
   gitMarkResolved: '标记已解决',
+  gitBinPlaceholder: 'git.exe 路径（可选）',
+  gitBinSave: '使用该路径',
+  gitBinReset: '清除路径并恢复自动探测',
   gitPushForce: '强制推送',
   gitPushForceHint: '强制推送（with lease：远端已变动则拒绝）',
   gitPushForceConfirm:

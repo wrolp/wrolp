@@ -471,6 +471,20 @@ const DEFS: SettingDef[] = [
     describe: 'How many recently used local terminals the Home page lists (1–50, default 10).',
   },
 
+  // ---- git ---------------------------------------------------------------
+  {
+    key: 'git.localBin',
+    kind: 'string',
+    group: 'ui',
+    default: '',
+    // Empty means "probe PATH and the usual Windows install locations". A GUI
+    // process on Windows often has no Git in PATH at all, so an explicit path is
+    // the escape hatch; it is only ever applied to the local machine.
+    storage: { kind: 'localStorage', key: 'wrolp-git-local-bin' },
+    describe:
+      'Absolute path to the local git executable (e.g. C:\\Program Files\\Git\\cmd\\git.exe). Empty means auto-detect.',
+  },
+
   // ---- security ----------------------------------------------------------
   {
     key: 'security.strictHostKey',

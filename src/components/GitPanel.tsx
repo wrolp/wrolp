@@ -98,6 +98,8 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const [stashUntracked, setStashUntracked] = useState(false)
   const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null)
   const [discardPaths, setDiscardPaths] = useState<string[] | null>(null)
+  /** Local git executable, editable from the "git not installed" state (D5). */
+  const [binInput, setBinInput] = useState(() => git.localBin ?? '')
   const [blamePath, setBlamePath] = useState<string | null>(null)
   const [forcePushOpen, setForcePushOpen] = useState(false)
   const [cloneOpen, setCloneOpen] = useState(false)
@@ -293,7 +295,42 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
           <Icon name="gitBranch" size={26} />
           <div className="git-empty-title">{t('gitProbeMissingTitle')}</div>
           {git.probe.message && <div className="git-empty-detail">{git.probe.message}</div>}
-          <button type="button" className="btn-primary" onClick={() => void git.reprobe()}>
+          {/* The executable path only applies to this machine; a remote host
+              resolves `git` from its own login shell. */}
+          {host.kind === 'local' && (
+            <>
+              <form
+                className="git-path-row"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  git.configureLocalBin(binInput)
+                }}
+              >
+                <input
+                  type="text"
+                  value={binInput}
+                  placeholder={t('gitBinPlaceholder')}
+                  onChange={(e) => setBinInput(e.target.value)}
+                />
+                <button type="submit" className="btn-primary" disabled={git.probing}>
+                  {t('gitBinSave')}
+                </button>
+              </form>
+              {git.localBin && (
+                <button
+                  type="button"
+                  className="git-link-btn"
+                  onClick={() => {
+                    setBinInput('')
+                    git.configureLocalBin('')
+                  }}
+                >
+                  {t('gitBinReset')}
+                </button>
+              )}
+            </>
+          )}
+          <button type="button" className="git-link-btn" onClick={() => void git.reprobe()}>
             {t('gitProbeMissingRetry')}
           </button>
         </div>

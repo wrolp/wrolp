@@ -92,8 +92,9 @@ pub async fn git_probe(
   state: tauri::State<'_, AppState>,
   cli: tauri::State<'_, GitState>,
   host: GitHostRef,
+  bin: Option<String>,
 ) -> Result<GitProbe, String> {
-  Ok(probe_git(&state, cli.inner(), &host).await)
+  Ok(probe_git(&state, cli.inner(), &host, bin.as_deref()).await)
 }
 
 /// `rev-parse` inside `path`: the worktree root, or `git_not_repo` for anything

@@ -29,6 +29,7 @@ import {
   gitStatus,
   gitUnstage,
 } from '../commands'
+import { applySettingChanges, readSetting } from '../lib/appSettings'
 import { gitHostKey, rememberGitRepo } from '../lib/gitHost'
 import type {
   GitBranch,
@@ -49,6 +50,12 @@ const HISTORY_PAGE = 20
 
 export type GitNetworkKind = 'fetch' | 'pull' | 'push' | 'clone'
 
+/** The user-configured local executable, or `null` when auto-detection is on. */
+function readLocalBin(): string | null {
+  const value = readSetting('git.localBin')?.value
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
 /**
  * One Git mode's data and actions. Repository discovery, status refresh and
  * every write live here; the panel only renders and calls back, so a host or
@@ -61,6 +68,8 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
   const hostKey = gitHostKey(host)
   const [probe, setProbe] = useState<GitProbe | null>(null)
   const [probing, setProbing] = useState(false)
+  /** Configured local `git` executable; changing it re-runs the probe. */
+  const [localBin, setLocalBin] = useState<string | null>(readLocalBin)
   const [repo, setRepo] = useState<GitRepoInfo | null>(null)
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [branches, setBranches] = useState<GitBranch[]>([])
@@ -108,7 +117,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     const seq = ++probeSeqRef.current
     setProbing(true)
     try {
-      const p = await gitProbe(host)
+      const p = await gitProbe(host, localBin)
       if (seq === probeSeqRef.current) setProbe(p)
     } catch (e: unknown) {
       if (seq === probeSeqRef.current) {
@@ -122,11 +131,24 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     } finally {
       if (seq === probeSeqRef.current) setProbing(false)
     }
-  }, [host])
+  }, [host, localBin])
 
   useEffect(() => {
     void reprobe()
   }, [reprobe])
+
+  /** Persist the local executable path; the probe effect re-runs on the change. */
+  const configureLocalBin = useCallback((bin: string) => {
+    const value = bin.trim()
+    try {
+      applySettingChanges({ 'git.localBin': value }, 'user')
+    } catch (e: unknown) {
+      setActionError(String(e))
+      return false
+    }
+    setLocalBin(value || null)
+    return true
+  }, [])
 
   // Progress events are broadcast for every operation; only the one this hook
   // started is kept, so a late event from a previous op cannot paint.
@@ -530,6 +552,8 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     probe,
     probing,
     reprobe,
+    localBin,
+    configureLocalBin,
     repo,
     root: repo?.root ?? null,
     status,

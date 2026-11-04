@@ -1560,8 +1560,8 @@ export async function helmUpgradeInstall(
 // ===== Git panel =====
 
 /** Whether the host has git. Never throws: "not installed" is a reported state. */
-export async function gitProbe(host: GitHostRef): Promise<GitProbe> {
-  return await invoke<GitProbe>('git_probe', { host })
+export async function gitProbe(host: GitHostRef, bin: string | null): Promise<GitProbe> {
+  return await invoke<GitProbe>('git_probe', { host, bin })
 }
 
 /** `rev-parse` in `path`; a folder that is not a repository rejects with `git_not_repo`. */
