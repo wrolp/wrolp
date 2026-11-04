@@ -413,6 +413,7 @@ pub fn run() {
       commands::git_remote_remove,
       commands::git_blame,
       commands::git_local_ignore,
+      commands::git_scan_repos,
       commands::git_stash_list,
       commands::git_stash_push,
       commands::git_stash_entry,

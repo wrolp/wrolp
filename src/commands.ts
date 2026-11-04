@@ -1735,6 +1735,15 @@ export async function gitPush(
   })
 }
 
+/** Repositories found under `path` (depth- and time-limited, P3). */
+export async function gitScanRepos(
+  host: GitHostRef,
+  path: string,
+  depth: number,
+): Promise<string[]> {
+  return await invoke<string[]>('git_scan_repos', { host, path, depth })
+}
+
 /** Append paths to `.git/info/exclude` (local ignore, never the tracked `.gitignore`). */
 export async function gitLocalIgnore(
   host: GitHostRef,

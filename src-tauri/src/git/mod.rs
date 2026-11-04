@@ -10,6 +10,7 @@ pub mod branch;
 pub mod conflict;
 pub mod history;
 pub mod remote;
+pub mod scan;
 pub mod stash;
 pub mod status;
 

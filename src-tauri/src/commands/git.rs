@@ -852,6 +852,57 @@ pub async fn git_remote_remove(
   Ok(parse::parse_remotes(&out))
 }
 
+// ==================== Repository scan ====================
+
+/// Find repositories under `path` (P3). Breadth-first, depth-limited, and
+/// bounded in both listings and wall time; a listing that fails is skipped
+/// rather than aborting the whole scan.
+#[tauri::command]
+pub async fn git_scan_repos(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  host: GitHostRef,
+  path: String,
+  depth: u32,
+) -> Result<Vec<String>, String> {
+  let start = path.trim();
+  if start.is_empty() {
+    return Err(crate::git::git_error("no_folder", "no folder selected"));
+  }
+  let depth = crate::git::scan::checked_depth(depth);
+  let fs = build_fs(&app, &state, &git_target_ref(&host)).await?;
+  let deadline = tokio::time::Instant::now() + crate::git::scan::SCAN_TIMEOUT;
+  let mut queue: std::collections::VecDeque<(String, u32)> =
+    std::collections::VecDeque::from([(start.to_string(), 0)]);
+  let mut visited = 0usize;
+  let mut found: Vec<String> = Vec::new();
+
+  while let Some((dir, level)) = queue.pop_front() {
+    if visited >= crate::git::scan::MAX_SCAN_DIRS || tokio::time::Instant::now() >= deadline {
+      break;
+    }
+    visited += 1;
+    let Ok(entries) = fs.list_dir(&dir).await else {
+      continue;
+    };
+    if entries.iter().any(|e| e.name == ".git") {
+      found.push(dir.clone());
+    }
+    if level >= depth {
+      continue;
+    }
+    for entry in &entries {
+      if !entry.is_dir || crate::git::scan::skipped_dir(&entry.name) {
+        continue;
+      }
+      queue.push_back((entry.path.clone(), level + 1));
+    }
+  }
+
+  found.sort();
+  Ok(found)
+}
+
 // ==================== Local ignore ====================
 
 /// The filesystem the repository lives on. Used only for the one thing git has

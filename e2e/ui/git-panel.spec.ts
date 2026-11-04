@@ -221,6 +221,29 @@ test('a host without git says so instead of failing every command', async ({ pag
     .toContain(BIN)
 })
 
+test('scanning a folder lists repositories and opens one on click', async ({ page }) => {
+  await boot(page, { gitScanRepos: [`${REPO}\\alpha`, `${REPO}\\beta`] })
+
+  await page.locator('.git-path-row input').fill(REPO)
+  await page.getByRole('button', { name: 'Scan for repositories' }).click()
+
+  const hits = page.locator('.git-scan-hit')
+  await expect(hits).toHaveCount(2)
+  await expect(hits.first()).toContainText('alpha')
+
+  // The scan is depth- and time-bounded; the panel always asks for depth 2.
+  expect(
+    (await invokedCalls(page)).filter((c) => c.cmd === 'git_scan_repos').at(-1)?.args,
+  ).toMatchObject({ path: REPO, depth: 2 })
+
+  await hits.last().click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'git_repo_info').map((c) => c.args.path),
+    )
+    .toContain(`${REPO}\\beta`)
+})
+
 test('an untracked file can be ignored locally without touching .gitignore', async ({ page }) => {
   await boot(page, {
     gitStatus: {

@@ -371,14 +371,47 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               {t('gitOpenRepo')}
             </button>
           </form>
-          <button
-            type="button"
-            className="git-link-btn"
-            disabled={busy || !pathInput.trim()}
-            onClick={() => void git.init(pathInput)}
-          >
-            {t('gitInitRepo')}
-          </button>
+          <div className="git-scan-row">
+            <button
+              type="button"
+              className="git-link-btn"
+              disabled={busy || !pathInput.trim()}
+              onClick={() => void git.init(pathInput)}
+            >
+              {t('gitInitRepo')}
+            </button>
+            <button
+              type="button"
+              className="git-link-btn"
+              disabled={busy || !pathInput.trim() || git.scanning}
+              onClick={() => void git.scan(pathInput)}
+            >
+              {git.scanning ? t('gitScanning') : t('gitScanRepos')}
+            </button>
+          </div>
+          {git.scanResults !== null && (
+            <div className="git-scan-results">
+              {git.scanResults.length === 0 ? (
+                <div className="git-note">{t('gitScanEmpty')}</div>
+              ) : (
+                git.scanResults.map((root) => (
+                  <button
+                    type="button"
+                    className="git-recent-row git-scan-hit"
+                    key={root}
+                    title={root}
+                    onClick={() => {
+                      git.clearScan()
+                      openPath(root)
+                    }}
+                  >
+                    <Icon name="gitBranch" size={11} />
+                    <span className="git-path">{root}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
           {cloneOpen ? (
             <form
               className="git-clone-row"

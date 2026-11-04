@@ -215,6 +215,8 @@ export interface TauriMockOptions {
   gitConflicts?: { inProgress: string | null; paths: string[] }
   /** Stash rows for `git_stash_list` (the store mutates on push / pop / drop). */
   gitStashes?: { index: number; oid: string; timestamp: number; message: string }[]
+  /** Repository roots returned by `git_scan_repos` (defaults to `[]`). */
+  gitScanRepos?: string[]
   /** Blame rows returned by `git_blame` (defaults to `[]`). */
   gitBlameLines?: {
     line: number
@@ -868,6 +870,8 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return opts.gitConflicts ?? { inProgress: null, paths: [] }
           case 'git_blame':
             return opts.gitBlameLines ?? []
+          case 'git_scan_repos':
+            return opts.gitScanRepos ?? []
           case 'git_local_ignore': {
             // Ignored paths leave the working tree, like the real command does.
             const paths = (args.paths ?? []) as string[]

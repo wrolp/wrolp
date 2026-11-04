@@ -23,6 +23,7 @@ import {
   gitRemotes,
   gitRepoInfo,
   gitResolve,
+  gitScanRepos,
   gitStashEntry,
   gitStashList,
   gitStashPush,
@@ -82,6 +83,9 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
   const [loading, setLoading] = useState(false)
   /** Repository discovery failures (not a repo, bare, no path). */
   const [error, setError] = useState<string | null>(null)
+  /** Results of the last folder scan, or `null` when none has run. */
+  const [scanResults, setScanResults] = useState<string[] | null>(null)
+  const [scanning, setScanning] = useState(false)
   /** The last write / network failure, shown as a dismissible banner. */
   const [actionError, setActionError] = useState<string | null>(null)
   const [lastCommit, setLastCommit] = useState<GitCommitResult | null>(null)
@@ -106,6 +110,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     setHasMoreLog(false)
     setError(null)
     setActionError(null)
+    setScanResults(null)
     setLastCommit(null)
     setNetworkResult(null)
     setProgress(null)
@@ -235,6 +240,29 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     },
     [host, hostKey, loadAll],
   )
+
+  /** Bounded folder scan; a hit is opened by the panel, not here. */
+  const scan = useCallback(
+    async (path: string, depth = 2) => {
+      const trimmed = path.trim()
+      if (!trimmed || scanning) return false
+      setScanning(true)
+      setScanResults(null)
+      setActionError(null)
+      try {
+        setScanResults(await gitScanRepos(host, trimmed, depth))
+        return true
+      } catch (e: unknown) {
+        setActionError(String(e))
+        return false
+      } finally {
+        setScanning(false)
+      }
+    },
+    [host, scanning],
+  )
+
+  const clearScan = useCallback(() => setScanResults(null), [])
 
   const init = useCallback(
     async (path: string) => {
@@ -585,6 +613,10 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     loading,
     error,
     actionError,
+    scanResults,
+    scanning,
+    scan,
+    clearScan,
     lastCommit,
     networkKind,
     progress,

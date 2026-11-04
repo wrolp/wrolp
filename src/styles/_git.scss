@@ -161,6 +161,36 @@
   }
 }
 
+.git-scan-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-scan-results {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 180px;
+  overflow: auto;
+  padding-top: 4px;
+}
+
+.git-scan-hit {
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  color: $text-secondary;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
 .git-repo-bar {
   flex: none;
   display: flex;
