@@ -170,6 +170,18 @@ fn diff_flags_binary_and_truncates_oversized_text() {
 }
 
 #[test]
+fn exclude_patterns_anchor_and_escape_metacharacters() {
+  assert_eq!(exclude_pattern("notes.txt"), "/notes.txt");
+  assert_eq!(exclude_pattern("build/*.log"), "/build/\\*.log");
+  assert_eq!(exclude_pattern("a?b[c]"), "/a\\?b\\[c\\]");
+  // A leading `#` or `!` would be a comment / negation line without escaping.
+  assert_eq!(exclude_pattern("#draft.md"), "/\\#draft.md");
+  assert_eq!(exclude_pattern("!important.txt"), "/\\!important.txt");
+  // Only the first character is special in that way.
+  assert_eq!(exclude_pattern("a#b"), "/a#b");
+}
+
+#[test]
 fn paths_outside_the_worktree_are_refused() {
   assert!(checked_rel_path("src/main.rs").is_ok());
   assert!(checked_rel_path("a file with spaces.txt").is_ok());

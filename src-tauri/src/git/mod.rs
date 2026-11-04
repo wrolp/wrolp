@@ -266,6 +266,31 @@ pub fn checked_rel_paths(paths: &[String]) -> Result<Vec<String>, String> {
   paths.iter().map(|p| checked_rel_path(p)).collect()
 }
 
+/// One `.git/info/exclude` line for a repository-relative path.
+///
+/// Anchored with a leading `/` so a bare file name cannot also match at any
+/// depth, and every gitignore metacharacter (`*`, `?`, `[`, `\`) is escaped so
+/// the path is matched literally. A leading `#` or `!` would otherwise turn the
+/// line into a comment or a negation, so it is escaped too.
+pub fn exclude_pattern(path: &str) -> String {
+  let mut out = String::with_capacity(path.len() + 2);
+  out.push('/');
+  for (i, ch) in path.chars().enumerate() {
+    match ch {
+      '*' | '?' | '[' | ']' | '\\' => {
+        out.push('\\');
+        out.push(ch);
+      }
+      '#' | '!' if i == 0 => {
+        out.push('\\');
+        out.push(ch);
+      }
+      _ => out.push(ch),
+    }
+  }
+  out
+}
+
 /// Drop credentials from a remote URL before it reaches the UI.
 ///
 /// `https://user:pass@host/x` → `https://host/x`, and the scp-like

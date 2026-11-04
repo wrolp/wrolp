@@ -247,6 +247,16 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               B
             </button>
           )}
+          {entry.kind === 'untracked' && (
+            <button
+              type="button"
+              className="git-mini-btn"
+              title={t('gitIgnoreLocally')}
+              onClick={() => void git.ignoreLocally([entry.path])}
+            >
+              <Icon name="eyeOff" size={11} />
+            </button>
+          )}
           {entry.kind !== 'ignored' && !entry.conflicted && (
             <button
               type="button"

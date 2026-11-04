@@ -868,6 +868,14 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return opts.gitConflicts ?? { inProgress: null, paths: [] }
           case 'git_blame':
             return opts.gitBlameLines ?? []
+          case 'git_local_ignore': {
+            // Ignored paths leave the working tree, like the real command does.
+            const paths = (args.paths ?? []) as string[]
+            for (let i = gitEntries.length - 1; i >= 0; i--) {
+              if (paths.includes(gitEntries[i].path)) gitEntries.splice(i, 1)
+            }
+            return null
+          }
           case 'git_stash_list':
             return gitStashes.map((s) => ({ ...s }))
           case 'git_stash_push': {

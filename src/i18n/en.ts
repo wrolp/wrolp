@@ -1527,6 +1527,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   gitOursShort: 'ours',
   gitTheirsShort: 'theirs',
   gitMarkResolved: 'Mark resolved',
+  gitIgnoreLocally: 'Ignore locally (.git/info/exclude)',
   gitBinPlaceholder: 'Path to git.exe (optional)',
   gitBinSave: 'Use this path',
   gitBinReset: 'Clear the path and auto-detect',

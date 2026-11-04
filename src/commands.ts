@@ -1735,6 +1735,15 @@ export async function gitPush(
   })
 }
 
+/** Append paths to `.git/info/exclude` (local ignore, never the tracked `.gitignore`). */
+export async function gitLocalIgnore(
+  host: GitHostRef,
+  root: string,
+  paths: string[],
+): Promise<void> {
+  await invoke('git_local_ignore', { host, root, paths })
+}
+
 export async function gitBlame(
   host: GitHostRef,
   root: string,

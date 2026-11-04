@@ -221,6 +221,39 @@ test('a host without git says so instead of failing every command', async ({ pag
     .toContain(BIN)
 })
 
+test('an untracked file can be ignored locally without touching .gitignore', async ({ page }) => {
+  await boot(page, {
+    gitStatus: {
+      entries: [
+        {
+          path: 'notes.txt',
+          origPath: null,
+          x: '?',
+          y: '?',
+          kind: 'untracked',
+          staged: false,
+          unstaged: false,
+          conflicted: false,
+        },
+      ],
+    },
+  })
+  await openRepo(page)
+
+  const row = page.locator('.git-row', { hasText: 'notes.txt' })
+  await row.locator('button[title*="Ignore locally"]').click()
+
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'git_local_ignore')
+        .map((c) => c.args.paths),
+    )
+    .toContainEqual(['notes.txt'])
+  // `.gitignore` itself is never written: the command only appends to info/exclude.
+  await expect(section(page, 'Untracked')).toHaveCount(0)
+})
+
 test('a folder that is not a repository reports it and stays in the picker', async ({ page }) => {
   await boot(page, { gitNotRepoPaths: [REPO] })
 

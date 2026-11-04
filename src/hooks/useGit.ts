@@ -13,6 +13,7 @@ import {
   gitDiscard,
   gitFetch,
   gitInit,
+  gitLocalIgnore,
   gitLog,
   gitProbe,
   gitPull,
@@ -301,6 +302,23 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     [host, runStatusAction],
   )
 
+  /** Local ignore: the paths leave Untracked without touching `.gitignore`. */
+  const ignoreLocally = useCallback(
+    async (paths: string[]) => {
+      if (!repo || repo.bare || paths.length === 0) return false
+      setActionError(null)
+      try {
+        await gitLocalIgnore(host, repo.root, paths)
+        await refresh()
+        return true
+      } catch (e: unknown) {
+        setActionError(String(e))
+        return false
+      }
+    },
+    [host, refresh, repo],
+  )
+
   const commit = useCallback(
     async (message: string, amend: boolean) => {
       if (!repo || repo.bare) return false
@@ -577,6 +595,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     stage,
     unstage,
     discard,
+    ignoreLocally,
     commit,
     createBranch,
     switchBranch,

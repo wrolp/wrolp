@@ -1448,6 +1448,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   gitOursShort: 'ours',
   gitTheirsShort: 'theirs',
   gitMarkResolved: '标记已解决',
+  gitIgnoreLocally: '本地忽略（.git/info/exclude）',
   gitBinPlaceholder: 'git.exe 路径（可选）',
   gitBinSave: '使用该路径',
   gitBinReset: '清除路径并恢复自动探测',

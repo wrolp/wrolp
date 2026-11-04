@@ -852,6 +852,96 @@ pub async fn git_remote_remove(
   Ok(parse::parse_remotes(&out))
 }
 
+// ==================== Local ignore ====================
+
+/// The filesystem the repository lives on. Used only for the one thing git has
+/// no plumbing command for: appending to `.git/info/exclude`.
+fn git_target_ref(host: &GitHostRef) -> TargetRef {
+  match host {
+    GitHostRef::Ssh { jump_tab_id } => TargetRef::Session {
+      tab_id: *jump_tab_id,
+    },
+    // `tab_id` is unused by the local implementation; the field exists because
+    // the frontend addresses targets per tab.
+    GitHostRef::Local => TargetRef::Local { tab_id: 0 },
+  }
+}
+
+/// Append repository-relative paths to `.git/info/exclude` so they stop showing
+/// as untracked without editing the shared, committed `.gitignore`.
+#[tauri::command]
+pub async fn git_local_ignore(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+  paths: Vec<String>,
+) -> Result<(), String> {
+  let root = checked_root(&root)?;
+  let paths = crate::git::checked_rel_paths(&paths)?;
+  let _lock = cli.try_lock(&host, &root)?;
+  // `--git-path` resolves to the right place for worktrees and submodules too.
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &[
+      "rev-parse".to_string(),
+      "--git-path".to_string(),
+      "info/exclude".to_string(),
+    ],
+    None,
+    READ_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("ignore", &out, &err, code));
+  }
+  let reported = String::from_utf8_lossy(&out).trim().to_string();
+  if reported.is_empty() {
+    return Err(crate::git::git_error(
+      "ignore",
+      "git reported no info/exclude path",
+    ));
+  }
+  let is_absolute = reported.starts_with('/')
+    || reported
+      .as_bytes()
+      .get(1)
+      .is_some_and(|b| *b == b':');
+  let exclude_path = if is_absolute {
+    reported
+  } else {
+    format!("{}/{}", root.trim_end_matches('/'), reported)
+  };
+
+  let fs = build_fs(&app, &state, &git_target_ref(&host)).await?;
+  // A missing file is the normal case for a fresh repository.
+  let existing = fs.read_file(&exclude_path).await.unwrap_or_default();
+  let mut text = String::from_utf8_lossy(&existing).to_string();
+  let mut appended = false;
+  for path in &paths {
+    let pattern = crate::git::exclude_pattern(path);
+    if text.lines().any(|l| l.trim() == pattern) {
+      continue;
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+      text.push('\n');
+    }
+    text.push_str(&pattern);
+    text.push('\n');
+    appended = true;
+  }
+  if appended {
+    fs.write_file(&exclude_path, text.as_bytes())
+      .await
+      .map_err(|e| crate::git::git_error("ignore", e))?;
+  }
+  Ok(())
+}
+
 // ==================== Stash ====================
 
 /// Helper shared by every stash command: read the list back after a write, so
