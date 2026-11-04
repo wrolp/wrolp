@@ -224,6 +224,26 @@ fn abort_only_accepts_the_known_operations() {
 }
 
 #[test]
+fn remote_urls_are_argv_safe() {
+  assert_eq!(remote::checked_url("https://github.com/x/y.git").unwrap(), "https://github.com/x/y.git");
+  assert_eq!(remote::checked_url("git@host:repo.git").unwrap(), "git@host:repo.git");
+  assert!(remote::checked_url("").is_err());
+  assert!(remote::checked_url("  ").is_err());
+  assert!(remote::checked_url("--upload-pack=x").is_err());
+  assert!(remote::checked_url("a b").is_err());
+  assert!(remote::checked_url("a\nb").is_err());
+}
+
+#[test]
+fn remote_add_and_remove_keep_the_name_then_the_url() {
+  assert_eq!(
+    remote::add_args("origin", "https://example.com/r.git"),
+    vec!["remote", "add", "origin", "https://example.com/r.git"]
+  );
+  assert_eq!(remote::remove_args("origin"), vec!["remote", "remove", "origin"]);
+}
+
+#[test]
 fn network_argv_covers_remote_and_branch_variants() {
   assert_eq!(
     remote::fetch_args(Some("origin")),

@@ -88,10 +88,15 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const [recent, setRecent] = useState(() => loadRecentGitRepos(gitHostKey(host)))
   const [branchesOpen, setBranchesOpen] = useState(false)
   const [newBranch, setNewBranch] = useState('')
+  const [remoteName, setRemoteName] = useState('')
+  const [remoteUrl, setRemoteUrl] = useState('')
   const [message, setMessage] = useState('')
   const [amend, setAmend] = useState(false)
   const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null)
   const [discardPaths, setDiscardPaths] = useState<string[] | null>(null)
+  const [cloneOpen, setCloneOpen] = useState(false)
+  const [cloneUrl, setCloneUrl] = useState('')
+  const [cloneDest, setCloneDest] = useState('')
 
   const groups = useMemo(() => groupGitStatus(git.status), [git.status])
   const stagedPaths = uniquePaths(groups.staged)
@@ -105,6 +110,8 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   useEffect(() => {
     setBranchesOpen(false)
     setNewBranch('')
+    setRemoteName('')
+    setRemoteUrl('')
     setMessage('')
     setAmend(false)
     setDiffTarget(null)
@@ -120,6 +127,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
 
   const busy = git.loading || git.networkKind != null
   const committed = git.lastCommit
+  const inProgress = git.conflicts?.inProgress ?? null
 
   const openPath = (path: string) => {
     void git.open(path)
@@ -150,15 +158,44 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
           {entry.origPath && <span className="git-orig-path">{entry.origPath}</span>}
         </button>
         <div className="git-row-actions">
-          {entry.kind !== 'ignored' && (
-            <button
-              type="button"
-              className="git-mini-btn"
-              title={staged ? t('gitUnstage') : t('gitStage')}
-              onClick={() => void (staged ? git.unstage([entry.path]) : git.stage([entry.path]))}
-            >
-              {staged ? '−' : '+'}
-            </button>
+          {entry.conflicted ? (
+            <>
+              <button
+                type="button"
+                className="git-mini-btn"
+                title={t('gitResolveOurs')}
+                onClick={() => void git.resolveConflict(entry.path, 'ours')}
+              >
+                {t('gitOursShort')}
+              </button>
+              <button
+                type="button"
+                className="git-mini-btn"
+                title={t('gitResolveTheirs')}
+                onClick={() => void git.resolveConflict(entry.path, 'theirs')}
+              >
+                {t('gitTheirsShort')}
+              </button>
+              <button
+                type="button"
+                className="git-mini-btn"
+                title={t('gitMarkResolved')}
+                onClick={() => void git.resolveConflict(entry.path, 'resolved')}
+              >
+                ✓
+              </button>
+            </>
+          ) : (
+            entry.kind !== 'ignored' && (
+              <button
+                type="button"
+                className="git-mini-btn"
+                title={staged ? t('gitUnstage') : t('gitStage')}
+                onClick={() => void (staged ? git.unstage([entry.path]) : git.stage([entry.path]))}
+              >
+                {staged ? '−' : '+'}
+              </button>
+            )
           )}
           {entry.kind !== 'ignored' && !entry.conflicted && (
             <button
@@ -247,6 +284,49 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
           >
             {t('gitInitRepo')}
           </button>
+          {cloneOpen ? (
+            <form
+              className="git-clone-row"
+              onSubmit={(e) => {
+                e.preventDefault()
+                void git.clone(cloneUrl, cloneDest).then((ok) => {
+                  if (ok) setCloneOpen(false)
+                })
+              }}
+            >
+              <input
+                type="text"
+                value={cloneUrl}
+                placeholder={t('gitCloneUrlPlaceholder')}
+                onChange={(e) => setCloneUrl(e.target.value)}
+              />
+              <input
+                type="text"
+                value={cloneDest}
+                placeholder={t('gitCloneDestPlaceholder')}
+                onChange={(e) => setCloneDest(e.target.value)}
+              />
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={busy || !cloneUrl.trim() || !cloneDest.trim()}
+              >
+                {t('gitClone')}
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="git-link-btn"
+              disabled={busy}
+              onClick={() => {
+                setCloneDest(pathInput.trim())
+                setCloneOpen(true)
+              }}
+            >
+              {t('gitCloneOpen')}
+            </button>
+          )}
           {git.error && <div className="git-error">{describeGitError(git.error, t)}</div>}
           {recent.length > 0 && (
             <div className="git-recent">
@@ -356,6 +436,19 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
             </div>
           </div>
 
+          {inProgress && (
+            <div className="git-conflict-banner">
+              <span>{t('gitInProgress', { op: inProgress })}</span>
+              <button
+                type="button"
+                className="git-link-btn danger"
+                onClick={() => void git.abortOperation(inProgress)}
+              >
+                {t('gitAbortOp')}
+              </button>
+            </div>
+          )}
+
           {branchesOpen && (
             <div className="git-branch-list">
               {git.branches
@@ -426,6 +519,56 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                 />
                 <button type="submit" className="git-link-btn" disabled={!newBranch.trim()}>
                   {t('gitCreateAndCheckout')}
+                </button>
+              </form>
+              <div className="git-branch-group">{t('gitRemotesSection')}</div>
+              {git.remotes.map((r) => (
+                <div className="git-branch-row" key={r.name}>
+                  <div className="git-row-main" title={`${r.name} · ${r.fetchUrl}`}>
+                    <span className="git-branch-name">{r.name}</span>
+                    <span className="git-branch-upstream">{r.fetchUrl}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="git-mini-btn danger"
+                    title={t('gitRemoteRemove')}
+                    onClick={() => void git.removeRemote(r.name)}
+                  >
+                    <Icon name="trash" size={11} />
+                  </button>
+                </div>
+              ))}
+              {git.remotes.length === 0 && <div className="git-note">{t('gitNoRemotes')}</div>}
+              <form
+                className="git-path-row"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const name = remoteName.trim()
+                  const url = remoteUrl.trim()
+                  if (!name || !url) return
+                  void git.addRemote(name, url)
+                  setRemoteName('')
+                  setRemoteUrl('')
+                }}
+              >
+                <input
+                  type="text"
+                  value={remoteName}
+                  placeholder={t('gitRemoteNamePlaceholder')}
+                  onChange={(e) => setRemoteName(e.target.value)}
+                />
+                <input
+                  type="text"
+                  value={remoteUrl}
+                  placeholder={t('gitRemoteUrlPlaceholder')}
+                  onChange={(e) => setRemoteUrl(e.target.value)}
+                />
+                <button
+                  type="submit"
+                  className="git-link-btn"
+                  disabled={!remoteName.trim() || !remoteUrl.trim()}
+                >
+                  {t('gitRemoteAdd')}
                 </button>
               </form>
             </div>

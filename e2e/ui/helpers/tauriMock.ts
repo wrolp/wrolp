@@ -211,6 +211,8 @@ export interface TauriMockOptions {
   gitBranches?: GitBranch[]
   /** Remotes returned by `git_remotes` (defaults to `[]`). */
   gitRemotes?: GitRemote[]
+  /** Conflict answer for `git_conflicts` (defaults to none in progress). */
+  gitConflicts?: { inProgress: string | null; paths: string[] }
   /** Commit rows returned by `git_log`, paged by `limit` / `skip`. */
   gitCommits?: GitCommit[]
   /** Whether a log page reports more history than it returned. */
@@ -841,7 +843,15 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'git_branch_create':
           case 'git_branch_switch':
           case 'git_abort':
+          case 'git_resolve':
             return gitStatusNow()
+          case 'git_conflicts':
+            return opts.gitConflicts ?? { inProgress: null, paths: [] }
+          case 'git_remote_add':
+          case 'git_remote_remove':
+            return opts.gitRemotes ?? []
+          case 'git_clone':
+            return { root: String(args.dest ?? ''), bare: false }
           case 'git_branch_delete':
             return opts.gitBranches ?? []
           case 'git_fetch':

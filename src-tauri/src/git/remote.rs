@@ -64,6 +64,35 @@ pub fn push_args(remote: Option<&str>, branch: Option<&str>) -> Vec<String> {
   }
 }
 
+/// `git remote add <name> <url>` — the URL is one argv element, never shell text.
+pub fn add_args(name: &str, url: &str) -> Vec<String> {
+  vec![
+    "remote".to_string(),
+    "add".to_string(),
+    name.to_string(),
+    url.to_string(),
+  ]
+}
+
+/// `git remote remove <name>`.
+pub fn remove_args(name: &str) -> Vec<String> {
+  vec!["remote".to_string(), "remove".to_string(), name.to_string()]
+}
+
+/// A remote URL becomes one argv element: refuse anything git could read as an
+/// option or that a shell could mangle. Everything else passes untouched — the
+/// URL schema space (https, ssh, scp-like, file://) is git's problem.
+pub fn checked_url(url: &str) -> Result<String, String> {
+  let u = url.trim();
+  if u.is_empty() {
+    return Err(super::git_error("remote", "missing remote URL"));
+  }
+  if u.starts_with('-') || u.chars().any(|c| c.is_control() || c.is_whitespace()) {
+    return Err(super::git_error("remote", format!("invalid remote URL: {u}")));
+  }
+  Ok(u.to_string())
+}
+
 /// The branch to push when the caller did not name one.
 pub fn checked_branch(branch: &str) -> Result<String, String> {
   super::status::checked_branch_name(branch)

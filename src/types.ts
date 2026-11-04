@@ -1009,6 +1009,12 @@ export interface GitNetworkResult {
   stderr: string
 }
 
+/** Unmerged paths plus the operation whose markers are live, if any. */
+export interface GitConflicts {
+  inProgress: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | null
+  paths: string[]
+}
+
 /** One tick of a fetch / pull / push, broadcast as `git-progress`. */
 export interface GitProgressEvent {
   opId: string

@@ -7,7 +7,9 @@ import {
   gitBranchSwitch,
   gitBranches,
   gitCancel,
+  gitClone,
   gitCommit,
+  gitConflicts,
   gitDiscard,
   gitFetch,
   gitInit,
@@ -15,8 +17,11 @@ import {
   gitProbe,
   gitPull,
   gitPush,
+  gitRemoteAdd,
+  gitRemoteRemove,
   gitRemotes,
   gitRepoInfo,
+  gitResolve,
   gitStage,
   gitStatus,
   gitUnstage,
@@ -26,6 +31,7 @@ import type {
   GitBranch,
   GitCommit,
   GitCommitResult,
+  GitConflicts,
   GitHostRef,
   GitNetworkResult,
   GitProbe,
@@ -37,7 +43,7 @@ import type {
 
 const HISTORY_PAGE = 20
 
-export type GitNetworkKind = 'fetch' | 'pull' | 'push'
+export type GitNetworkKind = 'fetch' | 'pull' | 'push' | 'clone'
 
 /**
  * One Git mode's data and actions. Repository discovery, status refresh and
@@ -55,6 +61,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [branches, setBranches] = useState<GitBranch[]>([])
   const [remotes, setRemotes] = useState<GitRemote[]>([])
+  const [conflicts, setConflicts] = useState<GitConflicts | null>(null)
   const [commits, setCommits] = useState<GitCommit[]>([])
   const [hasMoreLog, setHasMoreLog] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -78,6 +85,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     setStatus(null)
     setBranches([])
     setRemotes([])
+    setConflicts(null)
     setCommits([])
     setHasMoreLog(false)
     setError(null)
@@ -136,17 +144,19 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     async (root: string) => {
       setLoading(true)
       try {
-        const [st, br, rm, lg] = await Promise.all([
+        const [st, br, rm, lg, cf] = await Promise.all([
           gitStatus(host, root),
           gitBranches(host, root),
           gitRemotes(host, root),
           gitLog(host, root, HISTORY_PAGE, 0),
+          gitConflicts(host, root),
         ])
         setStatus(st)
         setBranches(br)
         setRemotes(rm)
         setCommits(lg.commits)
         setHasMoreLog(lg.hasMore)
+        setConflicts(cf)
       } catch (e: unknown) {
         setActionError(String(e))
       } finally {
@@ -175,6 +185,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
           setStatus(null)
           setBranches([])
           setRemotes([])
+          setConflicts(null)
           setCommits([])
           setHasMoreLog(false)
         } else {
@@ -333,9 +344,78 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
 
   const abortOperation = useCallback(
     async (operation: 'merge' | 'rebase' | 'cherry-pick' | 'revert') => {
-      return await runStatusAction((root) => gitAbort(host, root, operation))
+      const ok = await runStatusAction((root) => gitAbort(host, root, operation))
+      if (ok) await refresh()
+      return ok
     },
+    [host, refresh, runStatusAction],
+  )
+
+  const resolveConflict = useCallback(
+    (path: string, resolution: 'ours' | 'theirs' | 'resolved') =>
+      runStatusAction((root) => gitResolve(host, root, path, resolution)),
     [host, runStatusAction],
+  )
+
+  const addRemote = useCallback(
+    async (name: string, url: string) => {
+      if (!repo || repo.bare) return false
+      setActionError(null)
+      try {
+        setRemotes(await gitRemoteAdd(host, repo.root, name, url))
+        return true
+      } catch (e: unknown) {
+        setActionError(String(e))
+        return false
+      }
+    },
+    [host, repo],
+  )
+
+  const removeRemote = useCallback(
+    async (name: string) => {
+      if (!repo || repo.bare) return false
+      setActionError(null)
+      try {
+        setRemotes(await gitRemoteRemove(host, repo.root, name))
+        return true
+      } catch (e: unknown) {
+        setActionError(String(e))
+        return false
+      }
+    },
+    [host, repo],
+  )
+
+  /**
+   * Clone into `dest`, sharing the network progress UI, then open the result.
+   * Runs outside any repository root.
+   */
+  const clone = useCallback(
+    async (url: string, dest: string) => {
+      if (!url.trim() || !dest.trim() || networkKind) return false
+      const opId = `git-clone-${Date.now()}`
+      opRef.current = opId
+      setNetworkKind('clone')
+      setNetworkResult(null)
+      setActionError(null)
+      setProgress({ opId, phase: 'remote', received: 0, total: 0, percent: null, text: '' })
+      try {
+        const info = await gitClone(host, url.trim(), dest.trim(), opId)
+        setRepo(info)
+        rememberGitRepo(hostKey, info.root)
+        await loadAll(info.root)
+        return true
+      } catch (e: unknown) {
+        setActionError(String(e))
+        return false
+      } finally {
+        opRef.current = null
+        setNetworkKind(null)
+        setProgress(null)
+      }
+    },
+    [host, hostKey, loadAll, networkKind],
   )
 
   const loadMoreLog = useCallback(async () => {
@@ -411,6 +491,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     status,
     branches,
     remotes,
+    conflicts,
     defaultRemote,
     commits,
     hasMoreLog,
@@ -432,6 +513,10 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     switchBranch,
     deleteBranch,
     abortOperation,
+    resolveConflict,
+    addRemote,
+    removeRemote,
+    clone,
     loadMoreLog,
     runNetwork,
     cancelNetwork,

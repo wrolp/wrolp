@@ -7,6 +7,7 @@
 
 pub mod parse;
 pub mod branch;
+pub mod conflict;
 pub mod history;
 pub mod remote;
 pub mod status;
@@ -144,6 +145,15 @@ pub struct GitCommitResult {
 pub struct GitNetworkResult {
   pub stdout: String,
   pub stderr: String,
+}
+
+/// Unmerged paths plus the operation whose merge markers are still live, if any.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConflicts {
+  /// `merge` / `rebase` / `cherry-pick` / `revert`, or `None` when clean.
+  pub in_progress: Option<String>,
+  pub paths: Vec<String>,
 }
 
 // ==================== Errors ====================

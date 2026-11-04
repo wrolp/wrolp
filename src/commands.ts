@@ -70,6 +70,7 @@ import type {
   GitBranch,
   GitRemote,
   GitCommitResult,
+  GitConflicts,
   GitNetworkResult,
 } from './types'
 
@@ -1725,4 +1726,46 @@ export async function gitPush(
 
 export async function gitCancel(opId: string): Promise<void> {
   await invoke('git_cancel', { opId })
+}
+
+/** Unmerged paths plus the in-progress operation, if any. */
+export async function gitConflicts(host: GitHostRef, root: string): Promise<GitConflicts> {
+  return await invoke<GitConflicts>('git_conflicts', { host, root })
+}
+
+/** `ours` / `theirs` take that side; `resolved` re-adds after a manual edit. */
+export async function gitResolve(
+  host: GitHostRef,
+  root: string,
+  path: string,
+  resolution: 'ours' | 'theirs' | 'resolved',
+): Promise<GitStatus> {
+  return await invoke<GitStatus>('git_resolve', { host, root, path, resolution })
+}
+
+export async function gitRemoteAdd(
+  host: GitHostRef,
+  root: string,
+  name: string,
+  url: string,
+): Promise<GitRemote[]> {
+  return await invoke<GitRemote[]>('git_remote_add', { host, root, name, url })
+}
+
+export async function gitRemoteRemove(
+  host: GitHostRef,
+  root: string,
+  name: string,
+): Promise<GitRemote[]> {
+  return await invoke<GitRemote[]>('git_remote_remove', { host, root, name })
+}
+
+/** Clone with `--progress`; the returned info opens the new repository. */
+export async function gitClone(
+  host: GitHostRef,
+  url: string,
+  dest: string,
+  opId: string,
+): Promise<GitRepoInfo> {
+  return await invoke<GitRepoInfo>('git_clone', { host, url, dest, opId })
 }

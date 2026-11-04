@@ -8,13 +8,14 @@
 
 use super::*;
 use crate::git::branch;
+use crate::git::conflict;
 use crate::git::history;
 use crate::git::parse;
 use crate::git::remote;
 use crate::git::status;
 use crate::git::{
-  GitBranch, GitCommitFile, GitCommitResult, GitDiff, GitLogPage, GitNetworkResult, GitRemote,
-  GitRepoInfo, GitStatus, MAX_STATUS_ENTRIES,
+  GitBranch, GitCommitFile, GitCommitResult, GitConflicts, GitDiff, GitLogPage, GitNetworkResult,
+  GitRemote, GitRepoInfo, GitStatus, MAX_STATUS_ENTRIES,
 };
 use crate::git_host::{
   exec_git, exec_git_streaming, probe_git, GitHostRef, GitProbe, GitState, READ_TIMEOUT,
@@ -630,6 +631,82 @@ pub async fn git_abort(
   status_of(&state, cli.inner(), &host, &root).await
 }
 
+/// Unmerged paths and the in-progress operation. `in_progress` is detected by
+/// probing the marker refs (`MERGE_HEAD`, …); anything unexpected there is not
+/// an error the panel needs — the status list is the source of truth for rows.
+#[tauri::command]
+pub async fn git_conflicts(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+) -> Result<GitConflicts, String> {
+  let root = checked_root(&root)?;
+  let mut in_progress = None;
+  for op in conflict::IN_PROGRESS_OPERATIONS {
+    let Some(argv) = conflict::in_progress_probe_args(op) else {
+      continue;
+    };
+    let (_, _, code) = exec_git(&state, cli.inner(), &host, Some(&root), &argv, None, READ_TIMEOUT)
+      .await?;
+    if code == 0 {
+      in_progress = Some(op.to_string());
+      break;
+    }
+  }
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &conflict::list_args(),
+    None,
+    READ_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("conflict", &out, &err, code));
+  }
+  let paths = out
+    .split(|b| *b == 0)
+    .map(|t| String::from_utf8_lossy(t).to_string())
+    .filter(|s| !s.is_empty())
+    .collect();
+  Ok(GitConflicts { in_progress, paths })
+}
+
+/// One conflict path, one decision: take a side or re-add after a manual edit.
+#[tauri::command]
+pub async fn git_resolve(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+  path: String,
+  resolution: String,
+) -> Result<GitStatus, String> {
+  let root = checked_root(&root)?;
+  let path = crate::git::checked_rel_path(&path)?;
+  let argv = conflict::resolve_args(&path, &resolution).ok_or_else(|| {
+    crate::git::git_error("resolve", format!("unknown resolution: {resolution}"))
+  })?;
+  let _lock = cli.try_lock(&host, &root)?;
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &argv,
+    None,
+    WRITE_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("resolve", &out, &err, code));
+  }
+  status_of(&state, cli.inner(), &host, &root).await
+}
+
 #[tauri::command]
 pub async fn git_init(
   state: tauri::State<'_, AppState>,
@@ -655,6 +732,90 @@ pub async fn git_init(
     return Err(failed("init", &out, &err, code));
   }
   git_repo_info(state, cli, host, path.to_string()).await
+}
+
+/// `git remote add <name> <url>`. Returns the refreshed remote list.
+#[tauri::command]
+pub async fn git_remote_add(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+  name: String,
+  url: String,
+) -> Result<Vec<GitRemote>, String> {
+  let root = checked_root(&root)?;
+  let name = remote::checked_remote(&name)?;
+  let url = remote::checked_url(&url)?;
+  let _lock = cli.try_lock(&host, &root)?;
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &remote::add_args(&name, &url),
+    None,
+    WRITE_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("remote", &out, &err, code));
+  }
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &remote::list_args(),
+    None,
+    READ_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("remote", &out, &err, code));
+  }
+  Ok(parse::parse_remotes(&out))
+}
+
+/// `git remote remove <name>`. Returns the refreshed remote list.
+#[tauri::command]
+pub async fn git_remote_remove(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+  name: String,
+) -> Result<Vec<GitRemote>, String> {
+  let root = checked_root(&root)?;
+  let name = remote::checked_remote(&name)?;
+  let _lock = cli.try_lock(&host, &root)?;
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &remote::remove_args(&name),
+    None,
+    WRITE_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("remote", &out, &err, code));
+  }
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &remote::list_args(),
+    None,
+    READ_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("remote", &out, &err, code));
+  }
+  Ok(parse::parse_remotes(&out))
 }
 
 // ==================== Network ====================
@@ -800,4 +961,57 @@ pub async fn git_cancel(
 ) -> Result<(), String> {
   cli.cancel(&op_id);
   Ok(())
+}
+
+/// A clone destination is a host-side path, not a repo-relative one — validate
+/// shape only: non-empty, no option prefix, no control characters.
+fn checked_dest(dest: &str) -> Result<String, String> {
+  let d = dest.trim();
+  if d.is_empty() {
+    return Err(crate::git::git_error("clone", "missing destination path"));
+  }
+  if d.starts_with('-') || d.chars().any(|c| c.is_control()) {
+    return Err(crate::git::git_error("clone", format!("invalid destination: {d}")));
+  }
+  Ok(d.to_string())
+}
+
+/// `git clone --progress <url> <dest>` — streaming like the network verbs, then
+/// the new repository is probed so the panel can open it directly.
+#[tauri::command]
+pub async fn git_clone(
+  app: tauri::AppHandle,
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  url: String,
+  dest: String,
+  op_id: String,
+) -> Result<GitRepoInfo, String> {
+  let url = remote::checked_url(&url)?;
+  let dest = checked_dest(&dest)?;
+  let op_id = checked_op_id(&op_id)?;
+  let flag = cli.cancel_flag(&op_id);
+  let result = exec_git_streaming(
+    &app,
+    &state,
+    cli.inner(),
+    &host,
+    None,
+    &[
+      "clone".to_string(),
+      "--progress".to_string(),
+      url,
+      dest.clone(),
+    ],
+    &op_id,
+    flag,
+  )
+  .await;
+  cli.finish(&op_id);
+  let (out, err, code) = result?;
+  if code != 0 {
+    return Err(failed("clone", &out, &err, code));
+  }
+  git_repo_info(state, cli, host, dest).await
 }
