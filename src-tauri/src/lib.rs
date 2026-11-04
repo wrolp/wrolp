@@ -408,6 +408,7 @@ pub fn run() {
       commands::git_branch_delete,
       commands::git_abort,
       commands::git_conflicts,
+      commands::git_conflict_file,
       commands::git_resolve,
       commands::git_remote_add,
       commands::git_remote_remove,

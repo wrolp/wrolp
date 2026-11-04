@@ -56,6 +56,23 @@ pub fn resolve_args(path: &str, resolution: &str) -> Option<Vec<String>> {
   Some(argv)
 }
 
+/// `git show :<stage>:<path>` — one side of an unmerged path.
+///
+/// The object spec starts with `:`, so it can never be read as an option, and
+/// the path has already passed `checked_rel_path`. A stage that does not exist
+/// (add/add conflict has no base) simply exits non-zero; the caller maps that to
+/// `None` rather than an error.
+pub fn stage_args(stage: u8, path: &str) -> Option<Vec<String>> {
+  if !(1..=3).contains(&stage) {
+    return None;
+  }
+  Some(vec![
+    "show".to_string(),
+    "--no-color".to_string(),
+    format!(":{stage}:{path}"),
+  ])
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -85,6 +102,17 @@ mod tests {
       "REVERT_HEAD"
     );
     assert!(in_progress_probe_args("bogus").is_none());
+  }
+
+  #[test]
+  fn stage_reads_use_a_colon_object_spec_that_cannot_be_an_option() {
+    assert_eq!(
+      stage_args(2, "src/main.ts").unwrap(),
+      vec!["show", "--no-color", ":2:src/main.ts"]
+    );
+    assert_eq!(stage_args(1, "a.txt").unwrap()[2], ":1:a.txt");
+    assert!(stage_args(0, "a.txt").is_none());
+    assert!(stage_args(4, "a.txt").is_none());
   }
 
   #[test]

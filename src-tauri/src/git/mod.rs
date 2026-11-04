@@ -177,6 +177,20 @@ pub struct GitStash {
   pub message: String,
 }
 
+/// The three index stages of one unmerged path, as text.
+///
+/// `None` means the stage does not exist (a modify/delete conflict has no side
+/// for the deleted stage), which the merge view renders as an empty pane.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitConflictStages {
+  pub base: Option<String>,
+  pub ours: Option<String>,
+  pub theirs: Option<String>,
+  pub binary: bool,
+  pub truncated: bool,
+}
+
 /// Unmerged paths plus the operation whose merge markers are still live, if any.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

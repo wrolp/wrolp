@@ -71,6 +71,7 @@ import type {
   GitRemote,
   GitCommitResult,
   GitConflicts,
+  GitConflictStages,
   GitBlameLine,
   GitStash,
   GitNetworkResult,
@@ -1769,6 +1770,15 @@ export async function gitCancel(opId: string): Promise<void> {
 /** Unmerged paths plus the in-progress operation, if any. */
 export async function gitConflicts(host: GitHostRef, root: string): Promise<GitConflicts> {
   return await invoke<GitConflicts>('git_conflicts', { host, root })
+}
+
+/** The base / ours / theirs text of one unmerged path (merge view). */
+export async function gitConflictFile(
+  host: GitHostRef,
+  root: string,
+  path: string,
+): Promise<GitConflictStages> {
+  return await invoke<GitConflictStages>('git_conflict_file', { host, root, path })
 }
 
 /** `ours` / `theirs` take that side; `resolved` re-adds after a manual edit. */

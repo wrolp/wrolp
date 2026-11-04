@@ -16,6 +16,7 @@ import type { GitCommitFile, GitHostRef, GitStatusEntry } from '../types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitBlameView } from './GitBlameView'
 import { GitDiffView } from './GitDiffView'
+import { GitMergeView } from './GitMergeView'
 import { Icon } from './Icon'
 
 interface GitPanelProps {
@@ -101,6 +102,8 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   /** Local git executable, editable from the "git not installed" state (D5). */
   const [binInput, setBinInput] = useState(() => git.localBin ?? '')
   const [blamePath, setBlamePath] = useState<string | null>(null)
+  /** The conflict whose three-way view is open. */
+  const [mergePath, setMergePath] = useState<string | null>(null)
   const [forcePushOpen, setForcePushOpen] = useState(false)
   const [cloneOpen, setCloneOpen] = useState(false)
   const [cloneUrl, setCloneUrl] = useState('')
@@ -149,6 +152,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
     setAmend(false)
     setStashUntracked(false)
     setBlamePath(null)
+    setMergePath(null)
     setForcePushOpen(false)
     setDiffTarget(null)
     setDiscardPaths(null)
@@ -185,13 +189,17 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
           className="git-row-main"
           title={entry.path}
           disabled={entry.kind === 'untracked' || entry.kind === 'ignored'}
-          onClick={() =>
+          onClick={() => {
+            if (entry.conflicted) {
+              setMergePath(entry.path)
+              return
+            }
             setDiffTarget({
               path: entry.path,
               scope: staged ? 'staged' : 'unstaged',
               title: `${entry.path} · ${staged ? t('gitDiffStaged') : t('gitDiffUnstaged')}`,
             })
-          }
+          }}
         >
           <span className="git-letter">{letter}</span>
           <span className="git-path">{entry.path}</span>
@@ -1020,6 +1028,20 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
           oid={diffTarget.oid ?? null}
           title={diffTarget.title}
           onClose={() => setDiffTarget(null)}
+        />
+      )}
+
+      {mergePath && git.root && (
+        <GitMergeView
+          host={host}
+          root={git.root}
+          path={mergePath}
+          onResolve={(resolution) => {
+            const path = mergePath
+            setMergePath(null)
+            void git.resolveConflict(path, resolution)
+          }}
+          onClose={() => setMergePath(null)}
         />
       )}
 

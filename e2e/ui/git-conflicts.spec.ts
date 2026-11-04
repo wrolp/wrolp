@@ -50,6 +50,37 @@ test('a merge in progress gets a banner whose abort is offered', async ({ page }
     .toContainEqual({ host: { kind: 'local' }, root: REPO, operation: 'merge' })
 })
 
+test('a conflicted row opens the three-way view and resolves from it', async ({ page }) => {
+  await boot(page, {
+    gitConflictStages: {
+      base: 'const a = 0',
+      ours: 'const a = 1',
+      theirs: 'const a = 2',
+      binary: false,
+      truncated: false,
+    },
+  })
+
+  await page.locator('.git-row-main', { hasText: 'src/main.ts' }).first().click()
+
+  const modal = page.locator('.git-merge-modal')
+  await expect(modal).toBeVisible()
+  await expect(modal.locator('.git-merge-pane')).toHaveCount(3)
+  await expect(modal.locator('.git-merge-pane').nth(1)).toContainText('const a = 1')
+  await expect(modal.locator('.git-merge-pane').nth(2)).toContainText('const a = 2')
+
+  expect(
+    (await invokedCalls(page)).filter((c) => c.cmd === 'git_conflict_file').at(-1)?.args,
+  ).toMatchObject({ root: REPO, path: 'src/main.ts' })
+
+  await modal.getByRole('button', { name: 'Take theirs' }).click()
+  await expect.poll(async () => (await resolveCalls(page)).at(-1)?.args).toMatchObject({
+    path: 'src/main.ts',
+    resolution: 'theirs',
+  })
+  await expect(modal).toHaveCount(0)
+})
+
 test('a conflicted row resolves ours / theirs / mark resolved', async ({ page }) => {
   await boot(page)
 

@@ -803,6 +803,88 @@
   word-break: break-word;
 }
 
+.git-merge-modal {
+  width: min(1100px, 92vw);
+}
+
+.git-merge-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.git-merge-columns {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 1px;
+  background: $border;
+}
+
+.git-merge-pane {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: $bg-primary;
+}
+
+.git-merge-pane-head {
+  flex: none;
+  padding: 3px 6px;
+  background: $bg-secondary;
+  color: $text-muted;
+  font-size: var(--fs-xs);
+}
+
+.git-merge-empty {
+  padding: 8px 6px;
+  color: $text-dim;
+  font-size: var(--fs-xs);
+}
+
+.git-merge-pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 0;
+  overflow: auto;
+  font-family: $font-mono;
+  font-size: var(--fs-sm);
+  color: $text-secondary;
+}
+
+.git-merge-line {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px;
+  white-space: pre;
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
+.git-merge-no {
+  flex: none;
+  min-width: 32px;
+  text-align: right;
+  color: $text-dim;
+}
+
+.git-merge-text {
+  flex: 1 1 auto;
+}
+
+.git-merge-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid $border;
+}
+
 .git-blame-list {
   display: flex;
   flex-direction: column;

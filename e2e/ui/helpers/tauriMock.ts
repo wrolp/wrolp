@@ -213,6 +213,14 @@ export interface TauriMockOptions {
   gitRemotes?: GitRemote[]
   /** Conflict answer for `git_conflicts` (defaults to none in progress). */
   gitConflicts?: { inProgress: string | null; paths: string[] }
+  /** Stage texts for `git_conflict_file` (defaults to all three absent). */
+  gitConflictStages?: {
+    base: string | null
+    ours: string | null
+    theirs: string | null
+    binary: boolean
+    truncated: boolean
+  }
   /** Stash rows for `git_stash_list` (the store mutates on push / pop / drop). */
   gitStashes?: { index: number; oid: string; timestamp: number; message: string }[]
   /** Repository roots returned by `git_scan_repos` (defaults to `[]`). */
@@ -868,6 +876,16 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return gitStatusNow()
           case 'git_conflicts':
             return opts.gitConflicts ?? { inProgress: null, paths: [] }
+          case 'git_conflict_file':
+            return (
+              opts.gitConflictStages ?? {
+                base: null,
+                ours: null,
+                theirs: null,
+                binary: false,
+                truncated: false,
+              }
+            )
           case 'git_blame':
             return opts.gitBlameLines ?? []
           case 'git_scan_repos':

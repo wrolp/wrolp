@@ -1028,6 +1028,15 @@ export interface GitStash {
   message: string
 }
 
+/** The three index stages of one unmerged path; `null` = that stage is absent. */
+export interface GitConflictStages {
+  base: string | null
+  ours: string | null
+  theirs: string | null
+  binary: boolean
+  truncated: boolean
+}
+
 /** Unmerged paths plus the operation whose markers are live, if any. */
 export interface GitConflicts {
   inProgress: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | null

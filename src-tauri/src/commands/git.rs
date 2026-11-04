@@ -15,8 +15,8 @@ use crate::git::remote;
 use crate::git::stash;
 use crate::git::status;
 use crate::git::{
-  GitBlameLine, GitBranch, GitCommitFile, GitCommitResult, GitConflicts, GitDiff, GitLogPage,
-  GitNetworkResult, GitRemote, GitRepoInfo, GitStash, GitStatus, MAX_STATUS_ENTRIES,
+  GitBlameLine, GitBranch, GitCommitFile, GitCommitResult, GitConflictStages, GitConflicts, GitDiff,
+  GitLogPage, GitNetworkResult, GitRemote, GitRepoInfo, GitStash, GitStatus, MAX_STATUS_ENTRIES,
 };
 use crate::git_host::{
   exec_git, exec_git_streaming, probe_git, GitHostRef, GitProbe, GitState, READ_TIMEOUT,
@@ -707,6 +707,59 @@ pub async fn git_conflicts(
     .filter(|s| !s.is_empty())
     .collect();
   Ok(GitConflicts { in_progress, paths })
+}
+
+/// The three stages of one unmerged path, for the read-only merge view.
+///
+/// Reading a stage with `git show :n:path` is the CLI equivalent of libgit2's
+/// index lookup; a missing stage (add/add has no base) is `None`, not an error.
+#[tauri::command]
+pub async fn git_conflict_file(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+  path: String,
+) -> Result<GitConflictStages, String> {
+  let root = checked_root(&root)?;
+  let rel = crate::git::checked_rel_path(&path)?;
+  let mut stages: [Option<String>; 3] = [None, None, None];
+  let mut binary = false;
+  let mut truncated = false;
+  for stage in 1u8..=3 {
+    let argv = conflict::stage_args(stage, &rel)
+      .ok_or_else(|| crate::git::git_error("conflict", "invalid stage"))?;
+    let (out, _, code) = exec_git(
+      &state,
+      cli.inner(),
+      &host,
+      Some(&root),
+      &argv,
+      None,
+      READ_TIMEOUT,
+    )
+    .await?;
+    if code != 0 {
+      continue;
+    }
+    if out.contains(&0) {
+      binary = true;
+      continue;
+    }
+    let cut = out.len() > crate::git::MAX_DIFF_BYTES;
+    truncated |= cut;
+    let slice = &out[..out.len().min(crate::git::MAX_DIFF_BYTES)];
+    stages[usize::from(stage) - 1] =
+      Some(String::from_utf8_lossy(slice).trim_end_matches('\n').to_string());
+  }
+  let [base, ours, theirs] = stages;
+  Ok(GitConflictStages {
+    base,
+    ours,
+    theirs,
+    binary,
+    truncated,
+  })
 }
 
 /// One conflict path, one decision: take a side or re-add after a manual edit.
