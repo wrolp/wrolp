@@ -526,8 +526,9 @@
 
 .git-commit-row {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 6px;
   width: 100%;
   padding: 4px 4px;
   border: none;
@@ -540,6 +541,105 @@
 
   &:hover {
     background: $bg-hover;
+  }
+}
+
+.git-commit-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.git-history-item {
+  width: 100%;
+}
+
+.git-lane {
+  position: relative;
+  flex: none;
+  align-self: stretch;
+  min-height: 26px;
+}
+
+.git-lane-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--li, 0) * 12px + 5px);
+  width: 2px;
+  background: $bg-hover;
+  pointer-events: none;
+
+  &.own {
+    background: $accent;
+    opacity: 0.45;
+  }
+}
+
+.git-lane-dot {
+  position: absolute;
+  top: 8px;
+  left: calc(var(--lane, 0) * 12px + 2px);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: $accent;
+}
+
+.git-commit-files {
+  display: flex;
+  flex-direction: column;
+  padding: 0 4px 4px 22px;
+}
+
+.git-commit-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: $text-secondary;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+
+  .git-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
+.git-file-status {
+  flex: none;
+  min-width: 20px;
+  font-family: $font-mono;
+  color: $text-muted;
+
+  &.st-m {
+    color: $warning;
+  }
+
+  &.st-a {
+    color: $success;
+  }
+
+  &.st-d {
+    color: $danger;
+  }
+
+  &.st-r {
+    color: $info;
   }
 }
 

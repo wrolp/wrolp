@@ -1527,6 +1527,8 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   gitOursShort: 'ours',
   gitTheirsShort: 'theirs',
   gitMarkResolved: 'Mark resolved',
+  gitLoadingFiles: 'Loading files…',
+  gitNoFiles: 'No changed files in this commit',
   gitStaged: 'Staged changes',
   gitChanges: 'Changes',
   gitUntracked: 'Untracked',

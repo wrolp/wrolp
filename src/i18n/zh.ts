@@ -1448,6 +1448,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   gitOursShort: 'ours',
   gitTheirsShort: 'theirs',
   gitMarkResolved: '标记已解决',
+  gitLoadingFiles: '正在加载文件…',
+  gitNoFiles: '该提交没有变更文件',
   gitStaged: '已暂存',
   gitChanges: '更改',
   gitUntracked: '未跟踪',

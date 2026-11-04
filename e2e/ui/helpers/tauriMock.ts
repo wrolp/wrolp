@@ -215,6 +215,9 @@ export interface TauriMockOptions {
   gitConflicts?: { inProgress: string | null; paths: string[] }
   /** Commit rows returned by `git_log`, paged by `limit` / `skip`. */
   gitCommits?: GitCommit[]
+  /** Files for `git_commit_files`, either per-oid or a blanket default. */
+  gitCommitFilesByOid?: Record<string, { path: string; status: string }[]>
+  gitCommitFiles?: { path: string; status: string }[]
   /** Whether a log page reports more history than it returned. */
   gitHasMoreLog?: boolean
   /** Unified diff text returned by `git_diff`. */
@@ -835,7 +838,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
               binary: opts.gitDiffBinary ?? false,
             }
           case 'git_commit_files':
-            return []
+            return (
+              opts.gitCommitFilesByOid?.[String(args.oid ?? '')] ??
+              opts.gitCommitFiles ?? []
+            )
           case 'git_branches':
             return opts.gitBranches ?? []
           case 'git_remotes':

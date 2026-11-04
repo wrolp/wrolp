@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { useGit } from '../hooks/useGit'
+import { gitCommitFiles } from '../commands'
 import {
   forgetGitRepo,
   gitErrorDetail,
@@ -10,7 +11,8 @@ import {
   loadRecentGitRepos,
 } from '../lib/gitHost'
 import { groupGitStatus, gitEntryKey, gitEntryLetter } from '../lib/gitStatus'
-import type { GitHostRef, GitStatusEntry } from '../types'
+import { computeLanes, graphLaneCount } from '../lib/gitGraph'
+import type { GitCommitFile, GitHostRef, GitStatusEntry } from '../types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitDiffView } from './GitDiffView'
 import { Icon } from './Icon'
@@ -100,6 +102,31 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
 
   const groups = useMemo(() => groupGitStatus(git.status), [git.status])
   const stagedPaths = uniquePaths(groups.staged)
+  const laneRows = useMemo(
+    () => computeLanes(git.commits.map((c) => ({ oid: c.oid, parents: c.parents }))),
+    [git.commits],
+  )
+  const laneCount = useMemo(() => graphLaneCount(laneRows), [laneRows])
+
+  /** The commit whose file list is expanded, and the files once loaded. */
+  const [expandedOid, setExpandedOid] = useState<string | null>(null)
+  const [commitFiles, setCommitFiles] = useState<GitCommitFile[] | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+
+  const toggleCommitFiles = (oid: string) => {
+    if (expandedOid === oid) {
+      setExpandedOid(null)
+      setCommitFiles(null)
+      return
+    }
+    setExpandedOid(oid)
+    setCommitFiles(null)
+    setHistoryError(null)
+    if (!git.root) return
+    void gitCommitFiles(host, git.root, oid)
+      .then(setCommitFiles)
+      .catch((e: unknown) => setHistoryError(String(e)))
+  }
 
   // Suggested cwd changes (the user clicked another terminal) only pre-fill the
   // field; the hook decides whether to try it once.
@@ -116,6 +143,9 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
     setAmend(false)
     setDiffTarget(null)
     setDiscardPaths(null)
+    setExpandedOid(null)
+    setCommitFiles(null)
+    setHistoryError(null)
     setPathInput(suggestedPath ?? '')
     setRecent(loadRecentGitRepos(gitHostKey(host)))
   }, [host, suggestedPath])
@@ -717,35 +747,84 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
             <div className="git-section-head">
               <span>{t('gitHistory')}</span>
             </div>
-            {git.commits.map((c) => (
-              <button
-                type="button"
-                key={c.oid}
-                className="git-commit-row"
-                onClick={() =>
-                  setDiffTarget({
-                    path: null,
-                    scope: 'commit',
-                    oid: c.oid,
-                    title: `${c.shortOid} · ${c.subject}`,
-                  })
-                }
-              >
-                <div className="git-commit-top">
-                  <span className="git-commit-oid">{c.shortOid}</span>
-                  <span className="git-commit-subject">{c.subject}</span>
-                </div>
-                <div className="git-commit-meta">
-                  <span>{c.authorName}</span>
-                  <span>{formatWhen(c.timestamp)}</span>
-                  {c.refs.map((ref) => (
-                    <span className="git-ref-chip" key={ref}>
-                      {ref}
+            {git.commits.map((c, i) => {
+              const row = laneRows[i]
+              const expanded = expandedOid === c.oid
+              return (
+                <div className="git-history-item" key={c.oid}>
+                  <button
+                    type="button"
+                    className={`git-commit-row${expanded ? ' expanded' : ''}`}
+                    onClick={() => toggleCommitFiles(c.oid)}
+                  >
+                    <span
+                      className="git-lane"
+                      style={{
+                        width: laneCount * 12,
+                        ['--lane' as string]: row ? row.lane : 0,
+                      }}
+                    >
+                      {row &&
+                        Array.from({ length: row.laneCount }, (_, l) => (
+                          <span
+                            className={`git-lane-line${l === row.lane ? ' own' : ''}`}
+                            key={l}
+                            style={{ ['--li' as string]: l }}
+                          />
+                        ))}
+                      <span className="git-lane-dot" />
                     </span>
-                  ))}
+                    <div className="git-commit-main">
+                      <div className="git-commit-top">
+                        <span className="git-commit-oid">{c.shortOid}</span>
+                        <span className="git-commit-subject">{c.subject}</span>
+                      </div>
+                      <div className="git-commit-meta">
+                        <span>{c.authorName}</span>
+                        <span>{formatWhen(c.timestamp)}</span>
+                        {c.refs.map((ref) => (
+                          <span className="git-ref-chip" key={ref}>
+                            {ref}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </button>
+                  {expanded && (
+                    <div className="git-commit-files">
+                      {commitFiles === null && (
+                        <div className="git-note">{t('gitLoadingFiles')}</div>
+                      )}
+                      {commitFiles !== null && commitFiles.length === 0 && (
+                        <div className="git-note">{t('gitNoFiles')}</div>
+                      )}
+                      {commitFiles?.map((f) => (
+                        <button
+                          type="button"
+                          className="git-commit-file"
+                          key={`${f.status}:${f.path}`}
+                          title={f.path}
+                          onClick={() =>
+                            setDiffTarget({
+                              path: f.path,
+                              scope: 'commit',
+                              oid: c.oid,
+                              title: `${f.status} ${f.path} · ${c.shortOid}`,
+                            })
+                          }
+                        >
+                          <span className={`git-file-status st-${f.status[0].toLowerCase()}`}>
+                            {f.status}
+                          </span>
+                          <span className="git-path">{f.path}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </button>
-            ))}
+              )
+            })}
+            {historyError && <div className="git-error">{describeGitError(historyError, t)}</div>}
             {git.hasMoreLog && (
               <button type="button" className="git-link-btn" onClick={() => void git.loadMoreLog()}>
                 {t('gitLoadMore')}
