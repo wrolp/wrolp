@@ -1567,7 +1567,8 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   gitStage: 'Stage',
   gitUnstage: 'Unstage',
   gitDiscard: 'Discard',
-  gitDiscardConfirm: 'Discard changes in {count} path(s)? This cannot be undone.',
+  gitDiscardConfirm:
+    'Discard changes in {count} path(s)? This cannot be undone. Untracked files are deleted; directories are never recursed into.\n\n{paths}',
   gitCancel: 'Cancel',
   gitCommitMessage: 'Commit message',
   gitCommit: 'Commit',

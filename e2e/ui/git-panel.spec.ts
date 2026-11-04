@@ -221,6 +221,30 @@ test('a host without git says so instead of failing every command', async ({ pag
     .toContain(BIN)
 })
 
+test('network verbs use the tracked remote, not just the first one', async ({ page }) => {
+  await boot(page, {
+    // `fork` is listed first on purpose: the branch tracks `upstream/main`.
+    gitRemotes: [
+      { name: 'fork', fetchUrl: 'https://example.com/fork.git', pushUrl: 'https://example.com/fork.git' },
+      ORIGIN,
+      {
+        name: 'upstream',
+        fetchUrl: 'https://example.com/demo.git',
+        pushUrl: 'https://example.com/demo.git',
+      },
+    ],
+    gitStatus: { branch: 'main', upstream: 'upstream/main' },
+  })
+  await openRepo(page)
+
+  await page.locator('.git-network-actions button', { hasText: 'Fetch' }).click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'git_fetch').map((c) => c.args.remote),
+    )
+    .toContain('upstream')
+})
+
 test('the repo bar can go back to the picker and open another repository', async ({ page }) => {
   await boot(page)
   await openRepo(page)

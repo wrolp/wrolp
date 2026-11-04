@@ -1488,7 +1488,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   gitStage: '暂存',
   gitUnstage: '取消暂存',
   gitDiscard: '丢弃更改',
-  gitDiscardConfirm: '确定丢弃 {count} 个路径的更改？此操作无法撤销。',
+  gitDiscardConfirm:
+    '确定丢弃 {count} 个路径的更改？此操作无法撤销。未跟踪文件会被删除；不会递归删除目录。\n\n{paths}',
   gitCancel: '取消',
   gitCommitMessage: '提交信息',
   gitCommit: '提交',

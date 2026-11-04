@@ -561,6 +561,18 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     }
   }, [commits.length, host, repo])
 
+  /**
+   * The remote a network verb talks to: the one the branch tracks (`origin` for
+   * `origin/main`), falling back to the first configured remote. Picking
+   * `remotes[0]` alone is wrong as soon as a repository has an `upstream`
+   * remote next to `origin`.
+   */
+  const defaultRemote = useMemo(() => {
+    const tracked = status?.upstream?.split('/')[0]
+    if (tracked && remotes.some((r) => r.name === tracked)) return tracked
+    return remotes[0]?.name ?? null
+  }, [remotes, status?.upstream])
+
   /** `force` only matters for push and always means `--force-with-lease`. */
   const runNetwork = useCallback(
     async (kind: GitNetworkKind, force = false) => {
@@ -578,7 +590,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
         percent: null,
         text: '',
       })
-      const remote = remotes[0]?.name ?? null
+      const remote = defaultRemote
       const branch = status?.branch ?? null
       try {
         const result =
@@ -597,7 +609,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
         setProgress(null)
       }
     },
-    [host, loadAll, networkKind, remotes, repo, status],
+    [defaultRemote, host, loadAll, networkKind, repo, status?.branch],
   )
 
   const cancelNetwork = useCallback(async () => {
@@ -611,8 +623,6 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
   }, [])
 
   const dismissActionError = useCallback(() => setActionError(null), [])
-
-  const defaultRemote = useMemo(() => remotes[0]?.name ?? null, [remotes])
 
   return {
     hostKey,

@@ -172,6 +172,9 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const committed = git.lastCommit
   const inProgress = git.conflicts?.inProgress ?? null
   const dirty = groups.staged.length + groups.changes.length + groups.untracked.length > 0
+  /** A network button's tooltip names the remote it will talk to. */
+  const remoteHint = (label: string) =>
+    git.defaultRemote ? `${label} · ${git.defaultRemote}` : label
 
   const openPath = (path: string) => {
     void git.open(path)
@@ -558,7 +561,8 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               <button
                 type="button"
                 className="git-icon-btn"
-                title={t('gitFetch')}
+                // Naming the remote keeps a multi-remote repository unambiguous.
+                title={remoteHint(t('gitFetch'))}
                 disabled={busy}
                 onClick={() => void git.runNetwork('fetch')}
               >
@@ -567,7 +571,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               <button
                 type="button"
                 className="git-icon-btn"
-                title={t('gitPullFfHint')}
+                title={remoteHint(t('gitPullFfHint'))}
                 disabled={busy}
                 onClick={() => void git.runNetwork('pull')}
               >
@@ -576,7 +580,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               <button
                 type="button"
                 className="git-icon-btn"
-                title={t('gitPush')}
+                title={remoteHint(t('gitPush'))}
                 disabled={busy}
                 onClick={() => void git.runNetwork('push')}
               >
@@ -585,7 +589,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               <button
                 type="button"
                 className="git-icon-btn danger"
-                title={t('gitPushForceHint')}
+                title={remoteHint(t('gitPushForceHint'))}
                 disabled={busy}
                 onClick={() => setForcePushOpen(true)}
               >
@@ -1085,7 +1089,13 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
       {discardPaths && (
         <ConfirmDialog
           title={t('gitDiscard')}
-          message={t('gitDiscardConfirm', { count: discardPaths.length })}
+          message={t('gitDiscardConfirm', {
+            count: discardPaths.length,
+            // The user must see *what* is about to be deleted, not just a count.
+            paths:
+              discardPaths.slice(0, 10).join('\n') +
+              (discardPaths.length > 10 ? `\n… (${discardPaths.length - 10} more)` : ''),
+          })}
           confirmLabel={t('gitDiscard')}
           cancelLabel={t('gitCancel')}
           danger
