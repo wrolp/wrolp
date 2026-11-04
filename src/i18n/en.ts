@@ -1532,6 +1532,7 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   gitMergeTheirs: 'Theirs',
   gitMergeStageMissing: 'This side has no file (deleted or added)',
   gitMergeBinary: 'Binary file — resolve it from a terminal',
+  gitSwitchRepo: 'Switch repository',
   gitScanRepos: 'Scan for repositories',
   gitScanning: 'Scanning…',
   gitScanEmpty: 'No repositories found in this folder (depth 2)',

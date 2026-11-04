@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { gitDiff } from '../commands'
 import { useI18n } from '../i18n'
+import { isDismissKey } from '../lib/keybindings'
 import type { GitDiff, GitHostRef } from '../types'
 import { DraggableModal } from './DraggableModal'
 
@@ -54,10 +55,20 @@ export function GitDiffView({ host, root, path, scope, oid, title, onClose }: Gi
     }
   }, [host, oid, path, root, scope])
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isDismissKey(e)) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const lines = diff && !diff.binary && !error ? diff.text.split('\n') : []
 
   return (
-    <DraggableModal className="git-diff-modal" onClose={onClose}>
+    // No backdrop dismissal: dialogs in this app close from their own button or
+    // Esc, so a stray click cannot throw away what the user is reading.
+    <DraggableModal className="git-diff-modal">
       <div className="modal-header">
         <h3 title={path ?? undefined}>{title}</h3>
         <button className="k8s-modal-close" onClick={onClose} title={t('gitClose')}>

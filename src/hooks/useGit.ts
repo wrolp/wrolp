@@ -264,6 +264,27 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
 
   const clearScan = useCallback(() => setScanResults(null), [])
 
+  /**
+   * Go back to the picker. The recent list is what makes another repository
+   * reachable without an app restart; every host-scoped row is dropped so a
+   * stale status cannot be rendered against the next repository.
+   */
+  const closeRepo = useCallback(() => {
+    setRepo(null)
+    setStatus(null)
+    setBranches([])
+    setRemotes([])
+    setConflicts(null)
+    setStashes([])
+    setCommits([])
+    setHasMoreLog(false)
+    setError(null)
+    setActionError(null)
+    setLastCommit(null)
+    setNetworkResult(null)
+    setScanResults(null)
+  }, [])
+
   const init = useCallback(
     async (path: string) => {
       const trimmed = path.trim()
@@ -617,6 +638,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     scanning,
     scan,
     clearScan,
+    closeRepo,
     lastCommit,
     networkKind,
     progress,

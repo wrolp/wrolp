@@ -149,7 +149,11 @@
 - The **Git** mode in the activity rail manages one repository at a time on the focused host — an SSH session through its exec channel, or this machine when no session is focused — with one UI and one command surface (`src-tauri/src/commands/git.rs`).
 - Everything is the real `git` CLI (no bundled library): remote calls run `env LC_ALL=C GIT_TERMINAL_PROMPT=0 … bash -lc '<quoted command>'` over a fresh exec channel, local calls spawn `git` directly with `HideConsole`. `git_probe` finds the binary, including the usual Windows install paths.
 - Status (porcelain v2), diffs (2 MB cap), paged history, branches and remotes; stage / unstage / discard / commit (with amend), branch create / switch / delete, abort merge or rebase, and `git init` for a plain folder.
-- **Fetch / pull / push** stream `git-progress` events, can be cancelled with `git_cancel`, and pull is `--ff-only` — a non-fast-forward ends as `git_not_fast_forward` with a hint to merge in the terminal.
+- **Fetch / pull / push** stream `git-progress` events, can be cancelled with `git_cancel`, and pull is `--ff-only` — a non-fast-forward ends as `git_not_fast_forward` with a hint to merge in the terminal. A forced push exists only as `--force-with-lease` and always asks first.
+- History shows a commit-graph lane column; expanding a commit lists its changed files, and a file opens its commit-scope diff. A read-only **blame** view is available per tracked file.
+- Conflicts: the panel lists unmerged paths, offers ours / theirs / mark-resolved, a read-only three-way view (base / ours / theirs), and aborts an in-progress merge, rebase, cherry-pick or revert.
+- **Stash** (push / pop / apply / drop), **clone** with progress, remote add / remove, `git init`, a bounded **repository scan** from the picker, and **local ignore** that appends to `.git/info/exclude` instead of editing the tracked `.gitignore`.
+- `git.localBin` (Settings registry) pins the local executable when a GUI process has no Git in `PATH`; the picker's "git not installed" state accepts the path inline.
 - Paths never reach a shell: remote arguments are quoted one by one, and the backend rejects absolute paths, drive letters, backslashes and `..`.
 
 ### AI assistant

@@ -1453,6 +1453,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   gitMergeTheirs: '对方（theirs）',
   gitMergeStageMissing: '该侧没有文件（已删除或为新增）',
   gitMergeBinary: '二进制文件，请在终端中处理',
+  gitSwitchRepo: '切换仓库',
   gitScanRepos: '扫描仓库',
   gitScanning: '扫描中…',
   gitScanEmpty: '该目录下（深度 2）没有找到仓库',

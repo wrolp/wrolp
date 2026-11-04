@@ -221,6 +221,20 @@ test('a host without git says so instead of failing every command', async ({ pag
     .toContain(BIN)
 })
 
+test('the repo bar can go back to the picker and open another repository', async ({ page }) => {
+  await boot(page)
+  await openRepo(page)
+
+  // The picker is otherwise unreachable once a repository is open.
+  await page.locator('.git-repo-bar button[title="Switch repository"]').click()
+  await expect(page.locator('.git-empty-title')).toHaveText('Open a repository to get started')
+  // Prefilled with the repository we just left, so re-opening is one click.
+  await expect(page.locator('.git-path-row input')).toHaveValue(REPO)
+
+  await page.locator('.git-path-row button[type="submit"]').click()
+  await expect(page.locator('.git-repo-root span')).toHaveText('demo')
+})
+
 test('scanning a folder lists repositories and opens one on click', async ({ page }) => {
   await boot(page, { gitScanRepos: [`${REPO}\\alpha`, `${REPO}\\beta`] })
 

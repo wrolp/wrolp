@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { gitBlame } from '../commands'
 import { useI18n } from '../i18n'
+import { isDismissKey } from '../lib/keybindings'
 import type { GitBlameLine, GitHostRef } from '../types'
 import { DraggableModal } from './DraggableModal'
 
@@ -48,8 +49,18 @@ export function GitBlameView({ host, root, path, oid, onClose }: GitBlameViewPro
     }
   }, [host, oid, path, root])
 
+  // Esc closes; the backdrop deliberately does not (a stray click must not
+  // dismiss the dialog in this app).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isDismissKey(e)) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   return (
-    <DraggableModal className="git-diff-modal git-blame-modal" onClose={onClose}>
+    <DraggableModal className="git-diff-modal git-blame-modal">
       <div className="modal-header">
         <h3 title={path}>{path}</h3>
         <button className="k8s-modal-close" onClick={onClose} title={t('gitClose')}>

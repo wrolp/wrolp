@@ -505,6 +505,19 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
         <button
           type="button"
           className="git-icon-btn"
+          title={t('gitSwitchRepo')}
+          disabled={busy}
+          onClick={() => {
+            // Keep the picker pointing at the repository we just left.
+            setPathInput(git.root ?? pathInput)
+            git.closeRepo()
+          }}
+        >
+          <Icon name="folderOpen" size={13} />
+        </button>
+        <button
+          type="button"
+          className="git-icon-btn"
           title={t('gitRefresh')}
           disabled={busy}
           onClick={() => void git.refresh()}
