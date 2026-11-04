@@ -213,6 +213,8 @@ export interface TauriMockOptions {
   gitRemotes?: GitRemote[]
   /** Conflict answer for `git_conflicts` (defaults to none in progress). */
   gitConflicts?: { inProgress: string | null; paths: string[] }
+  /** Stash rows for `git_stash_list` (the store mutates on push / pop / drop). */
+  gitStashes?: { index: number; oid: string; timestamp: number; message: string }[]
   /** Commit rows returned by `git_log`, paged by `limit` / `skip`. */
   gitCommits?: GitCommit[]
   /** Files for `git_commit_files`, either per-oid or a blanket default. */
@@ -282,6 +284,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     }
     const gitEntries: GitStatusEntry[] = (opts.gitStatus?.entries ?? []).map((e) => ({ ...e }))
     let gitCommits: GitCommit[] = (opts.gitCommits ?? []).map((c) => ({ ...c }))
+    let gitStashes = (opts.gitStashes ?? []).map((s) => ({ ...s }))
     const gitStatusNow = (): GitStatus => ({
       ...gitBase,
       entries: gitEntries.map((e) => ({ ...e })),
@@ -853,6 +856,21 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return gitStatusNow()
           case 'git_conflicts':
             return opts.gitConflicts ?? { inProgress: null, paths: [] }
+          case 'git_stash_list':
+            return gitStashes.map((s) => ({ ...s }))
+          case 'git_stash_push': {
+            const message = String(args.message ?? 'WIP on main')
+            gitStashes = [{ index: 0, oid: 'f'.repeat(40), timestamp: 1760000000, message }, ...gitStashes]
+            return gitStashes.map((s) => ({ ...s }))
+          }
+          case 'git_stash_entry': {
+            const index = Number(args.index ?? -1)
+            const action = String(args.action ?? '')
+            if (action === 'drop' || action === 'pop') {
+              gitStashes = gitStashes.filter((s) => s.index !== index)
+            }
+            return gitStashes.map((s) => ({ ...s }))
+          }
           case 'git_remote_add':
           case 'git_remote_remove':
             return opts.gitRemotes ?? []

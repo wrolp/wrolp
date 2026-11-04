@@ -10,6 +10,7 @@ pub mod branch;
 pub mod conflict;
 pub mod history;
 pub mod remote;
+pub mod stash;
 pub mod status;
 
 #[cfg(test)]
@@ -145,6 +146,18 @@ pub struct GitCommitResult {
 pub struct GitNetworkResult {
   pub stdout: String,
   pub stderr: String,
+}
+
+/// One `git stash` entry. `index` addresses it as `stash@{index}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStash {
+  pub index: u32,
+  pub oid: String,
+  /// Unix seconds.
+  pub timestamp: i64,
+  /// The reflog subject (`WIP on main: …` or the `-m` message).
+  pub message: String,
 }
 
 /// Unmerged paths plus the operation whose merge markers are still live, if any.

@@ -515,6 +515,25 @@
   gap: 6px;
 }
 
+.git-stash-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.git-stash-main {
+  cursor: default;
+}
+
+.git-stash-index {
+  flex: none;
+  font-family: $font-mono;
+  font-size: var(--fs-xs);
+  color: $accent;
+}
+
 .git-amend {
   display: inline-flex;
   align-items: center;

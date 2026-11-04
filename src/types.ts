@@ -1009,6 +1009,14 @@ export interface GitNetworkResult {
   stderr: string
 }
 
+/** One `git stash` entry; `index` addresses it as `stash@{index}`. */
+export interface GitStash {
+  index: number
+  oid: string
+  timestamp: number
+  message: string
+}
+
 /** Unmerged paths plus the operation whose markers are live, if any. */
 export interface GitConflicts {
   inProgress: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | null

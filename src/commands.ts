@@ -71,6 +71,7 @@ import type {
   GitRemote,
   GitCommitResult,
   GitConflicts,
+  GitStash,
   GitNetworkResult,
 } from './types'
 
@@ -1758,6 +1759,34 @@ export async function gitRemoteRemove(
   name: string,
 ): Promise<GitRemote[]> {
   return await invoke<GitRemote[]>('git_remote_remove', { host, root, name })
+}
+
+export async function gitStashList(host: GitHostRef, root: string): Promise<GitStash[]> {
+  return await invoke<GitStash[]>('git_stash_list', { host, root })
+}
+
+export async function gitStashPush(
+  host: GitHostRef,
+  root: string,
+  message: string | null,
+  includeUntracked: boolean,
+): Promise<GitStash[]> {
+  return await invoke<GitStash[]>('git_stash_push', {
+    host,
+    root,
+    message,
+    includeUntracked,
+  })
+}
+
+/** `pop` applies + drops, `apply` keeps the entry, `drop` discards it. */
+export async function gitStashEntry(
+  host: GitHostRef,
+  root: string,
+  index: number,
+  action: 'pop' | 'apply' | 'drop',
+): Promise<GitStash[]> {
+  return await invoke<GitStash[]>('git_stash_entry', { host, root, index, action })
 }
 
 /** Clone with `--progress`; the returned info opens the new repository. */

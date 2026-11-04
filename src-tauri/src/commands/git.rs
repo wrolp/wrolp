@@ -12,10 +12,11 @@ use crate::git::conflict;
 use crate::git::history;
 use crate::git::parse;
 use crate::git::remote;
+use crate::git::stash;
 use crate::git::status;
 use crate::git::{
   GitBranch, GitCommitFile, GitCommitResult, GitConflicts, GitDiff, GitLogPage, GitNetworkResult,
-  GitRemote, GitRepoInfo, GitStatus, MAX_STATUS_ENTRIES,
+  GitRemote, GitRepoInfo, GitStash, GitStatus, MAX_STATUS_ENTRIES,
 };
 use crate::git_host::{
   exec_git, exec_git_streaming, probe_git, GitHostRef, GitProbe, GitState, READ_TIMEOUT,
@@ -816,6 +817,102 @@ pub async fn git_remote_remove(
     return Err(failed("remote", &out, &err, code));
   }
   Ok(parse::parse_remotes(&out))
+}
+
+// ==================== Stash ====================
+
+/// Helper shared by every stash command: read the list back after a write, so
+/// the panel always renders what git actually has.
+async fn stash_list_of(
+  state: &tauri::State<'_, AppState>,
+  cli: &GitState,
+  host: &GitHostRef,
+  root: &str,
+) -> Result<Vec<GitStash>, String> {
+  let (out, err, code) = exec_git(
+    state,
+    cli,
+    host,
+    Some(root),
+    &stash::list_args(),
+    None,
+    READ_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("stash", &out, &err, code));
+  }
+  Ok(parse::parse_stash_list(&out))
+}
+
+#[tauri::command]
+pub async fn git_stash_list(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+) -> Result<Vec<GitStash>, String> {
+  let root = checked_root(&root)?;
+  stash_list_of(&state, cli.inner(), &host, &root).await
+}
+
+/// `git stash push`: the working tree leaves, the stash entry appears. Untracked
+/// files are included only when the panel asked for them.
+#[tauri::command]
+pub async fn git_stash_push(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+  message: Option<String>,
+  include_untracked: bool,
+) -> Result<Vec<GitStash>, String> {
+  let root = checked_root(&root)?;
+  let _lock = cli.try_lock(&host, &root)?;
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &stash::push_args(message.as_deref(), include_untracked),
+    None,
+    WRITE_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("stash", &out, &err, code));
+  }
+  stash_list_of(&state, cli.inner(), &host, &root).await
+}
+
+/// `pop` applies and drops; `apply` keeps the entry; `drop` discards it.
+#[tauri::command]
+pub async fn git_stash_entry(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+  index: u32,
+  action: String,
+) -> Result<Vec<GitStash>, String> {
+  let root = checked_root(&root)?;
+  let argv = stash::entry_args(&action, index)
+    .ok_or_else(|| crate::git::git_error("stash", format!("unknown stash action: {action}")))?;
+  let _lock = cli.try_lock(&host, &root)?;
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &argv,
+    None,
+    WRITE_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("stash", &out, &err, code));
+  }
+  stash_list_of(&state, cli.inner(), &host, &root).await
 }
 
 // ==================== Network ====================

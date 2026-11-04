@@ -22,6 +22,9 @@ import {
   gitRemotes,
   gitRepoInfo,
   gitResolve,
+  gitStashEntry,
+  gitStashList,
+  gitStashPush,
   gitStage,
   gitStatus,
   gitUnstage,
@@ -38,6 +41,7 @@ import type {
   GitProgressEvent,
   GitRemote,
   GitRepoInfo,
+  GitStash,
   GitStatus,
 } from '../types'
 
@@ -62,6 +66,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
   const [branches, setBranches] = useState<GitBranch[]>([])
   const [remotes, setRemotes] = useState<GitRemote[]>([])
   const [conflicts, setConflicts] = useState<GitConflicts | null>(null)
+  const [stashes, setStashes] = useState<GitStash[]>([])
   const [commits, setCommits] = useState<GitCommit[]>([])
   const [hasMoreLog, setHasMoreLog] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -86,6 +91,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     setBranches([])
     setRemotes([])
     setConflicts(null)
+    setStashes([])
     setCommits([])
     setHasMoreLog(false)
     setError(null)
@@ -144,12 +150,13 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     async (root: string) => {
       setLoading(true)
       try {
-        const [st, br, rm, lg, cf] = await Promise.all([
+        const [st, br, rm, lg, cf, sts] = await Promise.all([
           gitStatus(host, root),
           gitBranches(host, root),
           gitRemotes(host, root),
           gitLog(host, root, HISTORY_PAGE, 0),
           gitConflicts(host, root),
+          gitStashList(host, root),
         ])
         setStatus(st)
         setBranches(br)
@@ -157,6 +164,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
         setCommits(lg.commits)
         setHasMoreLog(lg.hasMore)
         setConflicts(cf)
+        setStashes(sts)
       } catch (e: unknown) {
         setActionError(String(e))
       } finally {
@@ -186,6 +194,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
           setBranches([])
           setRemotes([])
           setConflicts(null)
+          setStashes([])
           setCommits([])
           setHasMoreLog(false)
         } else {
@@ -387,6 +396,40 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     [host, repo],
   )
 
+  /** `git stash push`: the working tree empties, so status is refreshed too. */
+  const pushStash = useCallback(
+    async (message: string | null, includeUntracked: boolean) => {
+      if (!repo || repo.bare) return false
+      setActionError(null)
+      try {
+        setStashes(await gitStashPush(host, repo.root, message, includeUntracked))
+        await refresh()
+        return true
+      } catch (e: unknown) {
+        setActionError(String(e))
+        return false
+      }
+    },
+    [host, refresh, repo],
+  )
+
+  /** `pop` / `apply` change the worktree; `drop` does not. Refresh either way. */
+  const stashAction = useCallback(
+    async (index: number, action: 'pop' | 'apply' | 'drop') => {
+      if (!repo || repo.bare) return false
+      setActionError(null)
+      try {
+        setStashes(await gitStashEntry(host, repo.root, index, action))
+        if (action !== 'drop') await refresh()
+        return true
+      } catch (e: unknown) {
+        setActionError(String(e))
+        return false
+      }
+    },
+    [host, refresh, repo],
+  )
+
   /**
    * Clone into `dest`, sharing the network progress UI, then open the result.
    * Runs outside any repository root.
@@ -492,6 +535,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     branches,
     remotes,
     conflicts,
+    stashes,
     defaultRemote,
     commits,
     hasMoreLog,
@@ -516,6 +560,8 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     resolveConflict,
     addRemote,
     removeRemote,
+    pushStash,
+    stashAction,
     clone,
     loadMoreLog,
     runNetwork,

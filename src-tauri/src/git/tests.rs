@@ -224,6 +224,19 @@ fn abort_only_accepts_the_known_operations() {
 }
 
 #[test]
+fn stash_rows_carry_the_index_git_printed() {
+  // Two records; the second lacks a `stash@{` selector and is skipped.
+  let raw = b"stash@{0}\x00aaaa\x001760000000\x00WIP on main: tweak\x1e\nstash@{1}\x00bbbb\x001759000000\x00on main: older\x1ejunk\x1e";
+  let entries = parse::parse_stash_list(raw);
+  assert_eq!(entries.len(), 2);
+  assert_eq!(entries[0].index, 0);
+  assert_eq!(entries[1].index, 1);
+  assert_eq!(entries[0].oid, "aaaa");
+  assert_eq!(entries[1].timestamp, 1759000000);
+  assert_eq!(entries[1].message, "on main: older");
+}
+
+#[test]
 fn remote_urls_are_argv_safe() {
   assert_eq!(remote::checked_url("https://github.com/x/y.git").unwrap(), "https://github.com/x/y.git");
   assert_eq!(remote::checked_url("git@host:repo.git").unwrap(), "git@host:repo.git");

@@ -94,6 +94,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const [remoteUrl, setRemoteUrl] = useState('')
   const [message, setMessage] = useState('')
   const [amend, setAmend] = useState(false)
+  const [stashUntracked, setStashUntracked] = useState(false)
   const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null)
   const [discardPaths, setDiscardPaths] = useState<string[] | null>(null)
   const [cloneOpen, setCloneOpen] = useState(false)
@@ -141,6 +142,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
     setRemoteUrl('')
     setMessage('')
     setAmend(false)
+    setStashUntracked(false)
     setDiffTarget(null)
     setDiscardPaths(null)
     setExpandedOid(null)
@@ -158,6 +160,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const busy = git.loading || git.networkKind != null
   const committed = git.lastCommit
   const inProgress = git.conflicts?.inProgress ?? null
+  const dirty = groups.staged.length + groups.changes.length + groups.untracked.length > 0
 
   const openPath = (path: string) => {
     void git.open(path)
@@ -741,7 +744,77 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                 {t('gitCommit')}
               </button>
             </div>
+            <div className="git-stash-row">
+              <label className="git-amend">
+                <input
+                  type="checkbox"
+                  checked={stashUntracked}
+                  onChange={(e) => setStashUntracked(e.target.checked)}
+                />
+                {t('gitStashUntracked')}
+              </label>
+              <button
+                type="button"
+                className="git-link-btn"
+                title={t('gitStashHint')}
+                disabled={busy || !dirty}
+                onClick={() => {
+                  void git.pushStash(message.trim() || null, stashUntracked).then((ok) => {
+                    if (ok) {
+                      setMessage('')
+                      setAmend(false)
+                    }
+                  })
+                }}
+              >
+                {t('gitStashChanges')}
+              </button>
+            </div>
           </section>
+
+          {git.stashes.length > 0 && (
+            <section className="git-section">
+              <div className="git-section-head">
+                <span>
+                  {t('gitStashes')} <span className="git-count">{git.stashes.length}</span>
+                </span>
+              </div>
+              {git.stashes.map((s) => (
+                <div className="git-row" key={`${s.index}-${s.oid}`}>
+                  <div className="git-row-main git-stash-main" title={s.message}>
+                    <span className="git-stash-index">{`stash@{${s.index}}`}</span>
+                    <span className="git-path">{s.message}</span>
+                  </div>
+                  <div className="git-row-actions">
+                    <button
+                      type="button"
+                      className="git-mini-btn"
+                      title={t('gitStashPopHint')}
+                      onClick={() => void git.stashAction(s.index, 'pop')}
+                    >
+                      {t('gitStashPop')}
+                    </button>
+                    <button
+                      type="button"
+                      className="git-mini-btn"
+                      title={t('gitStashApplyHint')}
+                      onClick={() => void git.stashAction(s.index, 'apply')}
+                    >
+                      {t('gitStashApply')}
+                    </button>
+                    <button
+                      type="button"
+                      className="git-mini-btn danger"
+                      title={t('gitStashDropHint')}
+                      onClick={() => void git.stashAction(s.index, 'drop')}
+                    >
+                      <Icon name="trash" size={11} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
 
           <section className="git-section">
             <div className="git-section-head">

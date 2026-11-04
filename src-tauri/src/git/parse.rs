@@ -5,7 +5,10 @@
 //! is `\0`. These functions take bytes so a conversion failure can never lose a
 //! row silently.
 
-use super::{GitBranch, GitCommit, GitCommitFile, GitDiff, GitLogPage, GitRemote, GitStatus, GitStatusEntry, MAX_DIFF_BYTES, MAX_STATUS_ENTRIES};
+use super::{
+  GitBranch, GitCommit, GitCommitFile, GitDiff, GitLogPage, GitRemote, GitStash, GitStatus,
+  GitStatusEntry, MAX_DIFF_BYTES, MAX_STATUS_ENTRIES,
+};
 
 fn field(bytes: &[u8]) -> String {
   String::from_utf8_lossy(bytes)
@@ -312,4 +315,42 @@ pub fn parse_diff(raw: &[u8]) -> GitDiff {
     truncated,
     binary: false,
   }
+}
+
+/// `git stash list --format=%gd%x00%H%x00%ct%x00%gs%x1e`.
+///
+/// The index is taken from `%gd` (`stash@{2}`) so it always matches what git
+/// itself printed; a record whose selector does not parse is skipped rather
+/// than guessed at.
+pub fn parse_stash_list(raw: &[u8]) -> Vec<GitStash> {
+  let mut out = Vec::new();
+  for record in raw.split(|b| *b == 0x1e) {
+    let record = record
+      .iter()
+      .copied()
+      .skip_while(|b| *b == b'\n' || *b == b'\r')
+      .collect::<Vec<u8>>();
+    if record.is_empty() {
+      continue;
+    }
+    let fields: Vec<String> = record.split(|b| *b == 0).map(field).collect();
+    if fields.len() < 4 {
+      continue;
+    }
+    let Some(index) = fields[0]
+      .trim()
+      .strip_prefix("stash@{")
+      .and_then(|s| s.strip_suffix('}'))
+      .and_then(|s| s.parse::<u32>().ok())
+    else {
+      continue;
+    };
+    out.push(GitStash {
+      index,
+      oid: fields[1].clone(),
+      timestamp: fields[2].parse().unwrap_or(0),
+      message: fields[3].clone(),
+    });
+  }
+  out
 }
