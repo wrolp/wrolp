@@ -30,6 +30,25 @@ pub fn commit_files_args(oid: &str) -> Vec<String> {
   ]
 }
 
+/// `git blame --line-porcelain [<oid>] -- <path>`.
+///
+/// `--line-porcelain` repeats every header on every line, which is what makes a
+/// line-oriented parser safe; the plain porcelain format omits repeated headers
+/// (including `summary`) and would need per-file state. `--` terminates options.
+pub fn blame_args(path: &str, oid: Option<&str>) -> Vec<String> {
+  let mut argv = vec![
+    "blame".to_string(),
+    "--line-porcelain".to_string(),
+    "--no-progress".to_string(),
+  ];
+  if let Some(oid) = oid {
+    argv.push(oid.to_string());
+  }
+  argv.push("--".to_string());
+  argv.push(path.to_string());
+  argv
+}
+
 /// An oid must be pure hex and long enough to be unambiguous. This also stops a
 /// frontend string that starts with `-` from being read as an option.
 pub fn checked_oid(oid: &str) -> Result<String, String> {

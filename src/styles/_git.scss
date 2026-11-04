@@ -206,6 +206,11 @@
     color: $accent;
   }
 
+  &.danger:hover:not(:disabled) {
+    border-color: $danger;
+    color: $danger;
+  }
+
   &:disabled {
     opacity: 0.45;
     cursor: default;
@@ -766,4 +771,55 @@
   color: $danger;
   font-size: var(--fs-sm);
   word-break: break-word;
+}
+
+.git-blame-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  font-family: $font-mono;
+  font-size: var(--fs-sm);
+}
+
+.git-blame-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 8px;
+  white-space: pre;
+
+  &:hover {
+    background: $bg-hover;
+  }
+}
+
+.git-blame-line {
+  flex: none;
+  min-width: 42px;
+  text-align: right;
+  color: $text-dim;
+}
+
+.git-blame-oid {
+  flex: none;
+  color: $accent;
+}
+
+.git-blame-author {
+  flex: none;
+  min-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: $text-muted;
+}
+
+.git-blame-date {
+  flex: none;
+  min-width: 70px;
+  color: $text-dim;
+}
+
+.git-blame-text {
+  flex: 1 1 auto;
+  color: $text-secondary;
 }

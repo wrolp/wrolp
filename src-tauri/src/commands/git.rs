@@ -15,8 +15,8 @@ use crate::git::remote;
 use crate::git::stash;
 use crate::git::status;
 use crate::git::{
-  GitBranch, GitCommitFile, GitCommitResult, GitConflicts, GitDiff, GitLogPage, GitNetworkResult,
-  GitRemote, GitRepoInfo, GitStash, GitStatus, MAX_STATUS_ENTRIES,
+  GitBlameLine, GitBranch, GitCommitFile, GitCommitResult, GitConflicts, GitDiff, GitLogPage,
+  GitNetworkResult, GitRemote, GitRepoInfo, GitStash, GitStatus, MAX_STATUS_ENTRIES,
 };
 use crate::git_host::{
   exec_git, exec_git_streaming, probe_git, GitHostRef, GitProbe, GitState, READ_TIMEOUT,
@@ -278,6 +278,38 @@ pub async fn git_commit_files(
     return Err(failed("log", &out, &err, code));
   }
   Ok(parse::parse_commit_files(&out))
+}
+
+/// `git blame --line-porcelain` for one tracked path, optionally at a commit.
+#[tauri::command]
+pub async fn git_blame(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+  path: String,
+  oid: Option<String>,
+) -> Result<Vec<GitBlameLine>, String> {
+  let root = checked_root(&root)?;
+  let rel = crate::git::checked_rel_path(&path)?;
+  let oid = match oid.as_deref().map(str::trim).filter(|o| !o.is_empty()) {
+    Some(o) => Some(history::checked_oid(o)?),
+    None => None,
+  };
+  let (out, err, code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &history::blame_args(&rel, oid.as_deref()),
+    None,
+    READ_TIMEOUT,
+  )
+  .await?;
+  if code != 0 {
+    return Err(failed("blame", &out, &err, code));
+  }
+  Ok(parse::parse_blame(&out))
 }
 
 #[tauri::command]
@@ -1024,6 +1056,7 @@ pub async fn git_push(
   root: String,
   remote: Option<String>,
   branch: Option<String>,
+  force: bool,
   op_id: String,
 ) -> Result<GitNetworkResult, String> {
   let root = checked_root(&root)?;
@@ -1042,7 +1075,7 @@ pub async fn git_push(
     cli.inner(),
     &host,
     &root,
-    &remote::push_args(remote.as_deref(), branch.as_deref()),
+    &remote::push_args(remote.as_deref(), branch.as_deref(), force),
     &op_id,
     "push",
   )

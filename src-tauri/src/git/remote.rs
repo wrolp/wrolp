@@ -51,8 +51,12 @@ pub fn pull_args(remote: Option<&str>, branch: Option<&str>) -> Vec<String> {
 
 /// With a known remote/branch, `--set-upstream` makes the first push self-
 /// sufficient and is harmless once the upstream already exists.
-pub fn push_args(remote: Option<&str>, branch: Option<&str>) -> Vec<String> {
-  match (remote, branch) {
+///
+/// `force` is always `--force-with-lease`, never a bare `--force`: the push is
+/// rejected if the remote moved since the last fetch, so a forced push cannot
+/// silently discard someone else's commits.
+pub fn push_args(remote: Option<&str>, branch: Option<&str>, force: bool) -> Vec<String> {
+  let mut argv = match (remote, branch) {
     (Some(r), Some(b)) => vec![
       "push".to_string(),
       "--set-upstream".to_string(),
@@ -61,7 +65,11 @@ pub fn push_args(remote: Option<&str>, branch: Option<&str>) -> Vec<String> {
     ],
     (Some(r), None) => vec!["push".to_string(), r.to_string()],
     _ => vec!["push".to_string()],
+  };
+  if force {
+    argv.insert(1, "--force-with-lease".to_string());
   }
+  argv
 }
 
 /// `git remote add <name> <url>` — the URL is one argv element, never shell text.

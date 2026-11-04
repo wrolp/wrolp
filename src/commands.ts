@@ -71,6 +71,7 @@ import type {
   GitRemote,
   GitCommitResult,
   GitConflicts,
+  GitBlameLine,
   GitStash,
   GitNetworkResult,
 } from './types'
@@ -1715,14 +1716,32 @@ export async function gitPull(
   return await invoke<GitNetworkResult>('git_pull', { host, root, remote, branch, opId })
 }
 
+/** `force` maps to `--force-with-lease`; the panel always confirms it first. */
 export async function gitPush(
   host: GitHostRef,
   root: string,
   remote: string | null,
   branch: string | null,
+  force: boolean,
   opId: string,
 ): Promise<GitNetworkResult> {
-  return await invoke<GitNetworkResult>('git_push', { host, root, remote, branch, opId })
+  return await invoke<GitNetworkResult>('git_push', {
+    host,
+    root,
+    remote,
+    branch,
+    force,
+    opId,
+  })
+}
+
+export async function gitBlame(
+  host: GitHostRef,
+  root: string,
+  path: string,
+  oid: string | null,
+): Promise<GitBlameLine[]> {
+  return await invoke<GitBlameLine[]>('git_blame', { host, root, path, oid })
 }
 
 export async function gitCancel(opId: string): Promise<void> {

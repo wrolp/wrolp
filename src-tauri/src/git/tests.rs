@@ -271,10 +271,50 @@ fn network_argv_covers_remote_and_branch_variants() {
     vec!["pull", "--ff-only", "origin", "main"]
   );
   assert_eq!(
-    remote::push_args(Some("origin"), Some("main")),
+    remote::push_args(Some("origin"), Some("main"), false),
     vec!["push", "--set-upstream", "origin", "main"]
   );
-  assert_eq!(remote::push_args(None, None), vec!["push"]);
+  assert_eq!(remote::push_args(None, None, false), vec!["push"]);
+  // A forced push is always `--force-with-lease`, never a bare `--force`.
+  assert_eq!(
+    remote::push_args(Some("origin"), Some("main"), true),
+    vec!["push", "--force-with-lease", "--set-upstream", "origin", "main"]
+  );
+  assert!(!remote::push_args(Some("origin"), None, true).contains(&"--force".to_string()));
+}
+
+#[test]
+fn blame_argv_terminates_options_and_pins_the_oid() {
+  assert_eq!(
+    history::blame_args("src/main.ts", None),
+    vec!["blame", "--line-porcelain", "--no-progress", "--", "src/main.ts"]
+  );
+  assert_eq!(
+    history::blame_args("src/main.ts", Some("abc123")),
+    vec![
+      "blame",
+      "--line-porcelain",
+      "--no-progress",
+      "abc123",
+      "--",
+      "src/main.ts"
+    ]
+  );
+}
+
+#[test]
+fn blame_blocks_become_one_row_per_line() {
+  let raw = b"1111111111111111111111111111111111111111 1 1 2\nauthor Ann\nauthor-mail <ann@example.com>\nauthor-time 1760000000\nauthor-tz +0000\ncommitter Ann\ncommitter-time 1760000000\ncommitter-tz +0000\nsummary initial commit\nfilename src/main.ts\n\tconst a = 1\n2222222222222222222222222222222222222222 2 2\nauthor Bob\nauthor-mail <bob@example.com>\nauthor-time 1760000100\nauthor-tz +0000\ncommitter Bob\ncommitter-time 1760000100\ncommitter-tz +0000\nsummary fix the client\nfilename src/main.ts\n\tconst b = 2\n";
+  let rows = parse::parse_blame(raw);
+  assert_eq!(rows.len(), 2);
+  assert_eq!(rows[0].line, 1);
+  assert_eq!(rows[0].short_oid, "1111111");
+  assert_eq!(rows[0].author, "Ann");
+  assert_eq!(rows[0].text, "const a = 1");
+  assert_eq!(rows[1].line, 2);
+  assert_eq!(rows[1].timestamp, 1760000100);
+  assert_eq!(rows[1].summary, "fix the client");
+  assert_eq!(rows[1].text, "const b = 2");
 }
 
 #[test]

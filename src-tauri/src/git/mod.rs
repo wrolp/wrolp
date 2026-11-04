@@ -148,6 +148,22 @@ pub struct GitNetworkResult {
   pub stderr: String,
 }
 
+/// One blame row: who last touched this line, and the line itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBlameLine {
+  /// 1-based line number in the blamed file.
+  pub line: u32,
+  pub oid: String,
+  pub short_oid: String,
+  pub author: String,
+  /// Unix seconds.
+  pub timestamp: i64,
+  pub summary: String,
+  /// The file line, with the leading tab git prints stripped.
+  pub text: String,
+}
+
 /// One `git stash` entry. `index` addresses it as `stash@{index}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

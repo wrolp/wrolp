@@ -1527,6 +1527,12 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   gitOursShort: 'ours',
   gitTheirsShort: 'theirs',
   gitMarkResolved: 'Mark resolved',
+  gitPushForce: 'Force push',
+  gitPushForceHint: 'Force push with lease (rejected if the remote moved)',
+  gitPushForceConfirm:
+    'Push with --force-with-lease? The push is rejected if the remote moved since the last fetch, but a successful one still rewrites the remote branch.',
+  gitBlameOpen: 'Blame this file',
+  gitBlameEmpty: 'No blame data for this file',
   gitStashes: 'Stashes',
   gitStashChanges: 'Stash changes',
   gitStashUntracked: 'Include untracked',

@@ -472,8 +472,9 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     }
   }, [commits.length, host, repo])
 
+  /** `force` only matters for push and always means `--force-with-lease`. */
   const runNetwork = useCallback(
-    async (kind: GitNetworkKind) => {
+    async (kind: GitNetworkKind, force = false) => {
       if (!repo || repo.bare || networkKind) return
       const opId = `git-${kind}-${Date.now()}`
       opRef.current = opId
@@ -496,7 +497,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
             ? await gitFetch(host, repo.root, remote, opId)
             : kind === 'pull'
               ? await gitPull(host, repo.root, remote, branch, opId)
-              : await gitPush(host, repo.root, remote, branch, opId)
+              : await gitPush(host, repo.root, remote, branch, force, opId)
         setNetworkResult(result)
         await loadAll(repo.root)
       } catch (e: unknown) {

@@ -6,8 +6,8 @@
 //! row silently.
 
 use super::{
-  GitBranch, GitCommit, GitCommitFile, GitDiff, GitLogPage, GitRemote, GitStash, GitStatus,
-  GitStatusEntry, MAX_DIFF_BYTES, MAX_STATUS_ENTRIES,
+  GitBlameLine, GitBranch, GitCommit, GitCommitFile, GitDiff, GitLogPage, GitRemote, GitStash,
+  GitStatus, GitStatusEntry, MAX_DIFF_BYTES, MAX_STATUS_ENTRIES,
 };
 
 fn field(bytes: &[u8]) -> String {
@@ -315,6 +315,57 @@ pub fn parse_diff(raw: &[u8]) -> GitDiff {
     truncated,
     binary: false,
   }
+}
+
+/// `git blame --line-porcelain` output.
+///
+/// A record starts with `<oid> <orig-line> <final-line> [<group>]` and ends with
+/// a tab-prefixed content line; every header repeats per line in this mode, so
+/// state never has to survive more than one block.
+pub fn parse_blame(raw: &[u8]) -> Vec<GitBlameLine> {
+  let text = String::from_utf8_lossy(raw);
+  let mut out = Vec::new();
+  let mut cur: Option<GitBlameLine> = None;
+  for line in text.lines() {
+    if let Some(content) = line.strip_prefix('\t') {
+      if let Some(mut row) = cur.take() {
+        if row.line > 0 {
+          row.text = content.to_string();
+          row.short_oid = row.oid.chars().take(7).collect();
+          out.push(row);
+        }
+      }
+      continue;
+    }
+    let header_oid = (line.len() > 41).then(|| &line[..40]).filter(|head| {
+      head.chars().all(|c| c.is_ascii_hexdigit()) && line.as_bytes().get(40) == Some(&b' ')
+    });
+    if let Some(oid) = header_oid {
+      let parts: Vec<&str> = line.split_whitespace().collect();
+      if parts.len() >= 3 {
+        cur = Some(GitBlameLine {
+          line: parts[2].parse().unwrap_or(0),
+          oid: oid.trim_start_matches('^').to_string(),
+          short_oid: String::new(),
+          author: String::new(),
+          timestamp: 0,
+          summary: String::new(),
+          text: String::new(),
+        });
+      }
+      continue;
+    }
+    if let Some(row) = cur.as_mut() {
+      if let Some(v) = line.strip_prefix("author ") {
+        row.author = v.trim().to_string();
+      } else if let Some(v) = line.strip_prefix("author-time ") {
+        row.timestamp = v.trim().parse().unwrap_or(0);
+      } else if let Some(v) = line.strip_prefix("summary ") {
+        row.summary = v.trim().to_string();
+      }
+    }
+  }
+  out
 }
 
 /// `git stash list --format=%gd%x00%H%x00%ct%x00%gs%x1e`.

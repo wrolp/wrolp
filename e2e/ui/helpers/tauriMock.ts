@@ -215,6 +215,16 @@ export interface TauriMockOptions {
   gitConflicts?: { inProgress: string | null; paths: string[] }
   /** Stash rows for `git_stash_list` (the store mutates on push / pop / drop). */
   gitStashes?: { index: number; oid: string; timestamp: number; message: string }[]
+  /** Blame rows returned by `git_blame` (defaults to `[]`). */
+  gitBlameLines?: {
+    line: number
+    oid: string
+    shortOid: string
+    author: string
+    timestamp: number
+    summary: string
+    text: string
+  }[]
   /** Commit rows returned by `git_log`, paged by `limit` / `skip`. */
   gitCommits?: GitCommit[]
   /** Files for `git_commit_files`, either per-oid or a blanket default. */
@@ -856,6 +866,8 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return gitStatusNow()
           case 'git_conflicts':
             return opts.gitConflicts ?? { inProgress: null, paths: [] }
+          case 'git_blame':
+            return opts.gitBlameLines ?? []
           case 'git_stash_list':
             return gitStashes.map((s) => ({ ...s }))
           case 'git_stash_push': {

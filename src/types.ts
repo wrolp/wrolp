@@ -1009,6 +1009,17 @@ export interface GitNetworkResult {
   stderr: string
 }
 
+/** One blame row: who last touched a line, and the line itself. */
+export interface GitBlameLine {
+  line: number
+  oid: string
+  shortOid: string
+  author: string
+  timestamp: number
+  summary: string
+  text: string
+}
+
 /** One `git stash` entry; `index` addresses it as `stash@{index}`. */
 export interface GitStash {
   index: number

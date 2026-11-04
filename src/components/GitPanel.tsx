@@ -14,6 +14,7 @@ import { groupGitStatus, gitEntryKey, gitEntryLetter } from '../lib/gitStatus'
 import { computeLanes, graphLaneCount } from '../lib/gitGraph'
 import type { GitCommitFile, GitHostRef, GitStatusEntry } from '../types'
 import { ConfirmDialog } from './ConfirmDialog'
+import { GitBlameView } from './GitBlameView'
 import { GitDiffView } from './GitDiffView'
 import { Icon } from './Icon'
 
@@ -97,6 +98,8 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const [stashUntracked, setStashUntracked] = useState(false)
   const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null)
   const [discardPaths, setDiscardPaths] = useState<string[] | null>(null)
+  const [blamePath, setBlamePath] = useState<string | null>(null)
+  const [forcePushOpen, setForcePushOpen] = useState(false)
   const [cloneOpen, setCloneOpen] = useState(false)
   const [cloneUrl, setCloneUrl] = useState('')
   const [cloneDest, setCloneDest] = useState('')
@@ -143,6 +146,8 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
     setMessage('')
     setAmend(false)
     setStashUntracked(false)
+    setBlamePath(null)
+    setForcePushOpen(false)
     setDiffTarget(null)
     setDiscardPaths(null)
     setExpandedOid(null)
@@ -229,6 +234,16 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                 {staged ? '−' : '+'}
               </button>
             )
+          )}
+          {entry.kind !== 'ignored' && entry.kind !== 'untracked' && (
+            <button
+              type="button"
+              className="git-mini-btn"
+              title={t('gitBlameOpen')}
+              onClick={() => setBlamePath(entry.path)}
+            >
+              B
+            </button>
           )}
           {entry.kind !== 'ignored' && !entry.conflicted && (
             <button
@@ -465,6 +480,15 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                 onClick={() => void git.runNetwork('push')}
               >
                 {t('gitPush')}
+              </button>
+              <button
+                type="button"
+                className="git-icon-btn danger"
+                title={t('gitPushForceHint')}
+                disabled={busy}
+                onClick={() => setForcePushOpen(true)}
+              >
+                ⇑
               </button>
             </div>
           </div>
@@ -916,6 +940,30 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
           oid={diffTarget.oid ?? null}
           title={diffTarget.title}
           onClose={() => setDiffTarget(null)}
+        />
+      )}
+
+      {blamePath && git.root && (
+        <GitBlameView
+          host={host}
+          root={git.root}
+          path={blamePath}
+          onClose={() => setBlamePath(null)}
+        />
+      )}
+
+      {forcePushOpen && (
+        <ConfirmDialog
+          title={t('gitPushForce')}
+          message={t('gitPushForceConfirm')}
+          confirmLabel={t('gitPushForce')}
+          cancelLabel={t('gitCancel')}
+          danger
+          onConfirm={() => {
+            setForcePushOpen(false)
+            void git.runNetwork('push', true)
+          }}
+          onCancel={() => setForcePushOpen(false)}
         />
       )}
 

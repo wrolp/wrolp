@@ -1448,6 +1448,12 @@ const zh: Partial<Record<TranslationKey, string>> = {
   gitOursShort: 'ours',
   gitTheirsShort: 'theirs',
   gitMarkResolved: '标记已解决',
+  gitPushForce: '强制推送',
+  gitPushForceHint: '强制推送（with lease：远端已变动则拒绝）',
+  gitPushForceConfirm:
+    '以 --force-with-lease 推送？远端自上次 fetch 后若已变动会被拒绝，但成功时仍会重写远端分支。',
+  gitBlameOpen: '查看该文件的 blame',
+  gitBlameEmpty: '该文件没有 blame 数据',
   gitStashes: '暂存区（stash）',
   gitStashChanges: '暂存更改',
   gitStashUntracked: '包含未跟踪文件',
