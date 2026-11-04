@@ -9,7 +9,7 @@ import type { TranslationKey } from '../i18n/en'
  * a time, which is why the collapsed/expanded plumbing the old stacked sidebar
  * needed is gone.
  */
-export type RailMode = 'hosts' | 'files' | 'containers' | 'k8s' | 'sessions' | 'nettools'
+export type RailMode = 'hosts' | 'files' | 'containers' | 'k8s' | 'git' | 'sessions' | 'nettools'
 
 interface ActivityRailProps {
   mode: RailMode
@@ -18,6 +18,7 @@ interface ActivityRailProps {
   filesAvailable: boolean
   containersAvailable: boolean
   k8sAvailable: boolean
+  gitAvailable: boolean
   onSettings: () => void
 }
 
@@ -26,6 +27,7 @@ const MODES: { mode: RailMode; icon: IconName; labelKey: TranslationKey }[] = [
   { mode: 'files', icon: 'folderOpen', labelKey: 'railFiles' },
   { mode: 'containers', icon: 'container', labelKey: 'railContainers' },
   { mode: 'k8s', icon: 'boxes', labelKey: 'railK8s' },
+  { mode: 'git', icon: 'gitBranch', labelKey: 'railGit' },
   { mode: 'sessions', icon: 'history', labelKey: 'railSessions' },
   { mode: 'nettools', icon: 'network', labelKey: 'railNetTools' },
 ]
@@ -36,6 +38,7 @@ export function ActivityRail({
   filesAvailable,
   containersAvailable,
   k8sAvailable,
+  gitAvailable,
   onSettings,
 }: ActivityRailProps) {
   const { t } = useI18n()
@@ -47,7 +50,9 @@ export function ActivityRail({
         ? containersAvailable
         : m === 'k8s'
           ? k8sAvailable
-          : true
+          : m === 'git'
+            ? gitAvailable
+            : true
 
   return (
     <nav className="activity-rail" aria-label={t('railNav')}>

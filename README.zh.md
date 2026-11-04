@@ -144,6 +144,14 @@
 - `command_help`：查询连接服务器上某命令的帮助 / 手册文本。
 - 相关 UI 面板：`DockerPanel`、`DockerLogViewer`、`DockerAnalysisPanel`、`HostAnalysisPanel`。
 
+### Git 管理面板
+
+- 活动栏的 **Git** 模式一次管理一个仓库，宿主跟随当前聚焦的终端：SSH 会话经 exec 通道，没有终端时就是本机；两端共用一套 UI 与一组命令（`src-tauri/src/commands/git.rs`）。
+- 全部走真实的 `git` CLI（不捆绑第三方库）：远端以 `env LC_ALL=C GIT_TERMINAL_PROMPT=0 … bash -lc '<逐参数引用>'` 在新 exec 通道里执行，本机直接 spawn `git`（`HideConsole`）；`git_probe` 负责找到可执行文件（含 Windows 常见安装路径）。
+- 状态（porcelain v2）、diff（2MB 上限）、分页历史、分支与远端；暂存 / 取消暂存 / 丢弃 / 提交（含 amend）、分支创建 / 切换 / 删除、abort merge 或 rebase、以及给普通目录 `git init`。
+- **Fetch / pull / push** 通过 `git-progress` 事件回报进度，可用 `git_cancel` 取消；pull 固定 `--ff-only`，非快进以 `git_not_fast_forward` 结束并提示去终端 merge。
+- 路径永不拼进 shell：远端参数逐个引用，后端拒绝绝对路径、盘符、反斜杠与 `..`。
+
 ### AI 助手
 
 - 聊天面板（`AiChatPanel`），含两种模式：

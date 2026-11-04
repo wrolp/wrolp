@@ -2,6 +2,11 @@ import type { Page } from '@playwright/test'
 import type {
   CommandHistoryEntry,
   CommandSetDto,
+  GitBranch,
+  GitCommit,
+  GitRemote,
+  GitStatus,
+  GitStatusEntry,
   HostCommandDto,
   ImageInfo,
   RecentConnectionEntry,
@@ -178,6 +183,46 @@ export interface TauriMockOptions {
    * cannot be told apart from one that never started.
    */
   holdDownload?: boolean
+  /**
+   * Answer to `git_probe`. Omitted means "git is installed", which is the state a
+   * spec needs to reach the repository picker; `{ installed: false }` renders the
+   * "no git on this host" panel instead.
+   */
+  gitProbe?: {
+    installed: boolean
+    version?: string | null
+    bin?: string | null
+    message?: string
+  }
+  /**
+   * Answer to `git_repo_info` / `git_init`. Omitted echoes the requested path as a
+   * non-bare root — what opening any ordinary folder looks like.
+   */
+  gitRepoInfo?: { root: string; bare: boolean }
+  /** Paths `git_repo_info` refuses with `git_not_repo:` (the picker's error row). */
+  gitNotRepoPaths?: string[]
+  /**
+   * The working tree the status answer starts from. `git_stage` / `git_unstage` /
+   * `git_discard` / `git_commit` mutate this store, so a spec watches sections move
+   * instead of replaying one canned status per call.
+   */
+  gitStatus?: Partial<GitStatus>
+  /** Branch rows returned by `git_branches` (defaults to `[]`). */
+  gitBranches?: GitBranch[]
+  /** Remotes returned by `git_remotes` (defaults to `[]`). */
+  gitRemotes?: GitRemote[]
+  /** Commit rows returned by `git_log`, paged by `limit` / `skip`. */
+  gitCommits?: GitCommit[]
+  /** Whether a log page reports more history than it returned. */
+  gitHasMoreLog?: boolean
+  /** Unified diff text returned by `git_diff`. */
+  gitDiff?: string
+  gitDiffBinary?: boolean
+  gitDiffTruncated?: boolean
+  /** What `git_commit` reports back (the success toast's oid + summary). */
+  gitCommitResult?: { oid: string; summary: string }
+  /** What a fetch / pull / push resolves with. */
+  gitNetworkResult?: { stdout: string; stderr: string }
 }
 
 /**
@@ -215,6 +260,27 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     // Scripted `poll_k8s_logs` answers, drained one array per poll. Once they run out
     // the stream reports `ended`, which is how a viewer sees a pod's logs stop.
     const k8sLogChunks: string[][] = (opts.k8sLogChunks ?? []).map((c) => [...c])
+    // Git: one stateful working tree per page. Stage / unstage / discard / commit
+    // rewrite `gitEntries`, and a commit prepends to `gitCommits`, so the panel's
+    // sections really move instead of the mock replaying a canned status.
+    const gitBase: GitStatus = {
+      branch: 'main',
+      headOid: '0123456789abcdef0123456789abcdef01234567',
+      detached: false,
+      unborn: false,
+      upstream: 'origin/main',
+      ahead: 0,
+      behind: 0,
+      entries: [],
+      truncated: false,
+      ...(opts.gitStatus ?? {}),
+    }
+    const gitEntries: GitStatusEntry[] = (opts.gitStatus?.entries ?? []).map((e) => ({ ...e }))
+    let gitCommits: GitCommit[] = (opts.gitCommits ?? []).map((c) => ({ ...c }))
+    const gitStatusNow = (): GitStatus => ({
+      ...gitBase,
+      entries: gitEntries.map((e) => ({ ...e })),
+    })
     // Stateful device-command index, so `clear_host_commands` -> re-read really
     // does come back empty rather than replaying the seeded rows.
     let hostIndex: Array<Record<string, unknown>> = (opts.hostCommands ?? []).map((r) => ({
@@ -662,6 +728,140 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             }
           case 'vacuum_database':
             return { beforeBytes: 65536, afterBytes: 65536, freedBytes: 0 }
+          // ===== Git =====
+          // Every answer is a plain value (the wrappers in commands.ts use the
+          // invoke result directly). The status verbs return the mutated working
+          // tree, which is how the panel repaints after each action.
+          case 'git_probe': {
+            const p = opts.gitProbe
+            if (!p) return { installed: true, version: '2.47.0', bin: 'git', message: '' }
+            return {
+              installed: p.installed,
+              version: p.version ?? null,
+              bin: p.bin ?? null,
+              message: p.message ?? '',
+            }
+          }
+          case 'git_repo_info': {
+            const path = String(args.path ?? '')
+            if ((opts.gitNotRepoPaths ?? []).includes(path)) {
+              throw `git_not_repo: not a git repository: ${path}`
+            }
+            return opts.gitRepoInfo ?? { root: path, bare: false }
+          }
+          case 'git_init':
+            return opts.gitRepoInfo ?? { root: String(args.path ?? ''), bare: false }
+          case 'git_status':
+            return gitStatusNow()
+          case 'git_stage': {
+            const paths = (args.paths ?? []) as string[]
+            for (const e of gitEntries) {
+              if (!paths.includes(e.path)) continue
+              e.staged = true
+              e.unstaged = false
+              e.x = e.kind === 'untracked' ? 'A' : 'M'
+              e.y = '.'
+              if (e.kind === 'untracked') e.kind = 'added'
+            }
+            return gitStatusNow()
+          }
+          case 'git_unstage': {
+            const paths = (args.paths ?? []) as string[]
+            for (const e of gitEntries) {
+              if (!paths.includes(e.path)) continue
+              e.staged = false
+              e.unstaged = true
+              e.x = '.'
+              e.y = e.kind === 'added' ? 'A' : 'M'
+              if (e.kind === 'added') e.kind = 'modified'
+            }
+            return gitStatusNow()
+          }
+          case 'git_discard': {
+            const paths = (args.paths ?? []) as string[]
+            for (let i = gitEntries.length - 1; i >= 0; i--) {
+              if (paths.includes(gitEntries[i].path)) gitEntries.splice(i, 1)
+            }
+            return gitStatusNow()
+          }
+          case 'git_commit': {
+            const summary = String(args.message ?? '').trim()
+            const result = opts.gitCommitResult ?? {
+              oid: 'd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0',
+              summary,
+            }
+            // Staged work becomes a commit: a row that also had worktree edits
+            // stays in the list as unstaged (a `MM` row), everything else is done.
+            for (let i = gitEntries.length - 1; i >= 0; i--) {
+              const e = gitEntries[i]
+              if (!e.staged) continue
+              if (e.unstaged) {
+                e.staged = false
+                e.x = '.'
+                e.y = e.kind === 'added' ? 'A' : 'M'
+              } else {
+                gitEntries.splice(i, 1)
+              }
+            }
+            gitCommits = [
+              {
+                oid: result.oid,
+                shortOid: result.oid.slice(0, 7),
+                authorName: 'E2E',
+                authorEmail: 'e2e@example.com',
+                timestamp: 1760000000,
+                parents: [],
+                refs: ['HEAD -> main'],
+                subject: result.summary,
+              },
+              ...gitCommits,
+            ]
+            return result
+          }
+          case 'git_log': {
+            const limit = Number(args.limit ?? 20)
+            const skip = Number(args.skip ?? 0)
+            return {
+              commits: gitCommits.slice(skip, skip + limit),
+              hasMore: opts.gitHasMoreLog ?? skip + limit < gitCommits.length,
+            }
+          }
+          case 'git_diff':
+            return {
+              text: opts.gitDiff ?? '',
+              truncated: opts.gitDiffTruncated ?? false,
+              binary: opts.gitDiffBinary ?? false,
+            }
+          case 'git_commit_files':
+            return []
+          case 'git_branches':
+            return opts.gitBranches ?? []
+          case 'git_remotes':
+            return opts.gitRemotes ?? []
+          case 'git_branch_create':
+          case 'git_branch_switch':
+          case 'git_abort':
+            return gitStatusNow()
+          case 'git_branch_delete':
+            return opts.gitBranches ?? []
+          case 'git_fetch':
+          case 'git_pull':
+          case 'git_push': {
+            // One progress tick before the promise settles, so a listener that
+            // filters by opId has something to filter.
+            const opId = String(args.opId ?? '')
+            emit('git-progress', {
+              opId,
+              phase: 'remote',
+              received: 0,
+              total: 0,
+              percent: 50,
+              text: 'mock transfer',
+            })
+            return opts.gitNetworkResult ?? { stdout: '', stderr: '' }
+          }
+          case 'git_cancel':
+            return null
           default:
             return null
         }

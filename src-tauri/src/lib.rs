@@ -12,6 +12,8 @@ mod docker_analysis;
 mod docker_fs;
 mod docker_host;
 mod ftp_fs;
+mod git;
+mod git_host;
 mod helm;
 mod host_analysis;
 mod host_commands;
@@ -89,6 +91,9 @@ pub fn run() {
 
       let state = AppState::new_with_base(db_conn, Some(data_dir.clone()));
       app.manage(state);
+      // Git panel state (repository locks, cancellation flags, local CLI cache).
+      // Deliberately separate from AppState: nothing else constructs that struct.
+      app.manage(git_host::GitState::default());
 
       // Spawn periodic recording flush task (every 5 seconds)
       {
@@ -386,6 +391,27 @@ pub fn run() {
       commands::helm_uninstall,
       commands::helm_upgrade_install,
       commands::open_local_kubectl_shell,
+      commands::git_probe,
+      commands::git_repo_info,
+      commands::git_status,
+      commands::git_diff,
+      commands::git_log,
+      commands::git_commit_files,
+      commands::git_branches,
+      commands::git_remotes,
+      commands::git_stage,
+      commands::git_unstage,
+      commands::git_discard,
+      commands::git_commit,
+      commands::git_branch_create,
+      commands::git_branch_switch,
+      commands::git_branch_delete,
+      commands::git_abort,
+      commands::git_init,
+      commands::git_fetch,
+      commands::git_pull,
+      commands::git_push,
+      commands::git_cancel,
       commands::command_help,
       commands::get_app_version,
       commands::open_config_dir,

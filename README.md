@@ -144,6 +144,14 @@
 - `command_help`: look up man-page / help text for a command on a connected server.
 - UI panels: `DockerPanel`, `DockerLogViewer`, `DockerAnalysisPanel`, `HostAnalysisPanel`.
 
+### Git panel
+
+- The **Git** mode in the activity rail manages one repository at a time on the focused host — an SSH session through its exec channel, or this machine when no session is focused — with one UI and one command surface (`src-tauri/src/commands/git.rs`).
+- Everything is the real `git` CLI (no bundled library): remote calls run `env LC_ALL=C GIT_TERMINAL_PROMPT=0 … bash -lc '<quoted command>'` over a fresh exec channel, local calls spawn `git` directly with `HideConsole`. `git_probe` finds the binary, including the usual Windows install paths.
+- Status (porcelain v2), diffs (2 MB cap), paged history, branches and remotes; stage / unstage / discard / commit (with amend), branch create / switch / delete, abort merge or rebase, and `git init` for a plain folder.
+- **Fetch / pull / push** stream `git-progress` events, can be cancelled with `git_cancel`, and pull is `--ff-only` — a non-fast-forward ends as `git_not_fast_forward` with a hint to merge in the terminal.
+- Paths never reach a shell: remote arguments are quoted one by one, and the backend rejects absolute paths, drive letters, backslashes and `..`.
+
 ### AI assistant
 
 - Chat panel (`AiChatPanel`) with two modes:

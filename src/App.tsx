@@ -30,6 +30,7 @@ import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
 import { K8sPanel } from './components/K8sPanel'
+import { GitPanel } from './components/GitPanel'
 import { CommandListPanel } from './components/CommandListPanel'
 import { ShortcutsPane } from './components/ShortcutsPane'
 import { StatusBar } from './components/StatusBar'
@@ -160,6 +161,7 @@ import type {
   DockerHostRef,
   DockerProbe,
   DockerAnalysisTarget,
+  GitHostRef,
   SessionSummary,
   CommandHistoryEntry,
   AiSessionSave,
@@ -263,6 +265,9 @@ const LOCAL_DOCKER_HOST: DockerHostRef = { kind: 'local' }
 // The Kubernetes mode's host for this machine. Same reasoning as above: one shared
 // constant so the panel never sees a fresh identity per paint.
 const LOCAL_K8S_HOST: K8sHostRef = { kind: 'local' }
+// The Git mode's host for this machine; source of the rail's `git` entry when no
+// SSH terminal is focused.
+const LOCAL_GIT_HOST: GitHostRef = { kind: 'local' }
 const DEFAULT_K8S_SCOPE: K8sScope = {
   mode: 'resources',
   context: '',
@@ -2175,6 +2180,22 @@ export default function App() {
       ? { kind: 'ssh', jumpTabId: tab.tabId }
       : null
   }, [focusedLeafTabId, tabs])
+  // Git follows the focused pane too, but unlike k8s it can only exec through an
+  // SSH session: Telnet has no jump handle and serial has no shell, so those
+  // tabs hide the mode rather than failing every command.
+  const gitHost = useMemo<GitHostRef | null>(() => {
+    const tab = focusedLeafTabId != null ? tabs.find((t) => t.tabId === focusedLeafTabId) : null
+    if (tab == null || tab.tabType === 'localShell') return LOCAL_GIT_HOST
+    if (tab.status !== 'connected') return null
+    return tab.tabType === 'terminal' ? { kind: 'ssh', jumpTabId: tab.tabId } : null
+  }, [focusedLeafTabId, tabs])
+  const gitSuggestedPath =
+    focusedLeafTabId != null
+      ? (cwdByTab[String(focusedLeafTabId)] ??
+        tabs.find((t) => t.tabId === focusedLeafTabId)?.localShellCwd ??
+        null)
+      : null
+  const gitHostKey = gitHost?.kind === 'ssh' ? `ssh:${gitHost.jumpTabId}` : gitHost ? 'local' : ''
   const [k8sScopes, setK8sScopes] = useState<Record<string, K8sScope>>({})
   const k8sScopeKey = k8sHost?.kind === 'ssh' ? `ssh:${k8sHost.jumpTabId}` : k8sHost ? 'local' : ''
   const updateK8sScope = useCallback(
@@ -8601,6 +8622,11 @@ export default function App() {
             />
           </div>
         )}
+        {railMode === 'git' && gitHost && (
+          <div className="collapsible-section" style={{ flex: 1, overflow: 'hidden' }}>
+            <GitPanel key={gitHostKey} host={gitHost} suggestedPath={gitSuggestedPath} />
+          </div>
+        )}
         {/* Sessions — recorded terminal sessions get their own column instead of
             being buried in the drawer. */}
         {railMode === 'sessions' && (
@@ -8710,6 +8736,7 @@ export default function App() {
           }
           containersAvailable={!!dockerHost}
           k8sAvailable={!!k8sHost}
+          gitAvailable={!!gitHost}
           onSettings={handleOpenSettings}
         />
 

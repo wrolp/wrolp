@@ -897,6 +897,128 @@ export interface DockerAnalysisTarget {
   container: string
 }
 
+// ===== Git panel =====
+
+/**
+ * Where a git command runs: a connected jump-host tab, or this machine.
+ * Mirrors `GitHostRef` in `src-tauri/src/git_host.rs`.
+ */
+export type GitHostRef = { kind: 'ssh'; jumpTabId: number } | { kind: 'local' }
+
+/**
+ * What `git_probe` learned about the host. `message` is the raw CLI diagnostic
+ * (shown as detail); the translated sentence comes from the flags.
+ */
+export interface GitProbe {
+  installed: boolean
+  version: string | null
+  /** Which executable answered (`git`, or an absolute Windows fallback path). */
+  bin: string | null
+  message: string
+}
+
+export interface GitRepoInfo {
+  root: string
+  /** A bare repository has no worktree, so the panel offers a terminal instead. */
+  bare: boolean
+}
+
+/** One working-tree row. `x` / `y` are porcelain letters, passed through verbatim. */
+export interface GitStatusEntry {
+  path: string
+  origPath?: string | null
+  x: string
+  y: string
+  /** `modified` / `untracked` / `conflicted` / `ignored` / `renamed`. */
+  kind: string
+  staged: boolean
+  unstaged: boolean
+  conflicted: boolean
+}
+
+export interface GitStatus {
+  /** `null` means detached HEAD. */
+  branch: string | null
+  headOid: string | null
+  detached: boolean
+  /** A fresh `git init`: HEAD names a branch with no commit yet. */
+  unborn: boolean
+  upstream: string | null
+  ahead: number
+  behind: number
+  entries: GitStatusEntry[]
+  truncated: boolean
+}
+
+export interface GitDiff {
+  text: string
+  truncated: boolean
+  binary: boolean
+}
+
+export interface GitCommit {
+  oid: string
+  shortOid: string
+  authorName: string
+  authorEmail: string
+  /** Unix seconds. */
+  timestamp: number
+  parents: string[]
+  refs: string[]
+  subject: string
+}
+
+export interface GitLogPage {
+  commits: GitCommit[]
+  hasMore: boolean
+}
+
+export interface GitCommitFile {
+  path: string
+  /** `--name-status` letter (`M`, `A`, `D`, `R100`…). */
+  status: string
+}
+
+export interface GitBranch {
+  /** `main` or `origin/main` (refs prefix stripped). */
+  name: string
+  fullName: string
+  oid: string
+  shortOid: string
+  upstream: string | null
+  current: boolean
+  remote: boolean
+  date: number
+  subject: string
+}
+
+export interface GitRemote {
+  name: string
+  /** Credentials are stripped backend-side before this reaches the UI. */
+  fetchUrl: string
+  pushUrl: string
+}
+
+export interface GitCommitResult {
+  oid: string
+  summary: string
+}
+
+export interface GitNetworkResult {
+  stdout: string
+  stderr: string
+}
+
+/** One tick of a fetch / pull / push, broadcast as `git-progress`. */
+export interface GitProgressEvent {
+  opId: string
+  phase: 'receiving' | 'resolving' | 'compressing' | 'writing' | 'remote' | 'done' | 'cancelled'
+  received: number
+  total: number
+  percent: number | null
+  text: string
+}
+
 // ===== Floating (pop-out) panes =====
 
 /** What kind of content a floating pane hosts. */

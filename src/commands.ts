@@ -60,6 +60,17 @@ import type {
   AppServerStatus,
   FtpConnectArgs,
   FtpConnectResult,
+  GitHostRef,
+  GitProbe,
+  GitRepoInfo,
+  GitStatus,
+  GitDiff,
+  GitLogPage,
+  GitCommitFile,
+  GitBranch,
+  GitRemote,
+  GitCommitResult,
+  GitNetworkResult,
 } from './types'
 
 // ==================== In-app network file tools ====================
@@ -1541,4 +1552,177 @@ export async function helmUpgradeInstall(
     wait: args.wait ?? false,
     createNamespace: args.createNamespace ?? false,
   })
+}
+
+// ===== Git panel =====
+
+/** Whether the host has git. Never throws: "not installed" is a reported state. */
+export async function gitProbe(host: GitHostRef): Promise<GitProbe> {
+  return await invoke<GitProbe>('git_probe', { host })
+}
+
+/** `rev-parse` in `path`; a folder that is not a repository rejects with `git_not_repo`. */
+export async function gitRepoInfo(host: GitHostRef, path: string): Promise<GitRepoInfo> {
+  return await invoke<GitRepoInfo>('git_repo_info', { host, path })
+}
+
+export async function gitStatus(host: GitHostRef, root: string): Promise<GitStatus> {
+  return await invoke<GitStatus>('git_status', { host, root })
+}
+
+/** `scope` is `unstaged` / `staged` / `commit`; `path` of null means the whole diff. */
+export async function gitDiff(
+  host: GitHostRef,
+  root: string,
+  path: string | null,
+  scope: 'unstaged' | 'staged' | 'commit',
+  oid?: string | null,
+): Promise<GitDiff> {
+  return await invoke<GitDiff>('git_diff', {
+    host,
+    root,
+    path,
+    scope,
+    oid: oid ?? null,
+  })
+}
+
+export async function gitLog(
+  host: GitHostRef,
+  root: string,
+  limit: number,
+  skip: number,
+): Promise<GitLogPage> {
+  return await invoke<GitLogPage>('git_log', { host, root, limit, skip })
+}
+
+export async function gitCommitFiles(
+  host: GitHostRef,
+  root: string,
+  oid: string,
+): Promise<GitCommitFile[]> {
+  return await invoke<GitCommitFile[]>('git_commit_files', { host, root, oid })
+}
+
+export async function gitBranches(host: GitHostRef, root: string): Promise<GitBranch[]> {
+  return await invoke<GitBranch[]>('git_branches', { host, root })
+}
+
+export async function gitRemotes(host: GitHostRef, root: string): Promise<GitRemote[]> {
+  return await invoke<GitRemote[]>('git_remotes', { host, root })
+}
+
+export async function gitStage(
+  host: GitHostRef,
+  root: string,
+  paths: string[],
+): Promise<GitStatus> {
+  return await invoke<GitStatus>('git_stage', { host, root, paths })
+}
+
+export async function gitUnstage(
+  host: GitHostRef,
+  root: string,
+  paths: string[],
+): Promise<GitStatus> {
+  return await invoke<GitStatus>('git_unstage', { host, root, paths })
+}
+
+/** Discard tracked (restore) and untracked (clean -f) paths; the fresh status comes back. */
+export async function gitDiscard(
+  host: GitHostRef,
+  root: string,
+  paths: string[],
+): Promise<GitStatus> {
+  return await invoke<GitStatus>('git_discard', { host, root, paths })
+}
+
+export async function gitCommit(
+  host: GitHostRef,
+  root: string,
+  message: string,
+  amend: boolean,
+): Promise<GitCommitResult> {
+  return await invoke<GitCommitResult>('git_commit', { host, root, message, amend })
+}
+
+export async function gitBranchCreate(
+  host: GitHostRef,
+  root: string,
+  name: string,
+  startPoint: string | null,
+  checkout: boolean,
+): Promise<GitStatus> {
+  return await invoke<GitStatus>('git_branch_create', {
+    host,
+    root,
+    name,
+    startPoint,
+    checkout,
+  })
+}
+
+export async function gitBranchSwitch(
+  host: GitHostRef,
+  root: string,
+  name: string,
+): Promise<GitStatus> {
+  return await invoke<GitStatus>('git_branch_switch', { host, root, name })
+}
+
+export async function gitBranchDelete(
+  host: GitHostRef,
+  root: string,
+  name: string,
+  force: boolean,
+): Promise<GitBranch[]> {
+  return await invoke<GitBranch[]>('git_branch_delete', { host, root, name, force })
+}
+
+/** Abort an in-progress `merge` / `rebase` / `cherry-pick` / `revert`. */
+export async function gitAbort(
+  host: GitHostRef,
+  root: string,
+  operation: 'merge' | 'rebase' | 'cherry-pick' | 'revert',
+): Promise<GitStatus> {
+  return await invoke<GitStatus>('git_abort', { host, root, operation })
+}
+
+export async function gitInit(host: GitHostRef, path: string): Promise<GitRepoInfo> {
+  return await invoke<GitRepoInfo>('git_init', { host, path })
+}
+
+/** Progress arrives as `git-progress` events filtered by `opId`. */
+export async function gitFetch(
+  host: GitHostRef,
+  root: string,
+  remote: string | null,
+  opId: string,
+): Promise<GitNetworkResult> {
+  return await invoke<GitNetworkResult>('git_fetch', { host, root, remote, opId })
+}
+
+/** Fixed `--ff-only`; a divergence rejects with `git_not_fast_forward`. */
+export async function gitPull(
+  host: GitHostRef,
+  root: string,
+  remote: string | null,
+  branch: string | null,
+  opId: string,
+): Promise<GitNetworkResult> {
+  return await invoke<GitNetworkResult>('git_pull', { host, root, remote, branch, opId })
+}
+
+export async function gitPush(
+  host: GitHostRef,
+  root: string,
+  remote: string | null,
+  branch: string | null,
+  opId: string,
+): Promise<GitNetworkResult> {
+  return await invoke<GitNetworkResult>('git_push', { host, root, remote, branch, opId })
+}
+
+export async function gitCancel(opId: string): Promise<void> {
+  await invoke('git_cancel', { opId })
 }

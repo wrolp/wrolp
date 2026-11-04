@@ -33,6 +33,8 @@ export type IconName =
   | 'container'
   // Kubernetes (lucide: boxes)
   | 'boxes'
+  // Git panel (lucide: git-branch)
+  | 'gitBranch'
   // Helm releases (lucide: package)
   | 'package'
   // Overflow menu (lucide: ellipsis)
@@ -267,6 +269,15 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="m10 14 11.9-6.9" />
       <path d="M14 19.8v-8.1" />
       <path d="M18 17.5V9.4" />
+    </>
+  ),
+  // lucide: git-branch — the Git rail entry.
+  gitBranch: (
+    <>
+      <line x1="6" x2="6" y1="3" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
     </>
   ),
   // lucide: ellipsis — the collapsed action strip.
