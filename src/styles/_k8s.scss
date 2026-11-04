@@ -267,6 +267,25 @@
   white-space: pre;
 }
 
+// Custom slim scrollbar for the log viewer (both axes — long lines scroll
+// horizontally too), matching the other panel scrollbars in the app.
+.k8s-log-output {
+  &::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: var(--r-1);
+    &:hover {
+      background: var(--scrollbar-thumb-hover);
+    }
+  }
+}
+
 .k8s-modal .modal-error {
   flex: none;
   margin: 8px 16px 0;

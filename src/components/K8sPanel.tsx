@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   HelmProbe,
   HelmRelease,
@@ -38,6 +38,7 @@ import {
   pollK8sLogs,
   stopK8sLogsStream,
 } from '../commands'
+import { parseAnsiToHtmlLines, highlightPlainLogLines } from '../ansi'
 import { Icon } from './Icon'
 import { ConfirmDialog } from './ConfirmDialog'
 import { DraggableModal } from './DraggableModal'
@@ -777,6 +778,23 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     if (!logRef.current || !stickRef.current) return
     logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs?.text])
+
+  // Render the log text as HTML, stripping shell control bytes (cursor moves,
+  // screen erases, OSC titles, bell/backspace) and colourising ANSI SGR codes.
+  // Output without any ANSI falls back to heuristic plain-log highlighting
+  // (timestamps, levels) so uncoloured `kubectl logs` stays readable. The wrapper
+  // object is memoized so a re-render doesn't replace the <pre> children and
+  // detach the user's text selection.
+  const logsHtmlPayload = useMemo(() => {
+    const text = logs?.text
+    if (!text) {
+      const msg = logs?.loading ? t('loading') : t('k8sNoLogs')
+      return { __html: msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
+    }
+    const plain = highlightPlainLogLines(text)
+    const lines = plain ?? parseAnsiToHtmlLines(text)
+    return { __html: lines.join('\n') }
+  }, [logs?.loading, logs?.text, t])
 
   const openYaml = useCallback(
     (row: K8sResource) => {
@@ -1608,9 +1626,8 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
               const el = e.currentTarget
               stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
             }}
-          >
-            {logs.loading && !logs.text ? t('loading') : logs.text || t('k8sNoLogs')}
-          </pre>
+            dangerouslySetInnerHTML={logsHtmlPayload}
+          />
           {logs.ended && <div className="k8s-note">{t('k8sStreamEnded')}</div>}
         </DraggableModal>
       )}
