@@ -278,12 +278,14 @@ export function FileEditor({
       {/* An open file has a tab bar entry of its own (App's `fileEditor` tabs),
           so this surface carries no tab strip. */}
       <div className="editor-body">
-        {!active && <div className="editor-empty">No file open</div>}
+        {!active && <div className="editor-empty">{t('noFileOpen')}</div>}
 
-        {active && active.loading && <div className="editor-loading">Loading {active.path}…</div>}
+        {active && active.loading && (
+          <div className="editor-loading">{t('loadingFile', { path: active.path })}</div>
+        )}
 
         {active && active.error && (
-          <div className="editor-error">Failed to open: {active.error}</div>
+          <div className="editor-error">{t('fileOpenFailed', { err: active.error })}</div>
         )}
 
         {active && !active.loading && !active.error && active.imageMime && active.hexBase64 && (
@@ -353,14 +355,14 @@ export function FileEditor({
               <span className="editor-filename" title={active.path}>
                 {active.name}
                 {active.isDirty && (
-                  <span className="dirty-dot" title="Unsaved changes">
+                  <span className="dirty-dot" title={t('unsavedChanges')}>
                     ●
                   </span>
                 )}
                 {active.needsEncoding && (
                   <span
                     className="enc-warn"
-                    title={`Needs ${active.encoding.toUpperCase()} encoding to avoid data loss`}
+                    title={t('needsEncoding', { enc: active.encoding.toUpperCase() })}
                   >
                     {active.encoding.toUpperCase()}
                   </span>
@@ -438,11 +440,11 @@ export function FileEditor({
               <button
                 className={`editor-btn${showWhitespace !== 'none' ? ' active' : ''}`}
                 onClick={() => setShowWhitespace((v) => (v === 'none' ? 'all' : 'none'))}
-                title={showWhitespace !== 'none' ? 'Hide whitespace' : 'Show whitespace'}
+                title={showWhitespace !== 'none' ? t('hideWhitespace') : t('showWhitespace')}
               >
-                ¶ {showWhitespace !== 'none' ? 'On' : 'Off'}
+                ¶ {t(showWhitespace !== 'none' ? 'on' : 'off')}
               </button>
-              <label className="editor-select tab-size" title="Tab size">
+              <label className="editor-select tab-size" title={t('tabSize')}>
                 <select
                   value={tabSize}
                   onChange={(e) => {
@@ -465,9 +467,9 @@ export function FileEditor({
               <button
                 className="editor-btn"
                 onClick={() => setShowMinimap((v) => !v)}
-                title={showMinimap ? 'Hide minimap' : 'Show minimap'}
+                title={showMinimap ? t('hideMinimap') : t('showMinimap')}
               >
-                {showMinimap ? '◫' : '▢'} Map
+                {showMinimap ? '◫' : '▢'} {t('minimap')}
               </button>
               {isMarkdown && (
                 <button
@@ -494,10 +496,10 @@ export function FileEditor({
                 disabled={!active.isDirty}
                 title={`${t('save')} (${saveKeys})`}
               >
-                Save
+                {t('save')}
               </button>
             </div>
-            {active.saving && <div className="editor-saving">Saving…</div>}
+            {active.saving && <div className="editor-saving">{t('saving')}</div>}
             <div className={`editor-views${previewOn ? ' is-preview' : ''}`}>
               {/* Monaco stays mounted (only hidden) while previewing — unmounting its
                   host would leave the editor instance without a home and the source

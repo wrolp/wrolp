@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { loadEditorPrefs, subscribeEditorPrefs } from '../lib/editorPrefs'
+import { useI18n } from '../i18n'
 
 interface HexViewerProps {
   /** Raw file bytes as Base64. */
@@ -32,6 +33,7 @@ function toHexByte(b: number): string {
  * freezing the UI on very large binaries; a button reveals more.
  */
 export default function HexViewer({ base64, name, size }: HexViewerProps) {
+  const { t } = useI18n()
   const bytes = useMemo(() => {
     try {
       return decodeBase64(base64)
@@ -81,7 +83,7 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
   if (bytes.length === 0) {
     return (
       <div className="hex-viewer">
-        <div className="hex-empty">Unable to decode binary data.</div>
+        <div className="hex-empty">{t('hexDecodeFailed')}</div>
       </div>
     )
   }
@@ -92,14 +94,14 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
         <span className="hex-filename" title={name}>
           {name}
         </span>
-        <span className="hex-meta">{bytes.length.toLocaleString()} bytes</span>
+        <span className="hex-meta">{t('bytesCount', { n: bytes.length.toLocaleString() })}</span>
         <span className="hex-spacer" />
-        <span className="hex-hint">hex dump · read-only</span>
+        <span className="hex-hint">{t('hexDumpReadOnly')}</span>
       </div>
       <div className="hex-head">
-        <span className="hex-offset">Offset</span>
-        <span className="hex-bytes">Hex bytes</span>
-        <span className="hex-ascii">ASCII</span>
+        <span className="hex-offset">{t('hexOffset')}</span>
+        <span className="hex-bytes">{t('hexBytes')}</span>
+        <span className="hex-ascii">{t('hexAscii')}</span>
       </div>
       <div className="hex-body">
         {rows}
@@ -110,7 +112,7 @@ export default function HexViewer({ base64, name, size }: HexViewerProps) {
       {more > 0 && (
         <div className="hex-more">
           <button className="editor-btn" onClick={() => setShownBytes((n) => n + 1_048_576)}>
-            Show next 1 MiB ({more.toLocaleString()} bytes remaining)
+            {t('showNextMiB', { n: more.toLocaleString() })}
           </button>
         </div>
       )}

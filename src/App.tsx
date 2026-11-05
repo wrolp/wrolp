@@ -3876,6 +3876,8 @@ export default function App() {
       setActiveTabId(tabId)
       return tabId
     },
+    // `t` reads the current language at call time from the module-level store,
+    // so it never goes stale and is safe to leave out of the dependency list.
     [newLeafId],
   )
 
@@ -4253,6 +4255,7 @@ export default function App() {
         return remaining.length ? remaining[0].tabId : null
       })
     },
+    // `t` is resolved per call from the module-level language store, not per render.
     [dropSessionFiles, setHomePinned, cancelAiForTabs],
   )
 
@@ -4640,7 +4643,7 @@ export default function App() {
     (tab: TabInfo): string => {
       if (tab.tabType === 'home') return t('tabHome')
       if (tab.tabType === 'settings') return t('tabSettings')
-      if (tab.tabType === 'dockerLog') return tab.containerName ?? 'Logs'
+      if (tab.tabType === 'dockerLog') return tab.containerName ?? t('logs')
       if (tab.commandLabel) return tab.commandLabel
       if (tab.tabType === 'localShell')
         return tab.localShellName || tab.localShellCwd || t('localTerminal')
@@ -4653,6 +4656,7 @@ export default function App() {
       const idx = siblings.findIndex((t) => t.tabId === tab.tabId)
       return `${tab.connectionName} (${idx + 1})`
     },
+    // `t` is live from the module-level language store; only the tab list matters.
     [tabs],
   )
 
@@ -4911,6 +4915,7 @@ export default function App() {
         return next
       })
     },
+    // `t` is read live from the module-level language store at call time.
     [newLeafId, closeTab, dropSessionFiles, cancelAiForTabs],
   )
 
@@ -5076,6 +5081,7 @@ export default function App() {
         },
       ])
     },
+    // `t` is live from the module-level language store at call time.
     [newLeafId, getTabLabel],
   )
 
@@ -5501,7 +5507,7 @@ export default function App() {
           )
           setToast({ kind: 'success', text: t('startupDirSet', { dir: dirLabel }) })
         } catch (err) {
-          setToast({ kind: 'error', text: `Failed to set startup directory: ${err}` })
+          setToast({ kind: 'error', text: t('startupDirFailed', { err: errorText(err) }) })
         }
         return
       }
@@ -5514,7 +5520,7 @@ export default function App() {
         setToast({ kind: 'success', text: t('startupDirSet', { dir: dirLabel }) })
         loadConnections()
       } catch (err) {
-        setToast({ kind: 'error', text: `Failed to set startup directory: ${err}` })
+        setToast({ kind: 'error', text: t('startupDirFailed', { err: errorText(err) }) })
       }
     },
     [focusedLeafTabId, tabs, connections, setToast, t, reloadLocalTerminals],
@@ -5616,6 +5622,8 @@ export default function App() {
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     },
+    // `updateLayout` is a stable wrapper around `setLayout`; layout persistence is
+    // a separate debounced effect, so it does not belong in this dependency list.
     [layout.sidebar.side, layout.sidebar.width],
   )
 
@@ -5659,6 +5667,7 @@ export default function App() {
       document.addEventListener('mousemove', handleMouseMove)
       document.addEventListener('mouseup', handleMouseUp)
     },
+    // `updateLayout` is stable; persistence runs in its own debounced effect.
     [layout.bottomPanel.size],
   )
 
@@ -5692,6 +5701,7 @@ export default function App() {
     document.body.style.userSelect = 'none'
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
+    // `updateLayout` is stable; persistence runs in its own debounced effect.
   }, [])
 
   // Inspector column drag-to-resize. The grab zone is a child of the column, so
@@ -9322,11 +9332,20 @@ export default function App() {
         onOpenAi={() => handleOpenAiChat()}
       />
 
+      {/* Screen readers announce the toast without stealing focus: errors
+          interrupt (assertive), everything else waits for a pause (polite).
+          Focus and hover both hold the auto-dismiss window so it cannot vanish
+          while being read or while tabbing to the close button. */}
       {toast && (
         <div
           className={`toast toast-${toast.kind}`}
+          role={toast.kind === 'error' ? 'alert' : 'status'}
+          aria-live={toast.kind === 'error' ? 'assertive' : 'polite'}
+          aria-atomic="true"
           onMouseEnter={() => setToastHeldFor(toast.text)}
           onMouseLeave={() => setToastHeldFor(null)}
+          onFocus={() => setToastHeldFor(toast.text)}
+          onBlur={() => setToastHeldFor(null)}
         >
           {toast.kind === 'progress' ? (
             <span className="toast-spinner" />

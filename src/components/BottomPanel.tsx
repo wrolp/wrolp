@@ -84,7 +84,7 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
       >
         <SessionViewer
           sessionId={viewingSession.id}
-          sessionTitle={viewingSession.title || viewingSession.connectionName || 'Session'}
+          sessionTitle={viewingSession.title || viewingSession.connectionName || t('session')}
           onClose={() => setViewingSession(null)}
         />
       </div>

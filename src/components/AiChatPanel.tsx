@@ -979,6 +979,7 @@ export default function AiChatPanel({
       })
       return next
     })
+    // Functional update: even a stale `setInput` wrapper targets the latest state.
   }, [])
 
   const handleSend = useCallback(
@@ -1012,6 +1013,7 @@ export default function AiChatPanel({
       ]
       runAgent(apiMessages, text, images)
     },
+    // `setInput` only performs functional updates, so it cannot go stale.
     [input, streaming, messages, pendingImages, config, configured, onOpenSettings, runAgent],
   )
 
@@ -1065,6 +1067,7 @@ export default function AiChatPanel({
         el.scrollTop = el.scrollHeight
       })
     },
+    // `setMessages` is a functional-update wrapper and therefore stable in effect.
     [messages, setInput, setPendingImages, setToolCalls],
   )
 
