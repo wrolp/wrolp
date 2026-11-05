@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
@@ -119,6 +118,7 @@ import {
   stopDockerContainer,
   k8sPodExecCommand,
   localClose,
+  disconnectSession,
   getLocalTerminals,
   saveLocalTerminals,
   listWorkspaces,
@@ -3432,14 +3432,26 @@ export default function App() {
     el.style.left = `${left}px`
   }, [tabContextMenu])
 
-  // Listen for unexpected SSH disconnections
+  // Listen for unexpected SSH disconnections. `connect` resolves before the
+  // handshake finishes, and a failed one emits this event right afterwards, so
+  // `connecting` has to be included: otherwise the event lands while the tab
+  // still says "connecting" and is dropped, leaving a green dot for a session
+  // that never opened. `reason` is the backend's readable failure text.
   useEffect(() => {
-    const unlisten = listen<{ tabId: number }>('connection-closed', (event) => {
+    const unlisten = listen<{ tabId: number; reason?: string }>('connection-closed', (event) => {
       const tid = event.payload.tabId
       setTabs((prev) =>
         prev.map((t) =>
-          t.tabId === tid && (t.status === 'connected' || t.status === 'suspect')
-            ? { ...t, status: 'disconnected', errorMessage: 'Connection lost' }
+          t.tabId === tid &&
+          (t.status === 'connected' || t.status === 'suspect' || t.status === 'connecting')
+            ? {
+                ...t,
+                status: 'disconnected',
+                // Keep the backend's readable reason (if any) instead of a generic
+                // string: the terminal line it also writes can be dropped together
+                // with the cleared output buffer, so this is the surviving copy.
+                errorMessage: event.payload.reason,
+              }
             : t,
         ),
       )
@@ -4177,20 +4189,30 @@ export default function App() {
       if (!(await cancelAiForTabs(sessionIds))) return
       for (const sid of sessionIds) {
         const s = tabsRef.current.find((t) => t.tabId === sid)
-        if (s?.tabType === 'terminal') {
-          try {
-            await invoke('disconnect', { tabId: sid })
-          } catch (e) {
-            console.error('Disconnect error:', e)
+        try {
+          if (s && isSessionTab(s)) {
+            if (s.tabType === 'localShell') await localClose(sid)
+            else await disconnectSession(sid)
           }
-        } else if (s?.tabType === 'localShell') {
-          try {
-            await localClose(sid)
-          } catch (e) {
-            console.error('Local shell close error:', e)
-          }
+        } catch (e) {
+          console.error('Disconnect error:', e)
+          setToast({
+            kind: 'error',
+            text: t('sessionDisconnectFailed', { err: String(e) }),
+          })
         }
       }
+      // Docker log views belong to the session they stream from. Their tab ids
+      // are not leaves of the split tree, so `sessionIds` alone never collects
+      // them and they would outlive the host as invisible, dangling tabs.
+      const dockerLogIds = new Set(
+        tabsRef.current
+          .filter(
+            (x) =>
+              x.tabType === 'dockerLog' && x.jumpTabId != null && sessionIds.includes(x.jumpTabId),
+          )
+          .map((x) => x.tabId),
+      )
       setSplitTrees((prev) => {
         const n = { ...prev }
         delete n[tabId]
@@ -4205,11 +4227,14 @@ export default function App() {
       setShellView((prev) => {
         const n = { ...prev }
         for (const sid of sessionIds) delete n[sid]
+        for (const lid of dockerLogIds) delete n[lid]
         return n
       })
       // The editor buffers die with their session, and so do their tab bar entries.
       const dyingKeys = dropSessionFiles(sessionIds)
-      setTabs((prev) => prev.filter((t) => !sessionIds.includes(t.tabId)))
+      setTabs((prev) =>
+        prev.filter((t) => !sessionIds.includes(t.tabId) && !dockerLogIds.has(t.tabId)),
+      )
       setActiveTabId((prev) => {
         // `tabsRef.current` is still the pre-close list here, so "was the selected
         // tab removed" has to be answered from the two sets above: the workspace
@@ -4754,14 +4779,18 @@ export default function App() {
   // does the whole workspace close.
   const closePane = useCallback(
     async (leafId: string, opts?: { force?: boolean }) => {
-      const disconnectTab = (id: number) => {
+      const disconnectTab = async (id: number) => {
         const tab = tabsRef.current.find((t) => t.tabId === id)
-        if (tab?.tabType === 'terminal') {
-          try {
-            invoke('disconnect', { tabId: id })
-          } catch (e) {
-            console.error('Disconnect error:', e)
-          }
+        if (!tab || !isSessionTab(tab)) return
+        try {
+          if (tab.tabType === 'localShell') await localClose(id)
+          else await disconnectSession(id)
+        } catch (e) {
+          console.error('Disconnect error:', e)
+          setToast({
+            kind: 'error',
+            text: t('sessionDisconnectFailed', { err: String(e) }),
+          })
         }
       }
       // Find which workspace contains this leaf.
@@ -4819,18 +4848,35 @@ export default function App() {
       // Tear down only the closed session's tab.
       if (closedTabId != null) {
         if (!(await cancelAiForTabs([closedTabId]))) return
+        // Docker log tabs stream from this session; their ids are not leaf ids,
+        // so they must be removed alongside the host or they linger invisible.
+        const closedDockerLogIds = tabsRef.current
+          .filter(
+            (t) => t.tabType === 'dockerLog' && t.jumpTabId != null && t.jumpTabId === closedTabId,
+          )
+          .map((t) => t.tabId)
         if (closedTabId === rootId) {
           // The workspace's identity pane closed, but others remain. Keep the
           // rootId tab as the workspace entry (now disconnected) so the top tab
           // bar stays valid; do not remove it.
-          disconnectTab(rootId)
+          await disconnectTab(rootId)
           setTabs((prev) =>
-            prev.map((t) => (t.tabId === rootId ? { ...t, status: 'disconnected' } : t)),
+            prev
+              .filter((t) => !closedDockerLogIds.includes(t.tabId))
+              .map((t) => (t.tabId === rootId ? { ...t, status: 'disconnected' } : t)),
           )
         } else {
-          disconnectTab(closedTabId)
-          setTabs((prev) => prev.filter((t) => t.tabId !== closedTabId))
+          await disconnectTab(closedTabId)
+          setTabs((prev) =>
+            prev.filter((t) => t.tabId !== closedTabId && !closedDockerLogIds.includes(t.tabId)),
+          )
         }
+        setShellView((prev) => {
+          const n = { ...prev }
+          delete n[closedTabId]
+          for (const lid of closedDockerLogIds) delete n[lid]
+          return n
+        })
         // The session took its open files — and their tab bar entries — with it,
         // whether the workspace entry survived as disconnected or not.
         const dropped = dropSessionFiles([closedTabId])
@@ -7386,6 +7432,20 @@ export default function App() {
             <div style={{ fontSize: '12px', color: '#888' }}>
               {tab.connectionName} — {tab.host}
             </div>
+            {tab.errorMessage && (
+              <div
+                style={{
+                  fontSize: '12px',
+                  color: '#808080',
+                  marginTop: 8,
+                  maxWidth: '560px',
+                  wordBreak: 'break-word',
+                  textAlign: 'center',
+                }}
+              >
+                {tab.errorMessage}
+              </div>
+            )}
             <div style={{ fontSize: '12px', color: '#666', marginTop: 8 }}>
               {t('pressEnterToRetry')} / {t('clickReconnectHint')}
             </div>
@@ -8429,6 +8489,7 @@ export default function App() {
               onTabClosed={closeTab}
               activeTabId={activeTabId}
               onConnectionChange={handleConnectionChange}
+              onError={(text) => setToast({ kind: 'error', text })}
               onSelectConnection={handleSelectConnection}
               onScanNetwork={() =>
                 updateLayout((l) => ({

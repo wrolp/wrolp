@@ -1366,12 +1366,15 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     sendNow(resolved)
   }
 
-  const updateSnippet = async (s: CommandSnippetDto) => {
+  const updateSnippet = async (s: CommandSnippetDto): Promise<boolean> => {
     try {
       await saveCommandSnippet(s)
       await reload()
+      return true
     } catch (e) {
       console.error('Failed to save command snippet:', e)
+      setToast(t('snippetSaveFailed', { err: String(e) }))
+      return false
     }
   }
 
@@ -1537,6 +1540,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     const defs = buildParamAndOptionDefs(command)
     if (!defs) return
     const now = new Date().toISOString()
+    let saved = true
     if (isAdding) {
       try {
         await saveCommandSnippet({
@@ -1557,9 +1561,11 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         await reload()
       } catch (e) {
         console.error('Failed to save new command snippet:', e)
+        setToast(t('snippetSaveFailed', { err: String(e) }))
+        saved = false
       }
     } else if (editing) {
-      await updateSnippet({
+      saved = await updateSnippet({
         ...editing,
         alias: editingAlias.trim() || null,
         command,
@@ -1571,7 +1577,8 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         updatedAt: now,
       })
     }
-    closeDialog()
+    // Keep the dialog open when a write failed, so the edits are not lost.
+    if (saved) closeDialog()
   }
 
   const remove = async (s: CommandSnippetDto) => {
@@ -1583,6 +1590,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       await reload()
     } catch (e) {
       console.error('Failed to delete command snippet:', e)
+      setToast(t('snippetDeleteFailed', { err: String(e) }))
     }
   }
 

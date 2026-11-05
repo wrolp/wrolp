@@ -39,6 +39,8 @@ interface ConnectionManagerProps {
   onTabClosed: (tabId: number) => void
   activeTabId: number | null
   onConnectionChange: () => void
+  /** Report a failure the sidebar cannot show inline (e.g. a failed save). */
+  onError?: (text: string) => void
   onSelectConnection: (config: ConnectionConfig) => void
   /** Open the inspector's subnet-scan tab. The scan used to be a modal mounted
    * here; it is a column now, so this component only asks for it. */
@@ -102,6 +104,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onTabClosed,
   activeTabId,
   onConnectionChange,
+  onError,
   onSelectConnection,
   onScanNetwork,
   onSplitRight,
@@ -789,6 +792,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               await saveConn(config)
             } catch (err) {
               console.error('Failed to save connection:', err)
+              onError?.(t('connectionSaveFailed', { err: String(err) }))
+              // Keep the modal open so the user can retry without retyping.
+              return
             }
             onConnectionChange()
             setShowModal(false)

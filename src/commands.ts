@@ -267,6 +267,14 @@ export async function disconnect(tabId: number): Promise<boolean> {
   return await invoke<boolean>('disconnect', { tabId })
 }
 
+/** Tear down a PTY-backed session (SSH, serial or telnet).
+ *  The backend `disconnect` command handles every session kind; local shells
+ *  must use `localClose` instead. Kept as a named wrapper so callers that close
+ *  a tab do not reach for `invoke` directly. */
+export async function disconnectSession(tabId: number): Promise<boolean> {
+  return disconnect(tabId)
+}
+
 export async function sendInput(tabId: number, data: string): Promise<boolean> {
   return await invoke<boolean>('send_input', { tabId, data })
 }

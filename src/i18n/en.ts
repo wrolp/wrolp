@@ -1264,6 +1264,8 @@ An invalid regex gets a red border and simply never fires; “Reset defaults” 
   snippetSend: 'Send',
   snippetSendDirect: 'All values are available — send straight to the terminal',
   snippetFillVarsRequired: 'Please provide a value for "{name}"',
+  snippetSaveFailed: 'Failed to save command: {err}',
+  snippetDeleteFailed: 'Failed to delete command: {err}',
   // Global variables (shared library for command snippets)
   cmdVarManager: 'Variables',
   cmdVarName: 'Name',

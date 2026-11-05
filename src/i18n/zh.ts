@@ -1198,6 +1198,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   snippetSend: '发送',
   snippetSendDirect: '变量都有值，直接发送到终端（不打开填写框）',
   snippetFillVarsRequired: '请填写变量 "{name}"',
+  snippetSaveFailed: '保存命令失败：{err}',
+  snippetDeleteFailed: '删除命令失败：{err}',
   // Global variables (shared library for command snippets)
   cmdVarManager: '变量',
   cmdVarName: '变量名',
