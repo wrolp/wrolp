@@ -10,6 +10,7 @@ import type {
   HostCommandDto,
   ImageInfo,
   RecentConnectionEntry,
+  TunnelConfig,
 } from '../../../src/types'
 
 /**
@@ -29,6 +30,8 @@ export interface MockConnection {
   /** Serial only: COM port name (shown as the tab host). */
   portName?: string
   baudRate?: number
+  /** Saved tunnel definitions rendered as tree children (`.conn-tunnel`). */
+  tunnels?: TunnelConfig[]
 }
 
 export interface TauriMockOptions {
@@ -250,6 +253,19 @@ export interface TauriMockOptions {
   gitCommitResult?: { oid: string; summary: string }
   /** What a fetch / pull / push resolves with. */
   gitNetworkResult?: { stdout: string; stderr: string }
+  /**
+   * Commands that reject instead of resolving, mapped to the error text the
+   * backend would have produced. A string rejects every call; an array drains
+   * one message per call, so a spec can fail only the first attempt and let the
+   * user's retry succeed.
+   */
+  failCommands?: Record<string, string | string[]>
+  /**
+   * Commands delayed by this many milliseconds before their normal body runs.
+   * Lets a spec observe an in-flight state (e.g. a "connecting" indicator) that
+   * an instant mock would skip past.
+   */
+  delayCommands?: Record<string, number>
 }
 
 /**
@@ -305,6 +321,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     const gitEntries: GitStatusEntry[] = (opts.gitStatus?.entries ?? []).map((e) => ({ ...e }))
     let gitCommits: GitCommit[] = (opts.gitCommits ?? []).map((c) => ({ ...c }))
     let gitStashes = (opts.gitStashes ?? []).map((s) => ({ ...s }))
+    // Stateful running-tunnel list: `start_tunnel` / `stop_tunnel` mutate it, so
+    // the `.conn-tunnel` row really toggles its `active` class after a re-read.
+    let tunnelRows: Array<Record<string, unknown>> = []
+    let nextTunnelId = 1
     const gitStatusNow = (): GitStatus => ({
       ...gitBase,
       entries: gitEntries.map((e) => ({ ...e })),
@@ -346,6 +366,15 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
       convertFileSrc: (p: string) => p,
       async invoke(cmd: string, args: Record<string, unknown> = {}) {
         invoked.push({ cmd, args })
+        // Failure / latency injection, before any handler runs. The message
+        // shape matches what a real `#[tauri::command]` Err would serialise to.
+        const failure = opts.failCommands?.[cmd]
+        if (failure !== undefined) {
+          const message = Array.isArray(failure) ? failure.shift() : failure
+          if (message !== undefined) throw message
+        }
+        const delay = opts.delayCommands?.[cmd]
+        if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay))
         if (cmd === 'plugin:event|listen') {
           const cb = callbacks.get(args.handler as number)
           if (cb) {
@@ -446,7 +475,6 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           }
           case 'get_local_shell_dirs':
           case 'list_local_drives':
-          case 'list_tunnels':
           case 'list_global_variables':
           case 'list_hidden_builtin_templates':
           case 'list_ai_models':
@@ -477,6 +505,35 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           // the newest 300, so a spec that cares about order supplies its own rows.
           case 'list_command_history':
             return opts.commandHistory ?? []
+          // Saved tunnels are started/stopped from the sidebar tree; the stateful
+          // list is what makes the row flip to `active` after a successful start.
+          case 'list_tunnels':
+            return tunnelRows.map((r) => ({ ...r }))
+          case 'start_tunnel': {
+            // `startTunnel` wraps its payload as `{ args }` (commands.ts), so the
+            // fields sit one level down rather than at the top.
+            const t = (args.args ?? {}) as Record<string, unknown>
+            const row = {
+              id: nextTunnelId++,
+              tabId: t.tabId ?? 0,
+              connectionId: t.connectionId ?? '',
+              configId: t.configId ?? '',
+              localAddr: t.localAddr ?? '127.0.0.1',
+              localPort: t.localPort ?? 0,
+              remoteHost: t.remoteHost ?? '',
+              remotePort: t.remotePort ?? 0,
+              name: t.name,
+              bytes: 0,
+              active: true,
+            }
+            tunnelRows = [...tunnelRows, row]
+            return row.id
+          }
+          case 'stop_tunnel': {
+            const id = Number(args.id)
+            tunnelRows = tunnelRows.filter((r) => r.id !== id)
+            return null
+          }
           case 'record_command_history':
             return null
           // Forgetting one entry. The spec asserts the row is gone from the UI, so
