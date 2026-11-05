@@ -276,6 +276,46 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   // Track active stream so we can stop it on unmount / toggle-off
   const streamIdRef = useRef<string | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Chunks arriving between flushes are held here and applied in one setState
+  // every 300 ms. Polling at 500 ms would otherwise re-parse the whole buffer
+  // (O(n)) and replace the <pre> for what may be a single new line.
+  const pendingRef = useRef('')
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Mirrors `follow` for the visibility handler, which restarts the stream when
+  // the window comes back and must not read a stale closure value.
+  const followRef = useRef(follow)
+  followRef.current = follow
+  // The live tick, so the visibility handler can resume the *same* stream. The
+  // backend keeps buffering while nobody polls, so resuming drains everything
+  // that accumulated (the catch-up), with no line duplicated.
+  const tickRef = useRef<() => void>(() => {})
+  // Incremental parse cache: "already generated line HTML + the raw text it was
+  // generated from". A pure append of plain (ANSI-free) text only parses the
+  // suffix, so a 500 ms tick that adds one line no longer re-parses megabytes.
+  const parseCacheRef = useRef<{ raw: string; color: boolean; lines: string[] } | null>(null)
+
+  const flushPending = useCallback(() => {
+    flushTimerRef.current = null
+    const appended = pendingRef.current
+    if (!appended) return
+    pendingRef.current = ''
+    const el = logsRef.current
+    const prevTop = el ? el.scrollTop : 0
+    setLogs((prev) => {
+      const next = trimToMaxLines(trimHead(prev + appended), maxLines)
+      // Amount removed from the head (buffer limit). Record it so the
+      // layout effect can keep the user's view anchored.
+      const removedChars = prev.length + appended.length - next.length
+      const removedHead = removedChars > 0 ? prev.substring(0, removedChars) : ''
+      preUpdateRef.current = { scrollTop: prevTop, removedHead }
+      return next
+    })
+  }, [maxLines])
+
+  const scheduleFlush = useCallback(() => {
+    if (flushTimerRef.current) return
+    flushTimerRef.current = setTimeout(flushPending, 300)
+  }, [flushPending])
 
   // ---- detect whether user is scrolled to the bottom ----
   const handleScroll = useCallback(() => {
@@ -349,6 +389,13 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
       clearTimeout(pollTimerRef.current)
       pollTimerRef.current = null
     }
+    // A fresh stream re-tails from the start; anything still queued belongs to
+    // the previous stream.
+    pendingRef.current = ''
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
 
     setError('')
     setLoading(true)
@@ -359,25 +406,22 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
       // Start polling — 500ms is fast enough for real-time feel. A recursive
       // setTimeout (not setInterval) is used so each tick awaits the previous
       // fetch: a slow pollDockerLogs can no longer overlap the next one and
-      // deliver out-of-order log chunks.
+      // deliver out-of-order log chunks. New chunks are only buffered here;
+      // `scheduleFlush` applies them to the DOM at most every 300 ms.
       const tick = async () => {
         // Bail if the stream was stopped / replaced while this tick was queued.
         if (streamIdRef.current !== sid) return
+        // Hidden window: stop fetching entirely. The visibility listener below
+        // restarts the stream (with a fresh full tail) when it comes back.
+        if (document.hidden) {
+          pollTimerRef.current = null
+          return
+        }
         try {
           const chunks = await pollDockerLogs(sid)
           if (chunks.length > 0) {
-            const el = logsRef.current
-            const prevTop = el ? el.scrollTop : 0
-            setLogs((prev) => {
-              const appended = chunks.join('')
-              const next = trimToMaxLines(trimHead(prev + appended), maxLines)
-              // Amount removed from the head (buffer limit). Record it so the
-              // layout effect can keep the user's view anchored.
-              const removedChars = prev.length + appended.length - next.length
-              const removedHead = removedChars > 0 ? prev.substring(0, removedChars) : ''
-              preUpdateRef.current = { scrollTop: prevTop, removedHead }
-              return next
-            })
+            pendingRef.current += chunks.join('')
+            scheduleFlush()
           }
         } catch {
           // ignore poll errors — stream may have ended
@@ -388,6 +432,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
         }
       }
       pollTimerRef.current = setTimeout(tick, 500)
+      tickRef.current = tick
       // Snap to the bottom once the stream's initial tail is loaded.
       requestAnimationFrame(scrollToBottom)
     } catch (e) {
@@ -396,7 +441,7 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
     } finally {
       setLoading(false)
     }
-  }, [host, containerName, tail, scrollToBottom])
+  }, [host, containerName, tail, scrollToBottom, scheduleFlush])
 
   const stopStream = useCallback(async () => {
     if (streamIdRef.current) {
@@ -407,6 +452,12 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
       clearTimeout(pollTimerRef.current)
       pollTimerRef.current = null
     }
+    pendingRef.current = ''
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
+    tickRef.current = () => {}
   }, [])
 
   // ---- follow toggle ----
@@ -431,9 +482,28 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
   // log levels, JSON) so uncoloured container output is still readable.
   const logsLines = useMemo(() => {
     if (!logs) return ['']
-    if (!color) return escapeLogs(logs).split('\n')
-    const plain = highlightPlainLogLines(logs)
-    return plain ?? parseAnsiToHtmlLines(logs)
+    const prev = parseCacheRef.current
+    // Fast path: a pure append of ANSI-free text. Plain lines are independent,
+    // so every cached line stays as-is and only the suffix (from the start of
+    // the previously-last line) is parsed. Coloured buffers fall through: SGR
+    // state spans line breaks, so they must be parsed from the beginning.
+    if (
+      prev &&
+      prev.color === color &&
+      logs.length > prev.raw.length &&
+      logs.startsWith(prev.raw) &&
+      !logs.includes('\x1b[')
+    ) {
+      const appended = logs.slice(prev.raw.length)
+      const tailStart = prev.raw.lastIndexOf('\n') + 1
+      const tail = prev.raw.slice(tailStart) + appended
+      const lines = prev.lines.slice(0, -1).concat(parseLogLines(tail, color))
+      parseCacheRef.current = { raw: logs, color, lines }
+      return lines
+    }
+    const lines = parseLogLines(logs, color)
+    parseCacheRef.current = { raw: logs, color, lines }
+    return lines
   }, [logs, color])
 
   // Line numbers need a box per *logical* line, so a wrapped line keeps its number beside
@@ -516,8 +586,38 @@ export const DockerLogViewer: React.FC<DockerLogViewerProps> = ({
       if (pollTimerRef.current) {
         clearTimeout(pollTimerRef.current)
       }
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current)
+      }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A hidden window stops the tick (see `tick`); coming back resumes the same
+  // stream, whose backend buffer then delivers everything missed in one drain.
+  useEffect(() => {
+    let wasHidden = document.hidden
+    const onVisibility = () => {
+      if (document.hidden) {
+        wasHidden = true
+        if (pollTimerRef.current) {
+          clearTimeout(pollTimerRef.current)
+          pollTimerRef.current = null
+        }
+        return
+      }
+      if (!wasHidden) return
+      wasHidden = false
+      if (streamIdRef.current) {
+        if (pollTimerRef.current) {
+          clearTimeout(pollTimerRef.current)
+          pollTimerRef.current = null
+        }
+        tickRef.current()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
   return (
     <div className="docker-log-viewer">
@@ -692,6 +792,13 @@ function trimToMaxLines(text: string, maxLines: number): string {
 /// and control characters that must never reach the DOM as raw text.
 function escapeLogs(text: string): string {
   return stripInvisible(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/// One line-HTML parser for both the memo and its incremental fast path, so the
+/// cached lines and the newly parsed suffix can never diverge.
+function parseLogLines(text: string, color: boolean): string[] {
+  if (!color) return escapeLogs(text).split('\n')
+  return highlightPlainLogLines(text) ?? parseAnsiToHtmlLines(text)
 }
 
 /// Shrink the DOM selection back to `el`'s text when a drag has run past its edges.
