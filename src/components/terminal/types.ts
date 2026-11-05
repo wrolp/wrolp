@@ -7,6 +7,10 @@ export interface TerminalComponentProps {
   tabId: number
   isActive: boolean
   isFocused?: boolean
+  /** Whether this terminal's workspace is on screen. A hidden workspace keeps
+   *  the component mounted (scrollback survives) but its output poll loop is
+   *  stopped; becoming visible again pulls once immediately. Defaults to true. */
+  isVisible?: boolean
   /** Current shell view for this tab's pane ("terminal", editor key, docker
    *  log key). When transitioning back to "terminal" (e.g. from file editor),
    *  the terminal is automatically focused. */

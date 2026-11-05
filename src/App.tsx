@@ -1722,19 +1722,28 @@ const SETTINGS_PANES: {
   { key: 'about', icon: 'link', title: 'about', desc: 'settingsPaneAboutDesc' },
 ]
 
-// A tab bar entry that owns a workspace: a session with a pane tree of its own.
-// The other kinds — Settings, a docker log view, an open file — are entries in
-// the same bar but have no panes, so anything that splits, focuses or sends has
-// to skip them when it works out "the current workspace".
-function isWorkspaceTab(tab: TabInfo | undefined): tab is TabInfo {
+// Every tab type backed by a session/PTY. This is the single source of truth for
+// "does this tab own a live session": the close paths, pane reassignment, portal
+// mounting and visibility checks all branch on it, so adding a tab type here
+// admits it everywhere at once instead of leaving one filter behind.
+// Embedded pane tabs are sessions too — `isWorkspaceTab` adds the bar-level
+// requirement on top.
+function isSessionTab(tab: TabInfo | undefined): boolean {
   return (
     tab != null &&
-    !tab.embedded &&
     (tab.tabType === 'terminal' ||
       tab.tabType === 'localShell' ||
       tab.tabType === 'serial' ||
       tab.tabType === 'telnet')
   )
+}
+
+// A tab bar entry that owns a workspace: a session with a pane tree of its own.
+// The other kinds — Settings, a docker log view, an open file — are entries in
+// the same bar but have no panes, so anything that splits, focuses or sends has
+// to skip them when it works out "the current workspace".
+function isWorkspaceTab(tab: TabInfo | undefined): tab is TabInfo {
+  return isSessionTab(tab) && tab != null && !tab.embedded
 }
 
 // The bar entry that owns a session: a root tab owns itself, an embedded pane
@@ -5748,14 +5757,7 @@ export default function App() {
   const allTabToLeaf = useMemo(() => {
     const m = new Map<number, string>()
     for (const root of tabs) {
-      if (
-        (root.tabType !== 'terminal' &&
-          root.tabType !== 'localShell' &&
-          root.tabType !== 'serial' &&
-          root.tabType !== 'telnet') ||
-        root.embedded
-      )
-        continue
+      if (!isWorkspaceTab(root)) continue
       const tree = splitTrees[root.tabId]
       if (!tree) continue
       buildTabToLeaf(tree).forEach((v, k) => m.set(k, v))
@@ -5930,7 +5932,12 @@ export default function App() {
     />
   )
 
-  const renderTerminalForTab = (tab: TabInfo, isFocused: boolean, leafId?: string) => {
+  const renderTerminalForTab = (
+    tab: TabInfo,
+    isFocused: boolean,
+    leafId?: string,
+    isVisible = true,
+  ) => {
     const connectConfig = tab.connectionId
       ? (() => {
           const conn = cachedConnections.find((c) => c.id === tab.connectionId)
@@ -5977,6 +5984,7 @@ export default function App() {
               tabId={tab.tabId}
               isActive={true}
               isFocused={isFocused}
+              isVisible={isVisible}
               shellView={getShellView(tab.tabId)}
               reconnectTrigger={reconnectKeys[tab.tabId] || 0}
               connectConfig={connectConfig}
@@ -8137,78 +8145,6 @@ export default function App() {
     return out
   }
 
-  // Portals keep each terminal instance mounted (preserving its SSH session and
-  // scrollback) while placing its DOM into the correct pane body, or into the
-  // hidden pool when it isn't shown in any pane.
-  // A floated terminal pane is NOT torn down — its SAME TerminalComponent instance
-  // stays mounted and we simply re-route its DOM into the floating window's body
-  // (instead of unmounting it and mounting a fresh one, which would discard the
-  // scrollback/output). Map tabId -> floating-body pane id used as the portal dest.
-  const floatingTerminalDest = new Map<number, string>()
-  for (const fi of floatingItems) {
-    if (fi.kind === 'terminal' && fi.tabId != null) {
-      floatingTerminalDest.set(fi.tabId, `floatbody-${fi.floatId}`)
-    }
-  }
-  const terminalPortals = tabs
-    .filter(
-      (t) =>
-        t.tabType === 'terminal' ||
-        t.tabType === 'localShell' ||
-        t.tabType === 'serial' ||
-        t.tabType === 'telnet' ||
-        (t.tabType === 'settings' && settingsActive),
-    )
-    .map((tab) => {
-      if (tab.tabType === 'settings') {
-        return settingsOverlayRef.current
-          ? createPortal(
-              renderTerminalForTab(tab, false),
-              settingsOverlayRef.current,
-              String(tab.tabId),
-            )
-          : null
-      }
-      // Route each terminal into the leaf that shows it within its own workspace,
-      // or into the floating window's body when the pane is popped out. Every
-      // workspace container is always mounted (only visibility toggles), so the
-      // portal destination never changes on tab switch — sessions stay mounted
-      // and never reconnect.
-      const floatLeaf = floatingTerminalDest.get(tab.tabId)
-      const leafId = floatLeaf ?? allTabToLeaf.get(tab.tabId)
-      const dest = leafId ? paneBodyRefs.current.get(leafId) : null
-      if (!leafId || !dest) return null
-      // A popped-out terminal is always the focused/active surface within its window.
-      // Scoped to the anchor workspace rather than `activeTabId`, because a file or
-      // Settings tab is selected while its session keeps its focus.
-      const isFocused = floatLeaf != null || (workspaceAnchorId != null && leafId === focusedLeafId)
-      // Stable key: without it, removing one tab shifts the others' array
-      // index, making React remount the surviving terminal — which re-runs
-      // its connection (looks like the "other pane reconnected").
-      // The wrapper's onMouseDown focuses this pane even though the terminal is
-      // portaled (React events don't bubble through a portal to the pane div),
-      // so clicking a shell window marks its tab as the active/focused one.
-      return createPortal(
-        <div style={{ height: '100%', width: '100%' }} onMouseDown={() => setFocusedLeafId(leafId)}>
-          {renderTerminalForTab(tab, isFocused, leafId)}
-        </div>,
-        dest,
-        String(tab.tabId),
-      )
-    })
-
-  // Top-level terminal tabs (workspaces): each renders its own split layout
-  // inside an always-mounted container. Only the active workspace is visible;
-  // switching toggles visibility (never remounts), so sessions persist.
-  const rootTabs = tabs.filter(
-    (t) =>
-      (t.tabType === 'terminal' ||
-        t.tabType === 'localShell' ||
-        t.tabType === 'serial' ||
-        t.tabType === 'telnet') &&
-      !t.embedded,
-  )
-
   // The file the tab bar currently selects, if any. Docked, it takes the whole
   // main area (no workspace is shown); floated, it hands the area back to the
   // session the file came from, so `shownRootId` is that session.
@@ -8235,6 +8171,70 @@ export default function App() {
     activeTerminalTab?.tabType === 'dockerLog' && !activeTerminalTab.embedded
       ? activeTerminalTab
       : null
+
+  // Portals keep each terminal instance mounted (preserving its SSH session and
+  // scrollback) while placing its DOM into the correct pane body, or into the
+  // hidden pool when it isn't shown in any pane.
+  // A floated terminal pane is NOT torn down — its SAME TerminalComponent instance
+  // stays mounted and we simply re-route its DOM into the floating window's body
+  // (instead of unmounting it and mounting a fresh one, which would discard the
+  // scrollback/output). Map tabId -> floating-body pane id used as the portal dest.
+  const floatingTerminalDest = new Map<number, string>()
+  for (const fi of floatingItems) {
+    if (fi.kind === 'terminal' && fi.tabId != null) {
+      floatingTerminalDest.set(fi.tabId, `floatbody-${fi.floatId}`)
+    }
+  }
+  const terminalPortals = tabs
+    .filter((t) => isSessionTab(t) || (t.tabType === 'settings' && settingsActive))
+    .map((tab) => {
+      if (tab.tabType === 'settings') {
+        return settingsOverlayRef.current
+          ? createPortal(
+              renderTerminalForTab(tab, false),
+              settingsOverlayRef.current,
+              String(tab.tabId),
+            )
+          : null
+      }
+      // Route each terminal into the leaf that shows it within its own workspace,
+      // or into the floating window's body when the pane is popped out. Every
+      // workspace container is always mounted (only visibility toggles), so the
+      // portal destination never changes on tab switch — sessions stay mounted
+      // and never reconnect.
+      const floatLeaf = floatingTerminalDest.get(tab.tabId)
+      const leafId = floatLeaf ?? allTabToLeaf.get(tab.tabId)
+      const dest = leafId ? paneBodyRefs.current.get(leafId) : null
+      if (!leafId || !dest) return null
+      // A popped-out terminal is always the focused/active surface within its window.
+      // Scoped to the anchor workspace rather than `activeTabId`, because a file or
+      // Settings tab is selected while its session keeps its focus.
+      const isFocused = floatLeaf != null || (workspaceAnchorId != null && leafId === focusedLeafId)
+      // Only the workspace currently shown polls for output; a hidden workspace's
+      // terminals keep their scrollback but stop the 100 ms/400 ms loop until
+      // they are shown again. A floated pane is always visible.
+      const rootId = tab.embedded ? workspaceRootOf(splitTrees, tabs, tab.tabId) : tab.tabId
+      const isVisible =
+        floatLeaf != null || (!settingsActive && !homeActive && rootId === shownRootId)
+      // Stable key: without it, removing one tab shifts the others' array
+      // index, making React remount the surviving terminal — which re-runs
+      // its connection (looks like the "other pane reconnected").
+      // The wrapper's onMouseDown focuses this pane even though the terminal is
+      // portaled (React events don't bubble through a portal to the pane div),
+      // so clicking a shell window marks its tab as the active/focused one.
+      return createPortal(
+        <div style={{ height: '100%', width: '100%' }} onMouseDown={() => setFocusedLeafId(leafId)}>
+          {renderTerminalForTab(tab, isFocused, leafId, isVisible)}
+        </div>,
+        dest,
+        String(tab.tabId),
+      )
+    })
+
+  // Top-level terminal tabs (workspaces): each renders its own split layout
+  // inside an always-mounted container. Only the active workspace is visible;
+  // switching toggles visibility (never remounts), so sessions persist.
+  const rootTabs = tabs.filter((t) => isWorkspaceTab(t))
 
   // The Home page, whoever is showing it: unpinned it is what stands behind an
   // empty stage, pinned it is the body of the tab. One builder for both, so the

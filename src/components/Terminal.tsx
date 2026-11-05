@@ -255,6 +255,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   tabId,
   isActive,
   isFocused,
+  isVisible = true,
   shellView,
   reconnectTrigger,
   connectConfig,
@@ -291,13 +292,28 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // tracked by id, so a mount check is the reliable gate).
   const mountedRef = useRef(true)
   const isActiveRef = useRef(isActive)
+  const isFocusedRef = useRef(!!isFocused)
+  // Whether this terminal's workspace is currently on screen. A hidden
+  // workspace keeps its component mounted (so scrollback survives), but its
+  // poll loop must not keep hammering the backend for output nobody can see.
+  const isVisibleRef = useRef(isVisible)
   const tabIdRef = useRef(tabId)
   const connectConfigRef = useRef(connectConfig)
   const onStatusChangeRef = useRef(onStatusChange)
   const onSizeChangeRef = useRef(onSizeChange)
   const onCommandSubmittedRef = useRef(onCommandSubmitted)
   const onOpenFileRef = useRef(onOpenFile)
+  const onNotifyRef = useRef(onNotify)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Single-poll-loop state (see startPolling): at most one `poll_output` round is
+  // in flight, and a tick that arrives meanwhile only asks for one catch-up pull.
+  const pollInFlightRef = useRef(false)
+  const pollPendingRef = useRef(false)
+  const pollFailuresRef = useRef(0)
+  const pollErrorNotifiedRef = useRef(false)
+  // Assigned by the mount effect, called from the reconnect effect and from
+  // focus/visibility changes so every path shares one loop.
+  const startPollingRef = useRef<() => void>(() => {})
   // rAF retry counter for the initial fit-wait loop (capped to avoid a 60 fps
   // spin when a pane stays 0-sized, e.g. hidden behind a file editor overlay).
   const layoutWaitFrames = useRef(0)
@@ -497,6 +513,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Guards sendResize until the backend shell is registered (otherwise ResizeObserver
   // fires before openLocalShell resolves, producing "local_resize: Local shell not found").
   const connectedRef = useRef(false)
+  // Set when a `connection-closed` event arrives for this tab. `connect` resolves
+  // before the handshake finishes, and a failed one emits this event immediately
+  // afterwards — possibly before the promise's `.then()` runs. Without this flag
+  // that `.then()` would flip the tab the event just marked disconnected back to
+  // "connected", leaving a green dot, an enabled prompt and a polling loop behind.
+  const closedDuringConnectRef = useRef(false)
   // `pending` snapshots how much text sits on the shell's input line when the
   // menu opens, so "Clear input" can be disabled when there is nothing to clear.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; pending: string } | null>(null)
@@ -1653,6 +1675,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     isActiveRef.current = isActive
   }, [isActive])
+  // Focus / workspace visibility decide the poll cadence, and a workspace that
+  // becomes visible again must pull the output that accumulated while hidden.
+  useEffect(() => {
+    isFocusedRef.current = !!isFocused
+    isVisibleRef.current = isVisible !== false
+    if (isVisible !== false) startPollingRef.current()
+  }, [isFocused, isVisible])
   useEffect(() => {
     tabIdRef.current = tabId
   }, [tabId])
@@ -1672,6 +1701,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   useEffect(() => {
     setCwd(localCwd ?? null)
     homeRef.current = null
+    // `setCwd` is a stable wrapper (useCallback([])); listing `localCwd` would
+    // re-run this on every cwd change and undo the tracking it performs.
   }, [reconnectTrigger])
   useEffect(() => {
     connectConfigRef.current = connectConfig
@@ -1681,6 +1712,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     onSizeChangeRef.current = onSizeChange
     onCommandSubmittedRef.current = onCommandSubmitted
     onOpenFileRef.current = onOpenFile
+    onNotifyRef.current = onNotify
   })
 
   // Calculate terminal cols/rows and send resize command
@@ -2816,56 +2848,94 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       document.fonts.ready.then(() => maybeFitAndResize()).catch(() => {})
     }
 
-    // Poll SSH output (every 100ms), completely bypassing Tauri event system.
-    // The poll is skipped while the window is hidden (minimized / occluded) or
-    // the session is no longer connected — backend buffers the output, and the
-    // next visible/connected tick drains it. This keeps the IPC loop (10 Hz ×
-    // every tab) from burning CPU while the user isn't looking at the window.
-    const startPolling = () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-      // Do one immediate poll so slow first-output doesn't wait for the first
-      // 100 ms interval tick.
-      const doPoll = async () => {
-        if (document.hidden || !connectedRef.current) return
-        try {
-          const chunks = await pollOutput(currentTabId)
-          if (chunks.length > 0) {
-            for (const chunk of chunks) writeOutput(chunk)
-          }
-        } catch {
-          // Silently ignore polling failures to avoid spam
-        }
-      }
-      doPoll()
-      pollTimerRef.current = setInterval(doPoll, 100)
-    }
-
-    // Stop polling (and mark disconnected) when the backend reports the SSH
-    // connection closed, instead of keeping the 10 Hz IPC loop running forever.
-    let unlistenClosed: (() => void) | null = null
-    listen<{ tabId: number }>('connection-closed', (event) => {
-      if (event.payload.tabId !== currentTabId) return
-      connectedRef.current = false
+    // One poll loop per terminal. A round still awaiting `poll_output` makes the
+    // next tick skip instead of firing a second request — two overlapping
+    // resolves would interleave chunks into xterm out of order. The skipped tick
+    // only sets a flag, so the in-flight round pulls again when it finishes.
+    // Cadence: 100 ms for the focused pane, 400 ms for a visible-but-unfocused
+    // one, and no timer at all while the owning workspace (or the window) is
+    // hidden — coming back kicks one immediate catch-up round.
+    const POLL_FAILURES_BEFORE_ALERT = 5
+    const pollDelayMs = () => (isFocusedRef.current && isVisibleRef.current ? 100 : 400)
+    const stopPolling = () => {
       if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current)
+        clearTimeout(pollTimerRef.current)
         pollTimerRef.current = null
       }
+    }
+    const pollOnce = async (): Promise<void> => {
+      if (pollInFlightRef.current) {
+        pollPendingRef.current = true
+        return
+      }
+      if (document.hidden || !connectedRef.current || !isVisibleRef.current) return
+      pollInFlightRef.current = true
+      try {
+        const chunks = await pollOutput(currentTabId)
+        if (chunks.length > 0) {
+          for (const chunk of chunks) writeOutput(chunk)
+        }
+        pollFailuresRef.current = 0
+        pollErrorNotifiedRef.current = false
+      } catch (err) {
+        // Do not swallow polling failures: the tab can still look "connected"
+        // while no output ever reaches the screen. Report once per failure
+        // streak (a successful round above resets it) so a broken IPC channel
+        // surfaces without spamming one toast per tick.
+        pollFailuresRef.current += 1
+        if (
+          pollFailuresRef.current >= POLL_FAILURES_BEFORE_ALERT &&
+          !pollErrorNotifiedRef.current
+        ) {
+          pollErrorNotifiedRef.current = true
+          const errMsg = typeof err === 'string' ? err : (err as any)?.message || String(err)
+          onNotifyRef.current?.('error', t('terminalOutputSyncFailed', { err: errMsg }))
+        }
+      } finally {
+        pollInFlightRef.current = false
+        if (pollPendingRef.current && mountedRef.current) {
+          pollPendingRef.current = false
+          void pollOnce()
+        }
+      }
+    }
+    const schedulePoll = (immediate: boolean) => {
+      stopPolling()
+      if (!connectedRef.current || document.hidden || !isVisibleRef.current) return
+      pollTimerRef.current = setTimeout(
+        () => {
+          pollTimerRef.current = null
+          if (document.hidden || !connectedRef.current || !isVisibleRef.current) return
+          void pollOnce().finally(() => {
+            if (mountedRef.current) schedulePoll(false)
+          })
+        },
+        immediate ? 0 : pollDelayMs(),
+      )
+    }
+    const startPolling = () => schedulePoll(true)
+    // Reconnect paths live in another effect, so they reach the same loop through
+    // this ref instead of growing a second interval of their own.
+    startPollingRef.current = startPolling
+
+    // Stop polling (and mark disconnected) when the backend reports the SSH
+    // connection closed, instead of keeping the loop running forever.
+    let unlistenClosed: (() => void) | null = null
+    listen<{ tabId: number; reason?: string }>('connection-closed', (event) => {
+      if (event.payload.tabId !== currentTabId) return
+      closedDuringConnectRef.current = true
+      connectedRef.current = false
+      stopPolling()
     }).then((un) => {
       unlistenClosed = un
     })
 
     // When the window becomes visible again, drain any output that accumulated
-    // while it was hidden in one immediate poll (next interval tick is up to
-    // 100 ms away — this makes it feel instant).
+    // while it was hidden in one immediate poll (next tick would otherwise wait
+    // for the full interval — this makes it feel instant).
     const handleVisibility = () => {
-      if (!document.hidden && connectedRef.current && pollTimerRef.current) {
-        const currentTab = tabIdRef.current
-        pollOutput(currentTab)
-          .then((chunks) => {
-            for (const chunk of chunks) writeOutput(chunk)
-          })
-          .catch(() => {})
-      }
+      if (document.hidden) stopPolling()
+      else startPollingRef.current()
     }
     document.addEventListener('visibilitychange', handleVisibility)
 
@@ -2880,6 +2950,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // spurious SIGWINCH repaint and risk misalignment).
       lastColsRef.current = cols
       lastRowsRef.current = rows
+      closedDuringConnectRef.current = false
       onStatusChangeRef.current('connecting')
       if (isLocal) {
         openLocalPty(
@@ -2894,6 +2965,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           rows,
         )
           .then(() => {
+            if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             // Defer startPolling until after a confirmed-good fit+resize.
@@ -2949,6 +3021,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           rows,
         )
           .then(() => {
+            if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             startPolling()
@@ -2978,6 +3051,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           rows,
         )
           .then(() => {
+            if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             startPolling()
@@ -3008,6 +3082,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           true,
         )
           .then(() => {
+            if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             nestedDepthRef.current = 0 // fresh shell: no nested session carry-over
@@ -3096,7 +3171,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       unlistenClosed?.()
       document.removeEventListener('visibilitychange', handleVisibility)
       if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current)
+        clearTimeout(pollTimerRef.current)
         pollTimerRef.current = null
       }
       containerRef.current?.removeEventListener('click', handleClick)
@@ -3189,9 +3264,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
     // Stop existing poll timer
     if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current)
+      clearTimeout(pollTimerRef.current)
       pollTimerRef.current = null
     }
+    // A fresh session must not inherit the previous attempt's in-flight/pending
+    // poll state (otherwise the first tick would think a round is still running).
+    pollInFlightRef.current = false
+    pollPendingRef.current = false
+    pollFailuresRef.current = 0
+    pollErrorNotifiedRef.current = false
 
     // A reconnect starts a fresh session — abandon any in-flight highlight capture.
     resetCapture()
@@ -3231,6 +3312,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       const rows = term.rows
       console.log(`[Terminal] reconnect: ${cols}x${rows}`)
       onSizeChangeRef.current?.(cols, rows)
+      closedDuringConnectRef.current = false
       onStatusChangeRef.current('connecting')
 
       if (isLocal) {
@@ -3246,6 +3328,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           term.rows,
         )
           .then(() => {
+            if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             // Defer polling + post-connect fit so geometry is correct before
@@ -3264,16 +3347,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                   sendResize(term)
                 }
               }
-              if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-              pollTimerRef.current = setInterval(async () => {
-                if (document.hidden || !connectedRef.current) return
-                try {
-                  const chunks = await pollOutput(currentTabId)
-                  if (chunks.length > 0) {
-                    for (const chunk of chunks) writeOutput(chunk)
-                  }
-                } catch {}
-              }, 100)
+              startPollingRef.current()
             }, 300)
           })
           .catch((err) => {
@@ -3304,20 +3378,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           rows,
         )
           .then(() => {
+            if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             setTimeout(() => {
               if (!mountedRef.current) return
-              if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-              pollTimerRef.current = setInterval(async () => {
-                if (document.hidden || !connectedRef.current) return
-                try {
-                  const chunks = await pollOutput(currentTabId)
-                  if (chunks.length > 0) {
-                    for (const chunk of chunks) writeOutput(chunk)
-                  }
-                } catch {}
-              }, 100)
+              startPollingRef.current()
             }, 300)
           })
           .catch((err) => {
@@ -3348,20 +3414,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           rows,
         )
           .then(() => {
+            if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
             setTimeout(() => {
               if (!mountedRef.current) return
-              if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-              pollTimerRef.current = setInterval(async () => {
-                if (document.hidden || !connectedRef.current) return
-                try {
-                  const chunks = await pollOutput(currentTabId)
-                  if (chunks.length > 0) {
-                    for (const chunk of chunks) writeOutput(chunk)
-                  }
-                } catch {}
-              }, 100)
+              startPollingRef.current()
             }, 300)
           })
           .catch((err) => {
@@ -3392,6 +3450,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         false,
       )
         .then(() => {
+          if (closedDuringConnectRef.current) return
           connectedRef.current = true
           onStatusChangeRef.current('connected')
           nestedDepthRef.current = 0 // fresh shell: no nested session carry-over
@@ -3413,16 +3472,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 sendResize(term)
               }
             }
-            if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-            pollTimerRef.current = setInterval(async () => {
-              if (document.hidden || !connectedRef.current) return
-              try {
-                const chunks = await pollOutput(currentTabId)
-                if (chunks.length > 0) {
-                  for (const chunk of chunks) writeOutput(chunk)
-                }
-              } catch {}
-            }, 100)
+            startPollingRef.current()
           }, 300)
         })
         .catch((err) => {
