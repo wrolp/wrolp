@@ -1753,6 +1753,12 @@ function workspaceRootOf(
   return null
 }
 
+// A rejected Tauri command is usually a plain string, but a failed `invoke`
+// can also surface an Error. One formatter keeps every error toast readable.
+function errorText(err: unknown): string {
+  return typeof err === 'string' ? err : ((err as Error)?.message ?? String(err))
+}
+
 export default function App() {
   const { t, lang, langPref, setLang } = useI18n()
   // The tooltips that quote a combo (the inspector button) have to follow it
@@ -3006,6 +3012,20 @@ export default function App() {
     }
   }, [toast, toastHeld])
 
+  // Background refreshes (connection list, workspace list) can fail on every
+  // call — a locked vault or a backend that is still starting would otherwise
+  // stack one identical toast per attempt. Remember the last one and ignore an
+  // identical message inside the window; a genuinely new error still shows at
+  // once. This is the single funnel for "same error must not spam".
+  const lastErrorToastRef = useRef<{ text: string; at: number }>({ text: '', at: 0 })
+  const toastErrorOnce = useCallback((text: string) => {
+    const now = Date.now()
+    const last = lastErrorToastRef.current
+    if (last.text === text && now - last.at < 5000) return
+    lastErrorToastRef.current = { text, at: now }
+    setToast({ kind: 'error', text })
+  }, [])
+
   // Manual "collect now" for the settings card, bypassing the weekly gate: someone
   // who just installed a package wants it in the list this second, not after the
   // next connection. Lives down here because it reports through the toast above.
@@ -3711,6 +3731,8 @@ export default function App() {
       setConnections(conns)
     } catch (err) {
       console.error('Failed to load connections:', err)
+      // Keep the sidebar showing the last known list instead of blanking it.
+      toastErrorOnce(t('connectionsLoadFailed', { err: errorText(err) }))
     }
   }
 
@@ -3721,6 +3743,7 @@ export default function App() {
       setActiveWorkspaceId(data.activeWorkspaceId)
     } catch (err) {
       console.error('Failed to load workspaces:', err)
+      toastErrorOnce(t('workspacesLoadFailed', { err: errorText(err) }))
     }
   }
 
@@ -5443,44 +5466,60 @@ export default function App() {
   )
 
   // Workspace handlers
-  const handleWorkspaceSwitch = useCallback(async (workspaceId: string) => {
-    try {
-      await switchWorkspace(workspaceId)
-      setActiveWorkspaceId(workspaceId)
-      loadConnections()
-    } catch (err) {
-      console.error('Failed to switch workspace:', err)
-    }
-  }, [])
+  const handleWorkspaceSwitch = useCallback(
+    async (workspaceId: string) => {
+      try {
+        await switchWorkspace(workspaceId)
+        setActiveWorkspaceId(workspaceId)
+        loadConnections()
+      } catch (err) {
+        console.error('Failed to switch workspace:', err)
+        toastErrorOnce(t('workspaceSwitchFailed', { err: errorText(err) }))
+      }
+    },
+    [toastErrorOnce, t],
+  )
 
-  const handleWorkspaceCreate = useCallback(async (name: string) => {
-    try {
-      await createWorkspace(name)
-      loadWorkspaceData()
-      loadConnections()
-    } catch (err) {
-      console.error('Failed to create workspace:', err)
-    }
-  }, [])
+  const handleWorkspaceCreate = useCallback(
+    async (name: string) => {
+      try {
+        await createWorkspace(name)
+        loadWorkspaceData()
+        loadConnections()
+      } catch (err) {
+        console.error('Failed to create workspace:', err)
+        toastErrorOnce(t('workspaceCreateFailed', { err: errorText(err) }))
+      }
+    },
+    [toastErrorOnce, t],
+  )
 
-  const handleWorkspaceDelete = useCallback(async (workspaceId: string) => {
-    try {
-      await deleteWorkspace(workspaceId)
-      loadWorkspaceData()
-      loadConnections()
-    } catch (err) {
-      console.error('Failed to delete workspace:', err)
-    }
-  }, [])
+  const handleWorkspaceDelete = useCallback(
+    async (workspaceId: string) => {
+      try {
+        await deleteWorkspace(workspaceId)
+        loadWorkspaceData()
+        loadConnections()
+      } catch (err) {
+        console.error('Failed to delete workspace:', err)
+        toastErrorOnce(t('workspaceDeleteFailed', { err: errorText(err) }))
+      }
+    },
+    [toastErrorOnce, t],
+  )
 
-  const handleWorkspaceRename = useCallback(async (workspaceId: string, name: string) => {
-    try {
-      await renameWorkspace(workspaceId, name)
-      loadWorkspaceData()
-    } catch (err) {
-      console.error('Failed to rename workspace:', err)
-    }
-  }, [])
+  const handleWorkspaceRename = useCallback(
+    async (workspaceId: string, name: string) => {
+      try {
+        await renameWorkspace(workspaceId, name)
+        loadWorkspaceData()
+      } catch (err) {
+        console.error('Failed to rename workspace:', err)
+        toastErrorOnce(t('workspaceRenameFailed', { err: errorText(err) }))
+      }
+    },
+    [toastErrorOnce, t],
+  )
 
   // Sidebar drag-to-resize
   const handleDividerMouseDown = useCallback(
