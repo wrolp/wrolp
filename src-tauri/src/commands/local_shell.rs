@@ -406,12 +406,8 @@ pub(crate) async fn spawn_local_pty(
   // PATHEXT and never lands on the shim.
   let program = pty_program(&program);
 
-  // Clear any stale output for this tab
-  {
-    if let Ok(mut buffers) = state.output_buffers.lock() {
-      buffers.remove(&tab_id);
-    }
-  }
+  // Clear any stale output (and AI capture sink) for this tab
+  clear_tab_buffers(state.inner(), tab_id);
 
   // Remove any existing local shell for this tab
   {
@@ -521,7 +517,7 @@ pub(crate) async fn spawn_local_pty(
       LocalShell {
         tab_id,
         master,
-        writer: Box::new(writer),
+        writer: Arc::new(StdMutex::new(Box::new(writer))),
         child,
         session_id,
         cwd: shell_cwd,
@@ -562,11 +558,11 @@ pub(crate) async fn spawn_local_pty(
           // frontend queue below). Only active while an AI command runs.
           if let Ok(mut cap) = reader_ai_capture.lock() {
             if let Some(sink) = cap.as_mut() {
-              sink.push_str(&chunk);
+              push_ai_capture(sink, &chunk);
             }
           }
           if let Ok(mut q) = reader_output.lock() {
-            q.push(chunk);
+            push_capped_chunk(&mut q, chunk);
           }
         }
         Err(_) => break,
@@ -579,8 +575,19 @@ pub(crate) async fn spawn_local_pty(
       }
     }
     // Process exited — drop the shell registration and notify the frontend.
+    // Only if this reader still owns the tab's current registration: closing a
+    // tab and reopening it immediately leaves the old thread draining its (now
+    // orphaned) queue, and without the version check that stale thread would
+    // delete the *new* shell and tell the frontend it had closed.
     if let Some(state) = app.try_state::<AppState>() {
       if let Ok(mut shells) = state.local_shells.lock() {
+        let is_current = entry_is_ours(
+          shells.get(&reader_tab).map(|s| s.session_id),
+          session_id,
+        );
+        if !is_current {
+          return;
+        }
         shells.remove(&reader_tab);
       }
     }
@@ -703,14 +710,23 @@ pub async fn local_send_input(
   tab_id: u32,
   data: String,
 ) -> Result<bool, String> {
-  let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
-  let shell = shells.get_mut(&tab_id).ok_or("Local shell not found")?;
+  // Clone the writer handle and release the local_shells lock before the
+  // blocking PTY write — a stalled shell must not freeze `poll_output` or
+  // resize/close for every other tab.
+  let writer = {
+    let shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+    shells
+      .get(&tab_id)
+      .ok_or("Local shell not found")?
+      .writer
+      .clone()
+  };
   use std::io::Write;
-  shell
-    .writer
+  let mut writer = writer.lock().map_err(|e| e.to_string())?;
+  writer
     .write_all(data.as_bytes())
     .map_err(|e| format!("Failed to write to local shell: {}", e))?;
-  let _ = shell.writer.flush();
+  let _ = writer.flush();
   Ok(true)
 }
 

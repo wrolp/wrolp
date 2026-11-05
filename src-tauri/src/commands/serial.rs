@@ -201,16 +201,33 @@ pub async fn connect_serial(
     buffers.remove(&tab_id);
   }
 
-  // If an existing serial session already occupies this tab, ask its thread to stop.
-  {
+  // If an existing serial session already occupies this tab, ask its thread to
+  // stop and wait (bounded) until it has really released the OS port. Opening
+  // the port while the old thread still owns it fails with a confusing
+  // "access denied", and two readers would race on the same COM handle.
+  let old = {
     let sessions = state.serial_sessions.lock().map_err(|e| e.to_string())?;
-    if let Some(old) = sessions.get(&tab_id) {
-      old.shutdown.store(true, AtomicOrdering::SeqCst);
+    sessions
+      .get(&tab_id)
+      .map(|s| (s.shutdown.clone(), s.done.clone()))
+  };
+  if let Some((old_shutdown, old_done)) = old {
+    old_shutdown.store(true, AtomicOrdering::SeqCst);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !old_done.load(AtomicOrdering::SeqCst) {
+      if std::time::Instant::now() >= deadline {
+        return Err(format!(
+          "Previous serial session on tab {} did not release its port within 2s; retry after it closes",
+          tab_id
+        ));
+      }
+      tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
   }
 
   let session_id = state.next_session_id.fetch_add(1, Ordering::SeqCst);
   let shutdown = Arc::new(AtomicBool::new(false));
+  let done = Arc::new(AtomicBool::new(false));
   let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>();
 
   {
@@ -223,6 +240,7 @@ pub async fn connect_serial(
         shutdown: shutdown.clone(),
         write_tx: Some(write_tx),
         session_id,
+        done: done.clone(),
       },
     );
   }
@@ -258,10 +276,14 @@ pub async fn connect_serial(
       _ => "",
     };
     if let Ok(mut buffers) = state.output_buffers.lock() {
-      buffers.entry(tab_id).or_default().push(format!(
-        "\x1b[33m=== Serial {} @ {} {}{}{}{} ===\x1b[0m\r\n",
-        cfg.port_name, cfg.baud_rate, cfg.data_bits, parity_ch, cfg.stop_bits, fc
-      ));
+      push_output_chunk(
+        &mut buffers,
+        tab_id,
+        format!(
+          "\x1b[33m=== Serial {} @ {} {}{}{}{} ===\x1b[0m\r\n",
+          cfg.port_name, cfg.baud_rate, cfg.data_bits, parity_ch, cfg.stop_bits, fc
+        ),
+      );
     }
   }
 
@@ -270,6 +292,7 @@ pub async fn connect_serial(
   let tid = tab_id;
   let sid = session_id;
   let shutdown_flag = shutdown.clone();
+  let done_flag = done.clone();
   thread::spawn(move || {
     let state = app_handle.state::<AppState>();
     let mut port = port;
@@ -298,7 +321,7 @@ pub async fn connect_serial(
             continue;
           }
           if let Ok(mut buffers) = state.output_buffers.lock() {
-            buffers.entry(tid).or_default().push(text);
+            push_output_chunk(&mut buffers, tid, text);
           }
         }
         Err(e) => {
@@ -307,15 +330,21 @@ pub async fn connect_serial(
             continue;
           }
           if let Ok(mut buffers) = state.output_buffers.lock() {
-            buffers
-              .entry(tid)
-              .or_default()
-              .push(format!("\x1b[31m[serial] read error: {}\x1b[0m\r\n", e));
+            push_output_chunk(
+              &mut buffers,
+              tid,
+              format!("\x1b[31m[serial] read error: {}\x1b[0m\r\n", e),
+            );
           }
           break;
         }
       }
     }
+
+    // Release the OS handle *before* signalling done, so a reconnect that is
+    // waiting on `done` can open the port immediately.
+    drop(port);
+    done_flag.store(true, AtomicOrdering::SeqCst);
 
     // Cleanup + notify the frontend, but only if this session is still current.
     let is_ours = state
@@ -324,6 +353,7 @@ pub async fn connect_serial(
       .map(|s| s.get(&tid).map_or(false, |sess| sess.session_id == sid))
       .unwrap_or(false);
     if is_ours {
+      clear_tab_buffers(&state, tid);
       let _ = app_handle.emit("connection-closed", serde_json::json!({ "tabId": tid }));
       if let Ok(mut sessions) = state.serial_sessions.lock() {
         if let Some(s) = sessions.get_mut(&tid) {

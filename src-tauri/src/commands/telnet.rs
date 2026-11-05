@@ -545,10 +545,11 @@ pub async fn connect_telnet(
   // when the server stays silent until the first negotiation).
   {
     if let Ok(mut buffers) = state.output_buffers.lock() {
-      buffers.entry(tab_id).or_default().push(format!(
-        "\x1b[33m=== Telnet {} ({}x{}) ===\x1b[0m\r\n",
-        addr, cols, rows
-      ));
+      push_output_chunk(
+        &mut buffers,
+        tab_id,
+        format!("\x1b[33m=== Telnet {} ({}x{}) ===\x1b[0m\r\n", addr, cols, rows),
+      );
     }
   }
 
@@ -641,6 +642,7 @@ pub async fn connect_telnet(
     };
     if is_ours {
       if let Some(st) = app_handle.try_state::<AppState>() {
+        clear_tab_buffers(&st, tab_id);
         if let Ok(mut sessions) = st.telnet_sessions.lock() {
           sessions.remove(&tab_id);
         }
@@ -861,13 +863,13 @@ fn push_output(app: &tauri::AppHandle, tab_id: u32, text: &str) {
   }
   if let Some(state) = app.try_state::<AppState>() {
     if let Ok(mut buffers) = state.output_buffers.lock() {
-      buffers.entry(tab_id).or_default().push(text.to_string());
+      push_output_chunk(&mut buffers, tab_id, text.to_string());
     }
     // Tee a *copy* for an in-flight AI-issued command, never a move — the
     // frontend still drains `output_buffers` via `poll_output`.
     if let Ok(mut caps) = state.ai_captures.lock() {
       if let Some(buf) = caps.get_mut(&tab_id) {
-        buf.push_str(text);
+        push_ai_capture(buf, text);
       }
     }
   }

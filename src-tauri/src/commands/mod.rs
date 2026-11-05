@@ -13,7 +13,7 @@ pub(crate) use super::ssh_session::{
   ActiveRecording, AppState, ConnectResult, ConnectionConfig, ContainerInfo, DirDownloadSummary,
   DirUploadSummary, FileEntry, HostKeySeen, HostKeyWatch, LocalShell, LocalShellDir,
   LocalTerminalEntry, SerialSession, SshError, SshHandler, SshSession, SwitchedUser, TargetRef,
-  TelnetSession, TransferControl, TunnelInfo, UploadSession,
+  TelnetSession, TransferControl, TransferRegistry, TunnelInfo, UploadBatch, UploadSession,
 };
 #[allow(unused_imports)]
 pub(crate) use crate::db::{
@@ -41,6 +41,8 @@ pub(crate) use russh::keys::PublicKeyOrCertificate;
 pub(crate) use russh::ChannelId;
 
 pub use serial::*;
+#[allow(unused_imports)]
+pub(crate) use std::collections::HashMap;
 #[allow(unused_imports)]
 pub(crate) use std::path::PathBuf;
 #[allow(unused_imports)]
@@ -78,22 +80,162 @@ pub(crate) async fn check_pause(control: &TransferControl) -> Result<(), String>
   }
 }
 
-/// RAII guard to remove transfer control from state on drop
+/// Per-tab poll-buffer caps. Output is drained by `poll_output` every 100ms;
+/// if a tab stalls (or the frontend stops polling) this bounds memory instead
+/// of letting the queue grow without limit.
+pub(crate) const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_OUTPUT_CHUNKS: usize = 1024;
+/// Marker prepended to the poll buffer once older chunks are dropped. It is an
+/// ANSI-colored line, so `parseAnsiToHtml` renders it like normal output.
+pub(crate) const OUTPUT_TRUNCATION_MARKER: &str = "\r\n\u{1b}[33m…output truncated…\u{1b}[0m\r\n";
+
+/// Caps for the AI command-capture tee (`ai_captures` / `LocalShell.ai_capture`).
+pub(crate) const MAX_AI_CAPTURE_BYTES: usize = 512 * 1024;
+pub(crate) const AI_CAPTURE_TRUNCATION_MARKER: &str = "…ai capture truncated…\n";
+
+/// Append one output chunk, dropping the oldest chunks once the per-tab cap is
+/// exceeded and leaving a single visible truncation marker behind.
+pub(crate) fn push_capped_chunk(chunks: &mut Vec<String>, data: String) {
+  chunks.push(data);
+  // Keep the common case cheap: only scan sizes once the queue is non-trivial.
+  if chunks.len() <= 64 {
+    return;
+  }
+  let mut bytes: usize = chunks.iter().map(|s| s.len()).sum();
+  let mut drop = 0usize;
+  while (bytes > MAX_OUTPUT_BYTES || chunks.len() - drop > MAX_OUTPUT_CHUNKS)
+    && chunks.len() - drop > 1
+  {
+    bytes -= chunks[drop].len();
+    drop += 1;
+  }
+  if drop == 0 {
+    return;
+  }
+  chunks.drain(..drop);
+  if !chunks.iter().any(|s| s == OUTPUT_TRUNCATION_MARKER) {
+    chunks.insert(0, OUTPUT_TRUNCATION_MARKER.to_string());
+  }
+}
+
+/// Same as `push_capped_chunk`, but for the shared per-tab poll buffer map.
+pub(crate) fn push_output_chunk(
+  buffers: &mut HashMap<u32, Vec<String>>,
+  tab_id: u32,
+  data: String,
+) {
+  push_capped_chunk(buffers.entry(tab_id).or_default(), data);
+}
+
+/// Append to an AI capture buffer, keeping only the most recent bytes and
+/// marking the front once content was dropped.
+pub(crate) fn push_ai_capture(buf: &mut String, data: &str) {
+  buf.push_str(data);
+  if buf.len() <= MAX_AI_CAPTURE_BYTES {
+    return;
+  }
+  let mut cut = buf.len() - MAX_AI_CAPTURE_BYTES;
+  while cut < buf.len() && !buf.is_char_boundary(cut) {
+    cut += 1;
+  }
+  buf.drain(..cut);
+  if !buf.starts_with(AI_CAPTURE_TRUNCATION_MARKER) {
+    buf.insert_str(0, AI_CAPTURE_TRUNCATION_MARKER);
+  }
+}
+
+/// Move at most one poll batch out of `chunks`, leaving the rest queued.
+/// Always drains at least one chunk so a single oversized chunk cannot stall.
+pub(crate) const MAX_POLL_CHUNKS: usize = 128;
+pub(crate) const MAX_POLL_BYTES: usize = 256 * 1024;
+
+pub(crate) fn drain_poll_batch(chunks: &mut Vec<String>, out: &mut Vec<String>) {
+  let mut bytes = 0usize;
+  let mut taken = 0usize;
+  while taken < chunks.len() {
+    let len = chunks[taken].len();
+    if taken > 0 && (taken >= MAX_POLL_CHUNKS || bytes + len > MAX_POLL_BYTES) {
+      break;
+    }
+    bytes += len;
+    taken += 1;
+  }
+  out.extend(chunks.drain(..taken));
+}
+
+/// Drop every buffered byte for a tab when its session ends.
+pub(crate) fn clear_tab_buffers(state: &AppState, tab_id: u32) {
+  if let Ok(mut buffers) = state.output_buffers.lock() {
+    buffers.remove(&tab_id);
+  }
+  if let Ok(mut caps) = state.ai_captures.lock() {
+    caps.remove(&tab_id);
+  }
+}
+
+/// Stale-task guard (S2): a background task may only tear a session down (and
+/// finalize its recording) while the tab still points at *its* session id and
+/// the session has not been marked dead.
+pub(crate) fn session_is_current(entry_session_id: u64, entry_alive: bool, mine: u64) -> bool {
+  entry_session_id == mine && entry_alive
+}
+
+/// Stale-task guard for teardown helpers (S5/S6): an entry may only be removed
+/// while it still belongs to the caller. `None` entries belong to nobody.
+pub(crate) fn entry_is_ours(entry_session_id: Option<u64>, mine: u64) -> bool {
+  entry_session_id == Some(mine)
+}
+
+/// Remove exactly `control` from a tab's control list (S6), leaving a control
+/// installed by a newer transfer untouched. Returns whether it was present.
+pub(crate) fn remove_control(
+  list: &mut Vec<Arc<TransferControl>>,
+  control: &Arc<TransferControl>,
+) -> bool {
+  let before = list.len();
+  list.retain(|c| !Arc::ptr_eq(c, control));
+  list.len() != before
+}
+
+/// RAII guard to remove a transfer control from state on drop.
+///
+/// `disarm()` transfers that responsibility to a longer-lived owner — a
+/// streaming upload keeps its control registered across `upload_start` /
+/// `upload_chunk` / `upload_end`, so the guard is only useful for its early
+/// return paths.
 pub(crate) struct TransferGuard {
-  state_ptr: *const AppState,
+  /// Clone of the shared registry — no raw `AppState` pointer, so the guard is
+  /// `Send` by construction and cannot dangle if the tab/state is torn down.
+  registry: TransferRegistry,
   tab_id: u32,
   control: Arc<TransferControl>,
+  armed: bool,
 }
-// Safety: AppState is managed by Tauri and lives for the app lifetime
-unsafe impl Send for TransferGuard {}
+
+impl TransferGuard {
+  pub(crate) fn new(state: &AppState, tab_id: u32, control: Arc<TransferControl>) -> Self {
+    Self {
+      registry: state.transfer_controls.clone(),
+      tab_id,
+      control,
+      armed: true,
+    }
+  }
+
+  /// Keep the control registered after this command returns.
+  pub(crate) fn disarm(&mut self) {
+    self.armed = false;
+  }
+}
 
 impl Drop for TransferGuard {
   fn drop(&mut self) {
-    // Safety: state_ptr is valid because Tauri state outlives commands
-    let state = unsafe { &*self.state_ptr };
-    if let Ok(mut controls) = state.transfer_controls.lock() {
+    if !self.armed {
+      return;
+    }
+    if let Ok(mut controls) = self.registry.lock() {
       if let Some(list) = controls.get_mut(&self.tab_id) {
-        list.retain(|c| !Arc::ptr_eq(c, &self.control));
+        remove_control(list, &self.control);
       }
     }
   }
@@ -127,17 +269,28 @@ pub(crate) fn data_dir_for(base: Option<&std::path::Path>) -> Option<std::path::
 
 /// Persist the current connections list to disk in the encrypted format.
 pub(crate) async fn persist_connections(state: &tauri::State<'_, AppState>) -> Result<(), String> {
-  let path = data_dir_for(state.base_dir.as_deref()).map(|p| p.join("connections.json"));
-  if let Some(ref path) = path {
-    let all_conns = state.connections.lock().map_err(|e| e.to_string())?;
-    let workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
+  let path = match data_dir_for(state.base_dir.as_deref()) {
+    Some(p) => p.join("connections.json"),
+    None => return Ok(()),
+  };
+  // Snapshot under the locks (same order: connections → workspaces → active),
+  // then release all three before encrypting + writing on a blocking thread.
+  // AES encryption plus fsync must not run on an async worker.
+  let (all_conns, workspaces, active_id) = {
+    let all_conns = state.connections.lock().map_err(|e| e.to_string())?.clone();
+    let workspaces = state.workspaces.lock().map_err(|e| e.to_string())?.clone();
     let active_id = state
       .active_workspace_id
       .lock()
-      .map_err(|e| e.to_string())?;
-    crate::ssh_session::write_encrypted_connections(path, &all_conns, &workspaces, &active_id)?;
-  }
-  Ok(())
+      .map_err(|e| e.to_string())?
+      .clone();
+    (all_conns, workspaces, active_id)
+  };
+  tokio::task::spawn_blocking(move || {
+    crate::ssh_session::write_encrypted_connections(&path, &all_conns, &workspaces, &active_id)
+  })
+  .await
+  .map_err(|e| format!("connections.json write task failed: {e}"))?
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -339,3 +492,54 @@ pub use tftp_server::*;
 pub use tunnels::*;
 pub use upload::*;
 pub use window::*;
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::sync::atomic::AtomicBool;
+
+  fn control() -> Arc<TransferControl> {
+    Arc::new(TransferControl {
+      paused: AtomicBool::new(false),
+      cancelled: AtomicBool::new(false),
+      notify: tokio::sync::Notify::new(),
+    })
+  }
+
+  #[test]
+  fn stale_task_guard_requires_same_id_and_alive() {
+    // Own, live session.
+    assert!(session_is_current(7, true, 7));
+    // Same id but already marked dead (disconnect/failure happened first).
+    assert!(!session_is_current(7, false, 7));
+    // A newer session replaced ours (the stale-task case).
+    assert!(!session_is_current(8, true, 7));
+    assert!(!session_is_current(7, true, 8));
+  }
+
+  #[test]
+  fn entry_is_ours_only_matches_exact_id() {
+    assert!(entry_is_ours(Some(5), 5));
+    assert!(!entry_is_ours(Some(6), 5));
+    // Session already removed from the map: nobody owns it.
+    assert!(!entry_is_ours(None, 5));
+  }
+
+  #[test]
+  fn remove_control_targets_only_the_given_control() {
+    let old = control();
+    let current = control();
+    let stranger = control();
+
+    let mut list = vec![old.clone(), current.clone()];
+    assert!(remove_control(&mut list, &current));
+    assert_eq!(list.len(), 1);
+    assert!(Arc::ptr_eq(&list[0], &old));
+
+    // Removing an already-removed / never-registered control is a no-op.
+    assert!(!remove_control(&mut list, &current));
+    assert!(!remove_control(&mut list, &stranger));
+    assert!(!remove_control(&mut Vec::new(), &old));
+    assert!(list.len() == 1);
+  }
+}

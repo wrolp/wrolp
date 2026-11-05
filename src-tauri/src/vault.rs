@@ -77,9 +77,39 @@ pub fn load_or_create_key() -> Result<[u8; 32], String> {
   if let Some(parent) = path.parent() {
     let _ = std::fs::create_dir_all(parent);
   }
-  std::fs::write(&path, &key).map_err(|e| e.to_string())?;
-  restrict_file_perms(&path);
-  Ok(key)
+
+  // `create_new` maps to O_EXCL / CREATE_NEW: the first process to create the
+  // file wins, and a concurrent starter must adopt that key instead of writing
+  // its own. Previously a plain `fs::write` let two instances overwrite each
+  // other, which made every secret sealed by the loser undecryptable forever.
+  use std::io::Write;
+  match std::fs::OpenOptions::new()
+    .write(true)
+    .create_new(true)
+    .open(&path)
+  {
+    Ok(mut f) => {
+      f.write_all(&key).map_err(|e| e.to_string())?;
+      // Flush before another process can read it; a crash mid-write leaves a
+      // short file, which `read_key_file` rejects so the next run regenerates
+      // (safe: no ciphertext can exist before a key was fully persisted).
+      let _ = f.sync_all();
+      restrict_file_perms(&path);
+      Ok(key)
+    }
+    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+      // Another process won the race. Give it a moment to finish writing, then
+      // reuse its key — never overwrite.
+      for _ in 0..20 {
+        if let Some(existing) = read_key_file(&path) {
+          return Ok(existing);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+      }
+      Err("vault.key exists but could not be read (empty or corrupt)".to_string())
+    }
+    Err(e) => Err(e.to_string()),
+  }
 }
 
 #[cfg(windows)]

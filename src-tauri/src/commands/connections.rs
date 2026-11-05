@@ -145,11 +145,14 @@ pub async fn delete_workspace(
     return Err("Cannot delete the default workspace".to_string());
   }
   {
-    // Remove the workspace and its connections.
-    let mut workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
-    workspaces.retain(|w| w.id != workspace_id);
+    // Global lock order: connections → workspaces → active_workspace_id.
+    // Taking them in this order (the same order as `persist_connections`)
+    // prevents an ABBA deadlock with a concurrent save.
     let mut connections = state.connections.lock().map_err(|e| e.to_string())?;
     connections.retain(|c| c.workspace_id.as_deref() != Some(&workspace_id));
+    // Remove the workspace itself.
+    let mut workspaces = state.workspaces.lock().map_err(|e| e.to_string())?;
+    workspaces.retain(|w| w.id != workspace_id);
     // If we deleted the active workspace, switch to default.
     let mut active_id = state
       .active_workspace_id

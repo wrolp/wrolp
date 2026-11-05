@@ -184,12 +184,19 @@ fn type_into_shell(
     }
     LiveShell::Local => {
       use std::io::Write;
-      let mut shells = state.local_shells.lock().map_err(|e| e.to_string())?;
-      let sh = shells.get_mut(&tab_id).ok_or("Local shell not found")?;
-      sh.writer
+      let writer = {
+        let shells = state.local_shells.lock().map_err(|e| e.to_string())?;
+        shells
+          .get(&tab_id)
+          .ok_or("Local shell not found")?
+          .writer
+          .clone()
+      };
+      let mut writer = writer.lock().map_err(|e| e.to_string())?;
+      writer
         .write_all(data.as_bytes())
         .map_err(|e| format!("Failed to write to local shell: {}", e))?;
-      let _ = sh.writer.flush();
+      let _ = writer.flush();
       Ok(())
     }
     LiveShell::Telnet => {
@@ -432,10 +439,11 @@ async fn run_command_on_terminal(
     // Telnet output lands in `output_buffers` too, so it shares the SSH arm.
     LiveShell::Ssh | LiveShell::Telnet => {
       if let Ok(mut buffers) = state.output_buffers.lock() {
-        buffers
-          .entry(tab_id)
-          .or_default()
-          .push("\x1b[2m[AI]\x1b[0m ".to_string());
+        push_output_chunk(
+          &mut buffers,
+          tab_id,
+          "\x1b[2m[AI]\x1b[0m ".to_string(),
+        );
       }
     }
     LiveShell::Local => {
@@ -447,7 +455,7 @@ async fn run_command_on_terminal(
       if let Ok(shells) = state.local_shells.lock() {
         if let Some(sh) = shells.get(&tab_id) {
           if let Ok(mut out) = sh.output.lock() {
-            out.push("\x1b[2m[AI]\x1b[0m ".to_string());
+            push_capped_chunk(&mut out, "\x1b[2m[AI]\x1b[0m ".to_string());
           }
         }
       }

@@ -314,6 +314,82 @@ async fn run_session_loop(
   }
 }
 
+/// Take the in-memory recording belonging to `session_id` and finalize it.
+/// A superseded session's recording must be left for its own task to finalize.
+fn finalize_recording_for(state: &AppState, tab_id: u32, session_id: u64) {
+  let rec_to_finalize = match state.recordings.lock() {
+    Ok(mut recordings) => {
+      let is_ours = entry_is_ours(
+        recordings.get(&tab_id).map(|r| r.session_version),
+        session_id,
+      );
+      if is_ours {
+        recordings.remove(&tab_id)
+      } else {
+        None
+      }
+    }
+    Err(_) => None,
+  };
+  if let Some(rec) = rec_to_finalize {
+    if let Ok(conn) = state.db.lock() {
+      finalize_recording(&conn, &rec);
+    }
+  }
+}
+
+/// Common teardown for a session that never became usable (handshake, auth,
+/// PTY or shell failure). Every early-return path in the connect task goes
+/// through here instead of leaving a "live-looking" `SshSession` behind.
+///
+/// Guarded on `session_id`: a superseded task must not clear the replacement's
+/// state, announce a close for it, or finalize its recording.
+fn fail_session(app: &tauri::AppHandle, tab_id: u32, session_id: u64, msg: &str) {
+  let Some(state) = app.try_state::<AppState>() else {
+    return;
+  };
+  let ours = match state.sessions.lock() {
+    Ok(mut sessions) => match sessions.get_mut(&tab_id) {
+      Some(s) if s.session_id == session_id => {
+        s.alive = false;
+        s.shutdown_tx.take();
+        s.data_tx.take();
+        true
+      }
+      // Replaced by a newer connect: stay silent.
+      Some(_) => false,
+      // No entry at all: unexpected now that `connect()` registers the session
+      // before spawning, but still surface the failure instead of swallowing it.
+      None => true,
+    },
+    Err(_) => return,
+  };
+  if !ours {
+    return;
+  }
+
+  // Drop the failed session's backlog and keep only the readable error — the
+  // tab will stay closed, so replaying thousands of stale chunks is pointless.
+  clear_tab_buffers(state.inner(), tab_id);
+  if let Ok(mut buffers) = state.output_buffers.lock() {
+    push_output_chunk(
+      &mut buffers,
+      tab_id,
+      format!("\u{1b}[31m{}\u{1b}[0m\r\n", msg),
+    );
+  }
+  let _ = app.emit(
+    "connection-closed",
+    serde_json::json!({ "tabId": tab_id, "reason": msg }),
+  );
+  finalize_recording_for(state.inner(), tab_id, session_id);
+  // Nothing can be riding this session yet, but a stale tunnel from the tab's
+  // previous session may still be bound — close it like a normal teardown.
+  cleanup_tunnels_for_tab(state.inner(), tab_id);
+  crate::k8s_forward::cleanup_forwards_for_tab(state.inner(), tab_id);
+  let _ = app.emit("tunnel-changed", serde_json::json!({}));
+}
+
 #[tauri::command]
 pub async fn connect(
   app: tauri::AppHandle,
@@ -360,9 +436,7 @@ pub async fn connect(
   if reuse_existing {
     let live = {
       let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-      sessions
-        .get(&tab_id)
-        .map_or(false, |s| s.shutdown_tx.is_some())
+      sessions.get(&tab_id).is_some_and(|s| s.alive)
     };
     if live {
       eprintln!(
@@ -380,24 +454,24 @@ pub async fn connect(
     );
   }
 
-  // Clear stale output for this tab from previous sessions
-  {
-    if let Ok(mut buffers) = state.output_buffers.lock() {
-      buffers.remove(&tab_id);
-    }
-    // Drop any AI capture sink left behind by a command that was still running
-    // when the previous session died — a stale sink would permanently block new
-    // AI commands on this tab.
-    if let Ok(mut caps) = state.ai_captures.lock() {
-      caps.remove(&tab_id);
-    }
-  }
+  // Clear stale output for this tab from previous sessions. Also drops any AI
+  // capture sink left behind by a command that was still running when the
+  // previous session died — a stale sink would permanently block new AI
+  // commands on this tab.
+  clear_tab_buffers(state.inner(), tab_id);
+
+  // A reconnect abandons anything streaming over the old session: drop its
+  // remote file handles, batch SFTP connections and pause controls. Otherwise
+  // they stay registered (each non-batch upload even owns a separate SSH
+  // connection) until the process exits.
+  cleanup_uploads_for_tab(&state, tab_id);
 
   // If an existing session with the same tab_id exists, disconnect it first
   {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     if let Some(old_session) = sessions.get_mut(&tab_id) {
       eprintln!("[connect] removing old session for tab={}", tab_id);
+      old_session.alive = false;
       if let Some(tx) = old_session.shutdown_tx.take() {
         let _ = tx.send(());
       }
@@ -405,12 +479,42 @@ pub async fn connect(
     }
   }
 
+  // The superseded session's tunnels/forwards ride its old SSH connection.
+  // Close them here, at replacement time: a task that was superseded cannot
+  // reach the normal close branch, so that branch alone would leave them
+  // registered (and their local listeners bound) after a reconnect.
+  cleanup_tunnels_for_tab(state.inner(), tab_id);
+  crate::k8s_forward::cleanup_forwards_for_tab(state.inner(), tab_id);
+  let _ = app.emit("tunnel-changed", serde_json::json!({}));
+
   // Create channels
   let (data_tx, data_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
   let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
   // Bump session version so stale tasks can detect they've been replaced
   let session_id = state.next_session_id.fetch_add(1, Ordering::SeqCst);
+
+  // Register the session *before* spawning: the connect task can fail at any
+  // point (handshake, auth, PTY), and `fail_session` must always find the entry
+  // it has to tear down. The task fills in `session_handle` later, once the
+  // handshake succeeds; SFTP reconnects via fresh auth per operation.
+  {
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    sessions.insert(
+      tab_id,
+      SshSession {
+        tab_id,
+        config: config.clone(),
+        data_tx: Some(data_tx),
+        shutdown_tx: Some(shutdown_tx),
+        channel_arc: None,
+        session_handle: None,
+        switched_sftp_user: None,
+        session_id,
+        alive: true,
+      },
+    );
+  }
 
   // Background task: establish SSH connection and run I/O loop
   {
@@ -429,25 +533,18 @@ pub async fn connect(
             .map_or(false, |s| s.session_id == session_id)
           {
             if let Ok(mut buf) = s.output_buffers.lock() {
-              buf.entry(tid).or_default().push(format!(
-                "Connecting to {}:{} as {} ...\r\n",
-                cfg.host, cfg.port, cfg.username
-              ));
+              push_output_chunk(
+                &mut buf,
+                tid,
+                format!(
+                  "Connecting to {}:{} as {} ...\r\n",
+                  cfg.host, cfg.port, cfg.username
+                ),
+              );
             }
           }
         }
       }
-
-      let emit_error = |app: &tauri::AppHandle, tid: u32, msg: &str| {
-        if let Some(state) = app.try_state::<AppState>() {
-          if let Ok(mut buffers) = state.output_buffers.lock() {
-            buffers
-              .entry(tid)
-              .or_default()
-              .push(format!("\u{1b}[31m{}\u{1b}[0m\r\n", msg));
-          }
-        }
-      };
 
       // 1. Establish SSH connection
       // The handshake writes the server's fingerprint into this slot; russh keeps
@@ -456,6 +553,7 @@ pub async fn connect(
       let handler = SshHandler {
         app_handle: app_handle.clone(),
         tab_id: tid,
+        session_id: Some(session_id),
         is_sftp: false,
         host_key: Some(HostKeyWatch {
           slot: host_key_slot.clone(),
@@ -499,7 +597,12 @@ pub async fn connect(
           Ok(h) => h,
           Err(e) => {
             eprintln!("[russh] handshake error: {:?}", e);
-            emit_error(&app_handle, tid, &format!("SSH handshake failed: {}", e));
+            fail_session(
+              &app_handle,
+              tid,
+              session_id,
+              &format!("SSH handshake failed: {}", e),
+            );
             return;
           }
         };
@@ -532,12 +635,17 @@ pub async fn connect(
         match handle.authenticate_password(&cfg.username, pw).await {
           Ok(res) if res.success() => {}
           Ok(_) => {
-            emit_error(&app_handle, tid, "Authentication failed: wrong password");
+            fail_session(&app_handle, tid, session_id, "Authentication failed: wrong password");
             return;
           }
           Err(e) => {
             eprintln!("[russh] auth error: {:?}", e);
-            emit_error(&app_handle, tid, &format!("Authentication error: {}", e));
+            fail_session(
+              &app_handle,
+              tid,
+              session_id,
+              &format!("Authentication error: {}", e),
+            );
             return;
           }
         }
@@ -550,9 +658,10 @@ pub async fn connect(
         let key = match load_secret_key(&resolved_path, cfg.passphrase.as_deref()) {
           Ok(k) => k,
           Err(e) => {
-            emit_error(
+            fail_session(
               &app_handle,
               tid,
+              session_id,
               &format!("Failed to load key '{}': {}", key_path, e),
             );
             return;
@@ -567,34 +676,40 @@ pub async fn connect(
         {
           Ok(res) if res.success() => {}
           Ok(_) => {
-            emit_error(&app_handle, tid, "Authentication failed: invalid key");
+            fail_session(&app_handle, tid, session_id, "Authentication failed: invalid key");
             return;
           }
           Err(e) => {
             eprintln!("[russh] key auth error: {:?}", e);
-            emit_error(
+            fail_session(
               &app_handle,
               tid,
+              session_id,
               &format!("Key authentication error: {}", e),
             );
             return;
           }
         }
       } else {
-        emit_error(&app_handle, tid, "No password or key provided");
+        fail_session(&app_handle, tid, session_id, "No password or key provided");
         return;
       }
 
       eprintln!("[russh] authenticated, opening channel");
 
       // 3. Open channel + request PTY + start shell
-      let mut channel = match handle.channel_open_session().await {
+      let channel = match handle.channel_open_session().await {
         Ok(ch) => {
           eprintln!("[russh] channel opened");
           ch
         }
         Err(e) => {
-          emit_error(&app_handle, tid, &format!("Failed to open channel: {}", e));
+          fail_session(
+            &app_handle,
+            tid,
+            session_id,
+            &format!("Failed to open channel: {}", e),
+          );
           return;
         }
       };
@@ -604,14 +719,24 @@ pub async fn connect(
         .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
         .await
       {
-        emit_error(&app_handle, tid, &format!("PTY request failed: {}", e));
+        fail_session(
+          &app_handle,
+          tid,
+          session_id,
+          &format!("PTY request failed: {}", e),
+        );
         return;
       }
       eprintln!("[russh] PTY allocated");
 
       eprintln!("[russh] requesting shell...");
       if let Err(e) = channel.request_shell(true).await {
-        emit_error(&app_handle, tid, &format!("Shell request failed: {}", e));
+        fail_session(
+          &app_handle,
+          tid,
+          session_id,
+          &format!("Shell request failed: {}", e),
+        );
         return;
       }
 
@@ -669,8 +794,12 @@ pub async fn connect(
         if let Some(app_state) = app_handle.try_state::<AppState>() {
           if let Ok(mut sessions) = app_state.sessions.lock() {
             if let Some(session) = sessions.get_mut(&tid) {
-              session.channel_arc = Some(channel.clone());
-              session.session_handle = Some(Arc::new(handle));
+              // Only the current session may install its handle: a superseded
+              // task would otherwise clobber the replacement's live handle.
+              if session.session_id == session_id {
+                session.channel_arc = Some(channel.clone());
+                session.session_handle = Some(Arc::new(handle));
+              }
             }
           }
         }
@@ -684,10 +813,11 @@ pub async fn connect(
             .map_or(false, |s| s.session_id == session_id)
           {
             if let Ok(mut buffers) = state.output_buffers.lock() {
-              buffers
-                .entry(tid)
-                .or_default()
-                .push("\r\n\x1b[33m=== SSH session ready ===\x1b[0m\r\n".to_string());
+              push_output_chunk(
+                &mut buffers,
+                tid,
+                "\r\n\x1b[33m=== SSH session ready ===\x1b[0m\r\n".to_string(),
+              );
             }
           }
         }
@@ -709,25 +839,7 @@ pub async fn connect(
 
       // Finalize recording — only if this session hasn't been replaced
       if let Some(app_state) = app_handle.try_state::<AppState>() {
-        let rec_to_finalize = {
-          if let Ok(mut recordings) = app_state.recordings.lock() {
-            let is_ours = recordings
-              .get(&tid)
-              .map_or(false, |r| r.session_version == session_id);
-            if is_ours {
-              recordings.remove(&tid)
-            } else {
-              None
-            }
-          } else {
-            None
-          }
-        };
-        if let Some(rec) = rec_to_finalize {
-          if let Ok(conn) = app_state.db.lock() {
-            finalize_recording(&conn, &rec);
-          }
-        }
+        finalize_recording_for(&app_state, tid, session_id);
       }
 
       // Notify frontend that connection closed, but only if this session hasn't been replaced
@@ -741,6 +853,9 @@ pub async fn connect(
                   "tabId": tid,
                 }),
               );
+              // Session is over: release its buffered output/capture sinks so
+              // a closed tab can't keep megabytes alive until the next reconnect.
+              clear_tab_buffers(&app_state, tid);
               // Any tunnels carried by this SSH session are dead now — abort
               // their accept loops so local listeners close immediately.
               cleanup_tunnels_for_tab(&app_state, tid);
@@ -761,6 +876,7 @@ pub async fn connect(
         if let Ok(mut sessions) = app_state.sessions.lock() {
           if let Some(s) = sessions.get_mut(&tid) {
             if s.session_id == session_id {
+              s.alive = false;
               s.shutdown_tx.take();
               s.data_tx.take();
             }
@@ -768,26 +884,6 @@ pub async fn connect(
         }
       }
     });
-  }
-
-  // Save session to state — session_handle stored earlier in the spawned task
-  // For SFTP, we reconnect/create channels from the handle stored per-session.
-  // The handle is cloned before spawning so it stays alive.
-  {
-    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    sessions.insert(
-      tab_id,
-      SshSession {
-        tab_id,
-        config: config.clone(),
-        data_tx: Some(data_tx),
-        shutdown_tx: Some(shutdown_tx),
-        channel_arc: None,
-        session_handle: None, // SFTP reconnects via fresh auth per operation
-        switched_sftp_user: None,
-        session_id,
-      },
-    );
   }
 
   // Create session recording entry
@@ -888,6 +984,32 @@ pub async fn connect(
     }
   }
 
+  // The connect task can fail between the two registrations (the session is
+  // inserted before spawning, the recording only after). If it already marked
+  // the session dead, clean up the recording this call has just created and
+  // announce the close once — the frontend never saw a working session anyway.
+  let session_died = {
+    match state.sessions.lock() {
+      Ok(sessions) => sessions
+        .get(&tab_id)
+        .is_some_and(|s| s.session_id == session_id && !s.alive),
+      Err(_) => false,
+    }
+  };
+  if session_died {
+    if let Ok(mut sessions) = state.sessions.lock() {
+      if let Some(s) = sessions.get_mut(&tab_id) {
+        if s.session_id == session_id {
+          s.alive = false;
+          s.shutdown_tx.take();
+          s.data_tx.take();
+        }
+      }
+    }
+    finalize_recording_for(&state, tab_id, session_id);
+    let _ = app.emit("connection-closed", serde_json::json!({ "tabId": tab_id }));
+  }
+
   eprintln!("[connect] returning connected for tab={}", tab_id);
   Ok(ConnectResult {
     status: "connected".into(),
@@ -897,10 +1019,21 @@ pub async fn connect(
 
 #[tauri::command]
 pub async fn disconnect(state: tauri::State<'_, AppState>, tab_id: u32) -> Result<bool, String> {
+  // Drop whatever this tab still has queued; the session is going away either
+  // way and an un-polled backlog would otherwise outlive it.
+  clear_tab_buffers(state.inner(), tab_id);
+  // Nothing can keep streaming once the tab is disconnected: drop the upload
+  // handles (and their dedicated SSH connections) plus their pause controls.
+  cleanup_uploads_for_tab(&state, tab_id);
+
   // SSH sessions
   let shutdown_tx = {
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     if let Some(session) = sessions.get_mut(&tab_id) {
+      // A disconnect must never leave the tab reusable. Clearing the flag here
+      // (not relying on the task to flip it later) closes the race where the
+      // terminal remounts before the session loop notices the shutdown.
+      session.alive = false;
       session.shutdown_tx.take()
     } else {
       None
@@ -1034,17 +1167,22 @@ pub async fn poll_output(
   tab_id: u32,
 ) -> Result<Vec<String>, String> {
   let mut result = Vec::new();
-  // SSH output lives in the shared poll buffer.
+  // SSH output lives in the shared poll buffer. Drain at most one batch per
+  // call so a tab that outruns the 100ms tick builds a bounded backlog instead
+  // of shipping (and serializing) a multi-megabyte array in one IPC message.
   if let Ok(mut buffers) = state.output_buffers.lock() {
-    if let Some(chunks) = buffers.remove(&tab_id) {
-      result.extend(chunks);
+    if let Some(chunks) = buffers.get_mut(&tab_id) {
+      drain_poll_batch(chunks, &mut result);
+    }
+    if buffers.get(&tab_id).is_some_and(|c| c.is_empty()) {
+      buffers.remove(&tab_id);
     }
   }
   // Local shell output lives in its own per-tab queue (owned by LocalShell).
   if let Ok(shells) = state.local_shells.lock() {
     if let Some(sh) = shells.get(&tab_id) {
       if let Ok(mut q) = sh.output.lock() {
-        result.append(&mut q);
+        drain_poll_batch(&mut q, &mut result);
       }
     }
   }

@@ -71,7 +71,7 @@ fn init_logging() {
 
 pub fn run() {
   init_logging();
-  tauri::Builder::default()
+  let app = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_shell::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
@@ -470,6 +470,17 @@ pub fn run() {
       commands::stop_tftp_server,
       commands::tftp_server_status,
     ])
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application");
+
+  // Flush + finalize in-memory recordings on the way out: the 5s flush task
+  // dies with the async runtime, so without this the last events batch and the
+  // `sessions` row of every still-open tab would be lost.
+  app.run(|app_handle, event| {
+    if let tauri::RunEvent::Exit = event {
+      if let Some(state) = app_handle.try_state::<AppState>() {
+        commands::finalize_all_recordings(&state);
+      }
+    }
+  });
 }

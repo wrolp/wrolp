@@ -2,16 +2,21 @@ use super::*;
 use crate::win_proc::HideConsole;
 // ==================== Session Recording ====================
 
+/// Serializes NDJSON appends between the 5s flush task and the disconnect-time
+/// `finalize_recording` without holding the `recordings` state lock during
+/// disk I/O. Multiple O_APPEND writers on Windows must never interleave.
+static RECORDING_IO: StdMutex<()> = StdMutex::new(());
+
 /// Flush all in-memory recording buffers to their NDJSON event files. Called
 /// periodically by a background task and on app shutdown.
 ///
-/// File appends happen *while holding the `recordings` lock*: multiple O_APPEND
-/// writers on Windows must never interleave, and this serializes the 5s flush
-/// task against the disconnect-time `finalize_recording`. SQLite index updates
-/// (incremental `event_count`) run afterwards under the db lock.
+/// Events are drained *under* the `recordings` lock, but the file appends run
+/// *outside* it (serialized by `RECORDING_IO` only): a slow disk must not block
+/// `emit`/`record_event`/`connect` on every tab. SQLite index updates run
+/// afterwards under the db lock.
 pub fn flush_all_recordings(state: &AppState) {
-  // (session_id, event_count_delta, absolute events file)
-  let mut to_bump: Vec<(String, i64, String)> = Vec::new();
+  // (session_id, absolute events file, drained events)
+  let mut pending: Vec<(String, std::path::PathBuf, Vec<db::RecordedEvent>)> = Vec::new();
   {
     if let Ok(mut recordings) = state.recordings.lock() {
       for rec in recordings.values_mut() {
@@ -27,18 +32,28 @@ pub fn flush_all_recordings(state: &AppState) {
           );
           continue;
         };
-        if let Err(e) = crate::rec_file::append_events(&path, &drained) {
-          // A failed batch is dropped (not retried against a newer snapshot)
-          // and the session index is left untouched — no phantom counts.
-          eprintln!("[recording] flush failed for {}: {}", path.display(), e);
-          continue;
-        }
-        to_bump.push((
-          rec.session_id.clone(),
-          drained.len() as i64,
-          path.to_string_lossy().into_owned(),
-        ));
+        pending.push((rec.session_id.clone(), path, drained));
       }
+    }
+  }
+
+  // (session_id, event_count_delta, absolute events file)
+  let mut to_bump: Vec<(String, i64, String)> = Vec::new();
+  {
+    // Hold the append lock only for disk I/O — never while taking the db lock.
+    let _io = RECORDING_IO.lock().ok();
+    for (session_id, path, drained) in pending {
+      if let Err(e) = crate::rec_file::append_events(&path, &drained) {
+        // A failed batch is dropped (not retried against a newer snapshot)
+        // and the session index is left untouched — no phantom counts.
+        eprintln!("[recording] flush failed for {}: {}", path.display(), e);
+        continue;
+      }
+      to_bump.push((
+        session_id,
+        drained.len() as i64,
+        path.to_string_lossy().into_owned(),
+      ));
     }
   }
   if to_bump.is_empty() {
@@ -63,6 +78,9 @@ pub fn finalize_recording(conn: &rusqlite::Connection, rec: &ActiveRecording) {
   let path = rec.events_file.clone();
   if let Some(p) = &path {
     if !rec.events.is_empty() {
+      // Serialize with the periodic flush; the db lock is already held here, so
+      // never wait for the db while holding `RECORDING_IO` (flush never does).
+      let _io = RECORDING_IO.lock().ok();
       match crate::rec_file::append_events(p, &rec.events) {
         Ok(()) => {
           let _ = db::update_event_count_delta(
@@ -100,20 +118,50 @@ pub fn finalize_recording(conn: &rusqlite::Connection, rec: &ActiveRecording) {
   let _ = db::finalize_session(conn, &rec.session_id, &ended_at, duration, event_count);
 }
 
+/// Flush + finalize every in-memory recording. Called once on
+/// `RunEvent::Exit`: the periodic flush task dies with the async runtime, so a
+/// recording still sitting in memory would otherwise never reach its file or
+/// its `sessions` row. Takes the entries out under the lock, then does all
+/// file/SQLite work outside it.
+pub fn finalize_all_recordings(state: &AppState) {
+  let records: Vec<ActiveRecording> = match state.recordings.lock() {
+    Ok(mut recordings) => recordings.drain().map(|(_, rec)| rec).collect(),
+    Err(_) => return,
+  };
+  if records.is_empty() {
+    return;
+  }
+  let Ok(conn) = state.db.lock() else {
+    return;
+  };
+  for rec in &records {
+    finalize_recording(&conn, rec);
+  }
+}
+
 /// Load events for a session: file-first for the new layout (the
 /// `sessions.events_file` column is set once the first batch flushed), falling
 /// back to the legacy `session_events` table when the column is NULL or the
 /// events file is missing. Shared by `get_session_events` (playback UI) and
 /// `extract_commands` (command replay).
-fn load_session_events(state: &AppState, session_id: &str) -> Result<Vec<SessionEventDto>, String> {
+///
+/// The NDJSON parse can be a whole multi-MB file, so it runs on the blocking
+/// pool instead of pinning an async worker (paged/streamed reading is still a
+/// TODO — the UI asks for the full file in one call today).
+async fn load_session_events(
+  state: &AppState,
+  session_id: &str,
+) -> Result<Vec<SessionEventDto>, String> {
   let file = {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::session_events_file(&conn, session_id)?
   };
   if let Some(f) = file {
-    let path = std::path::Path::new(&f);
+    let path = std::path::PathBuf::from(&f);
     if path.exists() {
-      return crate::rec_file::read_events(path);
+      return tokio::task::spawn_blocking(move || crate::rec_file::read_events(&path))
+        .await
+        .map_err(|e| format!("Event file read task failed: {e}"))?;
     }
     eprintln!("[recording] events file missing for {}: {}", session_id, f);
   }
@@ -234,7 +282,7 @@ pub async fn get_session_events(
   state: tauri::State<'_, AppState>,
   session_id: String,
 ) -> Result<Vec<SessionEventDto>, String> {
-  load_session_events(state.inner(), &session_id)
+  load_session_events(state.inner(), &session_id).await
 }
 
 #[tauri::command]
@@ -278,8 +326,14 @@ pub async fn set_recording_enabled(
   tab_id: u32,
   enabled: bool,
 ) -> Result<bool, String> {
-  let mut recordings = state.recordings.lock().map_err(|e| e.to_string())?;
-  if let Some(rec) = recordings.get_mut(&tab_id) {
+  // Snapshot what the SQLite insert needs under the recordings lock,
+  // then drop it before touching the db (recordings → db is never nested).
+  let created = {
+    let mut recordings = state.recordings.lock().map_err(|e| e.to_string())?;
+    let Some(rec) = recordings.get_mut(&tab_id) else {
+      // No in-memory recording entry (e.g. local shell) — nothing to toggle.
+      return Ok(enabled);
+    };
     rec.recording_enabled = enabled;
     // Lazily persist the session row the moment recording is switched on (it
     // was intentionally not created at connect time when recording was off).
@@ -298,25 +352,35 @@ pub async fn set_recording_enabled(
         &started_at_iso,
         &rec.session_id,
       ));
-      if let Ok(conn) = state.db.lock() {
-        let _ = db::create_session(
-          &conn,
-          &rec.session_id,
-          &rec.connection_id,
-          &rec.connection_name,
-          tab_id,
-          &started_at_iso,
-          rec.workspace_name.as_deref(),
-          rec.group_name.as_deref(),
-        );
-      }
       rec.db_saved = true;
+      Some((
+        rec.session_id.clone(),
+        rec.connection_id.clone(),
+        rec.connection_name.clone(),
+        rec.workspace_name.clone(),
+        rec.group_name.clone(),
+        started_at_iso,
+      ))
+    } else {
+      None
     }
-    Ok(rec.recording_enabled)
-  } else {
-    // No in-memory recording entry (e.g. local shell) — nothing to toggle.
-    Ok(enabled)
+  };
+
+  if let Some((session_id, connection_id, connection_name, workspace, group, started_at)) = created {
+    if let Ok(conn) = state.db.lock() {
+      let _ = db::create_session(
+        &conn,
+        &session_id,
+        &connection_id,
+        &connection_name,
+        tab_id,
+        &started_at,
+        workspace.as_deref(),
+        group.as_deref(),
+      );
+    }
   }
+  Ok(enabled)
 }
 
 /// Query whether recording is currently enabled for a tab.
@@ -377,7 +441,7 @@ pub async fn extract_commands(
   state: tauri::State<'_, AppState>,
   session_id: String,
 ) -> Result<Vec<String>, String> {
-  let events = load_session_events(state.inner(), &session_id)?;
+  let events = load_session_events(state.inner(), &session_id).await?;
 
   // Prefer precise "command" events captured on Enter — they already contain
   // tab-completed text and exact spacing, so they are more faithful than the
@@ -826,7 +890,7 @@ pub async fn export_session_cast(
   session_id: String,
   target_path: String,
 ) -> Result<CastExportSummary, String> {
-  let events = load_session_events(state.inner(), &session_id)?;
+  let events = load_session_events(state.inner(), &session_id).await?;
   if events.is_empty() {
     return Err("This session has no recorded events to export.".to_string());
   }

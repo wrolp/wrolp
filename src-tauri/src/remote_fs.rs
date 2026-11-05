@@ -133,6 +133,7 @@ pub async fn open_session_sftp(
   let handler = SshHandler {
     app_handle: app.clone(),
     tab_id,
+    session_id: None,
     is_sftp: true,
     // Auxiliary handler: no device record, no enforcement (see `SshHandler::host_key`).
     host_key: None,
@@ -191,6 +192,7 @@ pub async fn open_jump_sftp(
   let handler = SshHandler {
     app_handle: app.clone(),
     tab_id,
+    session_id: None,
     is_sftp: true,
     // Auxiliary handler: no device record, no enforcement (see `SshHandler::host_key`).
     host_key: None,

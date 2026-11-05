@@ -296,6 +296,46 @@ fn inferred_kind(p: &PersistedConnection) -> Option<String> {
   None
 }
 
+/// Write `bytes` to `path` without ever leaving a half-written file behind.
+///
+/// The new content goes to a sibling temp file (`.<name>.tmp-<pid>`), is
+/// flushed with `sync_all`, and is then swapped in with `std::fs::rename`
+/// (on Windows that is `MoveFileEx` + `MOVEFILE_REPLACE_EXISTING`, so it
+/// replaces the destination instead of failing). The previous complete copy is
+/// kept as `<name>.bak`; readers therefore always see either the old or the new
+/// file, never a truncated one.
+pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+  use std::io::Write;
+
+  let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+  std::fs::create_dir_all(parent)?;
+  let name = path
+    .file_name()
+    .and_then(|n| n.to_str())
+    .unwrap_or("wrolp-data");
+  let tmp = parent.join(format!(".{}.tmp-{}", name, std::process::id()));
+  {
+    let mut f = std::fs::File::create(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+  }
+  // Refresh the backup before swapping so a crash mid-rename still leaves a
+  // complete copy on disk. A failed backup refresh is not fatal — the primary
+  // file is untouched at this point.
+  if path.exists() {
+    let bak = parent.join(format!("{}.bak", name));
+    let _ = std::fs::remove_file(&bak);
+    if let Err(e) = std::fs::copy(path, &bak) {
+      eprintln!("[fs] cannot refresh backup for {}: {}", path.display(), e);
+    }
+  }
+  let result = std::fs::rename(&tmp, path);
+  if result.is_err() {
+    let _ = std::fs::remove_file(&tmp);
+  }
+  result
+}
+
 /// Serialize connections + workspace metadata to disk (v2 envelope).
 pub(crate) fn write_encrypted_connections(
   path: &std::path::Path,
@@ -303,9 +343,6 @@ pub(crate) fn write_encrypted_connections(
   workspaces: &[WorkspaceInfo],
   active_workspace_id: &str,
 ) -> Result<(), String> {
-  if let Some(parent) = path.parent() {
-    let _ = std::fs::create_dir_all(parent);
-  }
   let mut persisted = Vec::with_capacity(conns.len());
   for c in conns {
     persisted.push(PersistedConnection::from_conn(c)?);
@@ -317,7 +354,7 @@ pub(crate) fn write_encrypted_connections(
     connections: persisted,
   };
   let content = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-  std::fs::write(path, content).map_err(|e| e.to_string())?;
+  write_atomic(path, content.as_bytes()).map_err(|e| e.to_string())?;
   Ok(())
 }
 
@@ -429,6 +466,11 @@ pub struct HostKeyWatch {
 pub struct SshHandler {
   pub app_handle: tauri::AppHandle,
   pub tab_id: u32,
+  /// Monotonic id of the interactive session that owns this handler. `None` for
+  /// auxiliary handlers (per-operation SFTP, ProxyJump) that must not filter.
+  /// Output/recording from a superseded task is dropped instead of injected
+  /// into the tab's replacement session.
+  pub session_id: Option<u64>,
   /// When true, suppress terminal output (used for SFTP-only sessions)
   pub is_sftp: bool,
   /// Host-key observation for this connection; `None` on the auxiliary handlers
@@ -453,14 +495,28 @@ pub struct SshHandler {
 }
 
 impl SshHandler {
+  /// True when this handler still belongs to the tab's current session.
+  /// Auxiliary handlers (`session_id: None`) are always considered current.
+  fn is_current_session(&self, state: &AppState) -> bool {
+    match self.session_id {
+      None => true,
+      Some(id) => state.sessions.lock().is_ok_and(|sessions| {
+        sessions.get(&self.tab_id).is_some_and(|s| {
+          crate::commands::session_is_current(s.session_id, s.alive, id)
+        })
+      }),
+    }
+  }
+
   /// Push data into AppState's output buffer (consumed by frontend via poll_output)
   pub fn emit(&self, data: &str) {
     if let Some(state) = self.app_handle.try_state::<AppState>() {
+      // A superseded task must not write into the replacement's terminal.
+      if !self.is_current_session(&state) {
+        return;
+      }
       if let Ok(mut buffers) = state.output_buffers.lock() {
-        buffers
-          .entry(self.tab_id)
-          .or_default()
-          .push(data.to_string());
+        crate::commands::push_output_chunk(&mut buffers, self.tab_id, data.to_string());
       }
       // Tee a *copy* into the AI capture sink while an AI-issued command is
       // running on this tab (see `run_command_on_terminal` in commands.rs).
@@ -469,7 +525,7 @@ impl SshHandler {
       // output live while the agent collects it.
       if let Ok(mut caps) = state.ai_captures.lock() {
         if let Some(buf) = caps.get_mut(&self.tab_id) {
-          buf.push_str(data);
+          crate::commands::push_ai_capture(buf, data);
         }
       }
     }
@@ -478,6 +534,11 @@ impl SshHandler {
   /// Record a terminal event (input or output) for session recording
   pub fn record_event(&self, direction: &str, content: &str) {
     if let Some(state) = self.app_handle.try_state::<AppState>() {
+      // Same stale-task guard as `emit`: a superseded task must not append to
+      // the replacement session's recording.
+      if !self.is_current_session(&state) {
+        return;
+      }
       if let Ok(mut recordings) = state.recordings.lock() {
         if let Some(rec) = recordings.get_mut(&self.tab_id) {
           if !rec.recording_enabled {
@@ -512,8 +573,10 @@ pub struct LocalShell {
   pub tab_id: u32,
   /// PTY master used for writing input and resizing.
   pub master: Box<dyn portable_pty::MasterPty + Send>,
-  /// Writer half of the master (for `write_all`).
-  pub writer: Box<dyn std::io::Write + Send>,
+  /// Writer half of the master (for `write_all`). Behind an `Arc<Mutex<..>>`
+  /// so callers can clone the handle, drop the `local_shells` lock and do the
+  /// blocking PTY write without stalling every other local-shell command.
+  pub writer: Arc<StdMutex<Box<dyn std::io::Write + Send>>>,
   /// Child process handle.
   pub child: Box<dyn portable_pty::Child + Send + Sync>,
   /// Monotonic version — bumped on each (re)open for the same tab, so a
@@ -559,6 +622,12 @@ pub struct SshSession {
   /// Monotonic session version — incremented on each reconnection for the same tab
   /// Used to prevent stale tasks from emitting spurious connection-closed events
   pub session_id: u64,
+  /// Explicit liveness flag for the reuse path: true from insertion until the
+  /// session is torn down (disconnect, failure, or natural close). Do NOT infer
+  /// liveness from `shutdown_tx.is_some()` — a failed connect used to leave that
+  /// sender populated and made `reuse_existing` report a dead session as
+  /// "connected" (S2).
+  pub alive: bool,
 }
 
 /// Switched SFTP user — allows operating files with a different user's permissions
@@ -587,6 +656,9 @@ pub struct SerialSession {
   /// Monotonic version — bumped on each (re)connect for the same tab, so a
   /// superseded reader thread can avoid emitting a stale `connection-closed`.
   pub session_id: u64,
+  /// Set by the reader thread once it has exited *and* dropped the OS port
+  /// handle. A reconnect waits on this before opening the same port again.
+  pub done: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Active Telnet (plain TCP) terminal session.
@@ -746,6 +818,29 @@ pub struct TransferControl {
   pub notify: tokio::sync::Notify,
 }
 
+/// Shareable handle to the transfer-control registry.
+///
+/// `Arc<Mutex<..>>` rather than a plain `Mutex` inside `AppState` so an RAII
+/// guard (see `commands::TransferGuard`) can hold a clone and clean up on
+/// drop *without* keeping a raw `*const AppState` pointer and `unsafe impl
+/// Send` alive. Exposing `lock()` keeps the existing
+/// `state.transfer_controls.lock()` call sites working unchanged.
+#[derive(Clone, Default)]
+pub struct TransferRegistry(Arc<StdMutex<HashMap<u32, Vec<Arc<TransferControl>>>>>);
+
+impl TransferRegistry {
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  pub fn lock(
+    &self,
+  ) -> std::sync::LockResult<std::sync::MutexGuard<'_, HashMap<u32, Vec<Arc<TransferControl>>>>>
+  {
+    self.0.lock()
+  }
+}
+
 /// One in-flight chunked (streaming) upload. The remote file handle stays
 /// open across several `upload_chunk` invokes so a large file is never held
 /// in memory (nor shipped through the Tauri JSON IPC as one giant payload).
@@ -766,6 +861,15 @@ pub struct UploadSession {
   pub tab_id: Option<u32>,
   /// Pause control shared with the frontend pause button.
   pub control: Arc<TransferControl>,
+}
+
+/// Shared SFTP session for a directory-upload batch (`upload_batch_start`).
+/// Carries the owning tab so a disconnect can drop unfinished batches instead
+/// of leaking one SSH connection per abandoned directory upload.
+#[derive(Clone)]
+pub struct UploadBatch {
+  pub tab_id: u32,
+  pub sftp: Arc<russh_sftp::client::SftpSession>,
 }
 
 /// Active session recording — accumulates events in memory, appended to a
@@ -810,6 +914,11 @@ pub struct AppState {
   /// user-relocated data directory works everywhere. Integration tests inject
   /// `Some(temp_dir)` so they never touch the real user config.
   pub base_dir: Option<std::path::PathBuf>,
+  /// Lock order (global, enforced by convention — never invert):
+  /// `connections` → `workspaces` → `active_workspace_id`.
+  /// Every command that needs more than one of these must acquire them in
+  /// this order; holding a later lock while taking an earlier one can deadlock
+  /// against `persist_connections`.
   pub connections: StdMutex<Vec<ConnectionConfig>>,
   /// Available workspaces (owned by this app instance).
   pub workspaces: StdMutex<Vec<WorkspaceInfo>>,
@@ -846,7 +955,7 @@ pub struct AppState {
   /// Transfer pause controls: tab_id → in-flight controls. A directory upload
   /// runs several transfers concurrently, so each tab can hold many controls;
   /// pause/resume/cancel fan out to all of them.
-  pub transfer_controls: StdMutex<HashMap<u32, Vec<Arc<TransferControl>>>>,
+  pub transfer_controls: TransferRegistry,
   /// In-flight chunked upload sessions: upload_id → session (remote file handle).
   pub upload_sessions: StdMutex<HashMap<u64, UploadSession>>,
   /// Monotonic upload id counter.
@@ -856,7 +965,7 @@ pub struct AppState {
   /// opening a fresh SSH+SFTP handshake per file (the previous behaviour).
   /// The session is registered by `upload_batch_start` and dropped by
   /// `upload_batch_end`; each file's `upload_start` clones the `Arc` handle.
-  pub upload_batch_sessions: StdMutex<HashMap<u64, Arc<russh_sftp::client::SftpSession>>>,
+  pub upload_batch_sessions: StdMutex<HashMap<u64, UploadBatch>>,
   /// Monotonic upload-batch id counter.
   pub next_upload_batch_id: AtomicU64,
   /// Monotonic connection counter — bumped per new connect() call
@@ -1044,7 +1153,7 @@ impl AppState {
       output_buffers: StdMutex::new(HashMap::new()),
       ai_captures: StdMutex::new(HashMap::new()),
       next_ai_term_seq: AtomicU64::new(1),
-      transfer_controls: StdMutex::new(HashMap::new()),
+      transfer_controls: TransferRegistry::new(),
       next_session_id: AtomicU64::new(1),
       db,
       recordings: StdMutex::new(HashMap::new()),

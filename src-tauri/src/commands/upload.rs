@@ -12,6 +12,43 @@ use super::*;
 
 /// Begin a streaming upload on the tab's SSH session. Creates the remote file
 /// (and parent dirs) and returns an `upload_id` for `upload_chunk`/`upload_end`.
+/// Puts a streaming-upload handle back into `upload_sessions` when it leaves
+/// scope, no matter how the chunk write ends (write error, pause/cancel early
+/// return, or a future dropped mid-flight). Without it a cancelled chunk
+/// stranded the remote file handle — and on the non-batch path a whole extra
+/// SSH connection — until the process exited.
+struct UploadSessionGuard<'a> {
+  state: &'a AppState,
+  upload_id: u64,
+  sess: Option<UploadSession>,
+}
+
+impl Drop for UploadSessionGuard<'_> {
+  fn drop(&mut self) {
+    let Some(sess) = self.sess.take() else {
+      return;
+    };
+    if let Ok(mut sessions) = self.state.upload_sessions.lock() {
+      sessions.insert(self.upload_id, sess);
+    }
+  }
+}
+
+/// Drop every streaming upload and pause control owned by `tab_id`. Called on
+/// disconnect/reconnect so an abandoned upload can't keep a remote handle and a
+/// dedicated SSH connection alive until the process exits.
+pub(crate) fn cleanup_uploads_for_tab(state: &AppState, tab_id: u32) {
+  if let Ok(mut sessions) = state.upload_sessions.lock() {
+    sessions.retain(|_, s| s.tab_id != Some(tab_id));
+  }
+  if let Ok(mut batches) = state.upload_batch_sessions.lock() {
+    batches.retain(|_, b| b.tab_id != tab_id);
+  }
+  if let Ok(mut controls) = state.transfer_controls.lock() {
+    controls.remove(&tab_id);
+  }
+}
+
 /// Open a shared SFTP connection for a directory-upload batch. All files in the
 /// batch reuse this one connection (via `batch_id` on `upload_start`) instead
 /// of performing a full SSH+SFTP handshake per file. Call `upload_batch_end`
@@ -28,7 +65,7 @@ pub async fn upload_batch_start(
     .upload_batch_sessions
     .lock()
     .map_err(|e| e.to_string())?
-    .insert(batch_id, sftp);
+    .insert(batch_id, UploadBatch { tab_id, sftp });
   Ok(batch_id)
 }
 
@@ -66,6 +103,11 @@ pub async fn upload_start(
     controls.entry(tab_id).or_default().push(control.clone());
   }
 
+  // While this command runs, the guard removes the control on any early
+  // return; on success it is disarmed because `upload_end` owns the control's
+  // lifetime from here on.
+  let mut control_guard = TransferGuard::new(&state, tab_id, control.clone());
+
   // Reuse the batch's shared SFTP connection when one is open (directory
   // upload), avoiding a full SSH+SFTP handshake per file.
   let sftp = match batch_id {
@@ -74,7 +116,7 @@ pub async fn upload_start(
       .lock()
       .map_err(|e| e.to_string())?
       .get(&bid)
-      .cloned()
+      .map(|b| b.sftp.clone())
       .ok_or_else(|| format!("Upload batch {} not found", bid))?,
     None => Arc::new(open_sftp_session(&state, &app, tab_id).await?),
   };
@@ -108,6 +150,7 @@ pub async fn upload_start(
         control,
       },
     );
+  control_guard.disarm();
   Ok(upload_id)
 }
 
@@ -179,16 +222,34 @@ pub async fn upload_chunk(
     .decode(chunk_b64.trim())
     .map_err(|e| format!("Failed to decode chunk: {}", e))?;
 
-  let mut sess = {
+  let sess = {
     let mut sessions = state.upload_sessions.lock().map_err(|e| e.to_string())?;
     sessions
       .remove(&upload_id)
       .ok_or("Upload session not found (already finished or expired)")?
   };
 
-  check_pause(&sess.control).await?;
+  // The handle lives outside the map for the duration of the write. The guard
+  // returns it on drop so a pause/cancel early return, a write error, or a
+  // dropped future cannot strand the session (and its SSH connection).
+  let mut guard = UploadSessionGuard {
+    state: &state,
+    upload_id,
+    sess: Some(sess),
+  };
+
+  let control = guard
+    .sess
+    .as_ref()
+    .map(|s| s.control.clone())
+    .ok_or("Upload session not found (already finished or expired)")?;
+  check_pause(&control).await?;
 
   let result = async {
+    let sess = guard
+      .sess
+      .as_mut()
+      .ok_or("Upload session not found (already finished or expired)")?;
     sess
       .file
       .write_all(&chunk)
@@ -212,11 +273,6 @@ pub async fn upload_chunk(
   }
   .await;
 
-  // Put the handle back even on error so `upload_end` can close it cleanly.
-  {
-    let mut sessions = state.upload_sessions.lock().map_err(|e| e.to_string())?;
-    sessions.insert(upload_id, sess);
-  }
   result
 }
 
@@ -233,7 +289,7 @@ pub async fn upload_end(state: tauri::State<'_, AppState>, upload_id: u64) -> Re
     if let Some(tab) = sess.tab_id {
       let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
       if let Some(list) = controls.get_mut(&tab) {
-        list.retain(|c| !Arc::ptr_eq(c, &sess.control));
+        remove_control(list, &sess.control);
       }
     }
     // sess (and its remote file handle) drops here.
@@ -753,11 +809,7 @@ pub async fn upload_local_dir(
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
     controls.entry(tab_id).or_default().push(control.clone());
   }
-  let _cleanup = TransferGuard {
-    state_ptr: &*state as *const AppState,
-    tab_id,
-    control: control.clone(),
-  };
+  let _cleanup = TransferGuard::new(&state, tab_id, control.clone());
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
   let remote_parent = resolve_sftp_path(&sftp, &remote_dir).await?;

@@ -53,6 +53,8 @@ pub async fn poll_working_dir(
     let handler = SshHandler {
       app_handle: app.clone(),
       tab_id,
+      // Auxiliary connection: not the tab's interactive session.
+      session_id: None,
       is_sftp: true,
       // No device record here: this per-operation SFTP connection reuses the host
       // the interactive session already identified (see `SshHandler::host_key`).
@@ -389,11 +391,7 @@ pub async fn download_file(
     controls.entry(tab_id).or_default().push(control.clone());
   }
   // Clean up control on exit
-  let _cleanup = TransferGuard {
-    state_ptr: &*state as *const AppState,
-    tab_id,
-    control: control.clone(),
-  };
+  let _cleanup = TransferGuard::new(&state, tab_id, control.clone());
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
@@ -415,7 +413,16 @@ pub async fn download_file(
     .await
     .map_err(|e| format!("Failed to open remote file: {}", e))?;
 
-  let mut all_data = Vec::with_capacity(total as usize);
+  // Stream straight to disk rather than into a `Vec<u8>`: buffering the whole
+  // file (and the accompanying `total as usize`) meant a multi-GB download had
+  // to fit twice in memory and could overflow a 32-bit usize.
+  if let Some(parent) = std::path::Path::new(&local_path).parent() {
+    let _ = tokio::fs::create_dir_all(parent).await;
+  }
+  let mut out = tokio::fs::File::create(&local_path)
+    .await
+    .map_err(|e| format!("Failed to create local file '{}': {}", local_path, e))?;
+
   let mut buf = vec![0u8; 65536];
   let start = std::time::Instant::now();
   let mut offset: u64 = 0;
@@ -431,7 +438,10 @@ pub async fn download_file(
     if n == 0 {
       break;
     }
-    all_data.extend_from_slice(&buf[..n]);
+    out
+      .write_all(&buf[..n])
+      .await
+      .map_err(|e| format!("Failed to write local file '{}': {}", local_path, e))?;
     offset += n as u64;
 
     let _ = app.emit(
@@ -446,21 +456,51 @@ pub async fn download_file(
       }),
     );
   }
-
-  // Write to local file
-  if let Some(parent) = std::path::Path::new(&local_path).parent() {
-    let _ = tokio::fs::create_dir_all(parent).await;
-  }
-  tokio::fs::write(&local_path, &all_data)
+  out
+    .flush()
     .await
-    .map_err(|e| format!("Failed to write local file: {}", e))?;
+    .map_err(|e| format!("Failed to flush local file '{}': {}", local_path, e))?;
 
   Ok(true)
 }
 
+/// Accept exactly one path component coming from a remote SFTP server.
+///
+/// Directory listings are server-controlled, so a hostile (or compromised)
+/// server can return names like `../../evil` or `C:\Windows\x`. Anything that
+/// could escape the chosen local folder, or that Windows would silently rewrite
+/// (reserved device names, ADS `:`), is rejected instead of joined into a path.
+fn sanitize_relative_name(name: &str) -> Option<String> {
+  if name.is_empty() || name == "." || name == ".." {
+    return None;
+  }
+  if name.contains('/') || name.contains('\\') || name.contains(':') {
+    return None;
+  }
+  if name.chars().any(|c| c == '\0' || (c as u32) < 0x20) {
+    return None;
+  }
+  // Windows strips trailing dots/spaces (so `a.` and `a` collide) and treats
+  // these stems as devices regardless of extension (`aux.txt` is still AUX).
+  if name.ends_with(' ') || name.ends_with('.') {
+    return None;
+  }
+  const RESERVED: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+  ];
+  let stem = name.split('.').next().unwrap_or("");
+  if RESERVED.iter().any(|r| stem.eq_ignore_ascii_case(r)) {
+    return None;
+  }
+  Some(name.to_string())
+}
+
 /// Recursively walk a remote directory over a single SFTP session, collecting
 /// (absolute_path, relative_path, size) for files and the relative paths of all
-/// directories. Symlinks are skipped so the walk cannot loop.
+/// directories. Symlinks are skipped so the walk cannot loop. Entries whose
+/// names fail [`sanitize_relative_name`] are skipped (and counted) as well, so
+/// every collected `rel` is a safe single-segment path.
 async fn walk_sftp_dir(
   sftp: &russh_sftp::client::SftpSession,
   remote_root: &str,
@@ -474,12 +514,20 @@ async fn walk_sftp_dir(
     .await
     .map_err(|e| format!("Failed to list remote directory '{}': {}", remote_root, e))?;
   for entry in entries {
-    let name = entry.file_name();
+    let raw_name = entry.file_name();
     let md = entry.metadata();
     if md.file_type().is_symlink() {
       *skipped += 1;
       continue;
     }
+    let Some(name) = sanitize_relative_name(&raw_name) else {
+      eprintln!(
+        "[sftp] skipping unsafe remote entry name {:?} in {}",
+        raw_name, remote_root
+      );
+      *skipped += 1;
+      continue;
+    };
     let child_abs = format!("{}/{}", remote_root.trim_end_matches('/'), name);
     let child_rel = if rel.is_empty() {
       name.clone()
@@ -517,11 +565,7 @@ pub async fn download_directory(
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
     controls.entry(tab_id).or_default().push(control.clone());
   }
-  let _cleanup = TransferGuard {
-    state_ptr: &*state as *const AppState,
-    tab_id,
-    control: control.clone(),
-  };
+  let _cleanup = TransferGuard::new(&state, tab_id, control.clone());
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
@@ -533,7 +577,7 @@ pub async fn download_directory(
 
   // The selected local folder is the *parent*: the downloaded directory keeps
   // its own name so the tree appears as `<local_dir>/<dir_name>/...`.
-  let dir_name = std::path::Path::new(&remote_dir)
+  let raw_dir_name = std::path::Path::new(&remote_dir)
     .file_name()
     .map(|n| n.to_string_lossy().to_string())
     .unwrap_or_else(|| {
@@ -544,6 +588,8 @@ pub async fn download_directory(
         .unwrap_or("download")
         .to_string()
     });
+  let dir_name =
+    sanitize_relative_name(&raw_dir_name).unwrap_or_else(|| "download".to_string());
   let local_root = std::path::Path::new(&local_dir).join(&dir_name);
 
   // Create local directory skeleton (root + all subdirs).
@@ -643,11 +689,7 @@ pub async fn upload_file(
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
     controls.entry(tab_id).or_default().push(control.clone());
   }
-  let _cleanup = TransferGuard {
-    state_ptr: &*state as *const AppState,
-    tab_id,
-    control: control.clone(),
-  };
+  let _cleanup = TransferGuard::new(&state, tab_id, control.clone());
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
@@ -800,11 +842,7 @@ pub async fn upload_file_bytes(
     let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
     controls.entry(tab_id).or_default().push(control.clone());
   }
-  let _cleanup = TransferGuard {
-    state_ptr: &*state as *const AppState,
-    tab_id,
-    control: control.clone(),
-  };
+  let _cleanup = TransferGuard::new(&state, tab_id, control.clone());
 
   let sftp = open_sftp_session(&state, &app, tab_id).await?;
 
@@ -927,11 +965,7 @@ pub async fn delete_file(
       let mut controls = state.transfer_controls.lock().map_err(|e| e.to_string())?;
       controls.entry(tab_id).or_default().push(control.clone());
     }
-    let _cleanup = TransferGuard {
-      state_ptr: &*state as *const AppState,
-      tab_id,
-      control: control.clone(),
-    };
+    let _cleanup = TransferGuard::new(&state, tab_id, control.clone());
 
     let fs = crate::remote_fs::SftpFs::new(sftp);
     let dir_name = std::path::Path::new(&path)
@@ -985,4 +1019,55 @@ pub async fn delete_file(
   }
 
   Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn sanitize_relative_name_rejects_escapes_and_windows_specials() {
+    // (input, expected)
+    let cases: &[(&str, Option<&str>)] = &[
+      ("normal.txt", Some("normal.txt")),
+      ("报告 2024.log", Some("报告 2024.log")),
+      ("..", None),
+      (".", None),
+      ("", None),
+      ("../../evil", None),
+      ("..\\..\\evil", None),
+      ("/etc/passwd", None),
+      ("C:\\Windows\\x", None),
+      ("name:stream", None),
+      ("nul\u{0}byte", None),
+      ("trailing.", None),
+      ("trailing ", None),
+      ("CON", None),
+      ("con.txt", None),
+      ("AUX", None),
+      ("COM1", None),
+      ("lpt9.tar.gz", None),
+      ("CONSOLE.log", Some("CONSOLE.log")),
+    ];
+    for (input, expected) in cases {
+      let got = sanitize_relative_name(input);
+      assert_eq!(got.as_deref(), *expected, "input={:?}", input);
+    }
+  }
+
+  #[test]
+  fn sanitized_names_never_escape_local_root() {
+    let root = std::path::Path::new("C:/downloads");
+    for evil in ["../evil", "..\\evil", "C:/Windows/x", "/etc/passwd"] {
+      if let Some(name) = sanitize_relative_name(evil) {
+        let joined = root.join(name);
+        assert!(
+          joined.starts_with(root),
+          "{:?} escaped to {:?}",
+          evil,
+          joined
+        );
+      }
+    }
+  }
 }
