@@ -1080,6 +1080,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       !q ||
       r.name.toLowerCase().includes(q) ||
       r.detail.toLowerCase().includes(q) ||
+      (r.node ?? '').toLowerCase().includes(q) ||
       r.status.toLowerCase().includes(q),
   )
   // The same filter box narrows the release list, by chart and status as well as name.
@@ -1280,7 +1281,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
               }}
               title={`${r.name}${r.namespace ? `\n${r.namespace}` : ''}\n${r.status}${
                 r.detail ? `\n${r.detail}` : ''
-              }`}
+              }${r.node ? `\n${r.node}` : ''}`}
             >
               <span className="k8s-icon">
                 <Icon name="boxes" size={14} />
@@ -1293,6 +1294,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
                   )}
                 </div>
                 <div className="k8s-detail">{r.detail}</div>
+                {r.node && <div className="k8s-node">{r.node}</div>}
               </div>
               <div className="k8s-chips">
                 <span className={`k8s-chip ${statusTone(r.status)}`}>{r.status}</span>

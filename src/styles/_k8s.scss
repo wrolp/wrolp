@@ -145,6 +145,15 @@
   text-overflow: ellipsis;
 }
 
+/* Pods put the node on its own line under the image. */
+.k8s-node {
+  font-size: var(--fs-xs);
+  color: $text-dim;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .k8s-chips {
   display: flex;
   flex-direction: column;

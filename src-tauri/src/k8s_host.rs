@@ -87,6 +87,10 @@ pub struct K8sResource {
   pub restarts: u64,
   /// One-line summary under the name (image, address, schedule…).
   pub detail: String,
+  /// The node a pod runs on, rendered on its own line under `detail`. Empty for
+  /// kinds that have no node.
+  #[serde(default)]
+  pub node: String,
   /// Container names, for the pod logs / exec pickers.
   pub containers: Vec<String>,
   /// Exposed ports, for the port-forward dialog's prefill (container ports, or a
@@ -409,7 +413,7 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
 
   let status = item.get("status").cloned().unwrap_or(Value::Null);
 
-  let (status_word, ready, restarts, detail) = match kind {
+  let (status_word, ready, restarts, detail, node) = match kind {
     "pods" => {
       let phase = status
         .get("phase")
@@ -434,14 +438,15 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
         .iter()
         .map(|c| c.get("restartCount").and_then(Value::as_u64).unwrap_or(0))
         .sum();
+      // The node goes on its own line in the panel; `detail` stays the image.
       let node = str_at(item, &["spec", "nodeName"]).unwrap_or("");
-      let detail = match (images.is_empty(), node.is_empty()) {
-        (false, false) => format!("{images} · {node}"),
-        (false, true) => images,
-        (true, false) => node.to_string(),
-        (true, true) => String::new(),
-      };
-      (phase, format!("{ready_n}/{total}"), restarts, detail)
+      (
+        phase,
+        format!("{ready_n}/{total}"),
+        restarts,
+        images,
+        node.to_string(),
+      )
     }
     "deployments" | "statefulsets" => {
       let desired = u64_at(item, &["spec", "replicas"]).max(
@@ -463,7 +468,13 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
       } else {
         "Progressing"
       };
-      (word.to_string(), format!("{ready_n}/{desired}"), 0, images)
+      (
+        word.to_string(),
+        format!("{ready_n}/{desired}"),
+        0,
+        images,
+        String::new(),
+      )
     }
     "daemonsets" => {
       let desired = u64_at(item, &["status", "desiredNumberScheduled"]);
@@ -477,7 +488,13 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
       } else {
         "Progressing"
       };
-      (word.to_string(), format!("{ready_n}/{desired}"), 0, images)
+      (
+        word.to_string(),
+        format!("{ready_n}/{desired}"),
+        0,
+        images,
+        String::new(),
+      )
     }
     "services" => {
       let ty = str_at(item, &["spec", "type"]).unwrap_or("ClusterIP");
@@ -503,7 +520,7 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
         .cloned()
         .collect::<Vec<_>>()
         .join(" · ");
-      (ty.to_string(), String::new(), 0, detail)
+      (ty.to_string(), String::new(), 0, detail, String::new())
     }
     "ingresses" => {
       let hosts = item
@@ -517,7 +534,7 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
             .join(", ")
         })
         .unwrap_or_default();
-      ("Active".to_string(), String::new(), 0, hosts)
+      ("Active".to_string(), String::new(), 0, hosts, String::new())
     }
     "jobs" => {
       let completions = u64_at(item, &["spec", "completions"]).max(1);
@@ -535,6 +552,7 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
         format!("{succeeded}/{completions}"),
         0,
         images,
+        String::new(),
       )
     }
     "cronjobs" => {
@@ -549,6 +567,7 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
         String::new(),
         0,
         schedule.to_string(),
+        String::new(),
       )
     }
     // ConfigMaps / Secrets: the useful fact is how many keys they carry.
@@ -568,6 +587,7 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
         String::new(),
         0,
         format!("{keys} key(s)"),
+        String::new(),
       )
     }
   };
@@ -580,6 +600,7 @@ fn resource_from(kind: &str, item: &Value) -> Option<K8sResource> {
     ready,
     restarts,
     detail,
+    node,
     containers,
     ports: exposed_ports(item),
     created_at,
@@ -843,8 +864,11 @@ mod tests {
     assert_eq!(rows[0].restarts, 5);
     assert_eq!(rows[0].containers, vec!["web"]);
     assert_eq!(rows[0].ports, vec![8080]);
+    // The image stays in `detail`; the node has its own field so the panel can
+    // render it on a separate line.
     assert!(rows[0].detail.contains("nginx:1.29"));
-    assert!(rows[0].detail.contains("node-1"));
+    assert!(!rows[0].detail.contains("node-1"));
+    assert_eq!(rows[0].node, "node-1");
   }
 
   #[test]

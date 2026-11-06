@@ -570,6 +570,8 @@ export interface K8sResource {
   ready: string
   restarts: number
   detail: string
+  /** Node a pod runs on, shown on its own line; empty for other kinds. */
+  node?: string
   containers: string[]
   /** Exposed ports (container ports, or a service's own) for the forward prefill. */
   ports: number[]

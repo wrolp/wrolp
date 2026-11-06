@@ -23,7 +23,8 @@ const POD = {
   status: 'Running',
   ready: '1/1',
   restarts: 2,
-  detail: 'nginx:1.29 · node-1',
+  detail: 'nginx:1.29',
+  node: 'node-1',
   containers: ['web'],
   createdAt: '2026-10-01T00:00:00Z',
 }
@@ -60,6 +61,9 @@ test('the panel lists the current context and shows the row YAML', async ({ page
   await expect(row).toContainText('web-0')
   await expect(row.locator('.k8s-chip.ok')).toHaveText('Running')
   await expect(row).toContainText('1/1')
+  // The image and the node are separate lines, not one "image · node" string.
+  await expect(row.locator('.k8s-detail')).toHaveText('nginx:1.29')
+  await expect(row.locator('.k8s-node')).toHaveText('node-1')
 
   await row.click()
   await expect(page.locator('.k8s-yaml')).toContainText('kind: Pod')
