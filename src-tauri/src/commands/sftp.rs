@@ -1,6 +1,12 @@
 use super::*;
 // ==================== SFTP File Operations ====================
 
+/// Bytes per upload read/write. Also the granularity of `transfer-progress`
+/// ticks: a 4MB buffer only reported every 4MB, so a small file produced a
+/// single tick at 100% and a slow link looked frozen. Matches the download
+/// loop's 64KB so both transfers move at the same visible rate.
+const UPLOAD_CHUNK_BYTES: usize = 64 * 1024;
+
 /// Helper: establish a fresh SFTP connection for a tab's main session.
 /// Delegates to the shared implementation in `remote_fs`.
 pub(crate) async fn open_sftp_session(
@@ -723,7 +729,7 @@ pub async fn upload_file(
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
   let start = std::time::Instant::now();
-  let chunk_size: usize = 4 * 1024 * 1024;
+  let chunk_size: usize = UPLOAD_CHUNK_BYTES;
   let mut buf = vec![0u8; chunk_size];
   let mut written: u64 = 0;
 
@@ -866,7 +872,7 @@ pub async fn upload_file_bytes(
     .map_err(|e| format!("Failed to create remote file '{}': {}", resolved_path, e))?;
 
   let start = std::time::Instant::now();
-  let chunk_size: usize = 4 * 1024 * 1024;
+  let chunk_size: usize = UPLOAD_CHUNK_BYTES;
   let mut written: u64 = 0;
 
   for chunk in file_data.chunks(chunk_size) {

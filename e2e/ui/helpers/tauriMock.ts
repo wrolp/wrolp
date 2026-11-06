@@ -187,6 +187,11 @@ export interface TauriMockOptions {
    */
   holdDownload?: boolean
   /**
+   * Same for `upload_file` / `target_upload_file`: the row has to stay `active`
+   * long enough for a spec to feed it `transfer-progress` events.
+   */
+  holdUpload?: boolean
+  /**
    * Answer to `git_probe`. Omitted means "git is installed", which is the state a
    * spec needs to reach the repository picker; `{ installed: false }` renders the
    * "no git on this host" panel instead.
@@ -467,7 +472,11 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_ai_sessions':
             return opts.aiSessions ?? []
           case 'get_local_terminals':
-            return localTerminals
+            // A real invoke deserializes a fresh array. Returning the store's own
+            // array would alias whatever React state received it, so a later
+            // re-read would hand back the same reference and `setState` would
+            // bail out — the list would only repaint on some other state change.
+            return [...localTerminals]
           case 'save_local_terminals': {
             const entries = (args.entries ?? []) as unknown[]
             localTerminals.splice(0, localTerminals.length, ...entries)
@@ -775,6 +784,12 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return new Promise<boolean>((resolve) => {
               finishPendingCall = () => resolve(true)
             })
+          case 'upload_file':
+          case 'target_upload_file':
+            if (!opts.holdUpload) return true
+            return new Promise<boolean>((resolve) => {
+              finishPendingCall = () => resolve(true)
+            })
           // Same content read, addressed through a non-session target (the local
           // pane of the dual-pane view opens files this way).
           case 'read_file_content':
@@ -918,10 +933,7 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
               binary: opts.gitDiffBinary ?? false,
             }
           case 'git_commit_files':
-            return (
-              opts.gitCommitFilesByOid?.[String(args.oid ?? '')] ??
-              opts.gitCommitFiles ?? []
-            )
+            return opts.gitCommitFilesByOid?.[String(args.oid ?? '')] ?? opts.gitCommitFiles ?? []
           case 'git_branches':
             return opts.gitBranches ?? []
           case 'git_remotes':
@@ -959,7 +971,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return gitStashes.map((s) => ({ ...s }))
           case 'git_stash_push': {
             const message = String(args.message ?? 'WIP on main')
-            gitStashes = [{ index: 0, oid: 'f'.repeat(40), timestamp: 1760000000, message }, ...gitStashes]
+            gitStashes = [
+              { index: 0, oid: 'f'.repeat(40), timestamp: 1760000000, message },
+              ...gitStashes,
+            ]
             return gitStashes.map((s) => ({ ...s }))
           }
           case 'git_stash_entry': {
