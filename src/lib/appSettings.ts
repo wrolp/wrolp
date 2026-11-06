@@ -451,6 +451,17 @@ const DEFS: SettingDef[] = [
       'Keep the Home page pinned as the first tab bar entry, so it can be reopened while sessions are open. Off means Home only appears while no tab is open at all.',
   },
   {
+    key: 'ui.showStatusBar',
+    kind: 'boolean',
+    group: 'ui',
+    default: true,
+    // The bar carries the connection state, the grid size, the recording mark and
+    // the update pill. Hiding it is for people who want the last strip of vertical
+    // space back; the same information stays reachable from the pane status bars.
+    storage: { kind: 'localStorage', key: 'wrolp-show-status-bar' },
+    describe: 'Show the status bar along the bottom edge of the window.',
+  },
+  {
     key: 'ui.recentRemoteCount',
     kind: 'number',
     min: HOME_RECENT_COUNT.min,

@@ -1010,11 +1010,17 @@ function AppearanceSettingsCard({
   const [alwaysShowHome, setAlwaysShowHome] = useState(
     () => readSetting('ui.alwaysShowHome')?.value !== false,
   )
+  // The bottom status bar is window chrome, not a theme value, so the card reads
+  // the registry the same way — and `App` subscribes to the same key to hide it.
+  const [showStatusBar, setShowStatusBar] = useState(
+    () => readSetting('ui.showStatusBar')?.value !== false,
+  )
   useEffect(
     () =>
-      subscribeAppSettings(() =>
-        setAlwaysShowHome(readSetting('ui.alwaysShowHome')?.value !== false),
-      ),
+      subscribeAppSettings(() => {
+        setAlwaysShowHome(readSetting('ui.alwaysShowHome')?.value !== false)
+        setShowStatusBar(readSetting('ui.showStatusBar')?.value !== false)
+      }),
     [],
   )
   // While a drag is in flight the store still reports the last *committed* size —
@@ -1213,6 +1219,20 @@ function AppearanceSettingsCard({
           />
           <span className="settings-label">{t('alwaysShowHomeLabel')}</span>
           <span className="settings-help">{t('alwaysShowHomeHelp')}</span>
+        </div>
+
+        <div className="settings-field switch-field">
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={showStatusBar}
+            aria-label={t('statusBarLabel')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => write({ 'ui.showStatusBar': !showStatusBar })}
+          />
+          <span className="settings-label">{t('statusBarLabel')}</span>
+          <span className="settings-help">{t('statusBarHelp')}</span>
         </div>
 
         <div className="settings-field">
@@ -1783,6 +1803,11 @@ export default function App() {
   const [alwaysShowHome, setAlwaysShowHome] = useState(
     () => readSetting('ui.alwaysShowHome')?.value !== false,
   )
+  // Settings → Appearance can hide the bottom status bar; the switch writes the
+  // registry and this subscription is what re-renders the window chrome.
+  const [showStatusBar, setShowStatusBar] = useState(
+    () => readSetting('ui.showStatusBar')?.value !== false,
+  )
   // Per-tab current working directory, reported by the Terminal so the FilePanel
   // shell-sync can follow the real (interactive) directory instead of $HOME.
   const [cwdByTab, setCwdByTab] = useState<Record<string, string | null>>({})
@@ -2277,9 +2302,10 @@ export default function App() {
   focusedLeafByRootRef.current = focusedLeafByRoot
   useEffect(
     () =>
-      subscribeAppSettings(() =>
-        setAlwaysShowHome(readSetting('ui.alwaysShowHome')?.value !== false),
-      ),
+      subscribeAppSettings(() => {
+        setAlwaysShowHome(readSetting('ui.alwaysShowHome')?.value !== false)
+        setShowStatusBar(readSetting('ui.showStatusBar')?.value !== false)
+      }),
     [],
   )
   // Pin or unpin the Home entry. `hasHome` is read from `tabsRef` because this runs
@@ -9295,14 +9321,16 @@ export default function App() {
         </div>
       </div>
 
-      <StatusBar
-        tab={statusBarTab}
-        termSize={focusedLeafId ? termSizes[focusedLeafId] : undefined}
-        recording={focusedLeafTabId != null ? recordingByTab[focusedLeafTabId] : undefined}
-        update={updateInfo && showUpdateBanner ? { ...updateInfo, state: updateState } : null}
-        onDownloadUpdate={() => void handleDownloadUpdate()}
-        onDismissUpdate={() => setShowUpdateBanner(false)}
-      />
+      {showStatusBar && (
+        <StatusBar
+          tab={statusBarTab}
+          termSize={focusedLeafId ? termSizes[focusedLeafId] : undefined}
+          recording={focusedLeafTabId != null ? recordingByTab[focusedLeafTabId] : undefined}
+          update={updateInfo && showUpdateBanner ? { ...updateInfo, state: updateState } : null}
+          onDownloadUpdate={() => void handleDownloadUpdate()}
+          onDismissUpdate={() => setShowUpdateBanner(false)}
+        />
+      )}
 
       {/* Ctrl+K command palette — the shell's one entry point for "open this /
           do that". It is portalled to <body>, so DOM order here is irrelevant. */}

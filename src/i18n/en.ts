@@ -541,6 +541,9 @@ const en = {
   statusShapesLabel: 'Distinguish status by shape',
   statusShapesHelp:
     'Error and warning dots change silhouette as well as colour, so state stays readable without colour vision.',
+  statusBarLabel: 'Show the status bar',
+  statusBarHelp:
+    'The bar along the bottom edge reads out the connection state, the terminal grid, an active recording and an available update. Off, the pane headers still carry the state.',
   alwaysShowHomeLabel: 'Always show Home',
   alwaysShowHomeHelp:
     'Keep the Home page pinned as the first tab, so it is one click away while sessions are open. Off, it only appears while no tab is left.',

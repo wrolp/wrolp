@@ -515,6 +515,9 @@ const zh: Partial<Record<TranslationKey, string>> = {
   focusRingHelp: '键盘聚焦时控件外围显示的描边。',
   statusShapesLabel: '用形状区分状态',
   statusShapesHelp: '错误与警告指示点同时改变轮廓与颜色，色觉受阻时也能读出状态。',
+  statusBarLabel: '显示状态栏',
+  statusBarHelp:
+    '窗口底部的状态栏显示连接状态、终端行列数、录制中标记与可用更新。关闭后，这些状态仍可从各窗格标题栏读到。',
   alwaysShowHomeLabel: '一直显示首页',
   alwaysShowHomeHelp:
     '把首页固定为第一个页签，会话开着的时候也能一键点回去。关闭后，首页只在没有任何页签时出现。',
