@@ -28,22 +28,20 @@ async function connectLocal(page: Page, entry: typeof POSIX_ENTRY, prompt: strin
     pollOutputChunks: [[prompt]],
   })
   await page.goto('/')
-  await page
-    .locator('.conn-item.local-term-item')
-    .filter({ hasText: entry.name })
-    .click()
+  await page.locator('.conn-item.local-term-item').filter({ hasText: entry.name }).click()
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached' })
   await expect
-    .poll(async () =>
-      (await invokedCalls(page)).filter((c) => c.cmd === 'open_local_shell').length,
-    )
+    .poll(async () => (await invokedCalls(page)).filter((c) => c.cmd === 'open_local_shell').length)
     .toBeGreaterThanOrEqual(1)
   await page.waitForTimeout(400)
 }
 
-/** The context menu's 🧹 "Clear" entry (there is also a "Clear input" one). */
+/** The context menu's "Clear" entry. The broom glyph became a shared lucide
+ *  `<svg>` (no distinguishing class/title), so the label text is the only
+ *  discriminator; anchoring on the whole label keeps it apart from the adjacent
+ *  "Clear input" item. */
 const clearItem = (page: Page) =>
-  page.locator('.context-menu .context-menu-item').filter({ hasText: /🧹/ })
+  page.locator('.context-menu .context-menu-item').filter({ hasText: /^\s*Clear\s*$/ })
 
 test('clear on a POSIX local terminal runs `clear` in the shell', async ({ page }) => {
   await connectLocal(page, POSIX_ENTRY, 'user@host:~$ ls -la')

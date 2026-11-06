@@ -76,14 +76,15 @@ test('each tab renders its own panel', async ({ page }) => {
   await expect(page.locator('.host-analysis-panel')).toHaveCount(0)
 })
 
-test('the AI tab explains itself when no session is focused', async ({ page }) => {
-  // The assistant is bound to the focused pane, so with nothing open the tab must
-  // say so rather than render an empty box with no explanation.
+test('the AI tab asks for an endpoint when none is configured', async ({ page }) => {
+  // The assistant is the app-level chat, not bound to a pane, so with nothing
+  // open there is still a chat surface — but without an endpoint it cannot run,
+  // and says so instead of rendering an empty box.
   await boot(page)
   await toggle(page).click()
   await page.locator('.inspector-tabs .tab-btn').nth(2).click()
   await expect(page.locator('.inspector-empty')).toHaveText(
-    'Open a terminal to talk to the assistant.',
+    'No AI endpoint is configured. Please configure it in Settings first.',
   )
   await expect(page.locator('.ai-chat-panel')).toHaveCount(0)
 })

@@ -66,16 +66,22 @@ test('the hover highlight is half the grab strip, not the whole hit area', async
   await boot(page)
   const grip = page.locator('.inspector > .inspector-resize')
 
-  const seam = await grip.evaluate((el) => ({
-    strip: Number.parseFloat(getComputedStyle(el).width),
-    line: Number.parseFloat(getComputedStyle(el, '::after').width),
-    resting: getComputedStyle(el, '::after').backgroundColor,
-  }))
+  const seam = await grip.evaluate((el) => {
+    const s = getComputedStyle(el, '::after')
+    return {
+      strip: Number.parseFloat(getComputedStyle(el).width),
+      line: Number.parseFloat(s.width),
+      background: s.backgroundImage,
+      resting: s.opacity,
+    }
+  })
   expect(seam.strip).toBeGreaterThan(0)
   expect(seam.line).toBe(seam.strip / 2)
+  // The highlight is a gradient that fades at the column's top/bottom ends, so it
+  // has no background-colour of its own; `opacity` is what animates.
+  expect(seam.background).toContain('linear-gradient')
+  expect(seam.resting).toBe('0')
 
   await grip.hover()
-  expect(await grip.evaluate((el) => getComputedStyle(el, '::after').backgroundColor)).not.toBe(
-    seam.resting,
-  )
+  await expect.poll(() => grip.evaluate((el) => getComputedStyle(el, '::after').opacity)).toBe('1')
 })

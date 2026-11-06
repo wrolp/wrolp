@@ -72,8 +72,10 @@ test('split panes are separated by a real gap', async ({ page }) => {
   expect(gap).toBeGreaterThanOrEqual(2)
   expect(gap).toBeLessThanOrEqual(6)
 
-  // Hover highlight is a crisp 1px accent line with a blurred halo — not a
-  // translucent band filling the whole track.
+  // The hover highlight IS the seam: the `::after` overlay is `inset: 0`, so it
+  // paints the full track width (the 4px gap) with the accent gradient that fades
+  // out at the ends — not a thin line with a blurred halo (see `.term-split-divider`
+  // in `_panes.scss`).
   const divider = page.locator('.term-split-divider.divider-row')
   await divider.hover()
   // The highlight fades in (0.12s transition), so poll instead of reading the
@@ -83,10 +85,11 @@ test('split panes are separated by a real gap', async ({ page }) => {
     .toBe('1')
   const line = await divider.evaluate((el) => {
     const s = getComputedStyle(el, '::after')
-    return { width: s.width, shadow: s.boxShadow }
+    return { width: s.width, background: s.backgroundImage, shadow: s.boxShadow }
   })
-  expect(line.width).toBe('1px')
-  expect(line.shadow).not.toBe('none')
+  expect(line.width).toBe('4px')
+  expect(line.background).toContain('linear-gradient')
+  expect(line.shadow).toBe('none')
 })
 
 // The docked AI pane must be separated from the terminal by a real gap AND a
