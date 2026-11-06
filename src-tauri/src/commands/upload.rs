@@ -303,6 +303,48 @@ pub async fn upload_end(state: tauri::State<'_, AppState>, upload_id: u64) -> Re
 // Docker container) and operate directly on that target. The `Session` variant
 // reproduces the behaviour of the `tab_id` commands above.
 
+/// The tab a target transfer's `transfer-progress` events are reported under.
+/// Targets with no owning session (a container on this machine, a local
+/// cluster's pod) report under tab 0 — the transfer list keys on the path, not
+/// the tab.
+fn progress_tab_id(target: &TargetRef) -> u32 {
+  match target {
+    TargetRef::Session { tab_id } | TargetRef::Local { tab_id } => *tab_id,
+    TargetRef::Wsl { tab_id, .. } => *tab_id,
+    TargetRef::Ftp { tab_id } => *tab_id,
+    TargetRef::JumpRemote { jump_tab_id, .. }
+    | TargetRef::DockerSsh { jump_tab_id, .. }
+    | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
+    TargetRef::DockerLocal { .. } => 0,
+    TargetRef::K8sPod { host, .. } => match host {
+      crate::k8s_host::K8sHostRef::Ssh { jump_tab_id } => *jump_tab_id,
+      crate::k8s_host::K8sHostRef::Local => 0,
+    },
+  }
+}
+
+/// Emit one `transfer-progress` tick for a single-file upload.
+fn emit_upload_progress(
+  app: &tauri::AppHandle,
+  tab_id: u32,
+  filename: &str,
+  transferred: u64,
+  total: u64,
+  elapsed_ms: u128,
+) {
+  let _ = app.emit(
+    "transfer-progress",
+    serde_json::json!({
+      "tabId": tab_id,
+      "op": "upload",
+      "filename": filename,
+      "transferred": transferred,
+      "total": total,
+      "elapsed": elapsed_ms,
+    }),
+  );
+}
+
 #[tauri::command]
 pub async fn target_list_files(
   app: tauri::AppHandle,
@@ -396,22 +438,7 @@ pub async fn target_download_directory(
   let mut done_bytes = 0u64;
   let mut done_files = 0usize;
   let start = std::time::Instant::now();
-  let tab_id = match &target {
-    TargetRef::Session { tab_id } | TargetRef::Local { tab_id } => *tab_id,
-    TargetRef::Wsl { tab_id, .. } => *tab_id,
-    TargetRef::Ftp { tab_id } => *tab_id,
-    TargetRef::JumpRemote { jump_tab_id, .. }
-    | TargetRef::DockerSsh { jump_tab_id, .. }
-    | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
-    // A container on this machine has no owning session tab, so its transfer progress is
-    // reported under tab 0 — the transfer list keys on the path, not the tab.
-    TargetRef::DockerLocal { .. } => 0,
-    // A pod reports the session its kubectl runs on, or 0 for a local cluster.
-    TargetRef::K8sPod { host, .. } => match host {
-      crate::k8s_host::K8sHostRef::Ssh { jump_tab_id } => *jump_tab_id,
-      crate::k8s_host::K8sHostRef::Local => 0,
-    },
-  };
+  let tab_id = progress_tab_id(&target);
   let local_root_str = local_root.to_string_lossy().to_string();
   let summary = crate::remote_fs::download_dir_recursive(
     fs.as_ref(),
@@ -575,9 +602,14 @@ pub async fn target_upload_file(
   // SFTP-backed targets stream the file in 64KB chunks so large files never
   // load fully into memory. Non-SFTP targets (Docker exec / local) keep the
   // single-shot `write_file` path.
+  let tab_id = progress_tab_id(&target);
+  let filename = std::path::Path::new(&remote_path)
+    .file_name()
+    .map(|n| n.to_string_lossy().to_string())
+    .unwrap_or_else(|| remote_path.clone());
   match build_sftp(&app, &state, &target).await {
     Ok(sftp) => {
-      stream_upload_file(&sftp, &local_path, &remote_path).await?;
+      stream_upload_file(&app, tab_id, &filename, &sftp, &local_path, &remote_path).await?;
       Ok(true)
     }
     Err(_) => {
@@ -585,15 +617,35 @@ pub async fn target_upload_file(
       let data = tokio::fs::read(&local_path)
         .await
         .map_err(|e| format!("Failed to read local file: {}", e))?;
+      // The whole buffer lands in one `write_file`, so bracket it with a tick
+      // each side: the row still gets a total (and a completed bar) instead of
+      // sitting at "queued" until the command returns.
+      let total = data.len() as u64;
+      let start = std::time::Instant::now();
+      emit_upload_progress(&app, tab_id, &filename, 0, total, 0);
       fs.write_file(&remote_path, &data).await?;
+      emit_upload_progress(
+        &app,
+        tab_id,
+        &filename,
+        total,
+        total,
+        start.elapsed().as_millis(),
+      );
       Ok(true)
     }
   }
 }
 
 /// Stream a local file into `remote_path` over an SFTP session in 64KB chunks
-/// (no full-file buffering). Parent directories are created as needed.
+/// (no full-file buffering). Parent directories are created as needed, and each
+/// written chunk ticks `transfer-progress` so the file panel can draw the bar and
+/// the speed for non-session targets too (the session path emits from
+/// `upload_file`).
 async fn stream_upload_file(
+  app: &tauri::AppHandle,
+  tab_id: u32,
+  filename: &str,
   sftp: &russh_sftp::client::SftpSession,
   local_path: &str,
   remote_path: &str,
@@ -601,11 +653,18 @@ async fn stream_upload_file(
   let mut local = tokio::fs::File::open(local_path)
     .await
     .map_err(|e| format!("Failed to open local file: {}", e))?;
+  let total = local
+    .metadata()
+    .await
+    .map_err(|e| format!("Failed to stat local file: {}", e))?
+    .len();
   ensure_parent_dir(sftp, remote_path).await?;
   let mut file = sftp
     .create(remote_path)
     .await
     .map_err(|e| format!("Failed to create remote file '{}': {}", remote_path, e))?;
+  let start = std::time::Instant::now();
+  let mut written: u64 = 0;
   let mut buf = vec![0u8; 65536];
   loop {
     let n = local
@@ -619,6 +678,8 @@ async fn stream_upload_file(
       .write_all(&buf[..n])
       .await
       .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
+    written += n as u64;
+    emit_upload_progress(app, tab_id, filename, written, total, start.elapsed().as_millis());
   }
   Ok(())
 }
@@ -634,16 +695,23 @@ async fn stream_upload_file(
 /// session. `local_dir` may be a single file (uploaded to
 /// `remote_parent/<basename>`) or a directory (uploaded to
 /// `remote_parent/<dirname>/...`). Symlinks are skipped (counted in the
-/// summary). `on_progress` is invoked after each chunk with
-/// (relative_path, done_bytes, total_bytes, done_files, total_files);
-/// returning `Err` aborts the upload (e.g. user cancel). `control`, when
+/// summary). `on_progress` is invoked with
+/// (relative_path, done_bytes, total_bytes, done_files, total_files) —
+/// **once per written chunk** while the files stream (throttled by the caller's
+/// emit interval is not needed here: chunks are 4 MiB, so a tick per chunk is
+/// already ~10/s on a fast link), then once more when each file completes.
+/// Returning `Err` aborts the upload (e.g. user cancel). `control`, when
 /// present, is checked before each chunk for pause/cancel.
+///
+/// The earlier shape only ticked after a whole file finished, so uploading one
+/// large file produced a single event at the very end — the progress bar and the
+/// speed stayed empty for the entire transfer.
 async fn stream_upload_local_dir(
   sftp: &russh_sftp::client::SftpSession,
   local_dir: &str,
   remote_parent: &str,
   control: Option<&TransferControl>,
-  on_progress: &mut (dyn FnMut(&str, u64, u64, u64, u64) -> Result<(), String> + Send),
+  on_progress: &(dyn Fn(&str, u64, u64, u64, u64) -> Result<(), String> + Send + Sync),
 ) -> Result<DirUploadSummary, String> {
   let local_root = std::path::Path::new(local_dir);
   let is_dir = local_root.is_dir();
@@ -710,8 +778,28 @@ async fn stream_upload_local_dir(
 
   let total_files = files.len();
   let total_bytes: u64 = files.iter().map(|(_, _, s)| s).sum();
-  let mut done_bytes = 0u64;
-  let mut done_files = 0usize;
+  // Shared across the concurrent file tasks: bytes/files are added from every
+  // task, so the progress tick can be emitted *while* a file streams.
+  let done_bytes = std::sync::atomic::AtomicU64::new(0);
+  let done_files = std::sync::atomic::AtomicU64::new(0);
+  // Wall-clock throttle for the per-chunk ticks. A 4 MiB chunk on a slow link
+  // already spaces them out; this keeps a loopback-fast link from flooding the
+  // event channel.
+  let last_tick = std::sync::Mutex::new(std::time::Instant::now());
+  let tick = |rel: &str, force: bool| -> Result<(), String> {
+    let bytes = done_bytes.load(std::sync::atomic::Ordering::Relaxed);
+    let files_done = done_files.load(std::sync::atomic::Ordering::Relaxed);
+    let mut last = last_tick.lock().map_err(|e| e.to_string())?;
+    let due = force
+      || bytes >= total_bytes
+      || last.elapsed() >= std::time::Duration::from_millis(120);
+    if !due {
+      return Ok(());
+    }
+    *last = std::time::Instant::now();
+    drop(last);
+    on_progress(rel, bytes, total_bytes, files_done, total_files as u64)
+  };
 
   // Upload files with bounded concurrency so a folder of many files keeps the
   // SSH pipe full. a945 achieved this by running several `upload_file` calls in
@@ -727,6 +815,9 @@ async fn stream_upload_local_dir(
       rels.push(rel.clone());
       let remote_path = format!("{}/{}", remote_root, rel);
       let ctrl = control.clone();
+      let rel_ref = rel.as_str();
+      let tick = &tick;
+      let done_bytes_ref = &done_bytes;
       tasks.push(async move {
         if let Some(c) = &ctrl {
           check_pause(c).await?;
@@ -755,6 +846,10 @@ async fn stream_upload_local_dir(
             .await
             .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
           written += n as u64;
+          // Per-chunk progress: this is what keeps the bar and the speed alive
+          // while one large file is still streaming.
+          done_bytes_ref.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+          tick(rel_ref, false)?;
         }
         Ok::<u64, String>(written)
       });
@@ -764,24 +859,18 @@ async fn stream_upload_local_dir(
       .into_iter()
       .zip(rels)
     {
-      let written = res?;
-      done_bytes += written;
-      done_files += 1;
-      on_progress(
-        &rel,
-        done_bytes,
-        total_bytes,
-        done_files as u64,
-        total_files as u64,
-      )?;
+      res?;
+      done_files.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+      // Force the completion tick so the last file is always reported.
+      tick(&rel, true)?;
     }
   }
 
   Ok(DirUploadSummary {
     total_files,
-    done_files,
+    done_files: done_files.load(std::sync::atomic::Ordering::Relaxed) as usize,
     total_bytes,
-    done_bytes,
+    done_bytes: done_bytes.load(std::sync::atomic::Ordering::Relaxed),
     skipped,
   })
 }
@@ -815,7 +904,7 @@ pub async fn upload_local_dir(
   let remote_parent = resolve_sftp_path(&sftp, &remote_dir).await?;
   let dir_key = local_dir.replace('\\', "/");
   let start = std::time::Instant::now();
-  let mut on_progress =
+  let on_progress =
     move |rel: &str, done_bytes: u64, total_bytes: u64, done_files: u64, total_files: u64| {
       let _ = app.emit(
         "transfer-progress",
@@ -838,7 +927,7 @@ pub async fn upload_local_dir(
     &local_dir,
     &remote_parent,
     Some(&control),
-    &mut on_progress,
+    &on_progress,
   )
   .await
 }
@@ -854,25 +943,12 @@ pub async fn target_upload_local_dir(
   local_dir: String,
   remote_dir: String,
 ) -> Result<DirUploadSummary, String> {
-  let tab_id = match &target {
-    TargetRef::Session { tab_id } | TargetRef::Local { tab_id } => *tab_id,
-    TargetRef::Wsl { tab_id, .. } => *tab_id,
-    TargetRef::Ftp { tab_id } => *tab_id,
-    TargetRef::JumpRemote { jump_tab_id, .. }
-    | TargetRef::DockerSsh { jump_tab_id, .. }
-    | TargetRef::Docker { jump_tab_id, .. } => *jump_tab_id,
-    // See `download_dir`: a local container has no owning session tab.
-    TargetRef::DockerLocal { .. } => 0,
-    TargetRef::K8sPod { host, .. } => match host {
-      crate::k8s_host::K8sHostRef::Ssh { jump_tab_id } => *jump_tab_id,
-      crate::k8s_host::K8sHostRef::Local => 0,
-    },
-  };
+  let tab_id = progress_tab_id(&target);
   let dir_key = local_dir.replace('\\', "/");
   let start = std::time::Instant::now();
   match build_sftp(&app, &state, &target).await {
     Ok(sftp) => {
-      let mut on_progress =
+      let on_progress =
         move |rel: &str, done_bytes: u64, total_bytes: u64, done_files: u64, total_files: u64| {
           let _ = app.emit(
             "transfer-progress",
@@ -890,19 +966,23 @@ pub async fn target_upload_local_dir(
           );
           Ok(())
         };
-      stream_upload_local_dir(&sftp, &local_dir, &remote_dir, None, &mut on_progress).await
+      stream_upload_local_dir(&sftp, &local_dir, &remote_dir, None, &on_progress).await
     }
     Err(_) => {
       // Non-SFTP target (Docker exec / local): one-shot per-file uploads.
       let fs = build_fs(&app, &state, &target).await?;
-      upload_local_dir_via_fs(fs.as_ref(), &local_dir, &remote_dir).await
+      upload_local_dir_via_fs(&app, tab_id, &dir_key, fs.as_ref(), &local_dir, &remote_dir).await
     }
   }
 }
 
 /// Fallback directory upload through a generic `RemoteFs` (no shared SFTP
 /// handle): walk the local tree with walkdir and upload each file in one shot.
+/// Emits an `upload-dir` tick per file so the row still shows bytes and speed.
 async fn upload_local_dir_via_fs(
+  app: &tauri::AppHandle,
+  tab_id: u32,
+  dir_key: &str,
   fs: &dyn RemoteFs,
   local_dir: &str,
   remote_parent: &str,
@@ -957,7 +1037,35 @@ async fn upload_local_dir_via_fs(
   for d in &dirs {
     let _ = fs.create_dir(&format!("{}/{}", remote_root, d)).await;
   }
+  // Sizes are known up front, so the row can show a real denominator from the
+  // first tick instead of growing a "0 / unknown" bar.
+  let total_bytes: u64 = files
+    .iter()
+    .map(|(abs, _)| std::fs::metadata(abs).map(|m| m.len()).unwrap_or(0))
+    .sum();
+  let total_files = files.len() as u64;
+  let start = std::time::Instant::now();
   let mut done_bytes = 0u64;
+  let mut done_files = 0u64;
+  // One tick before the first write: `write_file` is all-or-nothing, so this is
+  // the only way the row gets its denominator (and a bar) while the first —
+  // possibly very large — file is in flight.
+  if let Some((_, rel)) = files.first() {
+    let _ = app.emit(
+      "transfer-progress",
+      serde_json::json!({
+        "tabId": tab_id,
+        "op": "upload-dir",
+        "dirName": dir_key,
+        "relativePath": rel,
+        "doneFiles": 0,
+        "totalFiles": total_files,
+        "doneBytes": 0,
+        "totalBytes": total_bytes,
+        "elapsed": start.elapsed().as_millis()
+      }),
+    );
+  }
   for (abs, rel) in &files {
     let data = tokio::fs::read(abs)
       .await
@@ -965,12 +1073,27 @@ async fn upload_local_dir_via_fs(
     let remote = format!("{}/{}", remote_root, rel);
     fs.write_file(&remote, &data).await?;
     done_bytes += data.len() as u64;
+    done_files += 1;
+    let _ = app.emit(
+      "transfer-progress",
+      serde_json::json!({
+        "tabId": tab_id,
+        "op": "upload-dir",
+        "dirName": dir_key,
+        "relativePath": rel,
+        "doneFiles": done_files,
+        "totalFiles": total_files,
+        "doneBytes": done_bytes,
+        "totalBytes": total_bytes,
+        "elapsed": start.elapsed().as_millis()
+      }),
+    );
   }
 
   Ok(DirUploadSummary {
     total_files: files.len(),
     done_files: files.len(),
-    total_bytes: done_bytes,
+    total_bytes,
     done_bytes,
     skipped,
   })
@@ -1144,6 +1267,44 @@ pub async fn target_copy_file(
 
 // `list_docker_containers` lives in `commands/docker.rs` now — it takes a
 // `DockerHostRef` (jump host or this machine) rather than a jump tab id.
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // The frontend matches a progress event to its row by path, and only uses the
+  // tab as a tie-breaker; ownerless targets must still name a tab (0) so their
+  // ticks are not dropped by the `tabId` filter.
+  #[test]
+  fn progress_tab_id_maps_every_target() {
+    assert_eq!(progress_tab_id(&TargetRef::Session { tab_id: 7 }), 7);
+    assert_eq!(progress_tab_id(&TargetRef::Local { tab_id: 9 }), 9);
+    assert_eq!(
+      progress_tab_id(&TargetRef::Wsl {
+        tab_id: 4,
+        distro: Some("Ubuntu".into())
+      }),
+      4
+    );
+    assert_eq!(
+      progress_tab_id(&TargetRef::DockerLocal {
+        container: "web".into(),
+        user: None
+      }),
+      0
+    );
+    assert_eq!(
+      progress_tab_id(&TargetRef::K8sPod {
+        host: crate::k8s_host::K8sHostRef::Local,
+        context: None,
+        namespace: "default".into(),
+        pod: "api".into(),
+        container: None,
+      }),
+      0
+    );
+  }
+}
 
 // ==================== SFTP User Switching ====================
 

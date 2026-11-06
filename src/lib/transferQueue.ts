@@ -55,6 +55,26 @@ export const formatSpeed = (bytesPerSec: number): string => {
   return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
 }
 
+/**
+ * Last progress sample per row, for the throughput figure. A cumulative average
+ * (`bytes / elapsed`) lags badly — it keeps reporting the slow start of a
+ * transfer long after the link sped up — so the speed shown is the delta since
+ * the previous tick. Rows whose first tick arrives in under 200 ms report no
+ * speed instead of a divide-by-almost-zero number.
+ */
+const lastSample = new Map<string, { bytes: number; at: number }>()
+const SPEED_WINDOW_MS = 200
+
+function speedFor(key: string, bytes: number, elapsedMs: number): string {
+  const now = performance.now()
+  const prev = lastSample.get(key)
+  lastSample.set(key, { bytes, at: now })
+  if (prev && now - prev.at >= SPEED_WINDOW_MS && bytes > prev.bytes) {
+    return formatSpeed((bytes - prev.bytes) / ((now - prev.at) / 1000))
+  }
+  return elapsedMs >= 500 ? formatSpeed(bytes / (elapsedMs / 1000)) : ''
+}
+
 /* ---------- store ---------- */
 
 let rows: TransferRow[] = []
@@ -87,12 +107,19 @@ export function addTransferRows(next: TransferRow[]): void {
 
 export function removeTransferRow(key: string): void {
   rows = rows.filter((r) => r.key !== key)
+  lastSample.delete(key)
   emit()
 }
 
 /** Drop every row that is no longer in flight — the drawer's "clear finished". */
 export function clearFinishedTransfers(): void {
-  rows = rows.filter((r) => r.status === 'active' || r.status === 'queued')
+  const keep = new Set(
+    rows.filter((r) => r.status === 'active' || r.status === 'queued').map((r) => r.key),
+  )
+  for (const key of lastSample.keys()) {
+    if (!keep.has(key)) lastSample.delete(key)
+  }
+  rows = rows.filter((r) => keep.has(r.key))
   emit()
 }
 
@@ -138,14 +165,12 @@ async function startListening() {
   listening = true
   const stop = await listen<TransferProgress>('transfer-progress', (event) => {
     const p = event.payload
-    const elapsed = p.elapsed > 0 ? p.elapsed / 1000 : 0.001
 
     if (p.op === 'directory') {
       // A directory download streams many files; the row is keyed by the remote
       // directory path and shows aggregate bytes + the current relative path.
       const dirName = p.dirName ?? ''
       if (dirName.length === 0) return
-      const bytesPerSec = (p.doneBytes ?? 0) / elapsed
       updateTransferRows((prev) => {
         const target = pickRow(
           forTab(prev, p.tabId).filter(
@@ -164,7 +189,7 @@ async function startListening() {
                 filename: p.relativePath || p.filename,
                 transferred: p.doneBytes ?? r.transferred,
                 total: p.totalBytes ?? r.total,
-                speed: formatSpeed(bytesPerSec),
+                speed: speedFor(target.key, p.doneBytes ?? 0, p.elapsed),
                 status: 'active',
               }
             : r,
@@ -206,7 +231,6 @@ async function startListening() {
       // keyed by the full normalized local path.
       const dirName = p.dirName ?? ''
       if (dirName.length === 0) return
-      const bytesPerSec = (p.doneBytes ?? 0) / elapsed
       updateTransferRows((prev) => {
         const target = pickRow(
           forTab(prev, p.tabId).filter(
@@ -222,7 +246,7 @@ async function startListening() {
                 filename: p.relativePath || r.filename,
                 transferred: p.doneBytes ?? r.transferred,
                 total: p.totalBytes ?? r.total,
-                speed: formatSpeed(bytesPerSec),
+                speed: speedFor(target.key, p.doneBytes ?? 0, p.elapsed),
                 status: 'active',
               }
             : r,
@@ -230,7 +254,6 @@ async function startListening() {
       })
       return
     }
-    const bytesPerSec = p.transferred / elapsed
     updateTransferRows((prev) => {
       const base = p.filename
       if (base.length === 0) return prev
@@ -250,7 +273,7 @@ async function startListening() {
               ...r,
               transferred: p.transferred,
               total: p.total,
-              speed: formatSpeed(bytesPerSec),
+              speed: speedFor(target.key, p.transferred, p.elapsed),
               status: 'active',
             }
           : r,
@@ -266,6 +289,7 @@ export function resetTransferQueueForTests(): void {
   unlisten = null
   listening = false
   rows = []
+  lastSample.clear()
   emit()
 }
 
