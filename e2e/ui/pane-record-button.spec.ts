@@ -43,3 +43,20 @@ test('clicking it toggles recording and the active state', async ({ page }) => {
     .map((c) => c.args.enabled)
   expect(calls).toEqual([false, true])
 })
+
+// A pulsing recording mark in the pane header reads as the terminal's own cursor
+// blinking and keeps pulling the eye off the output. Both places that say
+// "recording" are red and steady now; only the colour carries the state.
+test('the recording marks hold still while active', async ({ page }) => {
+  const record = await connect(page)
+  await expect(record).toHaveClass(/active/)
+
+  const glyphAnimation = await record
+    .locator('svg')
+    .evaluate((el) => getComputedStyle(el).animationName)
+  expect(glyphAnimation).toBe('none')
+
+  const statusDot = page.locator('.status-bar .dot.rec')
+  await expect(statusDot).toBeVisible()
+  expect(await statusDot.evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
+})

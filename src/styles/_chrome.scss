@@ -1220,16 +1220,6 @@
   }
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-}
-
 .empty-state {
   padding: 24px 16px;
   text-align: center;

@@ -1532,26 +1532,14 @@
       color: $text-primary;
     }
 
-    // Recording is red and blinking, the way a record control reads everywhere.
-    // The glyph itself (ring + hub) is what distinguishes this button from the
-    // bare status pips used elsewhere — a green dot looked like a running state.
+    // Recording is red but steady. The glyph itself (ring + hub) is what
+    // distinguishes this button from the bare status pips used elsewhere — a
+    // green dot looked like a running state. A pulse was tried and removed: in
+    // the pane header it reads as the terminal's own cursor blinking, and it
+    // keeps pulling the eye while you are trying to read the output.
     &.active {
       color: var(--danger-soft-40);
-
-      svg {
-        animation: term-record-blink 1.2s ease-in-out infinite;
-      }
     }
-  }
-}
-
-@keyframes term-record-blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
   }
 }
 

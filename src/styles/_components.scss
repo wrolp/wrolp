@@ -320,20 +320,20 @@
     animation: spin 0.9s linear infinite;
   }
 
-  // Recording. Deliberately a breathing *circle* rather than the square `.err`
-  // uses: same red, different silhouette and motion, so "a session is being
-  // written to disk" cannot be misread as "a session failed" by anyone who is
-  // not relying on the colour.
+  // Recording. Deliberately a *circle* rather than the square `.err` uses: same
+  // red, different silhouette, so "a session is being written to disk" cannot be
+  // misread as "a session failed" by anyone who is not relying on the colour. It
+  // used to breathe; the motion is gone because a pulsing mark competes with the
+  // terminal's own cursor for attention while you are reading output.
   &.rec {
     background: $danger;
-    animation: pulse 1.6s var(--e-in-out) infinite;
   }
 }
 
 // 「提高状态可辨识度」关掉时的样子：正方形和三角收回成圆点，语义只剩颜色。
 // 默认值 'on' 让这段选择器匹配不到任何东西，所以上面的形状基线（提案 §9.2 立的
-// 色盲安全底线）在没碰过这个开关的用户那里一字未动。`.busy` / `.rec` 的动画不在
-// 收回之列 —— 那是运动形状，不是颜色。
+// 色盲安全底线）在没碰过这个开关的用户那里一字未动。`.busy` 的动画不在收回之列
+// —— 那是运动形状，不是颜色。
 //
 // 目前 `.dot` 的调用者是状态栏（StatusBar.tsx）；分屏页签状态条的 `.tsb-dot`
 // 仍是旧的纯色圆点，等它采用这个原语时自动一起受控。
