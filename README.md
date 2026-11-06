@@ -33,6 +33,8 @@
 - 🎬 **Session recording** to per-session NDJSON files, replayable from the bottom panel
 - 🌐 **Built-in FTP / HTTP / TFTP tools** — serve or fetch files without leaving the app
 - 🐳 **Docker & host analysis** — inspect containers, stream logs, analyze servers
+- ☸️ **Kubernetes panel** — contexts and namespaces, ten resource kinds, pod logs and exec, port-forwards, Helm releases
+- 🌿 **Git panel** — status, diffs, history graph, branches, fetch / pull / push, conflicts, stash, blame, clone and repository scan
 - 🤖 **AI assistant** with tool-calling agent mode, multimodal input, and encrypted API-key storage
 - 🗄️ **Portable data folder** — move all app data anywhere and monitor / shrink `wrolp.db` from Settings
 - 🪟 **Floating panes & split layout** — split the terminal area any way you like and pop panes out into independent floating windows
@@ -88,6 +90,7 @@
 - Remote file tree browser (sidebar `FilePanel`).
 - List / read / write / rename / delete / create directories.
 - Upload and download (file or raw bytes), with **pause / resume** support and `transfer-progress` events.
+- **Transfer queue** (`transferQueue.ts`): every file has its own row with bytes done / total and a live speed, in the file panel and in the bottom drawer. Directory and drag-dropped uploads are scanned once with `walkdir` on the Rust side and stream over one shared SFTP connection, ticking progress **per 4 MiB chunk** — so a single multi-GB file shows a moving bar and speed instead of jumping from 0 % to done.
 - Switching the SFTP user (`switch_sftp_user` / `revert_sftp_user`) to operate as a different account.
 
 ### Remote file editor
@@ -143,6 +146,14 @@
 - **Docker log tabs & floating**: a container's logs can be opened as a dedicated log tab and popped out into a floating window. When a tab reconnects, its `postConnectCmd` (e.g. the original `docker exec`) is re-sent automatically so the pane stays consistent across reconnects.
 - `command_help`: look up man-page / help text for a command on a connected server.
 - UI panels: `DockerPanel`, `DockerLogViewer`, `DockerAnalysisPanel`, `HostAnalysisPanel`.
+
+### Kubernetes
+
+- The **K8s** mode in the activity rail follows the focused terminal the same way Docker does: a `K8sHostRef` is either `{kind:'ssh', jumpTabId}` — `kubectl` runs on the jump host of a connected SSH session — or `{kind:'local'}`, this machine's own CLI and kubeconfig. Context and namespace are pickers at the top of the panel, and the row list is filtered by a search box.
+- Ten resource kinds share one generic row shape (`K8sResource`) in `src-tauri/src/k8s_host.rs`: pods, deployments, statefulsets, daemonsets, services, ingresses, jobs, cronjobs, configmaps and secrets. Each row carries its status chip, `ready/total`, restart count and a one-line summary; a pod's summary is its image and the **node sits on its own line** underneath.
+- Per row: view / edit the manifest YAML and apply it (`k8s_apply_yaml`), scale deployments and statefulsets, delete with an in-app confirmation, and open pod logs (one-shot or streaming with ANSI colour) or a shell inside the pod — locally as its own PTY shell, on an SSH host as a split pane that types `kubectl exec` for you.
+- **Port-forwarding**: forward a pod/service port, see live forwards in the panel and reuse saved rules; the backend reports forwards over the same event channel the terminal uses, so a closed tab cannot leave an orphan forward behind.
+- **Helm**: `helm_probe` says whether the CLI exists; the Helm tab lists releases in the namespace, shows values and revision history, and rolls back or uninstalls a release.
 
 ### Git panel
 

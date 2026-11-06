@@ -33,6 +33,8 @@
 - 🎬 **会话录制** — 按会话写入 NDJSON 文件，可在底部面板回放
 - 🌐 **内置 FTP / HTTP / TFTP 工具** — 无需外部客户端即可分享或拉取文件
 - 🐳 **Docker 与主机分析** — 查看容器、流式日志、分析服务器
+- ☸️ **Kubernetes 面板** — 上下文与命名空间、十种资源、Pod 日志与 exec、端口转发、Helm 版本
+- 🌿 **Git 面板** — 状态、diff、提交图、分支、fetch / pull / push、冲突、stash、blame、clone 与仓库扫描
 - 🤖 **AI 助手** — 支持工具调用 Agent 模式、多模态输入，API Key 加密存储
 - 🗄️ **可迁移的数据目录** — 全部数据可搬到任意位置，并可在设置中查看 / 瘦身 `wrolp.db`
 - 🪟 **浮动窗口与分栏布局** — 自由分割终端区域，并将面板弹出为独立浮动窗口
@@ -88,6 +90,7 @@
 - 远程文件树浏览器（侧边栏 `FilePanel`）。
 - 列举 / 读取 / 写入 / 重命名 / 删除 / 新建目录。
 - 上传与下载（文件或原始字节），支持**暂停 / 继续**，并通过 `transfer-progress` 事件上报进度。
+- **传输队列**（`transferQueue.ts`）：每个文件一行，显示已完成 / 总字节与实时速度，文件面板与底部抽屉共用同一份队列。目录上传与拖拽上传在 Rust 侧用 `walkdir` 扫描一次、复用同一条 SFTP 连接流式写入，并**按每 4 MiB 块**上报进度——单个数 GB 文件也会持续走条并显示速度，而不是从 0% 直接跳到完成。
 - 切换 SFTP 操作用户（`switch_sftp_user` / `revert_sftp_user`），以其他账号身份操作。
 
 ### 远程文件编辑器
@@ -143,6 +146,14 @@
 - **Docker 日志标签与浮动**：容器的日志可作为一个独立的日志标签打开，并弹出为浮动窗口。标签重连时会自动重新发送其 `postConnectCmd`（例如原始的 `docker exec`），从而让面板在重连后保持一致。
 - `command_help`：查询连接服务器上某命令的帮助 / 手册文本。
 - 相关 UI 面板：`DockerPanel`、`DockerLogViewer`、`DockerAnalysisPanel`、`HostAnalysisPanel`。
+
+### Kubernetes
+
+- 活动栏的 **K8s** 模式与 Docker 一样跟随当前聚焦的终端：`K8sHostRef` 要么是 `{kind:'ssh', jumpTabId}`（`kubectl` 跑在已连接 SSH 会话的跳板机上），要么是 `{kind:'local'}`（使用本机 CLI 与 kubeconfig）。面板顶部是上下文与命名空间选择器，行列表支持搜索过滤。
+- 十种资源共用一套通用行模型（`src-tauri/src/k8s_host.rs` 的 `K8sResource`）：pods、deployments、statefulsets、daemonsets、services、ingresses、jobs、cronjobs、configmaps、secrets。每行带状态 chip、`ready/total`、重启次数与一行摘要；Pod 的摘要是镜像，**节点名单独占一行**显示在其下方。
+- 行级操作：查看 / 编辑清单 YAML 并应用（`k8s_apply_yaml`）、对 deployment / statefulset 扩缩容、带应用内确认的删除、打开 Pod 日志（一次性或流式、支持 ANSI 颜色），以及在 Pod 内开 shell——本机宿主直接开一个独立 PTY，SSH 宿主则新开分栏并自动键入 `kubectl exec`。
+- **端口转发**：转发 Pod / Service 端口，面板里查看进行中的转发并复用已保存规则；后端与终端共用同一事件通道上报，标签页关闭不会留下孤儿转发。
+- **Helm**：`helm_probe` 判断 CLI 是否存在；Helm 标签页列出该命名空间的 release，展示 values 与修订历史，并支持回滚与卸载。
 
 ### Git 管理面板
 
