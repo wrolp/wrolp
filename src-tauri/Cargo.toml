@@ -28,6 +28,7 @@ rand = "0.8"
 base64 = "0.22"
 rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = "0.4"
+tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"

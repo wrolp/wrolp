@@ -72,6 +72,26 @@ fn init_logging() {
 pub fn run() {
   init_logging();
   let app = tauri::Builder::default()
+    // Must be registered before every other plugin: the plugin exits a second
+    // process from its `setup` hook, which Tauri runs before ours — so the
+    // duplicate never reaches DB init / connections.json / vault.key.
+    .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+      if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+      } else if let Some(config) = app.config().app.windows.first().cloned() {
+        // The main window is declared in `tauri.conf.json` (label defaults to
+        // "main"), and no other code creates windows, so reuse that same config
+        // via `from_config` instead of duplicating its attributes here.
+        if let Ok(window) =
+          tauri::WebviewWindowBuilder::from_config(app, &config).and_then(|w| w.build())
+        {
+          let _ = window.show();
+          let _ = window.set_focus();
+        }
+      }
+    }))
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_shell::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
