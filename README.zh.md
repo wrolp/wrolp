@@ -150,7 +150,7 @@
 
 ### Kubernetes
 
-- 活动栏的 **K8s** 模式与 Docker 一样跟随当前聚焦的终端：`K8sHostRef` 要么是 `{kind:'ssh', jumpTabId}`（`kubectl` 跑在已连接 SSH 会话的跳板机上），要么是 `{kind:'local'}`（使用本机 CLI 与 kubeconfig）。面板顶部是上下文与命名空间选择器，行列表支持搜索过滤。
+- 活动栏的 **K8s** 模式与 Docker 一样跟随当前聚焦的终端：`K8sHostRef` 要么是 `{kind:'ssh', jumpTabId}`（`kubectl` 跑在已连接 SSH 会话的跳板机上），要么是 `{kind:'local'}`（使用本机 CLI 与 kubeconfig）。面板顶部是上下文与命名空间选择器，行列表支持搜索过滤。**默认选中「所有命名空间」**（切换上下文也会回到它），kubeconfig 未指明的命名空间里出问题时第一眼就能看到。该模式下名字下方的命名空间文本按命名空间取一个稳定颜色，不同命名空间的行一眼可分。
 - 十种资源共用一套通用行模型（`src-tauri/src/k8s_host.rs` 的 `K8sResource`）：pods、deployments、statefulsets、daemonsets、services、ingresses、jobs、cronjobs、configmaps、secrets。每行带状态 chip、`ready/total`、重启次数与一行摘要；Pod 的摘要是镜像，**节点名单独占一行**显示在其下方。
 - 行级操作：查看 / 编辑清单 YAML 并应用（`k8s_apply_yaml`）、对 deployment / statefulset 扩缩容、带应用内确认的删除、打开 Pod 日志（一次性或流式、支持 ANSI 颜色），以及在 Pod 内开 shell——本机宿主直接开一个独立 PTY，SSH 宿主则新开分栏并自动键入 `kubectl exec`。
 - **端口转发**：转发 Pod / Service 端口，面板里查看进行中的转发并复用已保存规则；后端与终端共用同一事件通道上报，标签页关闭不会留下孤儿转发。

@@ -29,7 +29,11 @@ const POD = {
   createdAt: '2026-10-01T00:00:00Z',
 }
 
-async function boot(page: Page) {
+/**
+ * The panel opens in All namespaces. Tests that assert a namespace-scoped
+ * command select `apps` explicitly; pass `null` to keep the default.
+ */
+async function boot(page: Page, namespace: string | null = 'apps') {
   await installTauriMock(page, {
     k8sContexts: CONTEXTS,
     k8sNamespaces: NAMESPACES,
@@ -43,18 +47,21 @@ async function boot(page: Page) {
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await page.goto('/')
   await selectRailMode(page, 'k8s')
+  const ns = page.locator('.k8s-select').nth(1)
+  await expect(ns).toBeEnabled()
+  if (namespace !== null) await ns.selectOption(namespace)
 }
 
 const menuItem = (page: Page, text: RegExp) =>
   page.locator('.context-menu .context-menu-item').filter({ hasText: text })
 
-test('the panel lists the current context and shows the row YAML', async ({ page }) => {
-  await boot(page)
+test('the panel opens in All namespaces and shows the row YAML', async ({ page }) => {
+  await boot(page, null)
 
-  // Context defaults to the kubeconfig's current one; namespace to the context's
-  // own default (`apps`), not the alphabetically first entry.
+  // Context defaults to the kubeconfig's current one; the namespace selector
+  // starts on All namespaces, not the context's own default (`apps`).
   await expect(page.locator('.k8s-select').first()).toHaveValue('prod')
-  await expect(page.locator('.k8s-select').nth(1)).toHaveValue('apps')
+  await expect(page.locator('.k8s-select').nth(1)).toHaveValue('*')
 
   const row = page.locator('.k8s-item')
   await expect(row).toHaveCount(1)
@@ -69,7 +76,28 @@ test('the panel lists the current context and shows the row YAML', async ({ page
   await expect(page.locator('.k8s-yaml')).toContainText('kind: Pod')
 
   const named = (await invokedCalls(page)).filter((c) => c.cmd === 'k8s_list_resources')
-  expect(named[0]?.args).toMatchObject({ kind: 'pods', namespace: 'apps', context: 'prod' })
+  // All namespaces is sent as `null` (kubectl's --all-namespaces).
+  expect(named[0]?.args).toMatchObject({ kind: 'pods', namespace: null, context: 'prod' })
+})
+
+test('picking a namespace scopes the list to it', async ({ page }) => {
+  await boot(page, null)
+  await page.locator('.k8s-select').nth(1).selectOption('apps')
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'k8s_list_resources')
+        .map((c) => c.args.namespace),
+    )
+    .toContain('apps')
+})
+
+test('switching context resets the namespace to All namespaces', async ({ page }) => {
+  await boot(page)
+  const ns = page.locator('.k8s-select').nth(1)
+  await expect(ns).toHaveValue('apps')
+  await page.locator('.k8s-select').first().selectOption('dev')
+  await expect(ns).toHaveValue('*')
 })
 
 // The dialogs sit on top of the list they were opened from, so each one moves: the
@@ -432,6 +460,10 @@ test('helm releases list, read values, roll back and install', async ({ page }) 
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await page.goto('/')
   await selectRailMode(page, 'k8s')
+  // The panel opens in All namespaces; Helm install needs a concrete namespace.
+  const ns = page.locator('.k8s-select').nth(1)
+  await expect(ns).toBeEnabled()
+  await ns.selectOption('apps')
 
   await page.locator('.k8s-mode', { hasText: 'Helm' }).click()
   const rows = page.locator('.k8s-item')

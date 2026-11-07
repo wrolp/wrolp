@@ -130,10 +130,31 @@
   text-overflow: ellipsis;
 }
 
+// In All-namespaces mode the namespace label is the only thing that says which
+// cluster slice a row belongs to, so each namespace gets a stable hue. Colour,
+// not a badge: a chip competes with the status chips on the right. The palette
+// uses the theme's *-soft-40 tokens — tuned for AA text on both dark and light
+// surfaces (see `_theme.scss`).
+$ns-label-colors: (
+  0: var(--accent-soft-40),
+  1: var(--info-soft-40),
+  2: var(--cyan-soft-40),
+  3: var(--success-soft-40),
+  4: var(--warning-soft-40),
+  5: var(--danger-soft-40),
+  6: var(--purple-soft-40),
+);
+
+@each $index, $token in $ns-label-colors {
+  .k8s-ns-color-#{$index} {
+    --ns-color: #{$token};
+  }
+}
+
 .k8s-ns {
   margin-left: 6px;
   font-size: var(--fs-xs);
-  color: $text-dim;
+  color: var(--ns-color, #{$text-dim});
 }
 
 .k8s-detail {

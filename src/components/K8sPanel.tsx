@@ -39,6 +39,7 @@ import {
   stopK8sLogsStream,
 } from '../commands'
 import { parseAnsiToHtmlLines, highlightPlainLogLines } from '../ansi'
+import { namespaceColorIndex, namespaceColorMap } from '../lib/k8sNamespaceColor'
 import { Icon } from './Icon'
 import { ConfirmDialog } from './ConfirmDialog'
 import { DraggableModal } from './DraggableModal'
@@ -86,7 +87,8 @@ function trimToChars(text: string): string {
   return nl >= 0 ? text.slice(nl + 1) : text.slice(cut)
 }
 
-const ALL_NAMESPACES = '*'
+/** The "all namespaces" pseudo-selection. Shared with App's default scope. */
+export const ALL_NAMESPACES = '*'
 
 /**
  * The kinds `kubectl port-forward` accepts, mapped to the target prefix it wants.
@@ -334,7 +336,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           list.find((c) => c.name && c.current) ??
           list.find((c) => c.name)
         if (chosen && chosen.name !== saved) {
-          onScopeChangeRef.current({ context: chosen.name, namespace: '' })
+          onScopeChangeRef.current({ context: chosen.name, namespace: ALL_NAMESPACES })
         }
         setLoading(false)
       })
@@ -349,7 +351,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     }
   }, [hostKey])
 
-  // Explicit context changes clear the saved namespace; unchanged restored contexts keep it.
+  // Explicit context changes reset to All namespaces; unchanged restored contexts keep it.
   useEffect(() => {
     setNamespacesScope(null)
     setNamespaces([])
@@ -358,17 +360,18 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     setHelmLoading(false)
     if (!contextReady) return
     let cancelled = false
-    const known = contexts.find((c) => c.name === context)?.namespace ?? null
     setLoading(true)
     setError('')
     k8sListNamespaces(hostRef.current, context)
       .then((list) => {
         if (cancelled || scopeRef.current.context !== context) return
         const saved = scopeRef.current.namespace
+        // Keep a valid saved choice (including All namespaces); anything stale
+        // falls back to All namespaces rather than guessing a namespace from
+        // the kubeconfig — the user asked to see the whole cluster by default.
         const preferred =
           (saved === ALL_NAMESPACES || list.some((n) => n.name === saved) ? saved : null) ??
-          (known && list.some((n) => n.name === known) ? known : null) ??
-          (list.some((n) => n.name === 'default') ? 'default' : list[0]?.name)
+          ALL_NAMESPACES
         setNamespaces(list)
         if (preferred && preferred !== saved) {
           onScopeChangeRef.current({ namespace: preferred })
@@ -1091,6 +1094,15 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       r.chart.toLowerCase().includes(q) ||
       r.status.toLowerCase().includes(q),
   )
+  // One palette assignment for everything on screen: two rows from different
+  // namespaces must never share a colour, so the hash is de-duplicated against
+  // the namespaces this list actually shows.
+  const nsColors = namespaceColorMap([
+    ...visible.map((r) => r.namespace),
+    ...visibleReleases.map((r) => r.namespace),
+  ])
+  const colorClassFor = (ns: string) =>
+    `k8s-ns-color-${nsColors.get(ns) ?? namespaceColorIndex(ns)}`
 
   const menuRow = menu?.row
   const canScale =
@@ -1179,7 +1191,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           <select
             className="k8s-select"
             value={contextReady ? context : ''}
-            onChange={(e) => onScopeChange({ context: e.target.value, namespace: '' })}
+            onChange={(e) => onScopeChange({ context: e.target.value, namespace: ALL_NAMESPACES })}
             disabled={contextsHost !== hostKey || contexts.length === 0}
             aria-label={t('k8sContext')}
           >
@@ -1290,7 +1302,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
                 <div className="k8s-name">
                   {r.name}
                   {r.namespace && namespace === ALL_NAMESPACES && (
-                    <span className="k8s-ns">{r.namespace}</span>
+                    <span className={`k8s-ns ${colorClassFor(r.namespace)}`}>{r.namespace}</span>
                   )}
                 </div>
                 <div className="k8s-detail">{r.detail}</div>
@@ -1330,7 +1342,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
                 <div className="k8s-name">
                   {r.name}
                   {r.namespace && namespace === ALL_NAMESPACES && (
-                    <span className="k8s-ns">{r.namespace}</span>
+                    <span className={`k8s-ns ${colorClassFor(r.namespace)}`}>{r.namespace}</span>
                   )}
                 </div>
                 <div className="k8s-detail">

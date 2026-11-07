@@ -28,7 +28,7 @@ import { NetworkScanPanel } from './components/NetworkScanPanel'
 import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
-import { K8sPanel } from './components/K8sPanel'
+import { K8sPanel, ALL_NAMESPACES } from './components/K8sPanel'
 import { GitPanel } from './components/GitPanel'
 import { CommandListPanel } from './components/CommandListPanel'
 import { ShortcutsPane } from './components/ShortcutsPane'
@@ -271,7 +271,10 @@ const LOCAL_GIT_HOST: GitHostRef = { kind: 'local' }
 const DEFAULT_K8S_SCOPE: K8sScope = {
   mode: 'resources',
   context: '',
-  namespace: '',
+  // Show the whole cluster until the user picks a namespace. The context's own
+  // default namespace is deliberately not used: pod problems are rarely in the
+  // one namespace the kubeconfig happens to name.
+  namespace: ALL_NAMESPACES,
   kind: 'pods',
 }
 
