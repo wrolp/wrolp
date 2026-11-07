@@ -91,6 +91,7 @@
 - List / read / write / rename / delete / create directories.
 - Upload and download (file or raw bytes), with **pause / resume** support and `transfer-progress` events.
 - **Transfer queue** (`transferQueue.ts`): every file has its own row with bytes done / total and a live speed, in the file panel and in the bottom drawer. Directory and drag-dropped uploads are scanned once with `walkdir` on the Rust side and stream over one shared SFTP connection, ticking progress **per 4 MiB chunk** — so a single multi-GB file shows a moving bar and speed instead of jumping from 0 % to done.
+- **Cancelling an upload removes the half-written files** it created on the remote, so the directory does not fill up with unusable truncated copies. Files that finished before the cancel are kept, and a destination that already existed is never deleted (the upload truncated it, so deleting it would destroy the original).
 - Switching the SFTP user (`switch_sftp_user` / `revert_sftp_user`) to operate as a different account.
 
 ### Remote file editor

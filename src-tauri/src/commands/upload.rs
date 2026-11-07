@@ -659,6 +659,7 @@ async fn stream_upload_file(
     .map_err(|e| format!("Failed to stat local file: {}", e))?
     .len();
   ensure_parent_dir(sftp, remote_path).await?;
+  let existed_before = destination_existed(sftp, remote_path).await;
   let mut file = sftp
     .create(remote_path)
     .await
@@ -666,20 +667,30 @@ async fn stream_upload_file(
   let start = std::time::Instant::now();
   let mut written: u64 = 0;
   let mut buf = vec![0u8; 65536];
-  loop {
-    let n = local
-      .read(&mut buf)
-      .await
-      .map_err(|e| format!("Failed to read local file: {}", e))?;
-    if n == 0 {
-      break;
+  let write = async {
+    loop {
+      let n = local
+        .read(&mut buf)
+        .await
+        .map_err(|e| format!("Failed to read local file: {}", e))?;
+      if n == 0 {
+        break;
+      }
+      file
+        .write_all(&buf[..n])
+        .await
+        .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
+      written += n as u64;
+      emit_upload_progress(app, tab_id, filename, written, total, start.elapsed().as_millis());
     }
-    file
-      .write_all(&buf[..n])
-      .await
-      .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
-    written += n as u64;
-    emit_upload_progress(app, tab_id, filename, written, total, start.elapsed().as_millis());
+    Ok::<(), String>(())
+  }
+  .await;
+
+  let _ = file.close().await;
+  if let Err(e) = write {
+    discard_partial_upload(sftp, remote_path, existed_before).await;
+    return Err(e);
   }
   Ok(())
 }
@@ -825,33 +836,48 @@ async fn stream_upload_local_dir(
         let mut local = tokio::fs::File::open(local_abs)
           .await
           .map_err(|e| format!("Failed to open local file '{}': {}", local_abs, e))?;
+        let existed_before = destination_existed(sftp_ref, &remote_path).await;
         let mut rf = sftp_ref
           .create(&remote_path)
           .await
           .map_err(|e| format!("Failed to create remote file '{}': {}", remote_path, e))?;
         let mut buf = vec![0u8; 4 * 1024 * 1024];
         let mut written: u64 = 0;
-        loop {
-          if let Some(c) = &ctrl {
-            check_pause(c).await?;
+        let write = async {
+          loop {
+            if let Some(c) = &ctrl {
+              check_pause(c).await?;
+            }
+            let n = local
+              .read(&mut buf)
+              .await
+              .map_err(|e| format!("Failed to read local file '{}': {}", local_abs, e))?;
+            if n == 0 {
+              break;
+            }
+            rf.write_all(&buf[..n])
+              .await
+              .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
+            written += n as u64;
+            // Per-chunk progress: this is what keeps the bar and the speed alive
+            // while one large file is still streaming.
+            done_bytes_ref.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+            tick(rel_ref, false)?;
           }
-          let n = local
-            .read(&mut buf)
-            .await
-            .map_err(|e| format!("Failed to read local file '{}': {}", local_abs, e))?;
-          if n == 0 {
-            break;
-          }
-          rf.write_all(&buf[..n])
-            .await
-            .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
-          written += n as u64;
-          // Per-chunk progress: this is what keeps the bar and the speed alive
-          // while one large file is still streaming.
-          done_bytes_ref.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
-          tick(rel_ref, false)?;
+          Ok::<u64, String>(written)
         }
-        Ok::<u64, String>(written)
+        .await;
+
+        let _ = rf.close().await;
+        match write {
+          Ok(n) => Ok(n),
+          Err(e) => {
+            // Only this file is incomplete; files that already finished in
+            // earlier batches are real uploads and stay on the server.
+            discard_partial_upload(sftp_ref, &remote_path, existed_before).await;
+            Err(e)
+          }
+        }
       });
     }
     for (res, rel) in futures_util::future::join_all(tasks)
@@ -1071,7 +1097,15 @@ async fn upload_local_dir_via_fs(
       .await
       .map_err(|e| format!("Failed to read local file '{}': {}", abs, e))?;
     let remote = format!("{}/{}", remote_root, rel);
-    fs.write_file(&remote, &data).await?;
+    // A one-shot `write_file` can still fail halfway (Docker exec, local FS).
+    // Never delete a destination that was already there before this upload.
+    let existed_before = fs.metadata(&remote).await.is_ok();
+    if let Err(e) = fs.write_file(&remote, &data).await {
+      if may_discard_partial(existed_before) {
+        let _ = fs.remove_file(&remote).await;
+      }
+      return Err(e);
+    }
     done_bytes += data.len() as u64;
     done_files += 1;
     let _ = app.emit(

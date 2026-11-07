@@ -7,6 +7,41 @@ use super::*;
 /// loop's 64KB so both transfers move at the same visible rate.
 const UPLOAD_CHUNK_BYTES: usize = 64 * 1024;
 
+/// Whether the destination already existed before an upload created it.
+///
+/// A cancelled upload must not delete a pre-existing file: `create()` truncates
+/// it, so removing it afterwards would destroy the user's original data. The
+/// partial content is left behind in that case, which is the lesser evil.
+pub(crate) async fn destination_existed(
+  sftp: &russh_sftp::client::SftpSession,
+  path: &str,
+) -> bool {
+  sftp.metadata(path).await.is_ok()
+}
+
+/// Whether an aborted upload may delete its destination.
+///
+/// Only files this upload created are safe to remove. Pure so the rule is
+/// unit-tested without an SFTP server.
+pub(crate) fn may_discard_partial(existed_before: bool) -> bool {
+  !existed_before
+}
+
+/// Delete a half-written file left by a failed or cancelled upload, but only if
+/// the upload created it. Errors are ignored: the original failure is what the
+/// UI needs to hear about, and a server that refuses the delete must not turn a
+/// cancel into a confusing second error.
+pub(crate) async fn discard_partial_upload(
+  sftp: &russh_sftp::client::SftpSession,
+  path: &str,
+  existed_before: bool,
+) {
+  if !may_discard_partial(existed_before) {
+    return;
+  }
+  let _ = sftp.remove_file(path).await;
+}
+
 /// Helper: establish a fresh SFTP connection for a tab's main session.
 /// Delegates to the shared implementation in `remote_fs`.
 pub(crate) async fn open_sftp_session(
@@ -723,6 +758,7 @@ pub async fn upload_file(
   ensure_parent_dir(&sftp, &resolved_path).await?;
 
   // Write in chunks with progress
+  let existed_before = destination_existed(&sftp, &resolved_path).await;
   let mut file = sftp
     .create(&resolved_path)
     .await
@@ -733,36 +769,47 @@ pub async fn upload_file(
   let mut buf = vec![0u8; chunk_size];
   let mut written: u64 = 0;
 
-  loop {
-    check_pause(&control).await?;
-    let n = local
-      .read(&mut buf)
-      .await
-      .map_err(|e| format!("Failed to read local file: {}", e))?;
-    if n == 0 {
-      break;
+  let write = async {
+    loop {
+      check_pause(&control).await?;
+      let n = local
+        .read(&mut buf)
+        .await
+        .map_err(|e| format!("Failed to read local file: {}", e))?;
+      if n == 0 {
+        break;
+      }
+      file
+        .write_all(&buf[..n])
+        .await
+        .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+      written += n as u64;
+
+      let elapsed = start.elapsed().as_millis();
+      let _ = app.emit(
+        "transfer-progress",
+        serde_json::json!({
+          "tabId": tab_id,
+          "op": "upload",
+          "filename": &filename,
+          "transferred": written,
+          "total": total,
+          "elapsed": elapsed
+        }),
+      );
     }
-    file
-      .write_all(&buf[..n])
-      .await
-      .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
-    written += n as u64;
-
-    let elapsed = start.elapsed().as_millis();
-    let _ = app.emit(
-      "transfer-progress",
-      serde_json::json!({
-        "tabId": tab_id,
-        "op": "upload",
-        "filename": &filename,
-        "transferred": written,
-        "total": total,
-        "elapsed": elapsed
-      }),
-    );
+    Ok::<(), String>(())
   }
+  .await;
 
-  // File is closed on drop
+  let _ = file.close().await;
+  if let Err(e) = write {
+    // Cancel and write failures both leave a truncated file behind. Close the
+    // handle first, then remove it so the remote directory does not fill up
+    // with unusable halves (a pre-existing destination is preserved).
+    discard_partial_upload(&sftp, &resolved_path, existed_before).await;
+    return Err(e);
+  }
 
   Ok(true)
 }
@@ -866,6 +913,7 @@ pub async fn upload_file_bytes(
   ensure_parent_dir(&sftp, &resolved_path).await?;
 
   // Write in chunks with progress
+  let existed_before = destination_existed(&sftp, &resolved_path).await;
   let mut file = sftp
     .create(&resolved_path)
     .await
@@ -875,26 +923,36 @@ pub async fn upload_file_bytes(
   let chunk_size: usize = UPLOAD_CHUNK_BYTES;
   let mut written: u64 = 0;
 
-  for chunk in file_data.chunks(chunk_size) {
-    check_pause(&control).await?;
-    file
-      .write_all(chunk)
-      .await
-      .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
-    written += chunk.len() as u64;
+  let write = async {
+    for chunk in file_data.chunks(chunk_size) {
+      check_pause(&control).await?;
+      file
+        .write_all(chunk)
+        .await
+        .map_err(|e| format!("Failed to write data to '{}': {}", resolved_path, e))?;
+      written += chunk.len() as u64;
 
-    let elapsed = start.elapsed().as_millis();
-    let _ = app.emit(
-      "transfer-progress",
-      serde_json::json!({
-        "tabId": tab_id,
-        "op": "upload",
-        "filename": &filename,
-        "transferred": written,
-        "total": total,
-        "elapsed": elapsed
-      }),
-    );
+      let elapsed = start.elapsed().as_millis();
+      let _ = app.emit(
+        "transfer-progress",
+        serde_json::json!({
+          "tabId": tab_id,
+          "op": "upload",
+          "filename": &filename,
+          "transferred": written,
+          "total": total,
+          "elapsed": elapsed
+        }),
+      );
+    }
+    Ok::<(), String>(())
+  }
+  .await;
+
+  let _ = file.close().await;
+  if let Err(e) = write {
+    discard_partial_upload(&sftp, &resolved_path, existed_before).await;
+    return Err(e);
   }
 
   Ok(true)
@@ -1030,6 +1088,15 @@ pub async fn delete_file(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_cancelled_upload_only_deletes_files_it_created() {
+    // A fresh destination is a half-written file we own: remove it.
+    assert!(may_discard_partial(false));
+    // `create()` truncated an existing file; deleting it would destroy the
+    // user's original data, so the partial content has to stay.
+    assert!(!may_discard_partial(true));
+  }
 
   #[test]
   fn sanitize_relative_name_rejects_escapes_and_windows_specials() {
