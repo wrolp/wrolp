@@ -2,7 +2,7 @@
 // bundle artifacts so the MSI / signature filenames are locale-free.
 //
 // Usage: node scripts/strip-locale-suffix.mjs [bundleDir]
-//   bundleDir defaults to src-tauri/target/release/bundle
+//   bundleDir defaults to the release target's bundle dir (see release-paths.mjs)
 //
 // Example:
 //   wrolp-terminal_0.0.3_x64_en-US.msi   -> wrolp-terminal_0.0.3_x64.msi
@@ -10,14 +10,9 @@
 
 import { readdirSync, renameSync, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
+import { releaseBundleDir } from './release-paths.mjs'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const root = join(__dirname, '..')
-
-const bundleDir =
-  process.argv[2] || join(root, 'src-tauri', 'target', 'release', 'bundle')
+const bundleDir = process.argv[2] || releaseBundleDir()
 
 // Matches a trailing "_en-US", "_zh-CN", "_en_US", etc., anchored right before
 // the file extension (the whole filename must be tested, extension included).

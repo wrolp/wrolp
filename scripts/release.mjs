@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { requireVersionTag } from './release-tag-guard.mjs'
+import { releaseTargetDir } from './release-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -33,6 +34,11 @@ requireVersionTag({
 })
 
 const env = { ...process.env }
+// Build into the release-only target dir. Keeping releases out of
+// `src-tauri/target` is what lets the clean step below always succeed while
+// rust-analyzer has the dev target mapped (see `release-paths.mjs`), and it
+// leaves the dev build cache warm.
+env.CARGO_TARGET_DIR = releaseTargetDir()
 
 if (existsSync(keyPath)) {
   const key = readFileSync(keyPath, 'utf8').trim()
@@ -64,17 +70,19 @@ function run(cmd, args) {
   if (res.status !== 0) process.exit(res.status ?? 1)
 }
 
-// 1. clean, then build (signed)
+// 1. clean the release target, then build (signed)
 //
 // A release bundle must not inherit objects from earlier builds: icons and
-// embedded assets are fingerprint-free, so a stale `target/` has shipped the old
-// icon before. `RELEASE_SKIP_CLEAN=1` is the escape hatch for iterating on the
-// packaging steps themselves.
+// embedded assets are fingerprint-free, so a stale target has shipped the old
+// icon before. The release target dir is used only by releases, so this clean
+// cannot be blocked by rust-analyzer or a running dev build.
+// `RELEASE_SKIP_CLEAN=1` is the escape hatch for iterating on the packaging
+// steps themselves.
 if (process.env.RELEASE_SKIP_CLEAN === '1') {
   console.log('[release] RELEASE_SKIP_CLEAN=1 — reusing the existing build output')
 } else {
-  console.log('[release] cleaning build output (cargo clean + dist/)')
-  run(process.execPath, ['scripts/clean.mjs'])
+  console.log(`[release] cleaning ${env.CARGO_TARGET_DIR}`)
+  run(process.execPath, ['scripts/clean.mjs', '--release'])
 }
 
 run(process.execPath, [tauriCli, 'build'])

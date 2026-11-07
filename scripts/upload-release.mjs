@@ -34,6 +34,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { requireVersionTag } from './release-tag-guard.mjs'
+import { releaseMsiDir } from './release-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -66,7 +67,7 @@ const tag = tagOverride || `v${version}`
 requireVersionTag({ root, tag, version, label: 'upload' })
 
 // ---- locate artifacts ----
-const msiDir = join(root, 'src-tauri', 'target', 'release', 'bundle', 'msi')
+const msiDir = releaseMsiDir()
 if (!existsSync(msiDir)) {
   console.error(`[upload] MSI dir not found: ${msiDir}\n  Run "yarn release" first.`)
   process.exit(1)

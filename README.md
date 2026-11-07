@@ -262,18 +262,20 @@ yarn dev
 ## Build
 
 ```bash
-yarn build:clean     # cleans first, then builds — use this for a shippable bundle
-yarn tauri build     # incremental build, keeps whatever target/ already has
+yarn build:clean     # cleans its own target dir first, then builds — use this for a shippable bundle
+yarn tauri build     # incremental dev build into src-tauri/target/
 ```
 
-Output: `src-tauri/target/release/bundle/`. Bundle target is `["msi"]` only.
+`build:clean` builds into `src-tauri/target-release/` (bundle at `src-tauri/target-release/release/bundle/`), so cleaning never fights rust-analyzer or a running dev build over files in `src-tauri/target/` — on Windows that lock makes `cargo clean` fail with `os error 5`. Bundle target is `["msi"]` only.
 
 ### Clean Rebuild
 
 ```bash
-yarn clean           # cargo clean + remove dist/
+yarn clean           # dev output: cargo clean + remove dist/
 yarn tauri build
 ```
+
+`yarn clean` is the dev-side clean and needs `src-tauri/target/` to be unlocked (close the app, or restart rust-analyzer, if Windows reports access denied). Releases never touch that directory.
 
 ## Release
 
@@ -283,7 +285,7 @@ gh auth login -h github.com
 yarn run publish
 ```
 
-`publish` cleans first (`cargo clean` + `dist/`) and only then builds, so a release bundle never inherits objects — icons above all — from an earlier build. Set `RELEASE_SKIP_CLEAN=1` to reuse the existing output while iterating on the packaging steps.
+`publish` wipes its own target dir (`src-tauri/target-release`) and only then builds, so a release bundle never inherits objects — icons above all — from an earlier build, and the clean cannot be blocked by locks in the dev target. Set `RELEASE_SKIP_CLEAN=1` to reuse the existing output while iterating on the packaging steps.
 
 ## Testing
 

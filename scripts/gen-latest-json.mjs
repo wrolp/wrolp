@@ -32,6 +32,7 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { releaseMsiDir } from './release-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -76,7 +77,7 @@ const repo = m?.[2] || 'wrolp'
 const tag = tagOverride || `v${version}`
 
 // ---- locate the built MSI (suffix-free) ----
-const msiDir = join(root, 'src-tauri', 'target', 'release', 'bundle', 'msi')
+const msiDir = releaseMsiDir()
 if (!existsSync(msiDir)) {
   console.error(`[gen-latest] MSI dir not found: ${msiDir}\n  Run "yarn release" first.`)
   process.exit(1)

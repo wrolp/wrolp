@@ -1,33 +1,65 @@
 // Remove build output so the next build starts from nothing.
 //
-// `cargo clean` (not `rm -rf src-tauri/target`) because it also honours a
-// `CARGO_TARGET_DIR` override and leaves cargo's own bookkeeping consistent.
-// `dist/` is Vite's output; it is emptied on every build anyway, but a release
-// bundle must never be produced from a directory that still holds a previous
-// installer's assets.
+// Two targets, because they answer different questions:
 //
-// Used by `yarn clean` and by `scripts/release.mjs` before it builds.
+//   `node scripts/clean.mjs`            dev output — `cargo clean` in `src-tauri`
+//                                       plus Vite's `dist/`.
+//   `node scripts/clean.mjs --release`  the release target dir only. Release
+//                                       builds use their own directory (see
+//                                       `release-paths.mjs`), so this never
+//                                       fights rust-analyzer or a running app
+//                                       over a mapped DLL.
+//
+// `cargo clean` (not `rm -rf src-tauri/target`) because it also honours a
+// `CARGO_TARGET_DIR` override and keeps cargo's own bookkeeping consistent.
 
 import { spawnSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import { releaseTargetDir, root } from './release-paths.mjs'
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const releaseMode = process.argv.includes('--release')
 
-function run(cmd, args, cwd, env = process.env) {
-  const res = spawnSync(cmd, args, { stdio: 'inherit', env, cwd })
-  if (res.error) {
-    console.error(`[clean] failed to run ${cmd}: ${res.error.message}`)
-    process.exit(1)
+function removeDir(label, dir) {
+  console.log(`[clean] removing ${label}`)
+  try {
+    rmSync(dir, { recursive: true, force: true })
+    return true
+  } catch (e) {
+    console.error(`[clean] could not remove ${dir}: ${e.message}`)
+    return false
   }
-  if (res.status !== 0) process.exit(res.status ?? 1)
+}
+
+if (releaseMode) {
+  const dir = releaseTargetDir()
+  console.log(`[clean] release target: ${dir}`)
+  if (!removeDir('release target', dir)) process.exit(1)
+  console.log('[clean] done')
+  process.exit(0)
 }
 
 console.log('[clean] cargo clean (src-tauri)')
-run('cargo', ['clean'], join(root, 'src-tauri'))
+const res = spawnSync('cargo', ['clean'], {
+  stdio: 'inherit',
+  cwd: join(root, 'src-tauri'),
+})
+if (res.error) {
+  console.error(`[clean] failed to run cargo: ${res.error.message}`)
+  process.exit(1)
+}
+if (res.status !== 0) {
+  // On Windows this is usually a mapped proc-macro DLL: rust-analyzer keeps them
+  // open, so the file cannot be deleted. Say what to do instead of just failing.
+  console.error(
+    '[clean] cargo clean failed. On Windows this is almost always rust-analyzer\n' +
+      '  (or a running `tauri dev` app) holding files in src-tauri/target:\n' +
+      '    - restart rust-analyzer in the editor, or close the running app, then retry;\n' +
+      '    - or leave the dev target alone — `yarn run publish` cleans its own\n' +
+      '      release target (src-tauri/target-release) and does not need this step.',
+  )
+  process.exit(res.status ?? 1)
+}
 
-console.log('[clean] removing dist/')
-rmSync(join(root, 'dist'), { recursive: true, force: true })
-
+removeDir('dist/', join(root, 'dist'))
 console.log('[clean] done')

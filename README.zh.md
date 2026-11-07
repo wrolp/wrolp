@@ -262,18 +262,20 @@ yarn dev
 ## 构建
 
 ```bash
-yarn build:clean     # 先清理再构建，适合要交付的安装包
-yarn tauri build     # 增量构建，保留 target/ 里已有的对象
+yarn build:clean     # 先清理自己的构建目录再构建，适合要交付的安装包
+yarn tauri build     # 增量开发构建，产物在 src-tauri/target/
 ```
 
-输出目录：`src-tauri/target/release/bundle/`。打包目标仅 `["msi"]`。
+`build:clean` 构建到 `src-tauri/target-release/`（产物在 `src-tauri/target-release/release/bundle/`），因此清理时不会和 rust-analyzer 或正在运行的开发构建抢 `src-tauri/target/` 里的文件——Windows 上那个占用会让 `cargo clean` 直接报 `os error 5`。打包目标仅 `["msi"]`。
 
 ### 清理重建
 
 ```bash
-yarn clean           # cargo clean + 删除 dist/
+yarn clean           # 清理开发产物：cargo clean + 删除 dist/
 yarn tauri build
 ```
+
+`yarn clean` 是开发侧的清理，需要 `src-tauri/target/` 没有被占用（Windows 报「拒绝访问」时先关掉正在运行的应用，或在编辑器里重启 rust-analyzer）。发布流程不会碰这个目录。
 
 ## 发布
 
@@ -283,7 +285,7 @@ gh auth login -h github.com
 yarn run publish
 ```
 
-`publish` 会先清理（`cargo clean` + `dist/`）再构建，因此发布产物不会继承上一次构建留下的对象——图标尤其如此。若只是在调试打包步骤本身，可设 `RELEASE_SKIP_CLEAN=1` 复用已有产物。
+`publish` 会先清空自己的构建目录（`src-tauri/target-release`）再构建，因此发布产物不会继承上一次构建留下的对象——图标尤其如此，而且这个清理不会被开发目录里的文件占用挡住。若只是在调试打包步骤本身，可设 `RELEASE_SKIP_CLEAN=1` 复用已有产物。
 
 ## 测试
 
