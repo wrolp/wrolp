@@ -4,6 +4,49 @@
 
 ---
 
+## v0.0.12 — 2026-11-07
+
+Adds two working modes — **Kubernetes** and **Git** — that bring pod logs, exec, port-forwards and Helm into one panel, and cover status, commits, history, conflicts, stash and blame in another. Alongside them: single-instance protection, a hideable status bar, namespace-tinted resource lists, and a batch of upload and terminal reliability fixes.
+
+### Features
+
+- **Kubernetes panel** — a new K8s mode in the activity rail whose host follows the focused terminal: an SSH session runs `kubectl` on its jump host, and with no terminal it uses this machine's CLI and kubeconfig. Context and namespace pickers plus a search box; ten kinds (pods, deployments, statefulsets, daemonsets, services, ingresses, jobs, cronjobs, configmaps, secrets) share one row model, and a pod row shows its image with the node on its own line. Per row: view / edit YAML and apply it, scale, delete behind a confirmation, read logs once or stream them with ANSI colours, open a shell inside the pod (its own PTY locally, a new split that types `kubectl exec` on an SSH host), browse the pod's files, and forward a port (saved rules included). Dialogs in the panel drag by their header, and each host keeps its own selection across rail switches.
+- **Helm mode** — the panel's other tab: probes whether `helm` exists, lists releases in the namespace, shows values and revision history, rolls back, uninstalls, and installs / upgrades (values over stdin, optionally waiting for the rollout).
+- **All namespaces by default, with namespace colours** — the namespace picker now starts on All namespaces, and changing context returns to it, so trouble in a namespace the kubeconfig never names is still visible. In that mode the namespace label under each name takes a stable colour derived from the namespace, and no two namespaces on screen share one (colour only — no badge), so a mixed list sorts itself out at a glance.
+- **Git panel** — a Git mode that manages one repository at a time on the focused SSH session or this machine: status (porcelain v2), per-line diffs, stage / unstage / discard (listing the paths that will be deleted), commit and amend, `git init`; branch create / switch / delete; history with commit-graph lanes that expands into the commit's changed files, each opening its commit-scope diff; remote add / remove; fetch / pull / push (pull is `--ff-only`, and a forced push is always `--force-with-lease` behind a confirmation). With several remotes, network verbs use the branch's tracked one.
+- **Conflicts, stash, blame and repository handling** — conflicted paths can take a side (ours / theirs) or be marked resolved, with a read-only three-way view (base / ours / theirs) and an abort for merge / rebase / cherry-pick / revert. Stash supports push (untracked optional), pop, apply and drop. The blame dialog lists commit, author, time and content per line. From the empty state you can `git init`, clone with progress, or scan a folder for repositories — and switch back to the picker after opening one. An untracked file can be ignored **locally**, appending only to `.git/info/exclude` instead of touching the shared `.gitignore`.
+- **Configurable local Git executable** — the `git.localBin` setting: a GUI process on Windows often has no Git in `PATH`, so the path can be pinned; a path that does not answer `--version` is reported with the reason instead of silently falling back to auto-detection (local machine only).
+- **Single-instance protection** — launching the app again no longer starts a second process: the existing window is restored, shown and focused, and `wrolp.db`, the connection config and `vault.key` are never opened by two instances at once.
+- **Hideable status bar** — Settings → Appearance gains "Show the status bar" (on by default). With it off the strip takes no space, and connection state stays readable from each pane header.
+- **AI conversations persist and are visualised** — conversations are stored and can be reopened from the Conversations panel; an agent run's call flow is drawn as expandable graph nodes; templates are managed by group, with custom templates and actions at the top of the picker. The inspector's AI is an app-level chat now (usable with no terminal open) and leads with its endpoint.
+- **Duplicate a connection or local terminal** — right-click a saved connection or local terminal to get a copy right below it.
+- **Docker images view** — a new image list, and tighter container rows that lead with a state mark and give the container ID its own line.
+- **Record button** — the pane header's recording toggle is a record button now (a steady red dot, no pulse).
+- **Language follows the system** — the default language follows the OS, and can still be pinned to Chinese or English.
+- **Session list in narrow panels** — the toolbar verbs and row actions collapse into a menu instead of squeezing the breadcrumb.
+
+### Fixes
+
+- **Upload progress and speed** — directory and drag-dropped uploads now tick from the Rust side per 4 MiB chunk, so a single multi-GB file keeps a moving bar and a live speed instead of jumping from 0 % to done; single-file uploads drop from 4 MB to 64 KB chunks so a slow link no longer looks frozen.
+- **Cancelling an upload cleans up** — cancelling (or a failed write) removes the incomplete remote files this upload created; files that finished before the cancel stay, and a destination that already existed is never deleted.
+- **Transfer list** — finished rows are dropped even while another transfer is still in flight.
+- **Terminal** — every terminal shares one poll loop, background tabs poll less often and hidden workspaces pause; a nested shell no longer prints a second prompt after `ls`; `ls` after `cd ~` no longer lists the previous directory; clicking a file in a stale `ls` listing follows it to its new location; a port bound to an IPv6 address in `netstat` is no longer painted as part of the address; the next keystroke after a submitted command no longer sticks to the previous one; the recording mark no longer pulses.
+- **Sessions and app shell** — serial and Telnet tabs close on disconnect, save failures are surfaced, and connection-list / workspace load failures report instead of leaving a blank area; session lifecycle, config writes and upload cleanup were hardened.
+- **Git** — network verbs use the branch's tracked remote (they used the first one, which could push somewhere unintended); the discard confirmation lists the paths it will delete.
+- **Docker** — the log viewer updates incrementally instead of re-rendering the whole buffer.
+- **Editor** — `.sh` files use the self-registered shell grammar rather than Monaco's built-in one.
+- **Copy and accessibility** — remaining hard-coded strings are localised, toasts are reachable by screen readers, and the split / inspector seams' styling and tests match the gradient highlight that is actually drawn.
+- **Dependencies** — the `source-map-js`, `vite`, `zod` and `russh` Dependabot advisories are cleared.
+
+### Internal
+
+- New `k8s_host.rs` + `K8sPanel` with port-forward / log-stream / Helm command groups; new `src-tauri/src/git/` (parse, status, branch, conflict, history, remote, stash, scan) with 30 Git commands, fronted by `useGit`, `GitPanel`, `GitDiffView`, `GitBlameView` and `GitMergeView`.
+- New pure modules `src/lib/gitGraph.ts` (commit-graph lanes) and `src/lib/k8sNamespaceColor.ts` (namespace palette), both pinned by tests that need no backend.
+- Three performance passes this round: one shared terminal poll loop, incremental Docker log rendering, per-chunk upload reporting.
+- The release script only builds and uploads from a commit that carries the version tag, so a bundle can no longer come from the wrong commit.
+
+---
+
 ## v0.0.11 — 2026-10-21
 
 Turns Home into a tab you can keep, gives the two recent lists their own size, and moves every keyboard shortcut into one table that Settings can rebind. Plus a launch that no longer flashes console windows, the new app icon finally reaching the exe, and build/release fixes that had been quietly making rebuilds lie.

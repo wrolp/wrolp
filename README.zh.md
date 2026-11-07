@@ -262,7 +262,8 @@ yarn dev
 ## 构建
 
 ```bash
-yarn tauri build     # 或：npm run tauri build
+yarn build:clean     # 先清理再构建，适合要交付的安装包
+yarn tauri build     # 增量构建，保留 target/ 里已有的对象
 ```
 
 输出目录：`src-tauri/target/release/bundle/`。打包目标仅 `["msi"]`。
@@ -270,10 +271,19 @@ yarn tauri build     # 或：npm run tauri build
 ### 清理重建
 
 ```bash
-cd src-tauri && cargo clean && cd ..
-# 然后：
+yarn clean           # cargo clean + 删除 dist/
 yarn tauri build
 ```
+
+## 发布
+
+```bash
+gh auth login -h github.com
+
+yarn run publish
+```
+
+`publish` 会先清理（`cargo clean` + `dist/`）再构建，因此发布产物不会继承上一次构建留下的对象——图标尤其如此。若只是在调试打包步骤本身，可设 `RELEASE_SKIP_CLEAN=1` 复用已有产物。
 
 ## 测试
 

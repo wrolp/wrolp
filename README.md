@@ -262,7 +262,8 @@ yarn dev
 ## Build
 
 ```bash
-yarn tauri build     # or: npm run tauri build
+yarn build:clean     # cleans first, then builds — use this for a shippable bundle
+yarn tauri build     # incremental build, keeps whatever target/ already has
 ```
 
 Output: `src-tauri/target/release/bundle/`. Bundle target is `["msi"]` only.
@@ -270,8 +271,7 @@ Output: `src-tauri/target/release/bundle/`. Bundle target is `["msi"]` only.
 ### Clean Rebuild
 
 ```bash
-cd src-tauri && cargo clean && cd ..
-# Then:
+yarn clean           # cargo clean + remove dist/
 yarn tauri build
 ```
 
@@ -282,6 +282,8 @@ gh auth login -h github.com
 
 yarn run publish
 ```
+
+`publish` cleans first (`cargo clean` + `dist/`) and only then builds, so a release bundle never inherits objects — icons above all — from an earlier build. Set `RELEASE_SKIP_CLEAN=1` to reuse the existing output while iterating on the packaging steps.
 
 ## Testing
 

@@ -1,7 +1,7 @@
 {
   "name": "wrolp-terminal",
   "private": true,
-  "version": "0.0.11",
+  "version": "0.0.12",
   "license": "MIT",
   "resolutions": {
     "immutable": "^5.1.8",
@@ -24,6 +24,8 @@
     "test:e2e": "playwright test",
     "test:e2e:coverage": "node e2e/run-coverage.mjs",
     "postbuild:msi": "node scripts/strip-locale-suffix.mjs",
+    "clean": "node scripts/clean.mjs",
+    "build:clean": "node scripts/clean.mjs && tauri build",
     "release": "node scripts/release.mjs",
     "gen:latest": "node scripts/gen-latest-json.mjs",
     "upload": "node scripts/upload-release.mjs",

@@ -64,7 +64,19 @@ function run(cmd, args) {
   if (res.status !== 0) process.exit(res.status ?? 1)
 }
 
-// 1. build (signed)
+// 1. clean, then build (signed)
+//
+// A release bundle must not inherit objects from earlier builds: icons and
+// embedded assets are fingerprint-free, so a stale `target/` has shipped the old
+// icon before. `RELEASE_SKIP_CLEAN=1` is the escape hatch for iterating on the
+// packaging steps themselves.
+if (process.env.RELEASE_SKIP_CLEAN === '1') {
+  console.log('[release] RELEASE_SKIP_CLEAN=1 — reusing the existing build output')
+} else {
+  console.log('[release] cleaning build output (cargo clean + dist/)')
+  run(process.execPath, ['scripts/clean.mjs'])
+}
+
 run(process.execPath, [tauriCli, 'build'])
 // 2. strip _en-US suffix
 run(process.execPath, ['scripts/strip-locale-suffix.mjs'])
