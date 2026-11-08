@@ -1360,6 +1360,9 @@ export interface WorkspaceLayout {
     }
   }
   bottomPanel: {
+    /** Whether the drawer exists at all — its collapsed header strip included. */
+    shown: boolean
+    /** Whether the drawer is expanded past its header strip. */
     visible: boolean
     pos: DockPos
     size: number
@@ -1397,6 +1400,9 @@ export const defaultLayout: WorkspaceLayout = {
     },
   },
   bottomPanel: {
+    // The strip is part of the shell by default; the status bar's toggle is what
+    // takes it (and the room it costs) away.
+    shown: true,
     visible: false,
     pos: 'bottom',
     size: DEFAULT_DRAWER_HEIGHT,

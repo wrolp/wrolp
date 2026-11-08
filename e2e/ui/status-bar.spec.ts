@@ -10,10 +10,14 @@ import { installTauriMock } from './helpers/tauriMock'
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
 
-async function bootWithSession(page: import('@playwright/test').Page) {
+async function bootWithSession(
+  page: import('@playwright/test').Page,
+  layout?: Record<string, unknown>,
+) {
   await installTauriMock(page, {
     connections: [DEMO_CONN],
     pollOutputChunks: [['root@demo:~$ ']],
+    ...(layout ? { layout: JSON.stringify(layout) } : {}),
   })
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await page.goto('/')
@@ -46,6 +50,61 @@ test('the bar is a band of the column layout, not an overlay', async ({ page }) 
   })
   expect(bottom).toBeCloseTo(rootBottom, 0)
   expect(bottom - top).toBeGreaterThanOrEqual(22)
+})
+
+// Even collapsed, the drawer is a row of chrome that costs height. The bar's
+// toggle is the control that takes that row away entirely — it is a control, not
+// a read-out, so `aria-pressed` is what says whether the drawer exists.
+test('the status bar toggles the whole drawer, header strip included', async ({ page }) => {
+  await bootWithSession(page)
+  const drawer = page.locator('.bottom-panel')
+  const toggle = page.locator('.status-bar .status-panel-toggle')
+
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(drawer).toHaveCount(1)
+  await expect(drawer.locator('.bottom-panel-tabs')).toBeVisible()
+
+  await toggle.click()
+  await expect(drawer).toHaveCount(0)
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+  await toggle.click()
+  await expect(drawer).toHaveCount(1)
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  // Back the way it was: the strip returns, the content does not.
+  await expect(drawer.locator('.bottom-panel-tabs')).toBeVisible()
+  await expect(drawer.locator('.bottom-panel-content')).toHaveCount(0)
+})
+
+test('hiding an expanded drawer takes its divider with it, and restores expanded', async ({
+  page,
+}) => {
+  await bootWithSession(page, { bottomPanel: { visible: true } })
+  const drawer = page.locator('.bottom-panel')
+  const toggle = page.locator('.status-bar .status-panel-toggle')
+
+  await expect(drawer).toHaveClass(/expanded/)
+  await expect(page.locator('.panel-divider-h')).toHaveCount(1)
+
+  await toggle.click()
+  await expect(drawer).toHaveCount(0)
+  await expect(page.locator('.panel-divider-h')).toHaveCount(0)
+
+  // `visible` is left alone, so showing it again is the state it was hidden in.
+  await toggle.click()
+  await expect(drawer).toHaveClass(/expanded/)
+  await expect(page.locator('.panel-divider-h')).toHaveCount(1)
+})
+
+test('the panel shortcut opens a hidden drawer expanded', async ({ page }) => {
+  await bootWithSession(page)
+  const drawer = page.locator('.bottom-panel')
+  await page.locator('.status-bar .status-panel-toggle').click()
+  await expect(drawer).toHaveCount(0)
+
+  await page.keyboard.press('Control+j')
+  await expect(drawer).toHaveCount(1)
+  await expect(drawer).toHaveClass(/expanded/)
 })
 
 test('density moves every chrome band together', async ({ page }) => {

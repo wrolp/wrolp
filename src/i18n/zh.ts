@@ -193,6 +193,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   update: '更新',
   collapse: '折叠',
   expand: '展开',
+  showBottomPanel: '显示底部面板',
+  hideBottomPanel: '隐藏底部面板',
   ungrouped: '未分组',
   addSshConnectionHint: '点击 + 添加一个新的 SSH 连接',
   editConnection: '编辑连接',

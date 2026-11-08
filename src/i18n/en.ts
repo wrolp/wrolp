@@ -193,6 +193,8 @@ const en = {
   update: 'Update',
   collapse: 'Collapse',
   expand: 'Expand',
+  showBottomPanel: 'Show bottom panel',
+  hideBottomPanel: 'Hide bottom panel',
   ungrouped: 'Ungrouped',
   addSshConnectionHint: 'Click + to add a new SSH connection',
   editConnection: 'Edit Connection',

@@ -1920,6 +1920,7 @@ export default function App() {
   useEffect(() => {
     probeLocalDockerNow(false)
   }, [probeLocalDockerNow])
+  const bottomPanelShown = layout.bottomPanel.shown
   const bottomPanelExpanded = layout.bottomPanel.visible
   const inspectorOpen = layout.inspector.visible
   // Remote filesystem shown in the Files panel (null = the tab's main session).
@@ -3604,7 +3605,7 @@ export default function App() {
   // transfer.
   const openDualPane = useCallback(() => {
     setDualPaneOpen(true)
-    updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
+    updateLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, shown: true, visible: true } }))
   }, [updateLayout])
 
   // Ctrl+B / Ctrl+Alt+B / Ctrl+J / Ctrl+Alt+J / Ctrl+Alt+I / Ctrl+Shift+F moved
@@ -5456,9 +5457,14 @@ export default function App() {
           return
         case 'toggleBottomPanel':
           e.preventDefault()
+          // Hidden by the status-bar toggle: the shortcut is the "open it" verb,
+          // so it brings the drawer back expanded rather than collapsing a strip
+          // nobody can see.
           updateLayout((l) => ({
             ...l,
-            bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
+            bottomPanel: l.bottomPanel.shown
+              ? { ...l.bottomPanel, visible: !l.bottomPanel.visible }
+              : { ...l.bottomPanel, shown: true, visible: true },
           }))
           return
         case 'flipPanelPosition':
@@ -8774,13 +8780,19 @@ export default function App() {
               connections={connections}
               onPlaySession={(session) => {
                 setSessionToView(session)
-                setLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
+                setLayout((l) => ({
+                  ...l,
+                  bottomPanel: { ...l.bottomPanel, shown: true, visible: true },
+                }))
               }}
               // Command extraction lands in the drawer's command-set tab, so the
               // request is handed over the same way a replay is.
               onExtractCommands={(commands) => {
                 setPrefillCommands(commands)
-                setLayout((l) => ({ ...l, bottomPanel: { ...l.bottomPanel, visible: true } }))
+                setLayout((l) => ({
+                  ...l,
+                  bottomPanel: { ...l.bottomPanel, shown: true, visible: true },
+                }))
               }}
             />
           </div>
@@ -9262,30 +9274,34 @@ export default function App() {
                 )
               })()}
 
-            {/* Bottom panel — session recordings & command sets */}
-            {layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (
+            {/* Bottom panel — session recordings & command sets. `shown` is the
+                status bar's toggle: false unmounts the drawer entirely, header
+                strip included, so the workspace gets the room back. */}
+            {bottomPanelShown && layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (
               <div className="panel-divider-v" onMouseDown={handlePanelDividerMouseDown} />
             )}
-            {layout.bottomPanel.pos === 'bottom' && bottomPanelExpanded && (
+            {bottomPanelShown && layout.bottomPanel.pos === 'bottom' && bottomPanelExpanded && (
               <div className="panel-divider-h" onMouseDown={handleBottomDividerMouseDown} />
             )}
-            <BottomPanel
-              connections={connections}
-              activeTabId={focusedLeafTabId}
-              pendingSession={sessionToView}
-              onPendingSessionConsumed={() => setSessionToView(null)}
-              prefillCommands={prefillCommands}
-              onPrefillConsumed={() => setPrefillCommands(null)}
-              expanded={bottomPanelExpanded}
-              pos={layout.bottomPanel.pos}
-              size={layout.bottomPanel.size}
-              onToggleExpanded={() =>
-                updateLayout((l) => ({
-                  ...l,
-                  bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
-                }))
-              }
-            />
+            {bottomPanelShown && (
+              <BottomPanel
+                connections={connections}
+                activeTabId={focusedLeafTabId}
+                pendingSession={sessionToView}
+                onPendingSessionConsumed={() => setSessionToView(null)}
+                prefillCommands={prefillCommands}
+                onPrefillConsumed={() => setPrefillCommands(null)}
+                expanded={bottomPanelExpanded}
+                pos={layout.bottomPanel.pos}
+                size={layout.bottomPanel.size}
+                onToggleExpanded={() =>
+                  updateLayout((l) => ({
+                    ...l,
+                    bottomPanel: { ...l.bottomPanel, visible: !l.bottomPanel.visible },
+                  }))
+                }
+              />
+            )}
           </div>
 
           {/* Inspector — read-outs about the focused tab. Docked, it is placed
@@ -9329,6 +9345,17 @@ export default function App() {
           tab={statusBarTab}
           termSize={focusedLeafId ? termSizes[focusedLeafId] : undefined}
           recording={focusedLeafTabId != null ? recordingByTab[focusedLeafTabId] : undefined}
+          panelShown={bottomPanelShown}
+          panelDock={layout.bottomPanel.pos}
+          onTogglePanel={() =>
+            updateLayout((l) => ({
+              ...l,
+              // `visible` is left alone: showing the drawer again puts it back the
+              // way it was (expanded stays expanded), which is what a hide/show
+              // toggle should restore.
+              bottomPanel: { ...l.bottomPanel, shown: !l.bottomPanel.shown },
+            }))
+          }
           update={updateInfo && showUpdateBanner ? { ...updateInfo, state: updateState } : null}
           onDownloadUpdate={() => void handleDownloadUpdate()}
           onDismissUpdate={() => setShowUpdateBanner(false)}

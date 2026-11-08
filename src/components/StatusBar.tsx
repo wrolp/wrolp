@@ -11,6 +11,12 @@ type Props = {
   /** Character grid of the focused pane, once xterm has reported one. */
   termSize?: { cols: number; rows: number }
   recording?: boolean
+  /** Whether the bottom drawer — its collapsed header strip included — is mounted. */
+  panelShown?: boolean
+  /** Which edge that drawer is docked to, so the glyph matches where it lives. */
+  panelDock?: 'bottom' | 'right'
+  /** Hide/show that drawer. Omitted means the bar has no toggle for it. */
+  onTogglePanel?: () => void
   update?: { version: string; state: UpdateState } | null
   onDownloadUpdate?: () => void
   onDismissUpdate?: () => void
@@ -39,6 +45,9 @@ export function StatusBar({
   tab,
   termSize,
   recording,
+  panelShown,
+  panelDock,
+  onTogglePanel,
   update,
   onDownloadUpdate,
   onDismissUpdate,
@@ -98,9 +107,23 @@ export function StatusBar({
         )}
       </div>
 
-      {/* Right: the two things that ask for attention — an active recording and
-          an available update. */}
+      {/* Right: the panel toggle, then the things that ask for attention — an
+          active recording and an available update. */}
       <div className="status-bar-right">
+        {onTogglePanel && (
+          // A control, not a read-out: `aria-pressed` carries the state and the
+          // tooltip names the action, so the glyph can stay the same either way.
+          <button
+            type="button"
+            className="status-item status-panel-toggle"
+            aria-pressed={panelShown}
+            title={panelShown ? t('hideBottomPanel') : t('showBottomPanel')}
+            aria-label={panelShown ? t('hideBottomPanel') : t('showBottomPanel')}
+            onClick={onTogglePanel}
+          >
+            <Icon name={panelDock === 'right' ? 'panelRight' : 'panelBottom'} size={12} />
+          </button>
+        )}
         {recording && (
           <span className="status-item">
             <span className="dot rec" />

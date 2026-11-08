@@ -966,9 +966,25 @@
 
 // ===== Status bar: v8 additions =====
 //
-// The base band lives in `_chrome.scss`; this is only the update pill, which
+// The base band lives in `_chrome.scss`; these are the two additions — the drawer
+// toggle, which is a control rather than a read-out, and the update pill, which
 // used to be a bare `<button class="status-item">` and is now a chip with its own
 // dismiss affordance.
+
+// Shown is the resting state, so only the hidden side needs a rule: dimming it
+// tells "the drawer is off" apart from "the drawer is collapsed", which the
+// pressed glyph alone cannot.
+.status-item.status-panel-toggle {
+  &[aria-pressed='false'] {
+    color: $text-dim;
+
+    // Keep the chip's own hover read (the base rule loses on specificity here).
+    &:hover {
+      color: $text-primary;
+    }
+  }
+}
+
 .status-item.update-pill {
   gap: 4px;
   padding: 0 4px 0 6px;
