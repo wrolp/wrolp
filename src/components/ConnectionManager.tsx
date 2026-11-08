@@ -567,6 +567,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             <LocalTerminalsSection
               entries={localTerminals}
               filter={filter}
+              collapsed={collapsedGroups.includes(LOCAL_TERMINALS_GROUP)}
+              onToggleCollapsed={() => toggleGroup(LOCAL_TERMINALS_GROUP)}
               onOpen={onOpenLocalTerminal}
               onOpenSplit={onOpenLocalSplit}
               onOpenInFileManager={onOpenLocalDir}
@@ -937,10 +939,23 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
 // ===== Local Terminals Section =====
 
+/**
+ * The collapsed-state key for the local-terminals section.
+ *
+ * The section is not a connection group, but its collapse state has to persist
+ * with theirs (`window.json.collapsedGroups`) so it survives a restart. The NUL
+ * prefix is a sentinel a real group name cannot be — `window.prompt` cannot
+ * produce it — so the shared list never confuses the two.
+ */
+const LOCAL_TERMINALS_GROUP = '\u0000local-terminals'
+
 interface LocalTerminalsSectionProps {
   entries: LocalTerminalEntry[]
   /** The nav column's filter box, shared with the connection list. */
   filter?: string
+  /** Persisted collapse state, owned by the panel so it reaches `window.json`. */
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
   onOpen?: (entry: LocalTerminalEntry) => void
   onOpenSplit?: (entry: LocalTerminalEntry, direction: 'row' | 'column') => void
   onOpenInFileManager?: (entry: LocalTerminalEntry) => void
@@ -950,13 +965,14 @@ interface LocalTerminalsSectionProps {
 const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
   entries,
   filter = '',
+  collapsed = false,
+  onToggleCollapsed,
   onOpen,
   onOpenSplit,
   onOpenInFileManager,
   onChanged,
 }) => {
   const { t } = useI18n()
-  const [collapsed, setCollapsed] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<LocalTerminalEntry | null>(null)
   const [name, setName] = useState('')
@@ -1137,7 +1153,7 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
 
   return (
     <div className="conn-group local-terminals-group">
-      <div className="conn-group-header" onClick={() => setCollapsed((c) => !c)}>
+      <div className="conn-group-header" onClick={() => onToggleCollapsed?.()}>
         <span className={`collapse-chevron${isCollapsed ? '' : ' expanded'}`} />
         <span className="conn-group-name">{t('localTerminals')}</span>
         <span className="conn-group-count">{visible.length}</span>
