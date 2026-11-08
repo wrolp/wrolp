@@ -29,3 +29,5 @@ if (process.env.RELEASE_SKIP_CLEAN === '1') {
   run(['scripts/clean.mjs', '--release'])
 }
 run([tauriCli, 'build'])
+// Keep only `target-release/release/` — see prune-release-target.mjs.
+run(['scripts/prune-release-target.mjs'])

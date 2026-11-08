@@ -268,6 +268,8 @@ yarn tauri build     # 增量开发构建，产物在 src-tauri/target/
 
 `build:clean` 构建到 `src-tauri/target-release/`（产物在 `src-tauri/target-release/release/bundle/`），因此清理时不会和 rust-analyzer 或正在运行的开发构建抢 `src-tauri/target/` 里的文件——Windows 上那个占用会让 `cargo clean` 直接报 `os error 5`。打包目标仅 `["msi"]`。
 
+构建成功后只保留 `target-release/release/`：`debug/`、`tmp/` 与 cargo 的 `.fingerprint` 缓存会被删除以回收磁盘，因此下次发布会重新编译整棵依赖树。需要在调试打包步骤时保留它们，可设 `RELEASE_KEEP_TARGET=1`。
+
 ### 清理重建
 
 ```bash
@@ -285,7 +287,7 @@ gh auth login -h github.com
 yarn run publish
 ```
 
-`publish` 会先清空自己的构建目录（`src-tauri/target-release`）再构建，因此发布产物不会继承上一次构建留下的对象——图标尤其如此，而且这个清理不会被开发目录里的文件占用挡住。若只是在调试打包步骤本身，可设 `RELEASE_SKIP_CLEAN=1` 复用已有产物。
+`publish` 会先清空自己的构建目录（`src-tauri/target-release`）再构建，因此发布产物不会继承上一次构建留下的对象——图标尤其如此，而且这个清理不会被开发目录里的文件占用挡住。构建成功后会删除该目录下除 `release/` 之外的全部内容以回收磁盘。若只是在调试打包步骤本身，可设 `RELEASE_SKIP_CLEAN=1` 复用已有产物。
 
 ## 测试
 

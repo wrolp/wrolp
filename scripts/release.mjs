@@ -86,6 +86,9 @@ if (process.env.RELEASE_SKIP_CLEAN === '1') {
 }
 
 run(process.execPath, [tauriCli, 'build'])
+// 1b. keep only `target-release/release/`: the bundle lives there, everything
+// else (`debug/`, `tmp/`, `.fingerprint`) is dead weight between releases.
+run(process.execPath, ['scripts/prune-release-target.mjs'])
 // 2. strip _en-US suffix
 run(process.execPath, ['scripts/strip-locale-suffix.mjs'])
 // 3. generate latest.json

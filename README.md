@@ -268,6 +268,8 @@ yarn tauri build     # incremental dev build into src-tauri/target/
 
 `build:clean` builds into `src-tauri/target-release/` (bundle at `src-tauri/target-release/release/bundle/`), so cleaning never fights rust-analyzer or a running dev build over files in `src-tauri/target/` — on Windows that lock makes `cargo clean` fail with `os error 5`. Bundle target is `["msi"]` only.
 
+After a successful build only `target-release/release/` is kept: `debug/`, `tmp/` and cargo's `.fingerprint` cache are deleted to reclaim disk, so the next release compiles the dependency tree again. Set `RELEASE_KEEP_TARGET=1` to keep them (useful while iterating on the packaging steps).
+
 ### Clean Rebuild
 
 ```bash
@@ -285,7 +287,7 @@ gh auth login -h github.com
 yarn run publish
 ```
 
-`publish` wipes its own target dir (`src-tauri/target-release`) and only then builds, so a release bundle never inherits objects — icons above all — from an earlier build, and the clean cannot be blocked by locks in the dev target. Set `RELEASE_SKIP_CLEAN=1` to reuse the existing output while iterating on the packaging steps.
+`publish` wipes its own target dir (`src-tauri/target-release`) and only then builds, so a release bundle never inherits objects — icons above all — from an earlier build, and the clean cannot be blocked by locks in the dev target. Once the build succeeds, everything under that dir except `release/` is pruned to reclaim disk. Set `RELEASE_SKIP_CLEAN=1` to reuse the existing output while iterating on the packaging steps.
 
 ## Testing
 
