@@ -1,7 +1,7 @@
 //! argv builders for history reads.
 
 /// The largest page the panel offers.
-pub const MAX_LOG_LIMIT: usize = 200;
+pub const MAX_LOG_LIMIT: usize = 1000;
 
 /// `git log` with NUL-separated fields and RS-separated records.
 pub fn log_args(limit: usize, skip: usize) -> Vec<String> {
@@ -10,9 +10,7 @@ pub fn log_args(limit: usize, skip: usize) -> Vec<String> {
     "log".to_string(),
     "--no-color".to_string(),
     "--no-show-signature".to_string(),
-    format!(
-      "--format=%H%x00%h%x00%an%x00%ae%x00%at%x00%P%x00%D%x00%s%x1e"
-    ),
+    format!("--format=%H%x00%h%x00%an%x00%ae%x00%at%x00%P%x00%D%x00%s%x1e"),
     format!("-n{n}"),
     format!("--skip={skip}"),
   ]

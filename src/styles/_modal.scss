@@ -170,6 +170,31 @@
   }
 }
 
+// Every dialog's close affordance: one icon-sized hit target with a hover
+// surface, whether it is a button (Git views) or a clickable span (K8s).
+.modal-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: $text-muted;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: $bg-hover;
+    color: $text-primary;
+  }
+}
+
 // Dialogs moved by their header (components/DraggableModal.tsx). The cursor is the
 // only affordance that says "grab here", so it goes on the handle and not on the box,
 // and `user-select` keeps the title out of the clipboard mid-drag — same as a
@@ -177,6 +202,53 @@
 .modal.is-draggable > .modal-header {
   cursor: move;
   user-select: none;
+}
+
+// Resizable dialogs (Git diff / blame / merge). The body scrolls; the grips sit
+// above it, and the corner draws a small mark so the affordance is discoverable.
+.modal.is-resizable {
+  position: relative;
+  overflow: hidden;
+}
+
+.modal-resize-handle {
+  position: absolute;
+  z-index: 3;
+
+  &.e {
+    top: 0;
+    right: 0;
+    bottom: 12px;
+    width: 6px;
+    cursor: ew-resize;
+  }
+
+  &.s {
+    left: 0;
+    right: 12px;
+    bottom: 0;
+    height: 6px;
+    cursor: ns-resize;
+  }
+
+  &.se {
+    right: 0;
+    bottom: 0;
+    width: 14px;
+    height: 14px;
+    cursor: nwse-resize;
+
+    &::after {
+      content: '';
+      position: absolute;
+      right: 3px;
+      bottom: 3px;
+      width: 6px;
+      height: 6px;
+      border-right: 1px solid $text-dim;
+      border-bottom: 1px solid $text-dim;
+    }
+  }
 }
 
 // Multi-line paste confirmation (B20 / PasteConfirmDialog)

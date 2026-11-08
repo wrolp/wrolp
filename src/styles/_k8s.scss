@@ -224,16 +224,6 @@ $ns-label-colors: (
   flex: none;
 }
 
-.k8s-modal-close {
-  display: flex;
-  color: $text-muted;
-  cursor: pointer;
-
-  &:hover {
-    color: $text-primary;
-  }
-}
-
 .k8s-log-toolbar {
   display: flex;
   align-items: flex-end;

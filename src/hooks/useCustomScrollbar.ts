@@ -8,7 +8,7 @@ import { useRef, useState, useCallback, useEffect } from 'react'
  * thumb on top.
  *
  * Usage:
- *   const { listRef, thumbHeight, thumbTop, showThumb,
+ *   const { listRef, thumbHeight, thumbTop, showThumb, updateThumb,
  *           onScroll, onThumbMouseDown, onMouseEnter, onMouseLeave } = useCustomScrollbar()
  */
 export function useCustomScrollbar() {
@@ -87,6 +87,8 @@ export function useCustomScrollbar() {
     thumbHeight,
     thumbTop,
     showThumb,
+    /** Recompute after content height changes without a scroll event. */
+    updateThumb,
     onScroll,
     onThumbMouseDown,
     onMouseEnter,

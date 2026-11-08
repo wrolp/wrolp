@@ -4,6 +4,7 @@ import { useI18n } from '../i18n'
 import { isDismissKey } from '../lib/keybindings'
 import type { GitConflictStages, GitHostRef } from '../types'
 import { DraggableModal } from './DraggableModal'
+import { Icon } from './Icon'
 
 interface GitMergeViewProps {
   host: GitHostRef
@@ -80,11 +81,11 @@ export function GitMergeView({ host, root, path, onResolve, onClose }: GitMergeV
   }, [onClose])
 
   return (
-    <DraggableModal className="git-diff-modal git-merge-modal">
+    <DraggableModal className="git-diff-modal git-merge-modal" resizable>
       <div className="modal-header">
         <h3 title={path}>{path}</h3>
-        <button className="k8s-modal-close" onClick={onClose} title={t('gitClose')}>
-          ×
+        <button className="modal-close" onClick={onClose} title={t('gitClose')}>
+          <Icon name="x" size={14} />
         </button>
       </div>
       <div className="modal-body git-merge-body">
@@ -119,7 +120,7 @@ export function GitMergeView({ host, root, path, onResolve, onClose }: GitMergeV
         <button type="button" className="git-link-btn" onClick={() => onResolve('theirs')}>
           {t('gitResolveTheirs')}
         </button>
-        <button type="button" className="btn-primary" onClick={() => onResolve('resolved')}>
+        <button type="button" className="btn pri" onClick={() => onResolve('resolved')}>
           {t('gitMarkResolved')}
         </button>
       </div>

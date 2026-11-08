@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
-import { useGit } from '../hooks/useGit'
+import { useGit, HISTORY_PAGE_SIZES } from '../hooks/useGit'
+import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 import { gitCommitFiles } from '../commands'
 import {
   forgetGitRepo,
@@ -12,6 +13,7 @@ import {
 } from '../lib/gitHost'
 import { groupGitStatus, gitEntryKey, gitEntryLetter } from '../lib/gitStatus'
 import { computeLanes, graphLaneCount, GRAPH_PALETTE_SIZE } from '../lib/gitGraph'
+import { gitRefColor } from '../lib/gitRefColor'
 import type { GitCommitFile, GitHostRef, GitStatusEntry } from '../types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitBlameView } from './GitBlameView'
@@ -104,6 +106,19 @@ function uniquePaths(entries: GitStatusEntry[]): string[] {
 export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const { t } = useI18n()
   const git = useGit(host, suggestedPath)
+  // The repository view scrolls with an overlay thumb: the native scrollbar is
+  // invisible in this shell, and this matches the other rail lists.
+  const {
+    listRef: panelScrollRef,
+    thumbHeight: panelThumbHeight,
+    thumbTop: panelThumbTop,
+    showThumb: panelShowThumb,
+    updateThumb: updatePanelThumb,
+    onScroll: onPanelScroll,
+    onThumbMouseDown: onPanelThumbMouseDown,
+    onMouseEnter: onPanelMouseEnter,
+    onMouseLeave: onPanelMouseLeave,
+  } = useCustomScrollbar()
   const [pathInput, setPathInput] = useState(suggestedPath ?? '')
   const [recent, setRecent] = useState(() => loadRecentGitRepos(gitHostKey(host)))
   const [branchesOpen, setBranchesOpen] = useState(false)
@@ -178,6 +193,24 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
     setPathInput(suggestedPath ?? '')
     setRecent(loadRecentGitRepos(gitHostKey(host)))
   }, [host, suggestedPath])
+
+  // The hook's own observer is installed while the picker is mounted (no
+  // scroller yet), so attach to the repository view when it appears and recompute
+  // when content height changes without a scroll (Load more/all, expanding a
+  // commit, opening the branch list).
+  useEffect(() => {
+    const el = panelScrollRef.current
+    if (!el) return
+    updatePanelThumb()
+    const ro = new ResizeObserver(updatePanelThumb)
+    ro.observe(el)
+    const mo = new MutationObserver(updatePanelThumb)
+    mo.observe(el, { childList: true, subtree: true })
+    return () => {
+      ro.disconnect()
+      mo.disconnect()
+    }
+  }, [panelScrollRef, updatePanelThumb, git.root])
 
   // The hook remembers repositories on open; re-read so the list matches.
   useEffect(() => {
@@ -349,7 +382,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                   placeholder={t('gitBinPlaceholder')}
                   onChange={(e) => setBinInput(e.target.value)}
                 />
-                <button type="submit" className="btn-primary" disabled={git.probing}>
+                <button type="submit" className="btn pri" disabled={git.probing}>
                   {t('gitBinSave')}
                 </button>
               </form>
@@ -394,7 +427,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               placeholder={t('gitPathPlaceholder')}
               onChange={(e) => setPathInput(e.target.value)}
             />
-            <button type="submit" className="btn-primary" disabled={busy || !pathInput.trim()}>
+            <button type="submit" className="btn pri" disabled={busy || !pathInput.trim()}>
               {t('gitOpenRepo')}
             </button>
           </form>
@@ -463,7 +496,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               />
               <button
                 type="submit"
-                className="btn-primary"
+                className="btn pri"
                 disabled={busy || !cloneUrl.trim() || !cloneDest.trim()}
               >
                 {t('gitClone')}
@@ -515,7 +548,22 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   }
 
   return (
-    <div className="git-panel">
+    <div
+      className="git-panel has-overlay-scroll"
+      ref={panelScrollRef}
+      onScroll={onPanelScroll}
+      onMouseEnter={onPanelMouseEnter}
+      onMouseLeave={onPanelMouseLeave}
+    >
+      {panelThumbHeight > 0 && (
+        <div className={`overlay-scrollbar${panelShowThumb ? ' show' : ''}`}>
+          <div
+            className="sidebar-scrollbar-thumb"
+            style={{ height: panelThumbHeight, top: panelThumbTop }}
+            onMouseDown={onPanelThumbMouseDown}
+          />
+        </div>
+      )}
       <div className="git-repo-bar">
         <div className="git-repo-root" title={git.root ?? undefined}>
           <Icon name="gitBranch" size={12} />
@@ -558,7 +606,13 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               onClick={() => setBranchesOpen((v) => !v)}
               title={t('gitBranchTooltip')}
             >
-              <Icon name="gitBranch" size={12} />
+              <Icon
+                name="gitBranch"
+                size={12}
+                style={{
+                  color: git.status?.branch ? gitRefColor(git.status.branch) : undefined,
+                }}
+              />
               <span>
                 {git.status?.detached
                   ? t('gitDetached')
@@ -642,6 +696,10 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                         void git.switchBranch(b)
                       }}
                     >
+                      <span
+                        className="git-branch-dot"
+                        style={{ background: gitRefColor(b.name) }}
+                      />
                       <span className="git-branch-name">{b.name}</span>
                       {b.upstream && <span className="git-branch-upstream">{b.upstream}</span>}
                     </button>
@@ -672,6 +730,10 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                             void git.switchBranch(b)
                           }}
                         >
+                          <span
+                            className="git-branch-dot"
+                            style={{ background: gitRefColor(b.name) }}
+                          />
                           <span className="git-branch-name">{b.name}</span>
                         </button>
                       </div>
@@ -875,7 +937,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               </label>
               <button
                 type="button"
-                className="btn-primary"
+                className="btn pri"
                 disabled={busy || groups.staged.length === 0 || !message.trim()}
                 onClick={() => {
                   void git.commit(message, amend).then((ok) => {
@@ -935,17 +997,19 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                       type="button"
                       className="git-mini-btn"
                       title={t('gitStashPopHint')}
+                      aria-label={t('gitStashPopHint')}
                       onClick={() => void git.stashAction(s.index, 'pop')}
                     >
-                      {t('gitStashPop')}
+                      <Icon name="undo" size={11} />
                     </button>
                     <button
                       type="button"
                       className="git-mini-btn"
                       title={t('gitStashApplyHint')}
+                      aria-label={t('gitStashApplyHint')}
                       onClick={() => void git.stashAction(s.index, 'apply')}
                     >
-                      {t('gitStashApply')}
+                      <Icon name="download" size={11} />
                     </button>
                     <button
                       type="button"
@@ -963,7 +1027,24 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
 
           <section className="git-section">
             <div className="git-section-head">
-              <span>{t('gitHistory')}</span>
+              <span>
+                {t('gitHistory')}{' '}
+                <span className="git-count git-history-count">{git.commits.length}</span>
+              </span>
+              <select
+                className="git-history-page"
+                value={git.historyPageSize}
+                onChange={(e) => git.setHistoryPageSize(Number(e.target.value))}
+                disabled={git.historyAction !== null || git.loading}
+                title={t('gitHistoryPageSize')}
+                aria-label={t('gitHistoryPageSize')}
+              >
+                {HISTORY_PAGE_SIZES.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
             </div>
             {git.commits.map((c, i) => {
               const row = laneRows[i]
@@ -1058,7 +1139,11 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                         <span>{c.authorName}</span>
                         <span>{formatWhen(c.timestamp)}</span>
                         {c.refs.map((ref) => (
-                          <span className="git-ref-chip" key={ref}>
+                          <span
+                            className="git-ref-chip"
+                            key={ref}
+                            style={{ color: gitRefColor(ref) }}
+                          >
                             {ref}
                           </span>
                         ))}
@@ -1101,9 +1186,24 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
             })}
             {historyError && <div className="git-error">{describeGitError(historyError, t)}</div>}
             {git.hasMoreLog && (
-              <button type="button" className="git-link-btn" onClick={() => void git.loadMoreLog()}>
-                {t('gitLoadMore')}
-              </button>
+              <div className="git-history-more">
+                <button
+                  type="button"
+                  className="git-link-btn"
+                  disabled={git.historyAction !== null}
+                  onClick={() => void git.loadMoreLog()}
+                >
+                  {git.historyAction === 'more' ? t('loading') : t('gitLoadMore')}
+                </button>
+                <button
+                  type="button"
+                  className="git-link-btn"
+                  disabled={git.historyAction !== null}
+                  onClick={() => void git.loadAllLog()}
+                >
+                  {git.historyAction === 'all' ? t('loading') : t('gitLoadAll')}
+                </button>
+              </div>
             )}
           </section>
         </>

@@ -74,10 +74,12 @@ test('a conflicted row opens the three-way view and resolves from it', async ({ 
   ).toMatchObject({ root: REPO, path: 'src/main.ts' })
 
   await modal.getByRole('button', { name: 'Take theirs' }).click()
-  await expect.poll(async () => (await resolveCalls(page)).at(-1)?.args).toMatchObject({
-    path: 'src/main.ts',
-    resolution: 'theirs',
-  })
+  await expect
+    .poll(async () => (await resolveCalls(page)).at(-1)?.args)
+    .toMatchObject({
+      path: 'src/main.ts',
+      resolution: 'theirs',
+    })
   await expect(modal).toHaveCount(0)
 })
 
@@ -85,24 +87,33 @@ test('a conflicted row resolves ours / theirs / mark resolved', async ({ page })
   await boot(page)
 
   const row = page.locator('.git-row', { hasText: 'src/main.ts' })
+  await row.hover()
   await row.getByTitle('Take ours').click()
-  await expect.poll(async () => (await resolveCalls(page)).at(-1)?.args).toMatchObject({
-    root: REPO,
-    path: 'src/main.ts',
-    resolution: 'ours',
-  })
+  await expect
+    .poll(async () => (await resolveCalls(page)).at(-1)?.args)
+    .toMatchObject({
+      root: REPO,
+      path: 'src/main.ts',
+      resolution: 'ours',
+    })
 
+  await row.hover()
   await row.getByTitle('Take theirs').click()
-  await expect.poll(async () => (await resolveCalls(page)).at(-1)?.args).toMatchObject({
-    path: 'src/main.ts',
-    resolution: 'theirs',
-  })
+  await expect
+    .poll(async () => (await resolveCalls(page)).at(-1)?.args)
+    .toMatchObject({
+      path: 'src/main.ts',
+      resolution: 'theirs',
+    })
 
+  await row.hover()
   await row.getByTitle('Mark resolved').click()
-  await expect.poll(async () => (await resolveCalls(page)).at(-1)?.args).toMatchObject({
-    path: 'src/main.ts',
-    resolution: 'resolved',
-  })
+  await expect
+    .poll(async () => (await resolveCalls(page)).at(-1)?.args)
+    .toMatchObject({
+      path: 'src/main.ts',
+      resolution: 'resolved',
+    })
 
   // A conflicted row never offers discard or stage — the resolution buttons own it.
   expect(await row.locator('.git-mini-btn.danger').count()).toBe(0)

@@ -4,6 +4,8 @@ import { useI18n } from '../i18n'
 import { isDismissKey } from '../lib/keybindings'
 import type { GitBlameLine, GitHostRef } from '../types'
 import { DraggableModal } from './DraggableModal'
+import { Icon } from './Icon'
+import { OverlayScroll } from './OverlayScroll'
 
 interface GitBlameViewProps {
   host: GitHostRef
@@ -60,14 +62,14 @@ export function GitBlameView({ host, root, path, oid, onClose }: GitBlameViewPro
   }, [onClose])
 
   return (
-    <DraggableModal className="git-diff-modal git-blame-modal">
+    <DraggableModal className="git-diff-modal git-blame-modal" resizable>
       <div className="modal-header">
         <h3 title={path}>{path}</h3>
-        <button className="k8s-modal-close" onClick={onClose} title={t('gitClose')}>
-          ×
+        <button className="modal-close" onClick={onClose} title={t('gitClose')}>
+          <Icon name="x" size={14} />
         </button>
       </div>
-      <div className="modal-body git-diff-body">
+      <OverlayScroll className="modal-body git-diff-body">
         {rows === null && !error && <div className="git-diff-note">{t('gitLoading')}</div>}
         {error && <div className="git-diff-error">{error}</div>}
         {rows !== null && rows.length === 0 && (
@@ -90,7 +92,7 @@ export function GitBlameView({ host, root, path, oid, onClose }: GitBlameViewPro
             ))}
           </div>
         )}
-      </div>
+      </OverlayScroll>
     </DraggableModal>
   )
 }

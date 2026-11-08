@@ -4,6 +4,8 @@ import { useI18n } from '../i18n'
 import { isDismissKey } from '../lib/keybindings'
 import type { GitDiff, GitHostRef } from '../types'
 import { DraggableModal } from './DraggableModal'
+import { Icon } from './Icon'
+import { OverlayScroll } from './OverlayScroll'
 
 interface GitDiffViewProps {
   host: GitHostRef
@@ -68,14 +70,14 @@ export function GitDiffView({ host, root, path, scope, oid, title, onClose }: Gi
   return (
     // No backdrop dismissal: dialogs in this app close from their own button or
     // Esc, so a stray click cannot throw away what the user is reading.
-    <DraggableModal className="git-diff-modal">
+    <DraggableModal className="git-diff-modal" resizable>
       <div className="modal-header">
         <h3 title={path ?? undefined}>{title}</h3>
-        <button className="k8s-modal-close" onClick={onClose} title={t('gitClose')}>
-          ×
+        <button className="modal-close" onClick={onClose} title={t('gitClose')}>
+          <Icon name="x" size={14} />
         </button>
       </div>
-      <div className="modal-body git-diff-body">
+      <OverlayScroll className="modal-body git-diff-body">
         {loading && <div className="git-diff-note">{t('gitLoading')}</div>}
         {!loading && error && <div className="git-diff-error">{error}</div>}
         {!loading && !error && diff?.binary && (
@@ -94,7 +96,7 @@ export function GitDiffView({ host, root, path, scope, oid, title, onClose }: Gi
           </pre>
         )}
         {diff?.truncated && <div className="git-diff-note">{t('gitDiffTruncated')}</div>}
-      </div>
+      </OverlayScroll>
     </DraggableModal>
   )
 }

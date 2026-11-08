@@ -1580,7 +1580,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         <DraggableModal className="k8s-modal" onClose={() => setLogs(null)}>
           <div className="modal-header">
             <h3>{t('k8sLogsTitle', { name: logs.row.name })}</h3>
-            <span className="k8s-modal-close" onClick={() => setLogs(null)}>
+            <span className="modal-close" onClick={() => setLogs(null)}>
               <Icon name="x" size={14} />
             </span>
           </div>
@@ -1656,7 +1656,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         <DraggableModal className="k8s-modal" onClose={() => setYaml(null)}>
           <div className="modal-header">
             <h3>{t('k8sYamlTitle', { name: yaml.row.name })}</h3>
-            <span className="k8s-modal-close" onClick={() => setYaml(null)}>
+            <span className="modal-close" onClick={() => setYaml(null)}>
               <Icon name="x" size={14} />
             </span>
           </div>
@@ -1672,7 +1672,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         <DraggableModal className="k8s-modal" onClose={() => setApplyOpen(false)}>
           <div className="modal-header">
             <h3>{t('k8sApplyTitle')}</h3>
-            <span className="k8s-modal-close" onClick={() => setApplyOpen(false)}>
+            <span className="modal-close" onClick={() => setApplyOpen(false)}>
               <Icon name="x" size={14} />
             </span>
           </div>
@@ -1802,7 +1802,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         <DraggableModal className="k8s-modal" onClose={() => setHelmText(null)}>
           <div className="modal-header">
             <h3>{helmText.title}</h3>
-            <span className="k8s-modal-close" onClick={() => setHelmText(null)}>
+            <span className="modal-close" onClick={() => setHelmText(null)}>
               <Icon name="x" size={14} />
             </span>
           </div>
@@ -1818,7 +1818,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         <DraggableModal className="k8s-modal" onClose={() => setHistory(null)}>
           <div className="modal-header">
             <h3>{t('k8sHelmHistoryTitle', { name: history.release })}</h3>
-            <span className="k8s-modal-close" onClick={() => setHistory(null)}>
+            <span className="modal-close" onClick={() => setHistory(null)}>
               <Icon name="x" size={14} />
             </span>
           </div>
@@ -1862,7 +1862,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         <DraggableModal className="k8s-modal" onClose={() => setInstallOpen(false)}>
           <div className="modal-header">
             <h3>{t('k8sHelmInstallTitle')}</h3>
-            <span className="k8s-modal-close" onClick={() => setInstallOpen(false)}>
+            <span className="modal-close" onClick={() => setInstallOpen(false)}>
               <Icon name="x" size={14} />
             </span>
           </div>

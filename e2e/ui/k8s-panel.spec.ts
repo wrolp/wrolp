@@ -127,7 +127,7 @@ test('a dialog drags by its header and reopens centred', async ({ page }) => {
   expect(await at()).toEqual({ x: centred.x + 60, y: centred.y + 40 })
 
   // The close affordance in that same header still closes rather than drags.
-  await page.locator('.k8s-modal-close').click()
+  await page.locator('.modal-close').click()
   await expect(box).toHaveCount(0)
 
   await page.locator('.k8s-item').click()
@@ -176,7 +176,7 @@ test('logs stream into the viewer and delete is scoped to its namespace', async 
   // Follow off switches to the one-shot `kubectl logs --tail N` read.
   await page.locator('.k8s-log-toolbar input[type="checkbox"]').uncheck()
   await expect(page.locator('.k8s-log-output')).toContainText('one-shot web-0 log')
-  await page.locator('.k8s-modal-close').click()
+  await page.locator('.modal-close').click()
 
   await page.locator('.k8s-item').click({ button: 'right' })
   await menuItem(page, /^Delete$/).click()
@@ -475,7 +475,7 @@ test('helm releases list, read values, roll back and install', async ({ page }) 
   await rows.first().click()
   await expect(page.locator('.k8s-modal .k8s-yaml')).toContainText('replicas: 2')
   await expect(page.locator('.k8s-modal h3')).toHaveText('web — Values')
-  await page.locator('.k8s-modal-close').click()
+  await page.locator('.modal-close').click()
 
   await rows.first().click({ button: 'right' })
   await menuItem(page, /^History$/).click()

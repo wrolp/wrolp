@@ -58,6 +58,7 @@ test('the B action opens blame for that file', async ({ page }) => {
   await boot(page)
 
   const row = page.locator('.git-row', { hasText: 'src/main.ts' })
+  await row.hover()
   await row.getByTitle('Blame this file').click()
 
   const modal = page.locator('.git-blame-modal')

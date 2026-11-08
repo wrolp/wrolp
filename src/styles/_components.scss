@@ -482,3 +482,41 @@ html[data-status-shapes='off'] .dot {
     }
   }
 }
+
+// ---- Overlay scrollbar (Git rail panel, diff/blame dialogs) ----
+//
+// The global thumb is transparent, and the platform scrollbar here can be an
+// overlay that is invisible until the pointer is over its gutter. Lists and
+// dialogs that scroll opt in: the native bar is hidden and a 4px thumb fades in
+// when the container is hovered. The ruler is a zero-height sticky element so
+// the thumb's inline `top` stays relative to the scrollport at any offset.
+.has-overlay-scroll {
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.overlay-scrollbar {
+  position: sticky;
+  top: 0;
+  flex: none;
+  height: 0;
+  z-index: 2;
+  pointer-events: none;
+
+  .sidebar-scrollbar-thumb {
+    position: absolute;
+    right: 0;
+    width: 4px;
+    border-radius: 0;
+    background: transparent;
+    transition: background var(--d-2);
+    pointer-events: auto;
+  }
+
+  &.show .sidebar-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+  }
+}

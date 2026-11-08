@@ -13,7 +13,32 @@
   overflow-y: auto;
   background: $bg-primary;
   font-size: var(--fs-sm);
+  // The global thumb is transparent, so rail lists opt in explicitly. 4px like
+  // the session / command-set lists, not the 5px log viewers.
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    &:hover {
+      background: var(--scrollbar-thumb-hover);
+    }
+  }
+  // Branch/tag labels are coloured by a hash of their name so one branch keeps
+  // one hue across refreshes. Keep the count in sync with GIT_REF_COLOR_COUNT in
+  // `src/lib/gitRefColor.ts`; these tokens are the AA text-on-both-themes set
+  // the K8s namespace labels already use.
+  --git-ref-color-0: var(--accent-soft-40);
+  --git-ref-color-1: var(--info-soft-40);
+  --git-ref-color-2: var(--cyan-soft-40);
+  --git-ref-color-3: var(--success-soft-40);
+  --git-ref-color-4: var(--warning-soft-40);
+  --git-ref-color-5: var(--danger-soft-40);
+  --git-ref-color-6: var(--purple-soft-40);
 }
+
+// The repository view uses the shared overlay thumb (`.has-overlay-scroll` in
+// `_components.scss`); picker/empty views keep the native bar above.
 
 .git-empty {
   flex: 1;
@@ -336,6 +361,14 @@
   white-space: nowrap;
 }
 
+// A stable hue per branch, keyed by name (see `src/lib/gitRefColor.ts`).
+.git-branch-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
 .git-branch-upstream {
   flex: none;
   color: $text-dim;
@@ -390,6 +423,7 @@
 }
 
 .git-row {
+  position: relative;
   display: flex;
   align-items: center;
   border-radius: var(--r-1);
@@ -471,17 +505,29 @@
   font-size: var(--fs-xs);
 }
 
+// Actions float over the row's right edge instead of reserving width: at rest
+// the path gets the whole row, so a long path only truncates at the real edge.
+// The gradient hides the text underneath once the buttons appear on hover.
 .git-row-actions {
-  flex: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
+  align-items: center;
   gap: 1px;
+  padding-left: 14px;
+  border-radius: 0 var(--r-1) var(--r-1) 0;
+  background: linear-gradient(90deg, transparent, $bg-hover 14px);
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.12s;
 }
 
 .git-row:hover .git-row-actions,
-.git-recent-row .git-row-actions {
+.git-row:focus-within .git-row-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .git-mini-btn {
@@ -611,6 +657,30 @@
 
 .git-history-item {
   width: 100%;
+}
+
+.git-history-page {
+  padding: 0 2px;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  background: $bg-input;
+  color: $text-muted;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  cursor: pointer;
+
+  &:focus {
+    outline: none;
+    border-color: $border-focus;
+  }
+}
+
+.git-history-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 4px;
 }
 
 .git-lane {
@@ -770,7 +840,7 @@
 
 .git-ref-chip {
   padding: 0 4px;
-  border: 1px solid rgba($accent, 0.35);
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
   border-radius: 8px;
   color: $accent;
   font-size: 10px;

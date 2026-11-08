@@ -44,7 +44,9 @@ test('an existing stash is listed and pops by index', async ({ page }) => {
   await expect(section.locator('.git-stash-index')).toHaveText('stash@{0}')
   await expect(section).toContainText('WIP on main: tweak client')
 
-  await section.locator('button[title="Apply the entry and drop it"]').click()
+  const row = section.locator('.git-row').first()
+  await row.hover()
+  await row.locator('button[title="Apply the entry and drop it"]').click()
   await expect
     .poll(async () =>
       (await invokedCalls(page)).filter((c) => c.cmd === 'git_stash_entry').map((c) => c.args),

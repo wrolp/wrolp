@@ -48,7 +48,23 @@ import type {
   GitStatus,
 } from '../types'
 
-const HISTORY_PAGE = 20
+/** Page sizes the history picker offers; the backend clamps at 1000. */
+export const HISTORY_PAGE_SIZES = [100, 200, 500, 1000] as const
+export type HistoryPageSize = (typeof HISTORY_PAGE_SIZES)[number]
+const DEFAULT_HISTORY_PAGE: HistoryPageSize = 100
+const HISTORY_PAGE_KEY = 'wrolp.git.historyPage'
+/** "Load all" already loops, so each request asks for the backend's maximum. */
+const HISTORY_LOAD_ALL_PAGE = 1000
+
+function readHistoryPageSize(): HistoryPageSize {
+  try {
+    const n = Number(localStorage.getItem(HISTORY_PAGE_KEY))
+    if ((HISTORY_PAGE_SIZES as readonly number[]).includes(n)) return n as HistoryPageSize
+  } catch {
+    // Unavailable storage falls through to the default.
+  }
+  return DEFAULT_HISTORY_PAGE
+}
 
 export type GitNetworkKind = 'fetch' | 'pull' | 'push' | 'clone'
 
@@ -80,6 +96,9 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
   const [stashes, setStashes] = useState<GitStash[]>([])
   const [commits, setCommits] = useState<GitCommit[]>([])
   const [hasMoreLog, setHasMoreLog] = useState(false)
+  const [historyPageSize, setHistoryPageSizeState] = useState<HistoryPageSize>(readHistoryPageSize)
+  /** Which history expansion is running, if any (both buttons disable). */
+  const [historyAction, setHistoryAction] = useState<'more' | 'all' | 'page' | null>(null)
   const [loading, setLoading] = useState(false)
   /** Repository discovery failures (not a repo, bare, no path). */
   const [error, setError] = useState<string | null>(null)
@@ -96,9 +115,12 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
   const opRef = useRef<string | null>(null)
   const autoTriedRef = useRef<string | null>(null)
   const probeSeqRef = useRef(0)
+  /** Cancels an in-flight load-more/load-all once the log is reloaded or reset. */
+  const historySeqRef = useRef(0)
 
   // Host changes wipe every host-specific row before the new probe lands.
   useEffect(() => {
+    historySeqRef.current++
     setProbe(null)
     setRepo(null)
     setStatus(null)
@@ -108,6 +130,8 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     setStashes([])
     setCommits([])
     setHasMoreLog(false)
+    setHistoryAction(null)
+    setLoading(false)
     setError(null)
     setActionError(null)
     setScanResults(null)
@@ -176,16 +200,19 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
 
   const loadAll = useCallback(
     async (root: string) => {
+      const seq = ++historySeqRef.current
+      setHistoryAction(null)
       setLoading(true)
       try {
         const [st, br, rm, lg, cf, sts] = await Promise.all([
           gitStatus(host, root),
           gitBranches(host, root),
           gitRemotes(host, root),
-          gitLog(host, root, HISTORY_PAGE, 0),
+          gitLog(host, root, historyPageSize, 0),
           gitConflicts(host, root),
           gitStashList(host, root),
         ])
+        if (historySeqRef.current !== seq) return
         setStatus(st)
         setBranches(br)
         setRemotes(rm)
@@ -194,12 +221,12 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
         setConflicts(cf)
         setStashes(sts)
       } catch (e: unknown) {
-        setActionError(String(e))
+        if (historySeqRef.current === seq) setActionError(String(e))
       } finally {
-        setLoading(false)
+        if (historySeqRef.current === seq) setLoading(false)
       }
     },
-    [host],
+    [host, historyPageSize],
   )
 
   /** Open a folder as a repository. `quiet` is used by the auto-try from the cwd. */
@@ -270,6 +297,9 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
    * stale status cannot be rendered against the next repository.
    */
   const closeRepo = useCallback(() => {
+    historySeqRef.current++
+    setHistoryAction(null)
+    setLoading(false)
     setRepo(null)
     setStatus(null)
     setBranches([])
@@ -550,16 +580,88 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     [host, hostKey, loadAll, networkKind],
   )
 
+  /** Persist the page size and reload the log at the new size from the top. */
+  const setHistoryPageSize = useCallback(
+    (size: number) => {
+      const next = (HISTORY_PAGE_SIZES as readonly number[]).includes(size)
+        ? (size as HistoryPageSize)
+        : DEFAULT_HISTORY_PAGE
+      if (next === historyPageSize) return
+      try {
+        localStorage.setItem(HISTORY_PAGE_KEY, String(next))
+      } catch {
+        // Preference only; the in-memory value still applies.
+      }
+      setHistoryPageSizeState(next)
+      if (!repo || repo.bare) return
+      const seq = ++historySeqRef.current
+      setHistoryAction('page')
+      setLoading(true)
+      setActionError(null)
+      gitLog(host, repo.root, next, 0)
+        .then((page) => {
+          if (historySeqRef.current !== seq) return
+          setCommits(page.commits)
+          setHasMoreLog(page.hasMore)
+        })
+        .catch((e: unknown) => {
+          if (historySeqRef.current === seq) setActionError(String(e))
+        })
+        .finally(() => {
+          if (historySeqRef.current !== seq) return
+          setHistoryAction(null)
+          setLoading(false)
+        })
+    },
+    [historyPageSize, host, repo],
+  )
+
   const loadMoreLog = useCallback(async () => {
-    if (!repo || repo.bare) return
+    if (!repo || repo.bare || historyAction || loading) return
+    const seq = ++historySeqRef.current
+    setHistoryAction('more')
+    setActionError(null)
     try {
-      const page = await gitLog(host, repo.root, HISTORY_PAGE, commits.length)
+      const page = await gitLog(host, repo.root, historyPageSize, commits.length)
+      if (historySeqRef.current !== seq) return
       setCommits((prev) => [...prev, ...page.commits])
       setHasMoreLog(page.hasMore)
     } catch (e: unknown) {
-      setActionError(String(e))
+      if (historySeqRef.current === seq) setActionError(String(e))
+    } finally {
+      if (historySeqRef.current === seq) setHistoryAction(null)
     }
-  }, [commits.length, host, repo])
+  }, [commits.length, historyAction, historyPageSize, host, repo])
+
+  /**
+   * Append every remaining page. Requests are sequential (so a slow host cannot
+   * reorder pages) and always use the backend maximum; rows appear as they land.
+   */
+  const loadAllLog = useCallback(async () => {
+    if (!repo || repo.bare || historyAction || loading) return
+    const seq = ++historySeqRef.current
+    setHistoryAction('all')
+    setActionError(null)
+    let skip = commits.length
+    try {
+      for (;;) {
+        const page = await gitLog(host, repo.root, HISTORY_LOAD_ALL_PAGE, skip)
+        if (historySeqRef.current !== seq) return
+        if (page.commits.length === 0) {
+          setHasMoreLog(false)
+          return
+        }
+        skip += page.commits.length
+        setCommits((prev) => [...prev, ...page.commits])
+        setHasMoreLog(page.hasMore)
+        if (!page.hasMore) return
+      }
+    } catch (e: unknown) {
+      if (historySeqRef.current === seq) setActionError(String(e))
+    } finally {
+      if (historySeqRef.current === seq) setHistoryAction(null)
+    }
+  }, [commits.length, historyAction, host, repo])
 
   /**
    * The remote a network verb talks to: the one the branch tracks (`origin` for
@@ -641,6 +743,9 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     defaultRemote,
     commits,
     hasMoreLog,
+    historyPageSize,
+    setHistoryPageSize,
+    historyAction,
     loading,
     error,
     actionError,
@@ -672,6 +777,7 @@ export function useGit(host: GitHostRef, suggestedPath: string | null) {
     stashAction,
     clone,
     loadMoreLog,
+    loadAllLog,
     runNetwork,
     cancelNetwork,
     dismissActionError,
