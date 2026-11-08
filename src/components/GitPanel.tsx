@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { useGit } from '../hooks/useGit'
@@ -11,7 +11,7 @@ import {
   loadRecentGitRepos,
 } from '../lib/gitHost'
 import { groupGitStatus, gitEntryKey, gitEntryLetter } from '../lib/gitStatus'
-import { computeLanes, graphLaneCount } from '../lib/gitGraph'
+import { computeLanes, graphLaneCount, GRAPH_PALETTE_SIZE } from '../lib/gitGraph'
 import type { GitCommitFile, GitHostRef, GitStatusEntry } from '../types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitBlameView } from './GitBlameView'
@@ -67,6 +67,22 @@ function formatWhen(ts: number): string {
   } catch {
     return new Date(ts * 1000).toLocaleDateString()
   }
+}
+
+// Lane geometry, mirrored in `_git.scss`: 12px pitch, 2px lines, 8px dots whose
+// centre sits 12px below the row's content top (level with the first text line).
+const LANE_W = 12
+const LANE_LINE_W = 2
+const LANE_DOT_SIZE = 8
+const LANE_DOT_CY = 12
+
+const laneCenter = (lane: number) => lane * LANE_W + LANE_W / 2
+const laneColor = (lane: number) => `var(--git-graph-${lane % GRAPH_PALETTE_SIZE})`
+
+/** Native tooltip only when the text is actually clipped. */
+function titleIfTruncated(e: MouseEvent<HTMLElement>) {
+  const el = e.currentTarget
+  el.title = el.scrollWidth > el.clientWidth ? (el.textContent ?? '') : ''
 }
 
 function uniquePaths(entries: GitStatusEntry[]): string[] {
@@ -959,27 +975,84 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                     className={`git-commit-row${expanded ? ' expanded' : ''}`}
                     onClick={() => toggleCommitFiles(c.oid)}
                   >
-                    <span
-                      className="git-lane"
-                      style={{
-                        width: laneCount * 12,
-                        ['--lane' as string]: row ? row.lane : 0,
-                      }}
-                    >
-                      {row &&
-                        Array.from({ length: row.laneCount }, (_, l) => (
+                    <span className="git-lane" style={{ width: laneCount * LANE_W }}>
+                      {row && (
+                        <>
+                          {row.passThrough.map((l) => (
+                            <span
+                              className="git-lane-line"
+                              key={`v${l}`}
+                              style={{
+                                left: laneCenter(l) - LANE_LINE_W / 2,
+                                background: laneColor(l),
+                              }}
+                            />
+                          ))}
+                          {row.incoming && (
+                            <span
+                              className="git-lane-line"
+                              style={{
+                                left: laneCenter(row.lane) - LANE_LINE_W / 2,
+                                bottom: `calc(100% - ${LANE_DOT_CY}px)`,
+                                background: laneColor(row.lane),
+                              }}
+                            />
+                          )}
+                          {row.outgoing && (
+                            <span
+                              className="git-lane-line"
+                              style={{
+                                left: laneCenter(row.lane) - LANE_LINE_W / 2,
+                                top: LANE_DOT_CY,
+                                background: laneColor(row.lane),
+                              }}
+                            />
+                          )}
+                          {row.parentLanes
+                            .filter((target) => target !== row.lane)
+                            .map((target) => {
+                              const fromX = laneCenter(row.lane)
+                              const toX = laneCenter(target)
+                              const left = Math.min(fromX, toX) - LANE_LINE_W / 2
+                              const width = Math.abs(toX - fromX) + LANE_LINE_W
+                              return (
+                                <svg
+                                  className="git-lane-curve"
+                                  key={`c${target}`}
+                                  style={{ left, top: LANE_DOT_CY, width }}
+                                  viewBox={`0 0 ${width} 100`}
+                                  preserveAspectRatio="none"
+                                  aria-hidden="true"
+                                >
+                                  <path
+                                    d={`M ${fromX - left} 0 C ${fromX - left} 45, ${
+                                      toX - left
+                                    } 55, ${toX - left} 100`}
+                                    stroke={laneColor(target)}
+                                  />
+                                </svg>
+                              )
+                            })}
                           <span
-                            className={`git-lane-line${l === row.lane ? ' own' : ''}`}
-                            key={l}
-                            style={{ ['--li' as string]: l }}
+                            className={`git-lane-dot${
+                              c.refs.some((r) => r === 'HEAD' || r.startsWith('HEAD -> '))
+                                ? ' head'
+                                : ''
+                            }`}
+                            style={{
+                              left: laneCenter(row.lane) - LANE_DOT_SIZE / 2,
+                              background: laneColor(row.lane),
+                            }}
                           />
-                        ))}
-                      <span className="git-lane-dot" />
+                        </>
+                      )}
                     </span>
                     <div className="git-commit-main">
                       <div className="git-commit-top">
                         <span className="git-commit-oid">{c.shortOid}</span>
-                        <span className="git-commit-subject">{c.subject}</span>
+                        <span className="git-commit-subject" onMouseEnter={titleIfTruncated}>
+                          {c.subject}
+                        </span>
                       </div>
                       <div className="git-commit-meta">
                         <span>{c.authorName}</span>

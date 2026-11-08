@@ -584,7 +584,9 @@
   align-items: flex-start;
   gap: 6px;
   width: 100%;
-  padding: 4px 4px;
+  // No vertical padding: the lane column must span the whole row so its lines
+  // meet the neighbouring rows instead of leaving dashed gaps.
+  padding: 0 4px;
   border: none;
   border-radius: var(--r-1);
   background: transparent;
@@ -604,6 +606,7 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  padding: 4px 0;
 }
 
 .git-history-item {
@@ -615,31 +618,68 @@
   flex: none;
   align-self: stretch;
   min-height: 26px;
+  // Lane colours, cycled by lane index so a lane keeps one colour while it is
+  // alive. Keep the count in sync with GRAPH_PALETTE_SIZE in
+  // `src/lib/gitGraph.ts`.
+  --git-graph-0: #{$info};
+  --git-graph-1: #{$success};
+  --git-graph-2: #{$warning};
+  --git-graph-3: #{$purple};
+  --git-graph-4: #{$danger};
+  --git-graph-5: #{$cyan};
 }
 
 .git-lane-line {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(var(--li, 0) * 12px + 5px);
   width: 2px;
-  background: $bg-hover;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+// Branch edges: anchored at the dot's centre (inline top/left/width) and
+// stretched to the row bottom. Only the vertical axis is scaled, and the
+// non-scaling stroke keeps the edge 2px wide.
+.git-lane-curve {
+  position: absolute;
+  height: calc(100% - 12px);
+  overflow: visible;
   pointer-events: none;
 
-  &.own {
-    background: $accent;
-    opacity: 0.45;
+  path {
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
   }
 }
 
 .git-lane-dot {
   position: absolute;
   top: 8px;
-  left: calc(var(--lane, 0) * 12px + 2px);
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: $accent;
+  // The ring cuts the lane line around the dot instead of letting both blend.
+  box-shadow: 0 0 0 2px $bg-primary;
+}
+
+.git-commit-row:hover .git-lane-dot {
+  box-shadow: 0 0 0 2px $bg-hover;
+}
+
+// HEAD keeps an outer ring, like the reference graph.
+.git-lane-dot.head {
+  box-shadow:
+    0 0 0 2px $bg-primary,
+    0 0 0 3px $text-primary;
+}
+
+.git-commit-row:hover .git-lane-dot.head {
+  box-shadow:
+    0 0 0 2px $bg-hover,
+    0 0 0 3px $text-primary;
 }
 
 .git-commit-files {

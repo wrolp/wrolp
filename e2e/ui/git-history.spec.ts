@@ -60,6 +60,7 @@ test('lane assignment: linear commits share lane 0, a merge opens a second lane'
   ])
   expect(linear.map((r) => r.lane)).toEqual([0, 0, 0])
   expect(graphLaneCount(linear)).toBe(1)
+  expect(linear.map((r) => r.incoming)).toEqual([false, true, true])
 
   const merge = computeLanes([
     { oid: 'c1', parents: ['c2', 'x'] },
@@ -67,6 +68,20 @@ test('lane assignment: linear commits share lane 0, a merge opens a second lane'
   ])
   expect(merge.map((r) => r.lane)).toEqual([0, 0])
   expect(merge[0].laneCount).toBe(2)
+  // The merge's second parent branches into lane 1, which keeps a straight
+  // line on the next row while the commit's own lane enters its dot.
+  expect(merge[0]).toMatchObject({
+    incoming: false,
+    outgoing: true,
+    passThrough: [],
+    parentLanes: [0, 1],
+  })
+  expect(merge[1]).toMatchObject({
+    incoming: true,
+    outgoing: false,
+    passThrough: [1],
+    parentLanes: [],
+  })
 
   // A commit whose lane is already free reuses it rather than opening a new one.
   const branchy = computeLanes([
@@ -75,6 +90,21 @@ test('lane assignment: linear commits share lane 0, a merge opens a second lane'
     { oid: 'c3', parents: [] },
   ])
   expect(branchy.map((r) => r.lane)).toEqual([0, 0, 0])
+
+  // A first parent already reserved by an earlier merge curves into that lane
+  // instead of being tracked twice (which used to leave a phantom lane).
+  const reconverged = computeLanes([
+    { oid: 'm', parents: ['n', 'p'] },
+    { oid: 'n', parents: ['p'] },
+    { oid: 'p', parents: [] },
+  ])
+  expect(reconverged.map((r) => r.lane)).toEqual([0, 0, 1])
+  expect(reconverged[1]).toMatchObject({
+    incoming: true,
+    outgoing: false,
+    parentLanes: [1],
+  })
+  expect(reconverged[2].incoming).toBe(true)
 })
 
 test('clicking a commit expands its file list and a file opens its diff', async ({ page }) => {
@@ -96,4 +126,32 @@ test('clicking a commit expands its file list and a file opens its diff', async 
   await page.locator('.git-diff-modal .k8s-modal-close').click()
   await first.locator('.git-commit-row').click()
   await expect(first.locator('.git-commit-file')).toHaveCount(0)
+})
+
+test('the graph column draws the merge curve, lane lines and the HEAD ring', async ({ page }) => {
+  await boot(page)
+
+  const rows = page.locator('.git-history-item')
+  const first = rows.first()
+  // A's second parent opens lane 1 with a curve from the dot.
+  await expect(first.locator('.git-lane-curve')).toHaveCount(1)
+  await expect(first.locator('.git-lane-dot.head')).toHaveCount(1)
+  // B: the incoming edge into lane 0 plus the still-open lane 1 passing through.
+  await expect(rows.nth(1).locator('.git-lane-line')).toHaveCount(2)
+})
+
+test('a clipped commit subject grows a tooltip on hover, a fitting one does not', async ({
+  page,
+}) => {
+  const longSubject = 'a very long commit subject '.repeat(11) + 'end'
+  await boot(page, { gitCommits: [{ ...COMMITS[0], subject: longSubject }, COMMITS[1]] })
+
+  const clipped = page.locator('.git-commit-subject').first()
+  await expect(clipped).not.toHaveAttribute('title', /.+/)
+  await clipped.hover()
+  await expect(clipped).toHaveAttribute('title', longSubject)
+
+  const fitting = page.locator('.git-commit-subject').nth(1)
+  await fitting.hover()
+  await expect(fitting).not.toHaveAttribute('title', /.+/)
 })
