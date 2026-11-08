@@ -366,12 +366,17 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
       .then((list) => {
         if (cancelled || scopeRef.current.context !== context) return
         const saved = scopeRef.current.namespace
-        // Keep a valid saved choice (including All namespaces); anything stale
-        // falls back to All namespaces rather than guessing a namespace from
-        // the kubeconfig — the user asked to see the whole cluster by default.
+        // Keep a valid saved choice (including All namespaces); a stale one falls
+        // back to All namespaces rather than guessing a namespace from the
+        // kubeconfig — the user asked to see the whole cluster by default. An
+        // empty list is a failed validation, not a default: leave the saved
+        // choice untouched so it can be restored once the host answers again.
         const preferred =
-          (saved === ALL_NAMESPACES || list.some((n) => n.name === saved) ? saved : null) ??
-          ALL_NAMESPACES
+          saved === ALL_NAMESPACES || list.some((n) => n.name === saved)
+            ? saved
+            : list.length > 0
+              ? ALL_NAMESPACES
+              : null
         setNamespaces(list)
         if (preferred && preferred !== saved) {
           onScopeChangeRef.current({ namespace: preferred })

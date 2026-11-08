@@ -113,9 +113,10 @@ async function expectResource(page: Page, since: number, args: Record<string, un
 
 async function chooseDev(page: Page) {
   await selectRailMode(page, 'k8s')
-  await expect(namespaceSelect(page)).toHaveValue('apps')
+  // The panel opens in All namespaces, and switching context resets to it.
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await contextSelect(page).selectOption('dev')
-  await expect(namespaceSelect(page)).toHaveValue('dev-home')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await namespaceSelect(page).selectOption('team-b')
   await kindSelect(page).selectOption('services')
   await expectResource(page, 0, { context: 'dev', namespace: 'team-b', kind: 'services' })
@@ -241,9 +242,10 @@ test('removed namespace and context fall back without querying the invalid saved
   })
   let since = (await invokedCalls(page)).length
   await selectRailMode(page, 'k8s')
-  await expect(namespaceSelect(page)).toHaveValue('dev-home')
-  await expectResource(page, since, { context: 'dev', namespace: 'dev-home', kind: 'services' })
-  expect((await listCalls(page, since)).every((c) => c.args.namespace === 'dev-home')).toBe(true)
+  // The stale namespace falls back to All namespaces; nothing may query team-b.
+  await expect(namespaceSelect(page)).toHaveValue('*')
+  await expectResource(page, since, { context: 'dev', namespace: null, kind: 'services' })
+  expect((await listCalls(page, since)).every((c) => c.args.namespace === null)).toBe(true)
 
   // Restore team-b, save it again, then remove dev. prod ALSO contains team-b:
   // changing context must clear it, not accidentally validate it against prod.
@@ -252,7 +254,7 @@ test('removed namespace and context fall back without querying the invalid saved
     ;(window as unknown as ScopeWindow).__K8S_SCOPE_TEST__.hosts.local = local
   }, LOCAL)
   await selectRailMode(page, 'k8s')
-  await expect(namespaceSelect(page)).toHaveValue('dev-home')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await namespaceSelect(page).selectOption('team-b')
   await selectRailMode(page, 'hosts')
   await page.evaluate(() => {
@@ -262,12 +264,12 @@ test('removed namespace and context fall back without querying the invalid saved
   since = (await invokedCalls(page)).length
   await selectRailMode(page, 'k8s')
   await expect(contextSelect(page)).toHaveValue('prod')
-  await expect(namespaceSelect(page)).toHaveValue('apps')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await expect(kindSelect(page)).toHaveValue('services')
-  await expectResource(page, since, { context: 'prod', namespace: 'apps' })
+  await expectResource(page, since, { context: 'prod', namespace: null })
   expect(
     (await listCalls(page, since)).every(
-      (c) => c.args.context === 'prod' && c.args.namespace === 'apps',
+      (c) => c.args.context === 'prod' && c.args.namespace === null,
     ),
   ).toBe(true)
   const namespaceReads = (await invokedCalls(page))
@@ -335,11 +337,11 @@ test('late context discovery merges choices made while loading instead of overwr
   ).toEqual([])
   await hold(page, null)
   await release(page)
-  await expect(namespaceSelect(page)).toHaveValue('apps')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await expect(modeTab(page, 'Helm')).toHaveAttribute('aria-selected', 'true')
   await modeTab(page, 'Resources').click()
   await expect(kindSelect(page)).toHaveValue('services')
-  await expectResource(page, since, { context: 'prod', namespace: 'apps', kind: 'services' })
+  await expectResource(page, since, { context: 'prod', namespace: null, kind: 'services' })
   // No dependence on changing scope/callback objects in the contexts effect.
   expect(
     (await invokedCalls(page)).slice(since).filter((c) => c.cmd === 'k8s_list_contexts'),
@@ -351,7 +353,7 @@ test('context changes clear namespace atomically and ignore superseded namespace
 }) => {
   await boot(page)
   await selectRailMode(page, 'k8s')
-  await expect(namespaceSelect(page)).toHaveValue('apps')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await namespaceSelect(page).selectOption('audit')
   await modeTab(page, 'Helm').click()
   await expect
@@ -366,23 +368,23 @@ test('context changes clear namespace atomically and ignore superseded namespace
   expect(await listCalls(page, since)).toEqual([])
   await hold(page, null)
   await release(page)
-  // audit exists in dev, too, but a deliberate context change starts with its default.
-  await expect(namespaceSelect(page)).toHaveValue('dev-home')
-  await expectResource(page, since, { context: 'dev', namespace: 'dev-home' })
-  expect((await listCalls(page, since)).every((c) => c.args.namespace === 'dev-home')).toBe(true)
+  // audit exists in dev, too, but a deliberate context change starts in All namespaces.
+  await expect(namespaceSelect(page)).toHaveValue('*')
+  await expectResource(page, since, { context: 'dev', namespace: null })
+  expect((await listCalls(page, since)).every((c) => c.args.namespace === null)).toBe(true)
 
   await hold(page, 'k8s_list_namespaces')
   await contextSelect(page).selectOption('prod')
   await expectPending(page, 'k8s_list_namespaces', 'prod')
   await hold(page, null)
   await contextSelect(page).selectOption('dev')
-  await expect(namespaceSelect(page)).toHaveValue('dev-home')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await settlePanel(page)
   const afterSwitch = (await invokedCalls(page)).length
   await release(page, 'prod')
   await settlePanel(page)
   await expect(contextSelect(page)).toHaveValue('dev')
-  await expect(namespaceSelect(page)).toHaveValue('dev-home')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   expect(await listCalls(page, afterSwitch)).toEqual([])
 })
 
@@ -399,14 +401,14 @@ test('local and SSH hosts retain independent scopes even with identical context 
   const sshTab = page.locator('.tab-item:not(.tab-home)').nth(1)
   await localTab.click()
   await selectRailMode(page, 'k8s')
-  await expect(namespaceSelect(page)).toHaveValue('apps')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await namespaceSelect(page).selectOption('audit')
   await kindSelect(page).selectOption('services')
   await expectResource(page, 0, { host: { kind: 'local' }, namespace: 'audit', kind: 'services' })
 
   await sshTab.click()
   await expect(contextSelect(page)).toHaveValue('prod')
-  await expect(namespaceSelect(page)).toHaveValue('ops')
+  await expect(namespaceSelect(page)).toHaveValue('*')
   await expect(kindSelect(page)).toHaveValue('pods')
   await namespaceSelect(page).selectOption('ops-extra')
   await kindSelect(page).selectOption('configmaps')
