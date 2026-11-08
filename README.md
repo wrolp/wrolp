@@ -42,16 +42,28 @@
 
 ## 📸 Screenshots
 
+### Home
+
+<p align="center">
+  <img src="docs/images/home.png" alt="Wrolp Terminal - Home tab with connections, recent hosts and tools" width="720" />
+</p>
+
+### SSH session
+
+<p align="center">
+  <img src="docs/images/ssh-terminal.png" alt="Wrolp Terminal - SSH session on Ubuntu 24.04" width="720" />
+</p>
+
+### SFTP file browser
+
+<p align="center">
+  <img src="docs/images/file-transfer.png" alt="Wrolp Terminal - SFTP file panel beside the terminal" width="720" />
+</p>
+
 ### New connection dialog
 
 <p align="center">
   <img src="docs/images/new-connection.png" alt="Wrolp Terminal - New connection dialog" width="720" />
-</p>
-
-### AI assistant
-
-<p align="center">
-  <img src="docs/images/use-ai.png" alt="Wrolp Terminal - AI assistant analyzing a connected server" width="720" />
 </p>
 
 ## Features

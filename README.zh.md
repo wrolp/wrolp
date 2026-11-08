@@ -42,16 +42,28 @@
 
 ## 📸 截图
 
+### 首页
+
+<p align="center">
+  <img src="docs/images/home.png" alt="Wrolp Terminal - 首页：连接列表、最近主机与工具入口" width="720" />
+</p>
+
+### SSH 会话
+
+<p align="center">
+  <img src="docs/images/ssh-terminal.png" alt="Wrolp Terminal - Ubuntu 24.04 上的 SSH 会话" width="720" />
+</p>
+
+### SFTP 文件浏览
+
+<p align="center">
+  <img src="docs/images/file-transfer.png" alt="Wrolp Terminal - SFTP 文件面板与终端并排" width="720" />
+</p>
+
 ### 新建连接
 
 <p align="center">
   <img src="docs/images/new-connection.png" alt="Wrolp Terminal - 新建连接对话框" width="720" />
-</p>
-
-### AI 助手
-
-<p align="center">
-  <img src="docs/images/use-ai.png" alt="Wrolp Terminal - AI 助手分析已连接服务器" width="720" />
 </p>
 
 ## 功能特性
