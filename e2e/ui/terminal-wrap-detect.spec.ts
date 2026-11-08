@@ -1,6 +1,7 @@
 import { test, expect } from './helpers/fixtures'
 import {
   canRecolorInPlace,
+  columnsOfText,
   isWrappedContinuation,
   logicalTopRow,
 } from '../../src/components/terminal/wrapDetect'
@@ -10,6 +11,23 @@ import {
 // pinned here without an xterm instance.
 
 test.describe('input-line wrap detection (B25)', () => {
+  // A prompt holding wide characters is shorter than it is wide, and every offset
+  // in the recolor chain ran on the character count — which moved the rewrite two
+  // cells too few and erased the prompt's own `#` (Chinese prompt, after a command).
+  test('width is counted in cells, not characters', () => {
+    // `A桌B`: 3 characters, 1 + 2 + 1 cells.
+    expect(columnsOfText('A桌B', (col) => (col === 1 ? 2 : 1))).toBe(4)
+    // A wide character's trailing cell is width 0 and must not be stepped onto.
+    // Cells for `桌a`: leading half 2, trailing half 0, then `a` 1.
+    const cells = [2, 0, 1]
+    expect(columnsOfText('桌a', (col) => cells[col] ?? 1)).toBe(3)
+    // Offsets are measured from a start column (the command after the prompt).
+    expect(columnsOfText('ls', () => 1, 4)).toBe(2)
+    // No cell to read (past the row) falls back to one column per character.
+    expect(columnsOfText('abc', () => 0)).toBe(3)
+    expect(columnsOfText('', () => 1, 7)).toBe(0)
+  })
+
   test('a full-width row above is NOT merged while the caret is mid-line', () => {
     // The regression: caret after the prompt (column 12) with a full-width
     // output row above — that row is output, not our wrapped head.

@@ -16,6 +16,33 @@
 // were written for: the caret sitting at column 0 of a row it has just spilled
 // onto.
 
+/**
+ * Column width of `text`, measured with the terminal's own cell widths.
+ *
+ * Characters are NOT columns: `桌面` is two characters and four cells, so every
+ * offset in the input-line chain (how far past the prompt the command starts, how
+ * wide the logical line is, where the caret has to end up) is cell arithmetic.
+ * Using the character count instead moved a rewrite two cells too few and erased
+ * the prompt's own `#` on a Chinese prompt.
+ *
+ * `cellWidthAt` answers the width of the cell at a column — 2 on the first cell
+ * of a wide character, 0 on its second — which is what the buffer reports for
+ * what is actually drawn, so the answer follows xterm's width table rather than a
+ * copy of it. A missing cell counts as 1, i.e. the plain character count.
+ */
+export function columnsOfText(
+  text: string,
+  cellWidthAt: (column: number) => number,
+  startColumn = 0,
+): number {
+  let col = startColumn
+  for (const _ of text) {
+    const w = cellWidthAt(col)
+    col += w > 0 ? w : 1
+  }
+  return col - startColumn
+}
+
 /** Inputs for {@link isWrappedContinuation}. */
 export interface WrapContinuationArgs {
   /** Caret column on the row currently being read. */
@@ -24,7 +51,7 @@ export interface WrapContinuationArgs {
   isFirstStep: boolean
   /** xterm's `isWrapped` flag on the row above. */
   prevIsWrapped: boolean
-  /** Visible (ANSI-stripped) length of the row above. */
+  /** Display columns of the row above (see {@link columnsOfText}). */
   prevVisibleLength: number
   cols: number
 }
@@ -47,7 +74,7 @@ export function isWrappedContinuation(args: WrapContinuationArgs): boolean {
 export interface RecolorInPlaceArgs {
   /** Rows between the caret's row and the logical line's top row (0 = single row). */
   rowOffset: number
-  /** `prompt.length + command.length` (ANSI-stripped). */
+  /** Display columns of prompt + command (see {@link columnsOfText}). */
   logicalLen: number
   cols: number
   cursorX: number
@@ -74,7 +101,7 @@ export interface LogicalTopRowArgs {
   lastRow: number
   /** Top row implied by walking the `isWrapped` chain up from `lastRow`. */
   chainTopRow: number
-  /** `prompt.length + command.length` (ANSI-stripped). */
+  /** Display columns of prompt + command (see {@link columnsOfText}). */
   logicalLen: number
   cols: number
   /** Caret column — the length correction is only valid in the fresh-wrap state. */

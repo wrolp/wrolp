@@ -19,6 +19,8 @@ import { installTauriMock, invokedCalls } from './helpers/tauriMock'
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
 const CMD = './fs_light_sound.sh ./560.mp3 252 on 50'
 const PROMPT = '[root@sip ~]# '
+// Same shape, but with wide characters: 16 characters, 18 cells.
+const ZH_PROMPT = '[root@dev 桌面]# '
 
 const sentInput = async (page: Page) =>
   (await invokedCalls(page)).filter((c) => c.cmd === 'send_input').map((c) => String(c.args.data))
@@ -128,6 +130,53 @@ test('typing on the prompt after a command completes highlights live', async ({ 
   await page.waitForTimeout(600)
   const row = page.locator('.xterm-rows > div', { hasText: `${PROMPT}docker` }).last()
   expect(await row.innerHTML()).toContain('xterm-fg-13')
+})
+
+/**
+ * The recolor moves the caret "past the prompt" before rewriting the command. That
+ * offset is CELLS, and a prompt holding Chinese is shorter than it is wide (16
+ * characters, 18 cells), so the character count moved it two cells too few — onto
+ * the prompt's own `#`, which the rewrite then overwrote with the first typed
+ * character. Reading `桌面` at the end of a command left `[root@dev 桌面]ls`.
+ */
+test('a Chinese prompt keeps its # when the line is recolored', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    pollOutputChunks: [[ZH_PROMPT]],
+  })
+  await page.goto('/')
+  await page.evaluate((p) => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+        }
+      }
+    ).__TAURI_INTERNALS__
+    const orig = internals.invoke.bind(internals)
+    const outbox: string[] = []
+    let line = ''
+    internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
+      if (cmd === 'send_input') {
+        const visible = String(args.data ?? '').replace(/[\x00-\x1f\x7f]/g, '')
+        if (visible) {
+          line += visible
+          // Readline redraw: carriage return + prompt + everything typed so far.
+          outbox.push(`\r${p}${line}`)
+        }
+      }
+      const res = await orig(cmd, args)
+      if (cmd === 'poll_output') return outbox.length ? outbox.splice(0) : (res as string[])
+      return res
+    }
+  }, ZH_PROMPT)
+  await page.locator('.connection-item').first().click()
+  await expect(page.locator('.xterm-rows')).toContainText(ZH_PROMPT)
+  await page.locator('.xterm-screen').click()
+
+  await page.keyboard.type('ls', { delay: 60 })
+  await page.waitForTimeout(700)
+  await expect(page.locator('.xterm-rows')).toContainText(`${ZH_PROMPT}ls`)
 })
 
 test('typing in the middle of the line highlights, and the caret stays put', async ({ page }) => {

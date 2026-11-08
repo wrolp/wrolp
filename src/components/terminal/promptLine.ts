@@ -1,8 +1,29 @@
 import { Terminal } from '@xterm/xterm'
+import type { IBufferLine } from '@xterm/xterm'
 import { stripAnsi } from '../../lib/termHighlight'
 import { colorizeCommand } from '../../lib/cmdEcho'
 import { commitCommand } from '../../commands'
-import { canRecolorInPlace, isWrappedContinuation, logicalTopRow } from './wrapDetect'
+import {
+  canRecolorInPlace,
+  columnsOfText,
+  isWrappedContinuation,
+  logicalTopRow,
+} from './wrapDetect'
+
+/**
+ * Characters between two COLUMNS of a buffer row.
+ *
+ * `translateToString()` + `slice()` is indexed by characters, while a caret
+ * position is a column: on a row holding a Chinese prompt the two differ by one
+ * index per wide character, so slicing by the column reads the wrong text. A wide
+ * character contributes its text once, at its leading cell (its trailing cell is
+ * an empty width-0 cell), which is exactly what "the text up to column N" means.
+ */
+function rowCells(line: IBufferLine, from: number, to: number): string {
+  let out = ''
+  for (let x = Math.max(0, from); x < to; x++) out += line.getCell(x)?.getChars() ?? ''
+  return out
+}
 
 // What marks a screen as application-owned (an inline TUI that opens neither the
 // alternate buffer nor mouse tracking, so `isApplicationScreen` cannot see it):
@@ -51,7 +72,12 @@ export function getCurrentCommandLine(term: Terminal): string {
       cursorX: buffer.cursorX,
       isFirstStep: y === cursorRow,
       prevIsWrapped: prev.isWrapped,
-      prevVisibleLength: stripAnsi(prevText).length,
+      // Columns: a full CJK row holds `cols` cells but fewer characters, and the
+      // fallback is "is the row above as wide as the terminal?".
+      prevVisibleLength: columnsOfText(
+        stripAnsi(prevText),
+        (col) => prev.getCell(col)?.getWidth() ?? 1,
+      ),
       cols,
     })
     if (merge) {
@@ -269,7 +295,17 @@ export function highlightCurrentCommandLine(term: Terminal) {
   // deleted the space the user had just typed between two words (`echo hi` came
   // back as `echohi`).
   const typed = plain.slice(prompt.length)
-  const logicalLen = prompt.length + typed.length
+  // All offsets below are CELLS, not characters. A prompt holding wide characters
+  // (`[root@host 桌面]#`) is shorter than it is wide, so the character count moved
+  // the rewrite that many cells too few — it landed on the prompt's own `#` and
+  // erased it. Widths are read from the buffer row, i.e. from xterm's own table.
+  // That row only holds the text while the line fits on one; a wrapped line is
+  // rejected below anyway and the `?? 1` fallback then degrades to characters.
+  const rowLine = chainTopRow === lastRow ? buffer.getLine(lastRow) : undefined
+  const widthAt = (col: number) => rowLine?.getCell(col)?.getWidth() ?? 1
+  const promptWidth = columnsOfText(prompt, widthAt)
+  const typedWidth = columnsOfText(typed, widthAt, promptWidth)
+  const logicalLen = promptWidth + typedWidth
   const firstRow = logicalTopRow({
     lastRow,
     chainTopRow,
@@ -294,12 +330,12 @@ export function highlightCurrentCommandLine(term: Terminal) {
   // Where the user's caret was, and where this rewrite is going to leave it: the
   // rewrite types the whole command, so it ends up after the last character.
   const caretCol = buffer.cursorX
-  const endCol = prompt.length + typed.length
+  const endCol = promptWidth + typedWidth
 
   // In-place recolor: move to just past the prompt, reset SGR so the prompt's
   // style doesn't leak, and rewrite the colored command. Clear the tail in case
-  // the command just shrank (backspace).
-  term.write(`\r\x1b[${prompt.length}C\x1b[0m` + coloredCmd)
+  // the command just shrank (backspace). The move is in CELLS: see promptWidth.
+  term.write(`\r\x1b[${promptWidth}C\x1b[0m` + coloredCmd)
   term.write(`\x1b[0m\x1b[K`)
   // Put the caret back, or editing in the middle of a line would jump it to the
   // end on every echo — the recolor must be invisible, including to the caret.
@@ -330,18 +366,16 @@ export function getInputLineAtCursorEnd(
   if (isApplicationScreen(term)) return null
   // A pager prompt (`---- More ----`) sits on an output line, not an input one.
   if (isPagerPrompt(plain)) return null
-  const cols = term.cols
-  const logicalLen = prompt.length + command.length
   const row = buffer.baseY + buffer.cursorY
   const nextRow = row + 1 <= buffer.baseY + term.rows - 1 ? buffer.getLine(row + 1) : null
   const nextWrapped = !!(nextRow && nextRow.isWrapped)
-  // The caret is at the end of the command when it sits on the LAST physical row of
-  // the (possibly wrapped) logical line, at the column where the command's tail ends.
-  // For a wrapped line the tail column is logicalLen % cols; an exact multiple of cols
-  // leaves the caret at column 0 of the following (non-wrapped) row.
-  const tailCol = logicalLen % cols
-  const atEndCol = buffer.cursorX === tailCol || (tailCol === 0 && buffer.cursorX === 0)
-  if (!atEndCol) return null
+  // The caret is at the end when nothing but blanks sits to its right on the row
+  // — asked of the cells, not of a character count. `prompt.length + command.length`
+  // counts characters while the caret column counts cells, so a prompt with wide
+  // characters made a finished line look mid-command (no recolor, and the command
+  // was not recorded either).
+  const line = buffer.getLine(row)
+  if (!line || rowCells(line, buffer.cursorX, term.cols).trim() !== '') return null
   // If the next row is a wrapped continuation, the caret is mid-wrap, not at the end.
   if (nextWrapped) return null
   return { prompt, command }
@@ -389,10 +423,13 @@ export function getInputTextBeforeCaret(term: Terminal): string | null {
   if (isApplicationScreen(term)) return null
   const row = line.translateToString(false)
   if (isPagerPrompt(row)) return null
+  // Both halves are read cell by cell: the caret position is a COLUMN while the
+  // row's characters are one-per-cell only until a wide character appears, so
+  // slicing the string by the column drifts past the caret on a CJK prompt.
   // Nothing but blanks may sit to the right of the caret, or the caret is mid-word
   // and a tail there would be a lie.
-  if (stripAnsi(row.slice(buffer.cursorX)).trim() !== '') return null
-  const toCaret = stripAnsi(row.slice(0, buffer.cursorX))
+  if (rowCells(line, buffer.cursorX, term.cols).trim() !== '') return null
+  const toCaret = rowCells(line, 0, buffer.cursorX)
   const { prompt } = splitPromptCommand(toCaret)
   if (!prompt) return null
   // Cut at the prompt's own length instead of taking `splitPromptCommand`'s second
