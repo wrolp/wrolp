@@ -699,8 +699,11 @@
 
   // "+" button shown on the group header to add a new connection directly
   // into this group.
+  // Hidden "out of flow" (like the row-level `.conn-item-*` actions) so the count
+  // sits flush against the header's right edge and only shifts left once the "+"
+  // actually takes space on hover.
   .conn-group-add {
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     width: 18px;
@@ -714,9 +717,7 @@
     font-size: 15px;
     line-height: 1;
     cursor: pointer;
-    opacity: 0;
     transition:
-      opacity var(--d-1) ease,
       color var(--d-1) ease,
       background var(--d-1) ease;
 
@@ -727,7 +728,7 @@
   }
 
   &:hover .conn-group-add {
-    opacity: 1;
+    display: flex;
   }
 
   // Drag-and-drop highlight when a connection or group is dragged over
