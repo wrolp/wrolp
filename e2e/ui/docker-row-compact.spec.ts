@@ -68,7 +68,7 @@ async function boot(page: Page, lang: 'en' | 'zh' = 'en', width = 260) {
 const apiRow = (page: Page) => page.locator('.docker-item').filter({ hasText: API.name })
 
 for (const lang of ['en', 'zh'] as const) {
-  test(`container ID owns the line between name and image, selectable, copyable and does not browse (${lang})`, async ({
+  test(`container ID owns the line between name and image, not selectable, copyable and does not browse (${lang})`, async ({
     page,
   }) => {
     await boot(page, lang)
@@ -79,7 +79,7 @@ for (const lang of ['en', 'zh'] as const) {
     // It left the image line for a line of its own, so it must not be a child of
     // the meta row any more.
     await expect(row.locator('.docker-meta .docker-id')).toHaveCount(0)
-    expect(await id.evaluate((el) => getComputedStyle(el).userSelect)).toBe('all')
+    expect(await id.evaluate((el) => getComputedStyle(el).userSelect)).toBe('none')
     await id.click()
     await expect(row).not.toHaveClass(/active/)
     await expect(page.locator('.rail-item[data-mode="files"]')).toHaveCount(0)

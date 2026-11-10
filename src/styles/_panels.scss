@@ -1163,7 +1163,7 @@
     text-overflow: ellipsis;
   }
 
-  // Only the image name yields width to the selectable ID, not the container name.
+  // Only the image name yields width to the ID, not the container name.
   .docker-meta {
     display: flex;
     align-items: baseline;
@@ -1182,9 +1182,8 @@
     border: 1px solid $border;
     border-radius: var(--r-1);
     padding: 0 4px;
-    cursor: text;
-    // One click selects the whole ID so it can be copied into docker commands.
-    user-select: all;
+    cursor: default;
+    user-select: none;
 
     &:hover {
       color: $text-primary;
