@@ -9169,7 +9169,7 @@ export default function App() {
                         title={
                           file
                             ? origin
-                              ? `${file.path} — ${t('openedFrom', { name: origin })}`
+                              ? `${file.path}\n${t('openedFrom', { name: origin })}`
                               : file.path
                             : undefined
                         }

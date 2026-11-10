@@ -10,6 +10,20 @@ import { installTauriMock } from './helpers/tauriMock'
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
 const FILE_PATH = '/home/root/notes.txt'
 
+const DOCKER_LOCAL = {
+  id: 'aaa1111bbb2',
+  name: 'wrolp-local-api',
+  image: 'wrolp/api:1.4',
+  state: 'running',
+  status: 'Up 3 hours',
+}
+const DOCKER_RUNNING = {
+  installed: true,
+  serverRunning: true,
+  bin: 'docker',
+  serverVersion: '27.1.1',
+}
+
 async function openFile(page: Page) {
   await installTauriMock(page, {
     connections: [DEMO_CONN],
@@ -55,5 +69,51 @@ test('the editor toolbar names the session the file was opened from', async ({ p
 test('the file tab tooltip says it too', async ({ page }) => {
   await openFile(page)
   const tab = page.locator('.tab-item', { hasText: 'notes.txt' })
-  await expect(tab).toHaveAttribute('title', new RegExp(`${FILE_PATH}.*from Demo`))
+  await expect(tab).toHaveAttribute('title', new RegExp(`${FILE_PATH}\\n.*from Demo`))
+})
+
+test('a container file names the container, not the host connection', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    localDockerProbe: DOCKER_RUNNING,
+    localDockerContainers: [DOCKER_LOCAL],
+    filesByDir: {
+      '/': [
+        {
+          name: 'notes.txt',
+          path: '/notes.txt',
+          isDir: false,
+          size: 11,
+          mode: '-rw-r--r--',
+          modified: '',
+        },
+      ],
+    },
+    fileContent: {
+      path: '/notes.txt',
+      content: 'hello world',
+      size: 11,
+      mode: '-rw-r--r--',
+      isBinary: false,
+      isTooLarge: false,
+      encoding: 'utf-8',
+      needsEncoding: false,
+    },
+  })
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await page.goto('/')
+  // A local container's files need no session — its tree opens over the empty
+  // workspace, so the editor tab's origin has no terminal to name and must fall
+  // back to the target itself.
+  await selectRailMode(page, 'containers')
+  await page.locator('.docker-item', { hasText: DOCKER_LOCAL.name }).locator('.docker-name').click()
+  await selectRailMode(page, 'files')
+  await page.locator('.tree-row.file', { hasText: 'notes.txt' }).click()
+  await expect(page.locator('.monaco-editor')).toBeVisible()
+  const origin = page.locator('.editor-origin')
+  await expect(origin).toBeVisible()
+  // The container names the file's filesystem; the SSH connection name must not
+  // stand in for it (two containers behind one host would otherwise read the same).
+  await expect(origin).toContainText(DOCKER_LOCAL.name)
+  await expect(origin).not.toContainText(DEMO_CONN.name)
 })

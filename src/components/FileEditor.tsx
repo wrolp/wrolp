@@ -52,9 +52,10 @@ interface FileEditorProps {
   onFloat?: () => void
   /**
    * Names the terminal each file was opened from, for the toolbar to show. Resolves
-   * `EditorTab.sshTabId`; null when that session has been closed.
+   * `EditorTab.sshTabId` (and the file's `targetRef`, so a docker/WSL/jump target
+   * names its own filesystem); null when that session has been closed.
    */
-  describeOrigin?: (sshTabId: number) => string | null
+  describeOrigin?: (sshTabId: number, targetRef?: TargetRef) => string | null
 }
 
 const EOF_SEQ: Record<string, monaco.editor.EndOfLineSequence> = {
@@ -98,7 +99,7 @@ export function FileEditor({
   // `tab` (not `t`): `t` is the i18n translator below.
   const active = tabs.find((tab) => tab.key === activeKey) || null
   // Resolved once: the toolbar needs it twice (the label and its tooltip).
-  const origin = active ? (describeOrigin?.(active.sshTabId) ?? null) : null
+  const origin = active ? (describeOrigin?.(active.sshTabId, active.targetRef) ?? null) : null
 
   // Monaco's scrollbar is a 4px sliver by default — widen it while the pointer
   // is in the grab zone so it can actually be grabbed and dragged.
