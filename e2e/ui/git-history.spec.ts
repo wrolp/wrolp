@@ -157,13 +157,13 @@ test('a clipped commit subject grows a tooltip on hover, a fitting one does not'
   await boot(page, { gitCommits: [{ ...COMMITS[0], subject: longSubject }, COMMITS[1]] })
 
   const clipped = page.locator('.git-commit-subject').first()
-  await expect(clipped).not.toHaveAttribute('title', /.+/)
+  await expect(clipped).not.toHaveAttribute('data-tooltip', /.+/)
   await clipped.hover()
-  await expect(clipped).toHaveAttribute('title', longSubject)
+  await expect(clipped).toHaveAttribute('data-tooltip', longSubject)
 
   const fitting = page.locator('.git-commit-subject').nth(1)
   await fitting.hover()
-  await expect(fitting).not.toHaveAttribute('title', /.+/)
+  await expect(fitting).not.toHaveAttribute('data-tooltip', /.+/)
 })
 
 test('ref colours key on the branch name and differ between branches', async ({ page }) => {

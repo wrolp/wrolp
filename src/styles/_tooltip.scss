@@ -1,0 +1,41 @@
+// ===== Global tooltip =====
+//
+// One floating surface replaces every native `title` tooltip. Native tooltips take
+// the OS chrome and cannot be rounded; TooltipProvider (src/components/Tooltip.tsx)
+// intercepts the hover and renders this instead, so the corners and colours follow
+// the same tokens as the rest of the chrome.
+//
+// The `toast-*` tokens are reused because they already describe exactly this
+// surface — a floating, near-opaque layer that must stay readable over arbitrary
+// content in both themes.
+.wl-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  // Above the toast rung (--z-toast: 9999): a tooltip is the last thing shown.
+  z-index: 10000;
+  max-width: 360px;
+  padding: 4px 8px;
+  border: 1px solid var(--toast-border);
+  border-radius: var(--r-2);
+  background: var(--toast-bg);
+  color: var(--toast-fg);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  box-shadow: 0 4px 14px var(--shadow-2);
+  // Titles may carry a line break (e.g. the file tab shows path + origin on two
+  // lines), so render them instead of collapsing to a single run.
+  white-space: pre-line;
+  word-break: break-word;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--d-1) var(--e-out),
+    visibility var(--d-1) var(--e-out);
+
+  &[data-visible='true'] {
+    opacity: 1;
+    visibility: visible;
+  }
+}

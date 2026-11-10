@@ -81,10 +81,14 @@ const LANE_DOT_CY = 12
 const laneCenter = (lane: number) => lane * LANE_W + LANE_W / 2
 const laneColor = (lane: number) => `var(--git-graph-${lane % GRAPH_PALETTE_SIZE})`
 
-/** Native tooltip only when the text is actually clipped. */
+/** Custom tooltip only when the text is actually clipped. */
 function titleIfTruncated(e: MouseEvent<HTMLElement>) {
   const el = e.currentTarget
-  el.title = el.scrollWidth > el.clientWidth ? (el.textContent ?? '') : ''
+  if (el.scrollWidth > el.clientWidth) {
+    el.dataset.tooltip = el.textContent ?? ''
+  } else {
+    delete el.dataset.tooltip
+  }
 }
 
 function uniquePaths(entries: GitStatusEntry[]): string[] {
