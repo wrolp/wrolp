@@ -230,18 +230,6 @@ export function WelcomePage({
             content, and side by side they keep the taller list from stretching the
             short utility cards below into empty boxes. */}
         <div className="welcome-recent-row">
-          <section className="welcome-card" data-testid="welcome-recent-remote">
-            <div className="welcome-card-head">
-              <Icon name="history" size={14} />
-              <span>{t('welcomeRecentHosts')}</span>
-            </div>
-            {remotes.length === 0 ? (
-              <p className="welcome-empty">{t('welcomeNoHosts')}</p>
-            ) : (
-              renderRows(remotes)
-            )}
-          </section>
-
           <section className="welcome-card" data-testid="welcome-recent-local">
             <div className="welcome-card-head">
               <Icon name="desktop" size={14} />
@@ -251,6 +239,18 @@ export function WelcomePage({
               <p className="welcome-empty">{t('welcomeNoLocalTerms')}</p>
             ) : (
               renderRows(locals)
+            )}
+          </section>
+
+          <section className="welcome-card" data-testid="welcome-recent-remote">
+            <div className="welcome-card-head">
+              <Icon name="history" size={14} />
+              <span>{t('welcomeRecentHosts')}</span>
+            </div>
+            {remotes.length === 0 ? (
+              <p className="welcome-empty">{t('welcomeNoHosts')}</p>
+            ) : (
+              renderRows(remotes)
             )}
           </section>
         </div>
