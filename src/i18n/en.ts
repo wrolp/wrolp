@@ -571,6 +571,7 @@ const en = {
   termFontFamily: 'Terminal font',
   termFontFamilyHelp:
     'The font the terminal uses. Pick one from the list — the icon font (Nerd Font) is kept automatically, so starship / powerlevel10k glyphs don’t disappear when you switch.',
+  termFontPreview: 'Preview',
   termFontSize: 'Font size',
   termFontSizeHelp: 'Terminal font size in px (8–32).',
   termLineHeight: 'Line height',

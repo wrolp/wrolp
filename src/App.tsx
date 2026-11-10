@@ -204,6 +204,7 @@ import {
   HOME_RECENT_COUNT,
   readHomeRecentCount,
   TERMINAL_FONT_CHOICES,
+  withNerdFontFallback,
   type AppearanceSnapshot,
   type HomeRecentCountKey,
   type SettingGroup,
@@ -798,6 +799,12 @@ function PaneCommandHistory({
   )
 }
 
+/** Rendered by the font preview so the user can judge letterforms, digits, symbols
+ *  and the mono spacing at a glance. A pangram + glyph/digit line is the standard
+ *  "font specimen" shape used by terminal/IDE font pickers. */
+const FONT_PREVIEW_SAMPLE =
+  '$ The quick brown fox jumps over the lazy dog\n$ 0123456789 !@#$%^&*()_+-=[]{};:,.<>/?'
+
 /** Settings → Terminal: font family / size / line height / cursor. These registry
  *  keys existed since the AI appearance bridge but never had a user-facing control.
  *  The family field is a dropdown of curated monospace fonts; `getTerminalAppearance()`
@@ -851,6 +858,26 @@ function TerminalFontSettings() {
 
   return (
     <>
+      <div style={{ marginBottom: 6 }}>
+        <div className="settings-label" style={{ marginBottom: 4 }}>
+          {t('termFontPreview')}
+        </div>
+        <div
+          style={{
+            background: 'rgba(0,0,0,0.35)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 6,
+            padding: '8px 10px',
+            fontFamily: withNerdFontFallback(family),
+            fontSize: readSize(),
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {FONT_PREVIEW_SAMPLE}
+        </div>
+      </div>
+
       <div
         className="settings-field"
         style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
