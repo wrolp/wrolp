@@ -137,6 +137,37 @@ export function withNerdFontFallback(fontFamily: string): string {
   return `${f}, ${NERD_FONT_FALLBACK}`
 }
 
+/** A monospace font offered in the Terminal font dropdown. `value` is what gets
+ *  stored in `terminal.fontFamily` (a single family name, or the full default
+ *  stack); `label` is the human-readable name shown in the menu. The Nerd Font
+ *  fallback is re-appended at read time, so every choice keeps icon glyphs. */
+export interface TerminalFontChoice {
+  value: string
+  label: string
+}
+
+/** Curated monospace fonts for the Terminal font dropdown. The first entry is the
+ *  bundled default (a full Nerd Font stack); the rest are common terminal fonts
+ *  the user may have installed. Ordering favours the fonts most terminals ship or
+ *  developers install first. */
+export const TERMINAL_FONT_CHOICES: readonly TerminalFontChoice[] = [
+  { value: DEFAULT_TERMINAL_FONT_FAMILY, label: 'Wrolp Nerd Font' },
+  { value: 'Cascadia Code', label: 'Cascadia Code' },
+  { value: 'Fira Code', label: 'Fira Code' },
+  { value: 'JetBrains Mono', label: 'JetBrains Mono' },
+  { value: 'Consolas', label: 'Consolas' },
+  { value: 'Source Code Pro', label: 'Source Code Pro' },
+  { value: 'IBM Plex Mono', label: 'IBM Plex Mono' },
+  { value: 'Roboto Mono', label: 'Roboto Mono' },
+  { value: 'Ubuntu Mono', label: 'Ubuntu Mono' },
+  { value: 'Menlo', label: 'Menlo' },
+  { value: 'Monaco', label: 'Monaco' },
+  { value: 'Inconsolata', label: 'Inconsolata' },
+  { value: 'DejaVu Sans Mono', label: 'DejaVu Sans Mono' },
+  { value: 'Lucida Console', label: 'Lucida Console' },
+  { value: 'Courier New', label: 'Courier New' },
+]
+
 /** New localStorage keys introduced by this registry (stable contract). */
 export const TERMINAL_APPEARANCE_KEYS = {
   fontSize: 'wrolp-terminal-font-size',

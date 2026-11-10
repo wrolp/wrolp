@@ -541,8 +541,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   appliesToNewTabs: '适用于新标签页。',
   termFontFamily: '终端字体',
   termFontFamilyHelp:
-    '终端使用的字体。填一个字体名即可 —— 图标字体（Nerd Font）会自动保留，starship / powerlevel10k 的图标不会因为换字体而丢失。',
-  termFontFamilyRestore: '恢复默认',
+    '终端使用的字体。从列表中选择即可 —— 图标字体（Nerd Font）会自动保留，starship / powerlevel10k 的图标不会因为换字体而丢失。',
   termFontSize: '字号',
   termFontSizeHelp: '终端字号（8–32 px）。',
   termLineHeight: '行高',

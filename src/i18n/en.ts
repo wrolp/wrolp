@@ -570,8 +570,7 @@ const en = {
   appliesToNewTabs: 'Applies to new tabs.',
   termFontFamily: 'Terminal font',
   termFontFamilyHelp:
-    'The font the terminal uses. Type one font name — the icon font (Nerd Font) is kept automatically, so starship / powerlevel10k glyphs don’t disappear when you switch.',
-  termFontFamilyRestore: 'Restore default',
+    'The font the terminal uses. Pick one from the list — the icon font (Nerd Font) is kept automatically, so starship / powerlevel10k glyphs don’t disappear when you switch.',
   termFontSize: 'Font size',
   termFontSizeHelp: 'Terminal font size in px (8–32).',
   termLineHeight: 'Line height',

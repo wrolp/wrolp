@@ -66,6 +66,7 @@ import {
   DEFAULT_DRAWER_HEIGHT,
   isDockerTarget,
   dockerHostOf,
+  targetLabel,
 } from './types'
 import {
   SplitNode,
@@ -195,7 +196,6 @@ import {
 } from './lib/aiSessionStore'
 import {
   clearAppearanceHistory,
-  DEFAULT_TERMINAL_FONT_FAMILY,
   listAppearanceHistory,
   subscribeAppSettings,
   undoAppearance,
@@ -203,6 +203,7 @@ import {
   readSetting,
   HOME_RECENT_COUNT,
   readHomeRecentCount,
+  TERMINAL_FONT_CHOICES,
   type AppearanceSnapshot,
   type HomeRecentCountKey,
   type SettingGroup,
@@ -799,8 +800,9 @@ function PaneCommandHistory({
 
 /** Settings → Terminal: font family / size / line height / cursor. These registry
  *  keys existed since the AI appearance bridge but never had a user-facing control.
- *  The family field stores the user's raw input; `getTerminalAppearance()` re-appends
- *  the Nerd Font fallback at read time, so icon glyphs survive whatever font is picked. */
+ *  The family field is a dropdown of curated monospace fonts; `getTerminalAppearance()`
+ *  re-appends the Nerd Font fallback at read time, so icon glyphs survive whatever
+ *  font is picked. */
 function TerminalFontSettings() {
   const { t } = useI18n()
 
@@ -819,12 +821,6 @@ function TerminalFontSettings() {
   const readCursor = () => String(readSetting('terminal.cursorStyle')?.value || 'block')
   const [cursor, setCursor] = useState(readCursor)
   useEffect(() => subscribeAppSettings(() => setCursor(readCursor())), [])
-
-  const commitFamily = () => {
-    const next = family.trim()
-    if (next === readFamily()) return
-    applySettingChanges({ 'terminal.fontFamily': next || DEFAULT_TERMINAL_FONT_FAMILY }, 'user')
-  }
 
   const commitSize = () => {
     const n = Number(size)
@@ -846,6 +842,13 @@ function TerminalFontSettings() {
     ['bar', t('termCursorBar')],
   ]
 
+  // Keep the current (possibly custom or legacy) font visible even if it isn't in
+  // the curated list, so an old free-text value isn't silently replaced.
+  const familyChoices =
+    !family.trim() || TERMINAL_FONT_CHOICES.some((c) => c.value === family)
+      ? TERMINAL_FONT_CHOICES
+      : [...TERMINAL_FONT_CHOICES, { value: family, label: family }]
+
   return (
     <>
       <div
@@ -859,32 +862,21 @@ function TerminalFontSettings() {
         >
           {t('termFontFamily')}
         </label>
-        <input
+        <select
           id="term-font-family"
           className="settings-input"
           data-setting="terminal.fontFamily"
           value={family}
           style={{ flex: 1, minWidth: 0 }}
-          onChange={(e) => setFamily(e.target.value)}
-          onBlur={commitFamily}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur()
-            else if (e.key === 'Escape') {
-              setFamily(readFamily())
-              e.currentTarget.blur()
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="settings-inline-btn"
-          onClick={() => {
-            setFamily(DEFAULT_TERMINAL_FONT_FAMILY)
-            applySettingChanges({ 'terminal.fontFamily': DEFAULT_TERMINAL_FONT_FAMILY }, 'user')
-          }}
+          onChange={(e) => applySettingChanges({ 'terminal.fontFamily': e.target.value }, 'user')}
         >
-          {t('termFontFamilyRestore')}
-        </button>
+          {familyChoices.map((c, i) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+              {i === 0 ? ` (${t('default')})` : ''}
+            </option>
+          ))}
+        </select>
       </div>
       <span className="settings-help">{t('termFontFamilyHelp')}</span>
 
@@ -4885,17 +4877,43 @@ export default function App() {
    * Names the terminal a file was opened from. `EditorTab.sshTabId` is the owner
    * session, and for a split pane that is the pane's own shell — so this names the
    * exact terminal whose Files panel produced the open, not merely its connection.
+   * A file opened from a non-session target (docker container, WSL distro, jump
+   * remote) actually lives on that target's filesystem, so the target's own label
+   * is used — `targetLabel` is the same dispatch the Files panel header uses, which
+   * is the only way two same-named files behind one host tell each other apart.
    * Null once that session is closed: the file stays open, there is just nothing
    * left to point at.
    */
   const describeFileOrigin = useCallback(
-    (sshTabId: number): string | null => {
+    (sshTabId: number, targetRef?: TargetRef): string | null => {
       const src = tabs.find((t) => t.tabId === sshTabId)
-      if (!src) return null
-      const label = getTabLabel(src)
-      // Two connections can share a display name (`prod-web-01` on two hosts), and
-      // the tab label disambiguates those only among *open* siblings.
-      return src.host && src.host !== label ? `${label} · ${src.host}` : label
+      const srcLabel = src
+        ? (() => {
+            const label = getTabLabel(src)
+            // Two connections can share a display name (`prod-web-01` on two hosts), and
+            // the tab label disambiguates those only among *open* siblings.
+            return src.host && src.host !== label ? `${label} · ${src.host}` : label
+          })()
+        : null
+
+      if (
+        targetRef &&
+        targetRef.kind !== 'session' &&
+        targetRef.kind !== 'local' &&
+        targetRef.kind !== 'ftp'
+      ) {
+        const target = targetLabel(targetRef)
+        // A jump-host container (and a pod on a remote cluster) is reached *through*
+        // the session, so keep the terminal as context — "prod → docker:nginx", the
+        // same shape the Files panel header uses. Everything else (local container,
+        // WSL, jump remote) already names its own filesystem.
+        const throughSession =
+          targetRef.kind === 'docker' ||
+          (targetRef.kind === 'k8sPod' && targetRef.host.kind === 'ssh')
+        return throughSession && srcLabel ? `${srcLabel} → ${target}` : target
+      }
+
+      return srcLabel
     },
     [tabs, getTabLabel],
   )
@@ -9115,7 +9133,7 @@ export default function App() {
                     // A file's tooltip says where it came from as well as what it is:
                     // the same path can be open from two different boxes, and the tab
                     // label alone cannot tell them apart.
-                    const origin = file ? describeFileOrigin(file.sshTabId) : null
+                    const origin = file ? describeFileOrigin(file.sshTabId, file.targetRef) : null
                     return (
                       <div
                         key={tab.tabId}
