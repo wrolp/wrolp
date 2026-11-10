@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { ansiThemeColors, xtermTheme } from '../lib/theme'
 import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
+import { getTerminalAppearance } from '../lib/appSettings'
 import '@xterm/xterm/css/xterm.css'
 import type { SessionEventDto } from '../types'
 import { fixLowContrastSgr } from './terminal/sgrContrast'
@@ -72,10 +73,13 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
   // Init terminal
   useEffect(() => {
     if (!containerRef.current) return
+    // Replay uses the same font the live terminal does, so a session looks like
+    // the moment it was recorded (and the Nerd Font fallback still applies).
+    const appearance = getTerminalAppearance()
     const term = new Terminal({
-      fontSize: 13,
-      fontFamily:
-        '"WrolpNerdFont", "FiraCode Nerd Font", "Fira Code Nerd Font", "CaskaydiaCove Nerd Font", "CaskaydiaCove NF", "JetBrainsMono Nerd Font", "MesloLGS NF", "Symbols Nerd Font", Cascadia Code, Consolas, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace',
+      fontSize: appearance.fontSize,
+      fontFamily: appearance.fontFamily,
+      lineHeight: appearance.lineHeight,
       cursorBlink: false,
       disableStdin: true,
       convertEol: true,
@@ -113,7 +117,8 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
   // texture atlas and cell metrics need to be reset once the real font is
   // ready, otherwise icon glyphs render with stale metrics and leave ghosts.
   useEffect(() => {
-    document.fonts.load('13px "WrolpNerdFont"').then(
+    const appearance = getTerminalAppearance()
+    document.fonts.load(`${appearance.fontSize}px "WrolpNerdFont"`).then(
       () => {
         const fit = fitRef.current
         const term = termRef.current

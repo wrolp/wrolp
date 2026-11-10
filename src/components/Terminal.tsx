@@ -1889,6 +1889,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     })
     // Live-apply font / cursor changes pushed by the appearance registry (the
     // settings page or the AI UI bridge) to every open terminal instance.
+    // Track the last-applied font so the atlas is only rebuilt when the font
+    // actually changed (a change to an unrelated key must not flash the view).
+    let lastFontFamily = ''
+    let lastFontSize = 0
     const unsubAppearance = subscribeAppSettings(() => {
       const a = getTerminalAppearance()
       term.options.fontSize = a.fontSize
@@ -1896,6 +1900,30 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       term.options.lineHeight = a.lineHeight
       term.options.cursorStyle = a.cursorStyle
       term.options.cursorBlink = a.cursorBlink
+      // Reload the bundled Nerd Font at the new size and rebuild the renderer's
+      // texture atlas when the font changed — xterm derives its cell metrics from
+      // the font, so without this a changed font leaves stale glyphs and ghosts.
+      if (a.fontFamily !== lastFontFamily || a.fontSize !== lastFontSize) {
+        lastFontFamily = a.fontFamily
+        lastFontSize = a.fontSize
+        document.fonts.load(`${a.fontSize}px "WrolpNerdFont"`).then(
+          () => {
+            if (term.cols > 0 && term.rows > 0) {
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                ;(term as any)._core?._renderService?.clear()
+                fitAddon.fit()
+                term.refresh(0, term.rows - 1)
+              } catch {
+                /* container may be momentarily 0-sized */
+              }
+            }
+          },
+          () => {
+            console.warn('Terminal: bundled Nerd Font failed to load (size', a.fontSize + ')')
+          },
+        )
+      }
       setTailRoomGlobal(readSetting('terminal.tailRoom')?.value === true)
       setLnGlobal(a.lineNumbers)
       setCdSuggestGlobal(readSetting('terminal.cdSuggest')?.value === true)

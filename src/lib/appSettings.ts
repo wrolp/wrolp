@@ -119,6 +119,24 @@ export interface AppearanceSnapshot {
 export const DEFAULT_TERMINAL_FONT_FAMILY =
   '"WrolpNerdFont", "FiraCode Nerd Font", "Fira Code Nerd Font", "CaskaydiaCove Nerd Font", "CaskaydiaCove NF", "JetBrainsMono Nerd Font", "MesloLGS NF", "Symbols Nerd Font", "Fira Code", "Cascadia Code", Consolas, "Courier New", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace'
 
+/** Nerd Font + emoji + monospace tail appended after a user's own font, so icon
+ *  glyphs (powerline / nerdfont / starship's PUA codepoints) keep rendering no
+ *  matter what the user — or the AI bridge — sets as the primary font. The bundled
+ *  `WrolpNerdFont` (MesloLGS NF) carries the glyphs; the extra entries only help on
+ *  machines that have more Nerd Fonts installed. */
+export const NERD_FONT_FALLBACK =
+  '"WrolpNerdFont", "FiraCode Nerd Font", "Fira Code Nerd Font", "CaskaydiaCove Nerd Font", "CaskaydiaCove NF", "JetBrainsMono Nerd Font", "MesloLGS NF", "Symbols Nerd Font", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", monospace'
+
+/** Guarantee a font stack still names a Nerd Font. Returns the input unchanged when
+ *  it already mentions one (so the default stack stays verbatim); otherwise the
+ *  user's font goes first and the Nerd fallback is appended after it. */
+export function withNerdFontFallback(fontFamily: string): string {
+  const f = (fontFamily ?? '').trim()
+  if (!f) return DEFAULT_TERMINAL_FONT_FAMILY
+  if (/nerd\s*font|meslolgs/i.test(f)) return f
+  return `${f}, ${NERD_FONT_FALLBACK}`
+}
+
 /** New localStorage keys introduced by this registry (stable contract). */
 export const TERMINAL_APPEARANCE_KEYS = {
   fontSize: 'wrolp-terminal-font-size',
@@ -151,7 +169,10 @@ export interface TerminalAppearance {
   continuationSymbol: string
 }
 
-const MAX_STRING_LEN = 200
+// Long enough for `DEFAULT_TERMINAL_FONT_FAMILY` (≈295 chars) plus a user's own
+// font — otherwise "restore default" / reset / undo would be rejected by the
+// string-length check and fail-fast the whole change.
+const MAX_STRING_LEN = 400
 const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i
 
 /** Bounds and default for each Home recency list. The two lists are independent
@@ -701,7 +722,7 @@ export function getTerminalAppearance(): TerminalAppearance {
   }
   return {
     fontSize: Number(get('terminal.fontSize')) || 14,
-    fontFamily: String(get('terminal.fontFamily')) || DEFAULT_TERMINAL_FONT_FAMILY,
+    fontFamily: withNerdFontFallback(String(get('terminal.fontFamily'))),
     lineHeight: Number(get('terminal.lineHeight')) || 1,
     cursorStyle: (get('terminal.cursorStyle') as TerminalCursorStyle) ?? 'block',
     cursorBlink: get('terminal.cursorBlink') !== false,

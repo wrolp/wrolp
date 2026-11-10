@@ -568,6 +568,19 @@ const en = {
   currentPercent: 'Current: {val}%',
   maxScrollbackLines: 'Max Scrollback Lines',
   appliesToNewTabs: 'Applies to new tabs.',
+  termFontFamily: 'Terminal font',
+  termFontFamilyHelp:
+    'The font the terminal uses. Type one font name — the icon font (Nerd Font) is kept automatically, so starship / powerlevel10k glyphs don’t disappear when you switch.',
+  termFontFamilyRestore: 'Restore default',
+  termFontSize: 'Font size',
+  termFontSizeHelp: 'Terminal font size in px (8–32).',
+  termLineHeight: 'Line height',
+  termLineHeightHelp: 'Line-height multiplier (1.0–2.0).',
+  termCursorStyle: 'Cursor',
+  termCursorStyleHelp: 'The cursor’s shape.',
+  termCursorBlock: 'Block',
+  termCursorUnderline: 'Underline',
+  termCursorBar: 'Bar',
   termTailRoom: 'Tail room',
   // Tooltip on the switch itself (the pane status-bar button and the context-menu
   // item), so it must not point at "the switch in the pane status bar" — that is

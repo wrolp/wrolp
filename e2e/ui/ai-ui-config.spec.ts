@@ -161,3 +161,57 @@ test('reset_ui_settings restores defaults and the settings page can undo', async
   await card.locator('button', { hasText: 'Undo' }).first().click()
   expect(await ls(page, 'wrolp-theme')).toBe('light')
 })
+
+test('set_ui_settings writes the terminal font family', async ({ page }) => {
+  await installTauriMock(page, {})
+  await page.goto('/')
+
+  const res = await uiTool(page, 'set', { changes: { 'terminal.fontFamily': 'JetBrains Mono' } })
+  expect(res.undoId).toBeTruthy()
+  expect(await ls(page, 'wrolp-terminal-font-family')).toBe('JetBrains Mono')
+})
+
+test('reset_ui_settings restores the long default font stack (not rejected)', async ({ page }) => {
+  await installTauriMock(page, {})
+  await page.goto('/')
+
+  await uiTool(page, 'set', { changes: { 'terminal.fontFamily': 'Consolas' } })
+  expect(await ls(page, 'wrolp-terminal-font-family')).toBe('Consolas')
+
+  // The default stack is ~295 chars — longer than the old 200-char cap, which made
+  // "reset" fail-fast and reject the whole change.
+  const reset = await uiTool(page, 'reset', { keys: ['terminal.fontFamily'] })
+  expect(reset.undoId).toBeTruthy()
+  const restored = await ls(page, 'wrolp-terminal-font-family')
+  expect(restored).toBeTruthy()
+  expect(restored!.length).toBeGreaterThan(200)
+})
+
+test('the Terminal settings pane exposes the font controls', async ({ page }) => {
+  await installTauriMock(page, {})
+  await page.goto('/')
+
+  await page.locator('.settings-btn').click()
+  await page.locator('.settings-nav-item', { hasText: 'Terminal' }).click()
+
+  const family = page.locator('#term-font-family')
+  await expect(family).toBeVisible()
+
+  // Type a custom font — the registry stores the raw input (the Nerd Font fallback
+  // is re-appended at read time, not here).
+  await family.fill('Cascadia Code')
+  await family.blur()
+  expect(await ls(page, 'wrolp-terminal-font-family')).toBe('Cascadia Code')
+
+  // The other font controls render too.
+  await expect(page.locator('#term-font-size')).toBeVisible()
+  await expect(page.locator('#term-line-height')).toBeVisible()
+  await expect(page.locator('#term-cursor-style')).toBeVisible()
+
+  // "Restore default" writes the full default stack back. (`exact` disambiguates
+  // from the "Restore default colors" button on the highlight pane.)
+  await page.getByRole('button', { name: 'Restore default', exact: true }).click()
+  const restored = await ls(page, 'wrolp-terminal-font-family')
+  expect(restored).toBeTruthy()
+  expect(restored!.length).toBeGreaterThan(200)
+})

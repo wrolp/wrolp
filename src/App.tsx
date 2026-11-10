@@ -195,6 +195,7 @@ import {
 } from './lib/aiSessionStore'
 import {
   clearAppearanceHistory,
+  DEFAULT_TERMINAL_FONT_FAMILY,
   listAppearanceHistory,
   subscribeAppSettings,
   undoAppearance,
@@ -793,6 +794,196 @@ function PaneCommandHistory({
         </div>
       )}
     </div>
+  )
+}
+
+/** Settings → Terminal: font family / size / line height / cursor. These registry
+ *  keys existed since the AI appearance bridge but never had a user-facing control.
+ *  The family field stores the user's raw input; `getTerminalAppearance()` re-appends
+ *  the Nerd Font fallback at read time, so icon glyphs survive whatever font is picked. */
+function TerminalFontSettings() {
+  const { t } = useI18n()
+
+  const readFamily = () => String(readSetting('terminal.fontFamily')?.value || '')
+  const [family, setFamily] = useState(readFamily)
+  useEffect(() => subscribeAppSettings(() => setFamily(readFamily())), [])
+
+  const readSize = () => Number(readSetting('terminal.fontSize')?.value) || 14
+  const [size, setSize] = useState(() => String(readSize()))
+  useEffect(() => subscribeAppSettings(() => setSize(String(readSize()))), [])
+
+  const readLineHeight = () => Number(readSetting('terminal.lineHeight')?.value) || 1
+  const [lineHeight, setLineHeight] = useState(() => String(readLineHeight()))
+  useEffect(() => subscribeAppSettings(() => setLineHeight(String(readLineHeight()))), [])
+
+  const readCursor = () => String(readSetting('terminal.cursorStyle')?.value || 'block')
+  const [cursor, setCursor] = useState(readCursor)
+  useEffect(() => subscribeAppSettings(() => setCursor(readCursor())), [])
+
+  const commitFamily = () => {
+    const next = family.trim()
+    if (next === readFamily()) return
+    applySettingChanges({ 'terminal.fontFamily': next || DEFAULT_TERMINAL_FONT_FAMILY }, 'user')
+  }
+
+  const commitSize = () => {
+    const n = Number(size)
+    const next = Number.isFinite(n) ? Math.min(32, Math.max(8, Math.round(n))) : 14
+    setSize(String(next))
+    if (next !== readSize()) applySettingChanges({ 'terminal.fontSize': next }, 'user')
+  }
+
+  const commitLineHeight = () => {
+    const n = Number(lineHeight)
+    const next = Number.isFinite(n) ? Math.min(2, Math.max(1, n)) : 1
+    setLineHeight(String(next))
+    if (next !== readLineHeight()) applySettingChanges({ 'terminal.lineHeight': next }, 'user')
+  }
+
+  const cursorOptions: Array<[string, string]> = [
+    ['block', t('termCursorBlock')],
+    ['underline', t('termCursorUnderline')],
+    ['bar', t('termCursorBar')],
+  ]
+
+  return (
+    <>
+      <div
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
+        <label
+          htmlFor="term-font-family"
+          className="settings-label"
+          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          {t('termFontFamily')}
+        </label>
+        <input
+          id="term-font-family"
+          className="settings-input"
+          data-setting="terminal.fontFamily"
+          value={family}
+          style={{ flex: 1, minWidth: 0 }}
+          onChange={(e) => setFamily(e.target.value)}
+          onBlur={commitFamily}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            else if (e.key === 'Escape') {
+              setFamily(readFamily())
+              e.currentTarget.blur()
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="settings-inline-btn"
+          onClick={() => {
+            setFamily(DEFAULT_TERMINAL_FONT_FAMILY)
+            applySettingChanges({ 'terminal.fontFamily': DEFAULT_TERMINAL_FONT_FAMILY }, 'user')
+          }}
+        >
+          {t('termFontFamilyRestore')}
+        </button>
+      </div>
+      <span className="settings-help">{t('termFontFamilyHelp')}</span>
+
+      <div
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
+        <label
+          htmlFor="term-font-size"
+          className="settings-label"
+          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          {t('termFontSize')}
+        </label>
+        <input
+          id="term-font-size"
+          type="number"
+          min={8}
+          max={32}
+          step={1}
+          className="settings-input"
+          data-setting="terminal.fontSize"
+          style={{ width: 72 }}
+          value={size}
+          onChange={(e) => setSize(e.target.value)}
+          onBlur={commitSize}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            else if (e.key === 'Escape') {
+              setSize(String(readSize()))
+              e.currentTarget.blur()
+            }
+          }}
+        />
+      </div>
+      <span className="settings-help">{t('termFontSizeHelp')}</span>
+
+      <div
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
+        <label
+          htmlFor="term-line-height"
+          className="settings-label"
+          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          {t('termLineHeight')}
+        </label>
+        <input
+          id="term-line-height"
+          type="number"
+          min={1}
+          max={2}
+          step={0.1}
+          className="settings-input"
+          data-setting="terminal.lineHeight"
+          style={{ width: 72 }}
+          value={lineHeight}
+          onChange={(e) => setLineHeight(e.target.value)}
+          onBlur={commitLineHeight}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            else if (e.key === 'Escape') {
+              setLineHeight(String(readLineHeight()))
+              e.currentTarget.blur()
+            }
+          }}
+        />
+      </div>
+      <span className="settings-help">{t('termLineHeightHelp')}</span>
+
+      <div
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
+        <label
+          htmlFor="term-cursor-style"
+          className="settings-label"
+          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          {t('termCursorStyle')}
+        </label>
+        <select
+          id="term-cursor-style"
+          className="settings-input"
+          data-setting="terminal.cursorStyle"
+          value={cursor}
+          style={{ width: 140 }}
+          onChange={(e) => applySettingChanges({ 'terminal.cursorStyle': e.target.value }, 'user')}
+        >
+          {cursorOptions.map(([id, label]) => (
+            <option key={id} value={id}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <span className="settings-help">{t('termCursorStyleHelp')}</span>
+    </>
   )
 }
 
@@ -6289,6 +6480,8 @@ export default function App() {
                     <>
                       <div className="settings-card">
                         <div className="settings-fields">
+                          <TerminalFontSettings />
+
                           <div className="settings-field">
                             <label htmlFor="maxScrollback" className="settings-label">
                               {t('maxScrollbackLines')}
