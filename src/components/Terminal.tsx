@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import type { ILink } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { ansiThemeColors, xtermTheme } from '../lib/theme'
 import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
 import {
@@ -1845,6 +1846,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // instance (float pop-out / dock-back) can replay it exactly.
     const serializeAddon = new SerializeAddon()
     term.loadAddon(serializeAddon)
+    // Unicode 11 width table: the xterm default (v6) sizes emoji like 🌐 as one
+    // cell while the emoji font draws them ~2 cells wide, so the glyph swallows
+    // the following space and prompts (starship `$os`) render cramped. Other
+    // terminals (Windows Terminal / VS Code) already use v11 widths.
+    const unicode11Addon = new Unicode11Addon()
+    term.loadAddon(unicode11Addon)
+    term.unicode.activeVersion = '11'
     term.open(containerRef.current)
 
     // The DOM renderer ignores `customGlyphs`, so ░/▒/▓ and box-drawing characters

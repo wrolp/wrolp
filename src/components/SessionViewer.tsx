@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { ansiThemeColors, xtermTheme } from '../lib/theme'
 import { getTerminalTheme, subscribeTheme } from '../lib/themeStore'
 import { getTerminalAppearance } from '../lib/appSettings'
@@ -91,6 +92,10 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    // Same as Terminal.tsx: v11 emoji widths so replayed prompts match the live
+    // terminal instead of cramming `🌐 debian` together.
+    term.loadAddon(new Unicode11Addon())
+    term.unicode.activeVersion = '11'
     term.open(containerRef.current)
     fit.fit()
     termRef.current = term
