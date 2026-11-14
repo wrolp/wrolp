@@ -562,6 +562,16 @@ pub async fn delete_command_snippet(
   db::delete_command_snippet(&conn, &id)
 }
 
+/// Persist a hand-picked order for one group. Only the listed rows move.
+#[tauri::command]
+pub async fn reorder_command_snippets(
+  state: tauri::State<'_, AppState>,
+  ordered_ids: Vec<String>,
+) -> Result<usize, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::reorder_command_snippets(&conn, &ordered_ids)
+}
+
 // ==================== Global Variables (shared by command snippets) ====================
 
 #[tauri::command]

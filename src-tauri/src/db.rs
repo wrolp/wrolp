@@ -801,6 +801,32 @@ pub fn delete_command_snippet(conn: &Connection, id: &str) -> Result<(), String>
   Ok(())
 }
 
+/// Rewrite `sort_order` for the listed ids in one transaction.
+///
+/// `ordered_ids[i]` gets `i * 1024`, so one drag renumbers a whole group with a
+/// single IPC. Ids outside the list keep their current value (a group that is
+/// not visible is never touched), and unknown ids simply match no row. Returns
+/// the number of rows actually updated.
+pub fn reorder_command_snippets(
+  conn: &Connection,
+  ordered_ids: &[String],
+) -> Result<usize, String> {
+  let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+  let mut changed = 0usize;
+  {
+    let mut stmt = tx
+      .prepare("UPDATE command_snippets SET sort_order = ?1 WHERE id = ?2")
+      .map_err(|e| e.to_string())?;
+    for (i, id) in ordered_ids.iter().enumerate() {
+      changed += stmt
+        .execute(params![(i as i64) * 1024, id])
+        .map_err(|e| e.to_string())?;
+    }
+  }
+  tx.commit().map_err(|e| e.to_string())?;
+  Ok(changed)
+}
+
 // ==================== Global Variable Queries ====================
 
 fn map_global_var_row(row: &rusqlite::Row) -> rusqlite::Result<GlobalVariable> {

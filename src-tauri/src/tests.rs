@@ -634,6 +634,70 @@ async fn command_snippets_crud() {
     .is_empty());
 }
 
+/// A drag renumbers exactly the ids it lists: the order round-trips, rows left
+/// out keep their number, and empty / unknown ids are harmless.
+#[tokio::test]
+async fn command_snippet_reorder_updates_only_listed_ids() {
+  let app = build_test_app();
+
+  let snippet = |id: &str, sort_order: i64| CommandSnippetDto {
+    id: id.into(),
+    command: format!("cmd {id}"),
+    alias: None,
+    favorite: false,
+    hidden: false,
+    sort_order,
+    connection_id: None,
+    params: vec![],
+    options: vec![],
+    created_at: "2026-01-01T00:00:00Z".into(),
+    updated_at: "2026-01-01T00:00:00Z".into(),
+    group_name: None,
+    description: None,
+  };
+
+  for (id, order) in [("a", 0), ("b", 0), ("c", 0), ("other", 5000)] {
+    commands::save_command_snippet(app.state(), snippet(id, order))
+      .await
+      .expect("save");
+  }
+
+  let changed =
+    commands::reorder_command_snippets(app.state(), vec!["c".into(), "a".into(), "b".into()])
+      .await
+      .expect("reorder");
+  assert_eq!(changed, 3);
+
+  let list = commands::list_command_snippets(app.state())
+    .await
+    .expect("list");
+  let ids: Vec<&str> = list.iter().map(|s| s.id.as_str()).collect();
+  assert_eq!(ids, vec!["c", "a", "b", "other"]);
+  let order: Vec<i64> = list.iter().map(|s| s.sort_order).collect();
+  assert_eq!(order, vec![0, 1024, 2048, 5000]);
+
+  // Empty and unknown ids must not error or touch any row.
+  assert_eq!(
+    commands::reorder_command_snippets(app.state(), vec![])
+      .await
+      .expect("empty reorder"),
+    0
+  );
+  assert_eq!(
+    commands::reorder_command_snippets(app.state(), vec!["missing".into()])
+      .await
+      .expect("unknown reorder"),
+    0
+  );
+  assert_eq!(
+    commands::list_command_snippets(app.state())
+      .await
+      .expect("list")
+      .len(),
+    4
+  );
+}
+
 /// Rows written before the connection_id / params / options / group_name
 /// migration must still load: NULL columns default to "general" scope, empty
 /// defs and no group label.

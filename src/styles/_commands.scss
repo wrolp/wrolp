@@ -294,9 +294,33 @@
   cursor: pointer;
   user-select: none;
   transition: background var(--d-1) var(--e-out);
+  // Insertion line for a same-bucket reorder (both views).
+  position: relative;
 
   &:hover {
     background: $bg-hover;
+  }
+
+  // A 2px line at the edge, not a tinted row: the row still has to be readable
+  // while the drag preview floats over it.
+  &.drop-before::before,
+  &.drop-after::after {
+    content: '';
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    height: 2px;
+    background: $accent;
+    border-radius: 1px;
+    pointer-events: none;
+  }
+
+  &.drop-before::before {
+    top: -1px;
+  }
+
+  &.drop-after::after {
+    bottom: -1px;
   }
 
   &.favorite {

@@ -13,6 +13,7 @@ import {
   listCommandSnippets,
   saveCommandSnippet,
   deleteCommandSnippet,
+  reorderCommandSnippets,
   listGlobalVariables,
   saveGlobalVariable,
   deleteGlobalVariable,
@@ -577,6 +578,23 @@ interface ListedGroup {
   empty: boolean
 }
 
+/**
+ * One bucket's display order: favourite first, then the hand-picked
+ * `sortOrder`, then most-recently-updated — exactly the backend's
+ * `ORDER BY favorite DESC, sort_order ASC, updated_at DESC`. Sorting here (and
+ * not trusting the IPC order) is what makes a drag stick: after a renumber the
+ * new numbers must win over whatever order the previous response cached.
+ */
+function sortSnippets(items: CommandSnippetDto[]): CommandSnippetDto[] {
+  return [...items].sort((a, b) => {
+    if (a.favorite !== b.favorite) return a.favorite ? -1 : 1
+    const ao = a.sortOrder ?? 0
+    const bo = b.sortOrder ?? 0
+    if (ao !== bo) return ao - bo
+    return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')
+  })
+}
+
 interface CommandListPanelProps {
   open: boolean
   onClose: () => void
@@ -754,7 +772,21 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   // Drag & drop (custom view only): what is being dragged + the hovered target.
   const dragSnippetRef = useRef<string | null>(null)
   const dragGroupRef = useRef<string | null>(null)
+  /** Section under the drag: a drop here re-labels / re-scopes the snippet. */
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  /** Row-level insertion line (same-bucket reordering). */
+  const [dropLine, setDropLine] = useState<{
+    groupId: string
+    index: number
+    position: 'before' | 'after'
+  } | null>(null)
+  /** Mirror of `dropLine` for the drop handler: a `drop` can arrive in the same
+   *  tick as the last `dragover`, before React has re-rendered with the state. */
+  const dropLineRef = useRef<{
+    groupId: string
+    index: number
+    position: 'before' | 'after'
+  } | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; snippet: CommandSnippetDto } | null>(
     null,
   )
@@ -969,7 +1001,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const buildCustomGroups = (): ListedGroup[] => {
     const groups: ListedGroup[] = knownGroupNames
       .map((name) => {
-        const items = scoped.filter((s) => s.groupName === name)
+        const items = sortSnippets(scoped.filter((s) => s.groupName === name))
         return { id: `g:${name}`, title: name, items, empty: items.length === 0 }
       })
       // A created-but-empty group is listed only when nothing is searched for,
@@ -977,7 +1009,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       .filter((g) => g.items.length > 0 || (query.length === 0 && groupOrder.includes(g.title)))
     // "Ungrouped" always sits last, mirroring the connection view's trailing
     // general bucket.
-    const ungrouped = scoped.filter((s) => !s.groupName)
+    const ungrouped = sortSnippets(scoped.filter((s) => !s.groupName))
     if (ungrouped.length > 0) {
       groups.push({ id: UNGROUPED_KEY, title: t('ungrouped'), items: ungrouped, empty: false })
     }
@@ -992,7 +1024,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     const groups: ListedGroup[] = []
     const knownConnIds = new Set(connections.map((c) => c.id))
     for (const c of connections) {
-      const items = scoped.filter((s) => s.connectionId === c.id)
+      const items = sortSnippets(scoped.filter((s) => s.connectionId === c.id))
       // Prefix the group so two connections that share a name (and possibly IP)
       // in different groups are told apart — mirrors the editor's grouped
       // <optgroup> labels.
@@ -1005,7 +1037,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         })
       }
     }
-    const unknownItems = scoped.filter((s) => s.connectionId && !knownConnIds.has(s.connectionId))
+    const unknownItems = sortSnippets(
+      scoped.filter((s) => s.connectionId && !knownConnIds.has(s.connectionId)),
+    )
     if (unknownItems.length > 0) {
       groups.push({
         id: '__unknown__',
@@ -1014,7 +1048,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         empty: false,
       })
     }
-    const generalItems = scoped.filter((s) => !s.connectionId)
+    const generalItems = sortSnippets(scoped.filter((s) => !s.connectionId))
     if (generalItems.length > 0) {
       groups.push({
         id: '__general__',
@@ -1116,6 +1150,27 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     await updateSnippet({ ...s, groupName, updatedAt: new Date().toISOString() })
   }
 
+  /**
+   * Move one snippet into another connection's bucket, appended at its end.
+   * `sortOrder` is set past the bucket's current maximum so the row really lands
+   * last instead of inheriting a number that collides with an existing row.
+   */
+  const moveSnippetToConnection = async (s: CommandSnippetDto, connectionId: string | null) => {
+    setMenu(null)
+    setGroupMenu(null)
+    if ((s.connectionId ?? null) === connectionId) return
+    const bucket = sortSnippets(
+      scoped.filter((x) => (x.connectionId ?? null) === connectionId && x.id !== s.id),
+    )
+    const maxOrder = bucket.reduce((max, x) => Math.max(max, x.sortOrder ?? 0), -1024)
+    await updateSnippet({
+      ...s,
+      connectionId,
+      sortOrder: maxOrder + 1024,
+      updatedAt: new Date().toISOString(),
+    })
+  }
+
   /** Drop a dragged group header onto another one (insert before the target). */
   const reorderGroups = (dragged: string, target: string) => {
     if (dragged === target) return
@@ -1126,28 +1181,155 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     commitGroupOrder(next)
   }
 
+  /**
+   * Commit a same-bucket reorder. The whole bucket is renumbered (0, 1024, …) in
+   * ONE IPC: one row's number cannot express "moved before X" without colliding
+   * with a neighbour, and a per-row loop can leave half the order written when
+   * one call fails.
+   */
+  const commitSnippetOrder = async (
+    items: CommandSnippetDto[],
+    sourceId: string,
+    targetId: string,
+    position: 'before' | 'after',
+  ) => {
+    const ids = items.map((x) => x.id)
+    const from = ids.indexOf(sourceId)
+    if (from < 0) return
+    ids.splice(from, 1)
+    let to = ids.indexOf(targetId)
+    if (to < 0) return
+    if (position === 'after') to += 1
+    ids.splice(to, 0, sourceId)
+    // Dropping a row back where it already was must not touch the database.
+    if (ids.every((id, i) => id === items[i]?.id)) return
+    try {
+      await reorderCommandSnippets(ids)
+      await reload()
+    } catch (err) {
+      console.error('Failed to reorder command snippets:', err)
+      setToast(t('snippetSaveFailed', { err: String(err) }))
+    }
+  }
+
+  /**
+   * Reordering is only safe when every row of a bucket is on screen: with a
+   * search or a filter the visible neighbours are not the real ones, so a
+   * renumber would scramble the hidden rows too.
+   */
+  const dragDisabled = searchActive || favoriteOnly || showHidden
+
   /** Highlight a section while a snippet or another header hovers it. */
   const onGroupDragOver = (e: React.DragEvent, groupId: string) => {
-    if (!dragSnippetRef.current && !dragGroupRef.current) return
+    const snippetDragging = dragSnippetRef.current !== null
+    const groupDragging = customView && dragGroupRef.current !== null
+    if (!snippetDragging && !groupDragging) return
+    // A deleted connection has no bucket to drop into (the id points nowhere).
+    if (snippetDragging && !customView && groupId === '__unknown__') return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
+    // The section claims the drop, so any row insertion line is stale.
+    dropLineRef.current = null
+    setDropLine(null)
     if (dropTarget !== groupId) setDropTarget(groupId)
   }
 
-  /** A drop lands either a snippet (re-labelled) or a header (re-ordered). */
+  /**
+   * Row hover: same-bucket rows show an insertion line; everything else lets
+   * the event bubble to the section so dropping onto another bucket still
+   * re-scopes / re-labels the snippet.
+   */
+  const onSnippetDragOver = (
+    e: React.DragEvent,
+    group: ListedGroup,
+    s: CommandSnippetDto,
+    index: number,
+  ) => {
+    const draggedId = dragSnippetRef.current
+    if (!draggedId || dragDisabled) return
+    const source = snippets.find((x) => x.id === draggedId)
+    if (!source) return
+    // Favourites are pinned by the backend ORDER BY; a cross-tier drop would
+    // jump back on the next reload, so it is not offered at all.
+    if (source.favorite !== s.favorite) {
+      e.preventDefault()
+      e.stopPropagation()
+      dropLineRef.current = null
+      setDropLine(null)
+      setDropTarget(null)
+      return
+    }
+    e.preventDefault()
+    // Keep the section from also claiming the drop (it would re-scope instead
+    // of reordering).
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    const rect = e.currentTarget.getBoundingClientRect()
+    const position: 'before' | 'after' = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+    setDropTarget(null)
+    const line = { groupId: group.id, index, position }
+    dropLineRef.current = line
+    setDropLine((cur) =>
+      cur &&
+      cur.groupId === line.groupId &&
+      cur.index === line.index &&
+      cur.position === line.position
+        ? cur
+        : line,
+    )
+  }
+
+  const onSnippetDrop = (
+    e: React.DragEvent,
+    group: ListedGroup,
+    s: CommandSnippetDto,
+    index: number,
+  ) => {
+    const draggedId = dragSnippetRef.current
+    if (!draggedId) return
+    // A drop on a row always belongs to the row: letting it bubble would hand the
+    // gesture to the section, which would re-scope instead of reorder.
+    e.preventDefault()
+    e.stopPropagation()
+    const line = dropLineRef.current
+    dropLineRef.current = null
+    dragSnippetRef.current = null
+    setDropLine(null)
+    setDropTarget(null)
+    if (dragDisabled || !line) return
+    if (line.groupId !== group.id || line.index !== index) return
+    if (draggedId === s.id) return
+    const source = snippets.find((x) => x.id === draggedId)
+    if (!source || source.favorite !== s.favorite) return
+    void commitSnippetOrder(group.items, draggedId, s.id, line.position)
+  }
+
+  /** A drop lands either a snippet (re-labelled / re-scoped) or a header (re-ordered). */
   const onGroupDrop = (e: React.DragEvent, group: ListedGroup) => {
     e.preventDefault()
     setDropTarget(null)
+    setDropLine(null)
+    dropLineRef.current = null
     const snippetId = dragSnippetRef.current
     if (snippetId) {
       dragSnippetRef.current = null
       const s = snippets.find((x) => x.id === snippetId)
-      if (s) void moveSnippetToGroup(s, group.id === UNGROUPED_KEY ? null : group.title)
-      // Dropping onto a COLLAPSED group must show the result, otherwise the
-      // gesture looks like it did nothing.
-      setExpandedCustomGroups((cur) => (cur.has(group.id) ? cur : new Set(cur).add(group.id)))
+      if (!s) return
+      if (customView) {
+        void moveSnippetToGroup(s, group.id === UNGROUPED_KEY ? null : group.title)
+        // Dropping onto a COLLAPSED group must show the result, otherwise the
+        // gesture looks like it did nothing.
+        setExpandedCustomGroups((cur) => (cur.has(group.id) ? cur : new Set(cur).add(group.id)))
+      } else {
+        // The deleted-connection bucket is a source only: there is no valid id
+        // to write, so it is not a drop target (guarded in onGroupDragOver too).
+        if (group.id === '__unknown__') return
+        void moveSnippetToConnection(s, group.id === '__general__' ? null : group.id)
+        setExpandedGroups((cur) => (cur.has(group.id) ? cur : new Set(cur).add(group.id)))
+      }
       return
     }
+    if (!customView) return
     const dragged = dragGroupRef.current
     dragGroupRef.current = null
     if (dragged && group.id !== UNGROUPED_KEY) reorderGroups(dragged, group.title)
@@ -2007,15 +2189,11 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                   className={
                     'cmd-list-section' +
                     (collapsed ? '' : ' expanded') +
-                    (customView && dropTarget === g.id ? ' drag-over' : '')
+                    (dropTarget === g.id ? ' drag-over' : '')
                   }
-                  onDragOver={customView ? (e) => onGroupDragOver(e, g.id) : undefined}
-                  onDragLeave={
-                    customView
-                      ? () => setDropTarget((cur) => (cur === g.id ? null : cur))
-                      : undefined
-                  }
-                  onDrop={customView ? (e) => onGroupDrop(e, g) : undefined}
+                  onDragOver={(e) => onGroupDragOver(e, g.id)}
+                  onDragLeave={() => setDropTarget((cur) => (cur === g.id ? null : cur))}
+                  onDrop={(e) => onGroupDrop(e, g)}
                 >
                   <div
                     className="cmd-list-section-header"
@@ -2111,33 +2289,36 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                     <div className="cmd-list-empty-group">{t('snippetGroupEmptyHint')}</div>
                   )}
                   {!collapsed &&
-                    g.items.map((s) => (
+                    g.items.map((s, index) => (
                       <div
                         key={s.id}
                         className={
                           'cmd-list-item' +
                           (s.favorite ? ' favorite' : '') +
-                          (s.hidden ? ' hidden' : '')
+                          (s.hidden ? ' hidden' : '') +
+                          (dropLine?.groupId === g.id && dropLine.index === index
+                            ? ` drop-${dropLine.position}`
+                            : '')
                         }
                         title={snippetTooltip(s)}
-                        draggable={customView}
+                        draggable={!dragDisabled}
                         onDragStart={
-                          customView
-                            ? (e) => {
+                          dragDisabled
+                            ? undefined
+                            : (e) => {
                                 dragSnippetRef.current = s.id
                                 e.dataTransfer.effectAllowed = 'move'
                                 e.dataTransfer.setData('text/plain', s.id)
                               }
-                            : undefined
                         }
-                        onDragEnd={
-                          customView
-                            ? () => {
-                                dragSnippetRef.current = null
-                                setDropTarget(null)
-                              }
-                            : undefined
-                        }
+                        onDragEnd={() => {
+                          dragSnippetRef.current = null
+                          dropLineRef.current = null
+                          setDropTarget(null)
+                          setDropLine(null)
+                        }}
+                        onDragOver={(e) => onSnippetDragOver(e, g, s, index)}
+                        onDrop={(e) => onSnippetDrop(e, g, s, index)}
                         onClick={() => send(s)}
                         onContextMenu={(e) => {
                           e.preventDefault()

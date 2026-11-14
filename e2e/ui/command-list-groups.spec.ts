@@ -67,32 +67,50 @@ async function groupMenu(page: Page, title: string, entry: string) {
   await page.locator('.cmd-list-menu .context-menu-item').filter({ hasText: entry }).click()
 }
 
-/** HTML5 drag & drop: Playwright's mouse cannot synthesise these events. */
-async function dragTo(page: Page, fromText: string, toText: string) {
+/**
+ * HTML5 drag & drop: Playwright's mouse cannot synthesise these events.
+ *
+ * `where` picks the drop target: `section` = a bucket header/container (re-label
+ * or re-scope), `before`/`after` = a row edge (same-bucket reorder).
+ */
+async function dragTo(
+  page: Page,
+  fromText: string,
+  toText: string,
+  where: 'section' | 'before' | 'after' = 'section',
+) {
   await page.evaluate(
-    ([from, to]) => {
+    ([from, to, pos]) => {
       const fromEl = Array.from(
         document.querySelectorAll('.cmd-list-item, .cmd-list-section-header'),
       ).find((el) => el.textContent?.includes(from)) as HTMLElement | undefined
-      const toEl = Array.from(
-        document.querySelectorAll('.cmd-list-section-header, .cmd-list-section'),
-      ).find((el) => el.textContent?.includes(to)) as HTMLElement | undefined
+      const targetSelector =
+        pos === 'section' ? '.cmd-list-section-header, .cmd-list-section' : '.cmd-list-item'
+      const toEl = Array.from(document.querySelectorAll(targetSelector)).find((el) =>
+        el.textContent?.includes(to),
+      ) as HTMLElement | undefined
       if (!fromEl || !toEl) throw new Error(`drag: ${from} -> ${to} not found`)
+      const rect = toEl.getBoundingClientRect()
+      // The row handler compares clientY against the row's midline.
+      const clientY =
+        pos === 'before'
+          ? rect.top + 2
+          : pos === 'after'
+            ? rect.bottom - 2
+            : rect.top + rect.height / 2
       const dt = new DataTransfer()
-      fromEl.dispatchEvent(
-        new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }),
-      )
-      toEl.dispatchEvent(
-        new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }),
-      )
-      toEl.dispatchEvent(
-        new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }),
-      )
-      fromEl.dispatchEvent(
-        new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt }),
-      )
+      const opts = (y: number) => ({
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dt,
+        clientY: y,
+      })
+      fromEl.dispatchEvent(new DragEvent('dragstart', opts(0)))
+      toEl.dispatchEvent(new DragEvent('dragover', opts(clientY)))
+      toEl.dispatchEvent(new DragEvent('drop', opts(clientY)))
+      fromEl.dispatchEvent(new DragEvent('dragend', opts(0)))
     },
-    [fromText, toText] as const,
+    [fromText, toText, where] as const,
   )
 }
 
@@ -318,6 +336,86 @@ test('dragging a group header reorders the order list only', async ({ page }) =>
   expect(await saveCalls(page)).toHaveLength(0)
 })
 
+// The connection view used to be read-only; dropping a row on another row now
+// renumbers that connection's bucket in one IPC.
+test('dragging a row within a connection bucket reorders it', async ({ page }) => {
+  await openPanel(page, [
+    baseSnippet({
+      id: 's1',
+      command: 'echo one',
+      connectionId: 'c1',
+      updatedAt: '2026-08-03T00:00:00Z',
+    }),
+    baseSnippet({
+      id: 's2',
+      command: 'echo two',
+      connectionId: 'c1',
+      updatedAt: '2026-08-02T00:00:00Z',
+    }),
+    baseSnippet({
+      id: 's3',
+      command: 'echo three',
+      connectionId: 'c1',
+      updatedAt: '2026-08-01T00:00:00Z',
+    }),
+  ])
+
+  // All sortOrder 0: the backend's updated_at DESC decides the start order.
+  await expect(page.locator('.cmd-list-command')).toHaveText(['echo one', 'echo two', 'echo three'])
+
+  await dragTo(page, 'echo three', 'echo one', 'before')
+
+  await expect
+    .poll(
+      async () =>
+        (await invokedCalls(page)).filter((c) => c.cmd === 'reorder_command_snippets').at(-1)?.args
+          .orderedIds,
+    )
+    .toEqual(['s3', 's1', 's2'])
+  await expect(page.locator('.cmd-list-command')).toHaveText(['echo three', 'echo one', 'echo two'])
+})
+
+// Dropping on another connection's header mirrors the group view: it re-scopes
+// the snippet (and appends it at that bucket's end).
+test('dragging a row onto another connection header re-scopes it', async ({ page }) => {
+  await openPanel(page, [
+    baseSnippet({
+      id: 's1',
+      command: 'echo demo',
+      connectionId: 'c1',
+      updatedAt: '2026-08-02T00:00:00Z',
+    }),
+    baseSnippet({
+      id: 's2',
+      command: 'echo other',
+      connectionId: 'c2',
+      updatedAt: '2026-08-01T00:00:00Z',
+    }),
+  ])
+  // Other connections are filtered out by default; both buckets must be visible
+  // for an inter-connection drop.
+  await page
+    .locator('.cmd-list-toggle', { hasText: 'This connection only' })
+    .locator('input')
+    .uncheck()
+  await expect(sectionTitles(page)).toHaveText(['Demo', 'Other'])
+
+  await dragTo(page, 'echo demo', 'Other')
+
+  await expect
+    .poll(async () => {
+      const calls = (await invokedCalls(page)).filter((c) => c.cmd === 'save_command_snippet')
+      const last = calls.at(-1)?.args.snippet as
+        | { id: string; connectionId?: string | null }
+        | undefined
+      return last && `${last.id}:${last.connectionId}`
+    })
+    .toBe('s1:c2')
+  // The now-empty Demo bucket disappears; both rows sit under Other.
+  await expect(sectionTitles(page)).toHaveText(['Other'])
+  await expect(page.locator('.cmd-list-item')).toHaveCount(2)
+})
+
 // The + on a group header adds straight into that group: the editor opens with
 // the group already filled in, so the new command does not have to be dragged
 // there afterwards.
@@ -395,9 +493,7 @@ test('a group header add button uses the accent hover, like the connections grou
       ctx.fillRect(0, 0, 1, 1)
       return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3)
     }
-    const accent = getComputedStyle(document.documentElement)
-      .getPropertyValue('--accent')
-      .trim()
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()
     return {
       hover: parse(getComputedStyle(el).backgroundColor),
       accent: parse(accent),

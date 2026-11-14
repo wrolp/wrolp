@@ -807,6 +807,11 @@ export async function deleteCommandSnippet(id: string): Promise<void> {
   await invoke<void>('delete_command_snippet', { id })
 }
 
+/** Rewrite `sort_order` for one group in a single call (drag-and-drop). */
+export async function reorderCommandSnippets(orderedIds: string[]): Promise<number> {
+  return await invoke<number>('reorder_command_snippets', { orderedIds })
+}
+
 // ===== Global Variables (shared by command snippets) =====
 
 export async function listGlobalVariables(): Promise<GlobalVariable[]> {

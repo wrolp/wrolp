@@ -781,7 +781,21 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             // later `save_command_snippet` mutates an array the component already
             // holds, React sees the identical reference and skips the re-render,
             // so the UI silently keeps showing pre-save data.
-            return snippets.map((s) => ({ ...s }))
+            //
+            // Same ORDER BY as `db.rs::list_command_snippets`: favourite first,
+            // then the hand-picked order, then most-recently-updated. Without it
+            // a spec would pass on seed order while the real app sorts differently.
+            return snippets
+              .map((s) => ({ ...s }))
+              .sort((a, b) => {
+                const af = a.favorite ? 1 : 0
+                const bf = b.favorite ? 1 : 0
+                if (af !== bf) return bf - af
+                const ao = Number(a.sortOrder ?? 0)
+                const bo = Number(b.sortOrder ?? 0)
+                if (ao !== bo) return ao - bo
+                return String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? ''))
+              })
           case 'save_command_snippet': {
             const snippet = args.snippet as Record<string, unknown>
             const id = snippet.id as string
@@ -795,6 +809,20 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             const i = snippets.findIndex((x) => x.id === id)
             if (i >= 0) snippets.splice(i, 1)
             return null
+          }
+          case 'reorder_command_snippets': {
+            // Mirrors `db.rs::reorder_command_snippets`: index * 1024, only the
+            // listed ids, unknown ids ignored.
+            const ids = (args.orderedIds ?? []) as string[]
+            let changed = 0
+            ids.forEach((id, i) => {
+              const target = snippets.find((s) => s.id === id)
+              if (target) {
+                target.sortOrder = i * 1024
+                changed += 1
+              }
+            })
+            return changed
           }
           // `target_*` is the dispatch path for every non-session target (jump remote,
           // container on the jump host, container on this machine, …); it answers the same
