@@ -76,6 +76,7 @@ fn local(id: &str, name: &str) -> LocalTerminalEntry {
     name: name.to_string(),
     cwd: "/var/www".to_string(),
     shell: "bash".to_string(),
+    workspace_id: None,
   }
 }
 
@@ -274,6 +275,73 @@ async fn a_local_terminal_deleted_since_drops_out_of_the_list() {
       .expect("list")
       .is_empty(),
     "a local row whose entry is gone resolves to nothing"
+  );
+}
+
+#[tokio::test]
+async fn local_terminals_are_scoped_to_the_active_workspace() {
+  let app = build_test_app();
+  commands::save_local_terminals(app.state(), vec![local("lt1", "Bash")])
+    .await
+    .expect("save in default");
+
+  let work = commands::create_workspace(app.state(), "Work".into())
+    .await
+    .expect("create ws");
+  commands::switch_workspace(app.state(), work)
+    .await
+    .expect("switch");
+
+  assert!(
+    commands::get_local_terminals(app.state())
+      .await
+      .expect("list in Work")
+      .is_empty(),
+    "a workspace starts without another workspace's local terminals"
+  );
+
+  // Saving in THIS workspace must not drop the default workspace's entry.
+  commands::save_local_terminals(app.state(), vec![local("lt2", "Pwsh")])
+    .await
+    .expect("save in Work");
+  let work_list = commands::get_local_terminals(app.state())
+    .await
+    .expect("list in Work");
+  assert_eq!(work_list.len(), 1);
+  assert_eq!(work_list[0].id, "lt2");
+
+  commands::switch_workspace(app.state(), "default".into())
+    .await
+    .expect("switch back");
+  let default_list = commands::get_local_terminals(app.state())
+    .await
+    .expect("list in default");
+  assert_eq!(default_list.len(), 1);
+  assert_eq!(
+    default_list[0].id, "lt1",
+    "the other workspace's save left this one alone"
+  );
+}
+
+#[tokio::test]
+async fn deleting_a_workspace_drops_its_local_terminals() {
+  let app = build_test_app();
+  let work = commands::create_workspace(app.state(), "Work".into())
+    .await
+    .expect("create ws");
+  commands::switch_workspace(app.state(), work.clone())
+    .await
+    .expect("switch");
+  commands::save_local_terminals(app.state(), vec![local("lt1", "Bash")])
+    .await
+    .expect("save");
+
+  commands::delete_workspace(app.state(), work)
+    .await
+    .expect("delete ws");
+  assert!(
+    app.state().local_terminals.lock().unwrap().is_empty(),
+    "a deleted workspace must not leave its entries behind"
   );
 }
 

@@ -51,9 +51,20 @@ pub async fn record_local_terminal_used(
   state: tauri::State<'_, AppState>,
   entry_id: String,
 ) -> Result<bool, String> {
+  // The entry must belong to the ACTIVE workspace: recording a use of another
+  // workspace's entry would put a row on this workspace's card that can never
+  // resolve back to a visible terminal.
+  let active_id = state
+    .active_workspace_id
+    .lock()
+    .map_err(|e| e.to_string())?
+    .clone();
   let known = {
     let terminals = state.local_terminals.lock().map_err(|e| e.to_string())?;
-    entry_id == db::DEFAULT_LOCAL_ENTRY_ID || terminals.iter().any(|t| t.id == entry_id)
+    entry_id == db::DEFAULT_LOCAL_ENTRY_ID
+      || terminals.iter().any(|t| {
+        t.id == entry_id && crate::ssh_session::local_entry_workspace(t) == active_id
+      })
   };
   if !known {
     return Ok(false);
@@ -83,26 +94,32 @@ pub async fn list_recent_connections(
   state: tauri::State<'_, AppState>,
   limit: Option<i64>,
 ) -> Result<Vec<db::RecentConnectionDto>, String> {
-  // Snapshot which connections the active workspace has, then release the locks:
-  // the workspace list and the database are independent and nothing here needs
-  // both at once, so the two mutexes are never held together. Saved local
-  // terminals are global (one list, no workspace), so they are snapshotted in a
-  // second, separate borrow.
-  let live: std::collections::HashSet<String> = {
+  // Snapshot which connections AND local terminals the active workspace has,
+  // then release the locks: they are independent and nothing here needs them at
+  // once. Local terminals are workspace-scoped like connections, so another
+  // workspace's entries must not surface on this card either.
+  let (live, live_local): (
+    std::collections::HashSet<String>,
+    std::collections::HashSet<String>,
+  ) = {
     let active_id = state
       .active_workspace_id
       .lock()
-      .map_err(|e| e.to_string())?;
+      .map_err(|e| e.to_string())?
+      .clone();
     let connections = state.connections.lock().map_err(|e| e.to_string())?;
-    connections
+    let live = connections
       .iter()
       .filter(|c| c.workspace_id.as_deref() == Some(active_id.as_str()))
       .map(|c| c.id.clone())
-      .collect()
-  };
-  let live_local: std::collections::HashSet<String> = {
+      .collect();
     let terminals = state.local_terminals.lock().map_err(|e| e.to_string())?;
-    terminals.iter().map(|t| t.id.clone()).collect()
+    let live_local = terminals
+      .iter()
+      .filter(|t| crate::ssh_session::local_entry_workspace(t) == active_id)
+      .map(|t| t.id.clone())
+      .collect();
+    (live, live_local)
   };
   // A pure read, so the lock is held inline (as `list_command_history` does).
   let conn = state.db.lock().map_err(|e| e.to_string())?;

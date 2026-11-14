@@ -743,6 +743,10 @@ export interface LocalTerminalEntry {
   shell: string
   /** WSL only: distribution name (e.g. "Ubuntu-22.04"); empty = default. */
   distro?: string
+  /** Workspace this entry belongs to (assigned by the backend on save; absent
+   *  on entries written before local terminals became workspace-scoped, which
+   *  resolve to `default`). */
+  workspaceId?: string
 }
 
 /**

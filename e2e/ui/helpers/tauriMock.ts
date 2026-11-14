@@ -77,6 +77,17 @@ export interface TauriMockOptions {
   /** Value returned by `read_file_content` (opening a file in the editor). */
   fileContent?: Record<string, unknown>
   /**
+   * When set, `write_file_content` / `target_write_file` reject with this message
+   * — the way a permission-denied save behaves (the editor must keep the text on
+   * screen and offer the copy / switch-user escape hatches).
+   */
+  saveFileError?: string
+  /**
+   * When set, `sudo_write_file` rejects with this message — lets a spec check
+   * that a wrong sudo password shows the reason without losing the text.
+   */
+  sudoWriteError?: string
+  /**
    * The path an OS file picker answers with (`plugin:dialog|open` / `|save`).
    * Omitted means the user hit Cancel, which is what the dialog-driven flows
    * (download, upload a folder) then refuse to start — a spec that wants one has
@@ -167,6 +178,12 @@ export interface TauriMockOptions {
    * to get `clear` instead of `cls`) must provide an entry here.
    */
   localTerminals?: unknown[]
+  /**
+   * Per-workspace answers for `get_local_terminals`, keyed by workspace id. Used
+   * to prove the sidebar follows a workspace switch; falls back to
+   * `localTerminals` for the active workspace when it has no entry here.
+   */
+  localTerminalsByWorkspace?: Record<string, unknown[]>
   /**
    * Rows `scan_network` resolves with. The mock also streams them exactly the
    * way the backend does — one `scan-start` carrying `{ total }`, then one
@@ -295,6 +312,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     // Stateful local-terminal store: the section duplicates by writing the whole
     // list and re-reading it, so the mock has to answer with what was written.
     const localTerminals: unknown[] = [...(opts.localTerminals ?? [])]
+    // Which workspace the backend is currently on. `switch_workspace` moves it,
+    // and `get_local_terminals` answers from `localTerminalsByWorkspace` so a spec
+    // can see the sidebar follow the switch.
+    let activeWorkspace = opts.workspaces?.activeWorkspaceId ?? 'default'
     // Stateful command-snippet store so the editor's save -> reload works.
     const snippets: Array<Record<string, unknown>> = (opts.commandSnippets ?? []).map((s) => ({
       ...(s as Record<string, unknown>),
@@ -471,12 +492,15 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return opts.aiConfig ?? {}
           case 'list_ai_sessions':
             return opts.aiSessions ?? []
+          case 'switch_workspace':
+            activeWorkspace = String(args.workspaceId)
+            return true
           case 'get_local_terminals':
             // A real invoke deserializes a fresh array. Returning the store's own
             // array would alias whatever React state received it, so a later
             // re-read would hand back the same reference and `setState` would
             // bail out — the list would only repaint on some other state change.
-            return [...localTerminals]
+            return [...(opts.localTerminalsByWorkspace?.[activeWorkspace] ?? localTerminals)]
           case 'save_local_terminals': {
             const entries = (args.entries ?? []) as unknown[]
             localTerminals.splice(0, localTerminals.length, ...entries)
@@ -795,6 +819,16 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'read_file_content':
           case 'target_read_file':
             return opts.fileContent ?? null
+          // Save (both the session path and the dispatched target path). A
+          // permission-denied write is the case the editor's save banner exists
+          // for, so a spec can make it reject on purpose.
+          case 'write_file_content':
+          case 'target_write_file':
+            if (opts.saveFileError) throw new Error(opts.saveFileError)
+            return true
+          case 'sudo_write_file':
+            if (opts.sudoWriteError) throw new Error(opts.sudoWriteError)
+            return true
           case 'get_recording_enabled':
             return true
           case 'set_recording_enabled':

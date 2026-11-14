@@ -162,7 +162,14 @@ pub async fn delete_workspace(
       *active_id = "default".to_string();
     }
   }
+  // Local terminals belong to the workspace as well. Leaving them behind would
+  // orphan entries that no workspace can ever show again.
+  {
+    let mut terminals = state.local_terminals.lock().map_err(|e| e.to_string())?;
+    terminals.retain(|t| crate::ssh_session::local_entry_workspace(t) != workspace_id.as_str());
+  }
   persist_connections(&state).await?;
+  persist_local_terminals(&state).await?;
   Ok(true)
 }
 
@@ -198,25 +205,65 @@ pub async fn switch_workspace(
   Ok(true)
 }
 
-/// Get the list of saved local terminal entries.
+/// Get the saved local terminal entries that belong to the active workspace.
+///
+/// Local terminals are workspace-scoped exactly like connections: switching
+/// workspaces must not show (or let you edit) another workspace's entries.
 #[tauri::command]
 pub async fn get_local_terminals(
   state: tauri::State<'_, AppState>,
 ) -> Result<Vec<LocalTerminalEntry>, String> {
+  let active_id = state
+    .active_workspace_id
+    .lock()
+    .map_err(|e| e.to_string())?
+    .clone();
   let entries = state.local_terminals.lock().map_err(|e| e.to_string())?;
-  Ok(entries.clone())
+  Ok(
+    entries
+      .iter()
+      .filter(|e| crate::ssh_session::local_entry_workspace(e) == active_id)
+      .cloned()
+      .collect(),
+  )
 }
 
-/// Replace the saved local terminal entries with the given list.
+/// Replace the ACTIVE workspace's local terminal entries with the given list.
+///
+/// The caller only ever sees its own workspace's entries (see
+/// `get_local_terminals`), so a replace here must not wipe the other
+/// workspaces' rows — they are kept and merged back before writing.
 #[tauri::command]
 pub async fn save_local_terminals(
   state: tauri::State<'_, AppState>,
   entries: Vec<LocalTerminalEntry>,
 ) -> Result<bool, String> {
+  let active_id = state
+    .active_workspace_id
+    .lock()
+    .map_err(|e| e.to_string())?
+    .clone();
   {
     let mut store = state.local_terminals.lock().map_err(|e| e.to_string())?;
-    *store = entries.clone();
+    // Drop this workspace's previous rows, keep every other workspace's.
+    store.retain(|t| crate::ssh_session::local_entry_workspace(t) != active_id);
+    let mut incoming = entries;
+    for entry in &mut incoming {
+      entry.workspace_id = Some(active_id.clone());
+    }
+    store.extend(incoming);
   }
+  persist_local_terminals(&state).await?;
+  Ok(true)
+}
+
+/// Write the whole local-terminal store (all workspaces) to
+/// `local_terminals.json`. Shared by save and workspace deletion.
+async fn persist_local_terminals(state: &AppState) -> Result<(), String> {
+  let entries = {
+    let store = state.local_terminals.lock().map_err(|e| e.to_string())?;
+    store.clone()
+  };
   let path = data_dir_for(state.base_dir.as_deref())
     .map(|p| p.join("local_terminals.json"))
     .or_else(crate::ssh_session::get_local_terminals_path);
@@ -227,7 +274,7 @@ pub async fn save_local_terminals(
     let json = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())?;
   }
-  Ok(true)
+  Ok(())
 }
 
 /// Rename a group: updates the `group` field of every connection in that group.

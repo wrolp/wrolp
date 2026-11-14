@@ -196,3 +196,26 @@ test('duplicates a saved local terminal right below its source', async ({ page }
   await expect(rows.first().locator('.conn-item-name')).toHaveText('repo')
   await expect(rows.last().locator('.conn-item-name')).toHaveText('repo copy')
 })
+
+// Hovering a group header must not change its height. The hover-only "+" used to
+// be 18px tall inside a 16px line box, so the header grew 2px and pushed the
+// first row down — right under the pointer that triggered it.
+test('hovering a group header does not shift the rows below it', async ({ page }) => {
+  await installTauriMock(page, { connections: BASE_CONNS })
+  await page.goto('/')
+
+  const header = page.locator('.conn-group-header').first()
+  const row = connRows(page).first()
+  await expect(row).toBeVisible()
+
+  await page.mouse.move(0, 0)
+  const beforeHeader = await header.boundingBox()
+  const beforeRow = await row.boundingBox()
+
+  await header.hover()
+  await expect
+    .poll(async () => (await header.boundingBox())?.height ?? 0)
+    .toBe(beforeHeader?.height ?? -1)
+
+  expect((await row.boundingBox())?.y).toBe(beforeRow?.y)
+})
