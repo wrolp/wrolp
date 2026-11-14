@@ -211,7 +211,9 @@ export const NetworkScanPanel: React.FC<NetworkScanPanelProps> = ({
                 const v = e.target.value
                 if (v === '__new__') {
                   setGroupMode('new')
-                  if (!group) setGroup('')
+                  // A new group starts empty: keeping the previously selected
+                  // name would silently re-create the group being left.
+                  setGroup('')
                 } else {
                   setGroupMode('select')
                   setGroup(v)

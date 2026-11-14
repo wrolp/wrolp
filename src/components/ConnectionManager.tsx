@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { open } from '@tauri-apps/plugin-dialog'
 import { listen } from '@tauri-apps/api/event'
@@ -1603,6 +1604,43 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   const [groupMode, setGroupMode] = useState<'select' | 'new'>(
     group && !existingGroups.includes(group) ? 'new' : 'select',
   )
+  // Drag offset for this floating dialog. It is portaled to <body> so it can sit
+  // above the floating command list; the transform keeps the flex centering as
+  // the origin, so the window starts centred and follows the header afterwards.
+  const [dialogPos, setDialogPos] = useState<{ x: number; y: number } | null>(null)
+  const dialogDragRef = useRef<{
+    startX: number
+    startY: number
+    origX: number
+    origY: number
+  } | null>(null)
+
+  const startDialogDrag = (e: React.MouseEvent) => {
+    // The ✕ is a span in the header — clicking it closes, not drags.
+    if ((e.target as HTMLElement).closest('span')) return
+    e.preventDefault()
+    dialogDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: dialogPos?.x ?? 0,
+      origY: dialogPos?.y ?? 0,
+    }
+    const onMove = (ev: MouseEvent) => {
+      const d = dialogDragRef.current
+      if (!d) return
+      setDialogPos({
+        x: d.origX + (ev.clientX - d.startX),
+        y: d.origY + (ev.clientY - d.startY),
+      })
+    }
+    const onUp = () => {
+      dialogDragRef.current = null
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
 
   // Serial-port connection fields
   const [kind, setKind] = useState<'ssh' | 'serial' | 'telnet'>(
@@ -1759,10 +1797,15 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
     onSave(config)
   }
 
-  return (
-    <div className="modal-overlay">
-      <div className="modal">
-        <div className="modal-header">
+  return createPortal(
+    <div className="modal-overlay conn-editor-overlay">
+      <div
+        className="modal conn-editor-modal"
+        style={
+          dialogPos ? { transform: `translate(${dialogPos.x}px, ${dialogPos.y}px)` } : undefined
+        }
+      >
+        <div className="modal-header" onMouseDown={startDialogDrag}>
           <h3>
             {duplicate
               ? t('duplicateConnection')
@@ -2103,7 +2146,10 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
                 const v = e.target.value
                 if (v === '__new__') {
                   setGroupMode('new')
-                  if (!group) setGroup('')
+                  // A brand-new group starts empty. Carrying the currently
+                  // selected name into the box would make "New Group…" save
+                  // right back into the group the user is leaving.
+                  setGroup('')
                 } else {
                   setGroupMode('select')
                   setGroup(v)
@@ -2269,7 +2315,8 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

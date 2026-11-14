@@ -16,6 +16,32 @@
   z-index: var(--z-modal);
 }
 
+// New / Edit Connection is a draggable floating window, NOT a page-blocking
+// dialog. It is portaled to <body> (ConnectionManager.tsx) so its z-index
+// competes with the other fixed roots directly: `--z-above-float` (2400) clears
+// the floating command list (`--z-float`, 2000). The transparent layer only
+// centres the window; clicks outside it reach the app underneath.
+.conn-editor-overlay {
+  background: transparent;
+  z-index: var(--z-above-float);
+  pointer-events: none;
+
+  .modal {
+    pointer-events: auto;
+  }
+}
+
+.conn-editor-modal {
+  .modal-header {
+    cursor: move;
+    user-select: none;
+
+    h3 {
+      cursor: move;
+    }
+  }
+}
+
 // v5 P5: everything in this partial that *floats above* something else — the dialog,
 // its three autocomplete lists, and the two context menus — moved to the elevated
 // step. The mock draws `.palette` / `.cl-modal` / `.menu` on `--bg-elev` for the same
@@ -300,7 +326,7 @@
   select {
     width: 100%;
     padding: 8px 12px;
-    background: $bg-input;
+    background-color: $bg-input;
     border: 1px solid $border;
     border-radius: var(--r-1);
     color: $text-primary;
@@ -311,6 +337,12 @@
       outline: none;
       border-color: $accent;
     }
+  }
+
+  // Room for the chevron drawn by the global `select` rule.
+  select {
+    padding-right: 26px;
+    border-radius: var(--r-2);
   }
 }
 
@@ -337,7 +369,9 @@
   textarea {
     width: 100%;
     padding: 8px 12px;
-    background: $bg-input;
+    // `background-color`, not the shorthand: the global `select` rule paints the
+    // chevron with `background-image`, which the shorthand would wipe.
+    background-color: $bg-input;
     border: 1px solid var(--border-l12);
     border-radius: var(--r-1);
     color: $text-primary;
@@ -354,6 +388,12 @@
     &::placeholder {
       color: var(--text-muted);
     }
+  }
+
+  // Room for the chevron drawn by the global `select` rule.
+  select {
+    padding-right: 26px;
+    border-radius: var(--r-2);
   }
 
   textarea {
