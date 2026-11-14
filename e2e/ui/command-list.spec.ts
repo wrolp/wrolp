@@ -125,3 +125,104 @@ test('a multi-line snippet is inserted like a paste (guard + quoted-insert)', as
     .poll(async () => await sentInput(page))
     .toEqual(['echo one \\\u0016\necho two', '\u0005'])
 })
+
+// The footer used to stack the hint above the slider, costing a whole extra line
+// on the panel's least important row. They now share one line, with the hint
+// yielding space first (ellipsis) so the slider stays reachable.
+test('the footer keeps the hint and the opacity slider on one line', async ({ page }) => {
+  await installTauriMock(page, { commandSnippets: SNIPPETS })
+  await page.goto('/')
+  await expect(page.locator('.titlebar')).toBeVisible()
+  await page.keyboard.press('Control+Shift+p')
+  await expect(page.locator('.cmd-list-float')).toBeVisible()
+
+  const hint = await page.locator('.cmd-list-hint').boundingBox()
+  const slider = await page.locator('.cmd-list-opacity').boundingBox()
+  if (!hint || !slider) throw new Error('footer controls not found')
+
+  // One row: vertical centres agree. A wrapped hint would sit a row above.
+  const hintMid = hint.y + hint.height / 2
+  const sliderMid = slider.y + slider.height / 2
+  expect(Math.abs(hintMid - sliderMid)).toBeLessThan(3)
+  expect(hint.x).toBeLessThan(slider.x)
+})
+
+// The trailing row actions used to reserve their width even while invisible, so
+// the command text stopped short of the right edge. They now collapse to zero
+// width and expand on hover — the expansion is what pushes the text left.
+test('row actions take no width until the row is hovered', async ({ page }) => {
+  await installTauriMock(page, { commandSnippets: SNIPPETS })
+  await page.goto('/')
+  await expect(page.locator('.titlebar')).toBeVisible()
+  await page.keyboard.press('Control+Shift+p')
+  await expect(page.locator('.cmd-list-float')).toBeVisible()
+  await expandAllGroups(page)
+
+  const row = page.locator('.cmd-list-item').first()
+  const actions = row.locator('.cmd-list-item-actions')
+
+  await page.mouse.move(0, 0)
+  await expect.poll(async () => (await actions.boundingBox())?.width ?? -1).toBeLessThan(1)
+
+  await row.hover()
+  await expect.poll(async () => (await actions.boundingBox())?.width ?? 0).toBeGreaterThan(20)
+})
+
+// A row carries its own tooltip and each action button carries another. The
+// button must win, and the row's `title` must stay suppressed while the pointer
+// is on a button — restoring it early is what let the browser draw the native
+// row tooltip on top of the custom one.
+test('a row action tooltip replaces the command tooltip', async ({ page }) => {
+  await installTauriMock(page, { commandSnippets: SNIPPETS })
+  await page.goto('/')
+  await expect(page.locator('.titlebar')).toBeVisible()
+  await page.keyboard.press('Control+Shift+p')
+  await expect(page.locator('.cmd-list-float')).toBeVisible()
+  await expandAllGroups(page)
+
+  const row = page.locator('.cmd-list-item').first()
+  const tip = page.locator('.wl-tooltip')
+
+  // The command's tooltip is the custom one, not the native title.
+  await row.hover()
+  await expect(tip).toHaveAttribute('data-visible', 'true')
+  await expect(tip).toContainText('docker ps')
+
+  // The third trailing action is Edit; its tooltip replaces the command's.
+  await row.locator('.cmd-list-item-actions button').nth(2).hover()
+  await expect(tip).toHaveText('Edit')
+  await expect(row).not.toHaveAttribute('title', /.+/)
+
+  // Back over the command itself: the button's text must not linger. The row's
+  // `title` is still suppressed here, so this only works if the chain keeps the
+  // text it captured on the way in.
+  await row.hover()
+  await expect(tip).toContainText('docker ps')
+})
+
+// Hovering a row also reveals the group header's "+". That button used to be
+// 18px tall inside a 16px line box, so the header grew 2px and pushed every row
+// down — then back up when the pointer left.
+test('hovering a command row does not shift it vertically', async ({ page }) => {
+  await installTauriMock(page, { commandSnippets: SNIPPETS })
+  await page.goto('/')
+  await expect(page.locator('.titlebar')).toBeVisible()
+  await page.keyboard.press('Control+Shift+p')
+  await expect(page.locator('.cmd-list-float')).toBeVisible()
+  await expandAllGroups(page)
+
+  const row = page.locator('.cmd-list-item').first()
+  const header = page.locator('.cmd-list-section-header').first()
+  await page.mouse.move(0, 0)
+  const beforeRow = await row.boundingBox()
+  const beforeHeader = await header.boundingBox()
+
+  await row.hover()
+  await expect
+    .poll(async () => (await header.boundingBox())?.height ?? 0)
+    .toBe(beforeHeader?.height ?? -1)
+  expect((await row.boundingBox())?.y).toBe(beforeRow?.y)
+
+  await page.mouse.move(0, 0)
+  expect((await row.boundingBox())?.y).toBe(beforeRow?.y)
+})

@@ -317,7 +317,9 @@ test('a fully-resolved snippet offers a one-click send (no fill dialog)', async 
   await expect.poll(() => sentJoined(page)).toContain('echo world done')
 })
 
-test('a snippet with an unfilled variable has no one-click send', async ({ page }) => {
+test('an unfilled variable still shows the send button, which asks for the value', async ({
+  page,
+}) => {
   await openPanelWithTerminal(page, [
     baseSnippet({
       id: 'q2',
@@ -326,9 +328,13 @@ test('a snippet with an unfilled variable has no one-click send', async ({ page 
     }),
   ])
 
-  await expect(page.locator('.cmd-list-send')).toHaveCount(0)
-  await page.locator('.cmd-list-item').click()
+  // Every row carries the shortcut; a missing value is what makes it open the
+  // fill dialog instead of sending straight away.
+  const send = page.locator('.cmd-list-send')
+  await expect(send).toHaveCount(1)
+  await send.click()
   await expect(page.locator('.snip-fill-modal')).toBeVisible()
+  expect(await sentJoined(page)).toBe('')
 })
 
 test('a value remembered from last time enables the one-click send', async ({ page }) => {
@@ -339,7 +345,9 @@ test('a value remembered from last time enables the one-click send', async ({ pa
       params: [{ name: 'who', type: 'text', defaultValue: '', options: [], defaultEnabled: true }],
     }),
   ])
-  await expect(page.locator('.cmd-list-send')).toHaveCount(0)
+  // The shortcut is there from the start (every row has one); only the
+  // remembered value changes what clicking it does.
+  await expect(page.locator('.cmd-list-send')).toHaveCount(1)
 
   // Fill it once through the dialog…
   await page.locator('.cmd-list-item').click()
@@ -481,4 +489,32 @@ test('a stale empty remembered option value cannot shadow its declared default',
   await send.click()
   await expect(page.locator('.snip-fill-modal')).toHaveCount(0)
   await expect.poll(() => sentJoined(page)).toContain('docker logs hello --tail=200 -f')
+})
+
+test('the add-command dialog explains how to declare a parameter', async ({ page }) => {
+  await openPanelWithTerminal(page, [])
+  await page.locator('.cmd-list-add-btn').click()
+  const editor = page.locator('.cmd-list-modal-drag')
+  await expect(editor).toBeVisible()
+
+  const hint = editor.locator('.snip-form-hint')
+  await expect(hint).toBeVisible()
+  await expect(hint.locator('code')).toHaveText('${name}')
+  await expect(hint).toContainText('docker logs')
+
+  // It belongs to the command field: directly below it, above the description.
+  const commandBox = editor.locator('textarea').first()
+  const descriptionBox = editor.locator('textarea').nth(1)
+  const cmd = await commandBox.boundingBox()
+  const hintBox = await hint.boundingBox()
+  const desc = await descriptionBox.boundingBox()
+  expect(hintBox?.y).toBeGreaterThan((cmd?.y ?? 0) + (cmd?.height ?? 0) - 1)
+  expect(hintBox?.y).toBeLessThan(desc?.y ?? 0)
+})
+
+test('the parameter hint is localised, not an English fallback', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'zh'))
+  await openPanelWithTerminal(page, [])
+  await page.locator('.cmd-list-add-btn').click()
+  await expect(page.locator('.snip-form-hint')).toContainText('在命令中使用该占位符')
 })

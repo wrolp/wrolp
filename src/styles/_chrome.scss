@@ -707,7 +707,10 @@
     align-items: center;
     justify-content: center;
     width: 18px;
-    height: 18px;
+    // 16px, not 18: the header's content line is the count's 16px line-height,
+    // so anything taller made the whole header grow 2px on hover and pushed the
+    // first row down with it.
+    height: 16px;
     margin-left: 2px;
     padding: 0;
     border: none;

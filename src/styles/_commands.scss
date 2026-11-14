@@ -333,15 +333,24 @@
   gap: 1px;
 }
 
+// Row actions take no space until the row is hovered: the command text then owns
+// the full width, and the strip expanding is what pushes it left. `focus-within`
+// keeps the buttons reachable (and visible) for keyboard users.
 .cmd-list-item-actions {
   display: flex;
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+  max-width: 0;
+  overflow: hidden;
   opacity: 0;
-  transition: opacity var(--d-1);
+  transition:
+    max-width var(--d-1) var(--e-out),
+    opacity var(--d-1) var(--e-out);
 
-  .cmd-list-item:hover & {
+  .cmd-list-item:hover &,
+  .cmd-list-item:focus-within & {
+    max-width: 120px;
     opacity: 1;
   }
 }
@@ -380,10 +389,11 @@
   background: rgba($text-primary, 0.08);
 }
 
-// Quick-send shortcut (only rendered when every variable already has a value).
-// Unlike the hover-only row actions it stays visible, so the shortcut is
-// discoverable without hovering.
+// Send shortcut, leading every row. Unlike the hover-only trailing actions it
+// stays visible, so the shortcut is discoverable without hovering; rows whose
+// variables still need a value open the fill dialog instead of sending.
 .cmd-list-send {
+  flex-shrink: 0;
   color: $accent;
   opacity: 0.7;
 
@@ -415,25 +425,38 @@
   text-overflow: ellipsis;
 }
 
+// Hint and opacity slider share one line: the footer is the panel's least
+// important row, so it costs as little height as possible. The hint yields
+// space first (ellipsis) — the slider must stay reachable.
 .cmd-list-footer {
-  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px;
   border-top: 1px solid $border;
-  text-align: center;
+  min-width: 0;
 }
 
 .cmd-list-hint {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--fs-xs);
   color: $text-muted;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cmd-list-opacity {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
   font-size: var(--fs-xs);
   color: $text-muted;
   user-select: none;
+  white-space: nowrap;
 
   input[type='range'] {
     width: 64px;
@@ -798,6 +821,39 @@
   border-radius: var(--r-3);
 }
 
+// Per-group "add command". Like the connections sidebar's group "+", it is out
+// of the flow until the pointer is over the section — a long list of headers
+// stays quiet and no width is reserved for a button that is not there.
+.cmd-list-section-add {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  // 16px, not 18: the header's content line is 16px, so an 18px button grew the
+  // header by 2px on hover and pushed every row below it down (and back up when
+  // the pointer left). Same fix as `.conn-group-add`.
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+
+  // Same hover affordance as `.conn-group-add`: accent fill with a white glyph,
+  // not a neutral grey wash.
+  &:hover {
+    color: var(--text-on-accent);
+    background: $accent;
+  }
+}
+
+.cmd-list-section:hover .cmd-list-section-add,
+.cmd-list-section:focus-within .cmd-list-section-add {
+  display: inline-flex;
+}
+
 // ===== Command list: bucketing switch + custom groups =====
 
 // Segmented control at the right of the search row (by connection / by group).
@@ -1001,7 +1057,7 @@
     flex: 1 1 90px;
     min-width: 0;
     padding: 5px 8px;
-    background: $bg-primary;
+    background-color: $bg-primary;
     border: 1px solid $border;
     color: $text-primary;
     border-radius: var(--r-1);
@@ -1021,6 +1077,9 @@
     // a whole row and squeeze every other field (and its placeholder hint).
     flex: 0 0 auto;
     width: auto;
+    // Room for the chevron drawn by the global `select` rule.
+    padding-right: 26px;
+    border-radius: var(--r-2);
   }
 
   // Allowed-values lists accept one value per line, so they're textareas.
@@ -1201,6 +1260,26 @@
   color: var(--warning);
 }
 
+// Under the command textarea: explains how a parameter is declared. Neutral
+// (unlike the orange orphan warning) because it is guidance, not an error.
+.snip-form-hint {
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: $text-muted;
+
+  code {
+    padding: 1px 5px;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    background: $bg-primary;
+    color: var(--info-soft-40);
+    font-family: $font-mono;
+    font-size: var(--fs-xs);
+    white-space: nowrap;
+  }
+}
+
 .snip-param-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1241,7 +1320,7 @@
     flex: 1;
     min-width: 0;
     padding: 5px 8px;
-    background: $bg-primary;
+    background-color: $bg-primary;
     border: 1px solid $border;
     color: $text-primary;
     border-radius: var(--r-1);
@@ -1258,6 +1337,9 @@
 
   select {
     font-family: inherit;
+    // Room for the chevron drawn by the global `select` rule.
+    padding-right: 26px;
+    border-radius: var(--r-2);
   }
 }
 

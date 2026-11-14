@@ -1402,8 +1402,13 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setLinkPicker(null)
   }
 
-  /** Open the dialog in "add new" mode (blank snippet, created on save). */
-  const startAdd = () => {
+  /**
+   * Open the dialog in "add new" mode (blank snippet, created on save).
+   *
+   * `seed` is what a group header's add button pre-fills: the command lands in
+   * the group it was added from instead of wherever the focused terminal points.
+   */
+  const startAdd = (seed?: { connectionId?: string; groupName?: string }) => {
     setMenu(null)
     setIsAdding(true)
     setEditing({} as CommandSnippetDto)
@@ -1413,13 +1418,14 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     // "general" when there is no active terminal, or the active pane isn't a
     // saved connection (e.g. a local shell).
     setEditingConnectionId(
-      activeConnectionId && connections.some((c) => c.id === activeConnectionId)
-        ? activeConnectionId
-        : '',
+      seed?.connectionId ??
+        (activeConnectionId && connections.some((c) => c.id === activeConnectionId)
+          ? activeConnectionId
+          : ''),
     )
     // A new command starts ungrouped and without a description; the datalist
-    // still offers existing group names.
-    setEditingGroupName('')
+    // still offers existing group names. A group-header button seeds the group.
+    setEditingGroupName(seed?.groupName ?? '')
     setEditingDescription('')
     setEditingParams([])
     setEditingOptions([])
@@ -1945,7 +1951,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                 <Icon name="folder" size={13} />
               </button>
             )}
-            <button className="cmd-list-add-btn" onClick={startAdd} title={t('addCommand')}>
+            <button className="cmd-list-add-btn" onClick={() => startAdd()} title={t('addCommand')}>
               <Icon name="plus" size={13} />
             </button>
             <button className="cmd-list-close" onClick={onClose} title={t('close')}>
@@ -2078,6 +2084,28 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                       <span className="cmd-list-section-title">{g.title}</span>
                     )}
                     <span className="cmd-list-section-count">{g.items.length}</span>
+                    {/* Add directly into this group. The "unknown connection"
+                        bucket has no valid scope to pre-fill, so it gets none. */}
+                    {g.id !== '__unknown__' && (
+                      <button
+                        type="button"
+                        className="cmd-list-section-add"
+                        title={t('addCommand')}
+                        aria-label={t('addCommand')}
+                        draggable={false}
+                        onDragStart={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          startAdd(
+                            customView
+                              ? { groupName: g.id === UNGROUPED_KEY ? '' : g.title }
+                              : { connectionId: g.id === '__general__' ? '' : g.id },
+                          )
+                        }}
+                      >
+                        <Icon name="plus" size={12} />
+                      </button>
+                    )}
                   </div>
                   {!collapsed && g.empty && (
                     <div className="cmd-list-empty-group">{t('snippetGroupEmptyHint')}</div>
@@ -2117,6 +2145,23 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                           setMenu({ x: e.clientX, y: e.clientY, snippet: s })
                         }}
                       >
+                        {/* Every row carries the send shortcut, whether or not its
+                            variables still need a value: a fully-resolved snippet
+                            sends at once, the rest open the fill dialog. */}
+                        <button
+                          className="cmd-list-action cmd-list-send"
+                          title={
+                            resolveSilently(s, snippetMemory) !== null
+                              ? t('snippetSendDirect')
+                              : t('snippetSend')
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            sendDirect(s)
+                          }}
+                        >
+                          <Icon name="send" size={11} />
+                        </button>
                         {s.favorite && <Icon name="pin" size={11} className="cmd-list-star" />}
                         <div className="cmd-list-item-text">
                           {s.alias && <span className="cmd-list-alias">{s.alias}</span>}
@@ -2130,20 +2175,6 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                         </div>
                         {s.hidden && (
                           <Icon name="eyeOff" size={11} className="cmd-list-hidden-icon" />
-                        )}
-                        {/* Every variable already resolves from defaults / last
-                          values -> one click sends without the fill dialog. */}
-                        {resolveSilently(s, snippetMemory) !== null && (
-                          <button
-                            className="cmd-list-action cmd-list-send"
-                            title={t('snippetSendDirect')}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              sendDirect(s)
-                            }}
-                          >
-                            <Icon name="send" size={11} />
-                          </button>
                         )}
                         <div className="cmd-list-item-actions" onClick={(e) => e.stopPropagation()}>
                           <button
@@ -2424,6 +2455,13 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                     placeholder={t('snippetCommandPlaceholder')}
                     rows={4}
                   />
+                  {/* Without this, the only way to discover the placeholder
+                      syntax is to type `${...}` by accident — the parameter
+                      rows below otherwise look like they can be added on their
+                      own (they become "not used in the command" orphans). */}
+                  <div className="snip-form-hint">
+                    <code>{'${name}'}</code> {t('snippetParamSyntaxHint')}
+                  </div>
                 </div>
                 {/* Sits right after the command, not after the alias: the note
                     answers "what does this command do", so it belongs next to

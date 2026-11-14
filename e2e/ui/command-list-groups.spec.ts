@@ -317,3 +317,95 @@ test('dragging a group header reorders the order list only', async ({ page }) =>
   // Reordering is a display preference: no snippet is touched.
   expect(await saveCalls(page)).toHaveLength(0)
 })
+
+// The + on a group header adds straight into that group: the editor opens with
+// the group already filled in, so the new command does not have to be dragged
+// there afterwards.
+test('a group header adds a command into that group', async ({ page }) => {
+  await openPanel(page, [baseSnippet({ id: 'a1', command: 'ls', groupName: 'ops' })])
+  await switchToGroups(page)
+
+  // The group "+" only materialises while the section is hovered.
+  const header = page.locator('.cmd-list-section-header', { hasText: 'ops' })
+  await header.hover()
+  await header.locator('.cmd-list-section-add').click()
+
+  const dialog = page.locator('.cmd-list-modal-drag')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('input[list="snippet-groups"]')).toHaveValue('ops')
+
+  await dialog.locator('textarea').first().fill('uptime')
+  await dialog.locator('.btn-primary').click()
+  await expect
+    .poll(async () => {
+      const s = (await saveCalls(page)).at(-1)?.args.snippet as
+        | { groupName?: string | null; command?: string }
+        | undefined
+      return s ? `${s.groupName}|${s.command}` : ''
+    })
+    .toBe('ops|uptime')
+})
+
+// Same affordance in the by-connection view: the new command is scoped to the
+// connection whose header it was added from.
+test('a connection header adds a command scoped to that connection', async ({ page }) => {
+  // The focused terminal is Demo (c1), so c2 is the discriminating case: the
+  // default scope would pick c1, and only the header's seed can yield c2.
+  await openPanel(page, [baseSnippet({ id: 'b1', command: 'ls', connectionId: 'c2' })])
+  // The panel defaults to "This connection only", which would hide c2 entirely.
+  await page
+    .locator('.cmd-list-toggle', { hasText: 'This connection only' })
+    .locator('input')
+    .uncheck()
+
+  const header = page.locator('.cmd-list-section-header', { hasText: 'Other' })
+  await header.hover()
+  await header.locator('.cmd-list-section-add').click()
+
+  const dialog = page.locator('.cmd-list-modal-drag')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('select').first()).toHaveValue('c2')
+})
+
+test('a group header add button uses the accent hover, like the connections group', async ({
+  page,
+}) => {
+  await openPanel(page, [baseSnippet({ id: 's1', command: 'ls' })])
+
+  // expandAllGroups leaves the pointer on the (only) group header — move it away
+  // first, or the section is already hovered and the button is showing.
+  await page.mouse.move(0, 0)
+  const section = page.locator('.cmd-list-section').first()
+  const add = section.locator('.cmd-list-section-add')
+  await expect(add).toBeHidden()
+  await section.hover()
+  await expect(add).toBeVisible()
+  await add.hover()
+
+  // Resolve both colours through a 1×1 canvas so the token (hex) and the
+  // computed background (rgb) compare in the same space.
+  const colors = await add.evaluate((el) => {
+    const parse = (color: string) => {
+      const cv = document.createElement('canvas')
+      cv.width = cv.height = 1
+      const ctx = cv.getContext('2d')!
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, 1, 1)
+      ctx.fillStyle = color
+      ctx.fillRect(0, 0, 1, 1)
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3)
+    }
+    const accent = getComputedStyle(document.documentElement)
+      .getPropertyValue('--accent')
+      .trim()
+    return {
+      hover: parse(getComputedStyle(el).backgroundColor),
+      accent: parse(accent),
+    }
+  })
+  expect(colors.accent.join(',')).not.toBe('0,0,0')
+  expect(colors.hover).toEqual(colors.accent)
+
+  await page.mouse.move(0, 0)
+  await expect(add).toBeHidden()
+})
