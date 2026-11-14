@@ -233,14 +233,20 @@ export function extractCwdFromPrompt(prompt: string): string | null {
     //    `[root@localhost:/home/me]#`), or
     //  - the last whitespace-delimited token otherwise (git-bash `… MINGW64 /c/Users/me`,
     //    or `[root@localhost lac724]#`).
+    // A pure `[...]` token is prompt DECORATION, not a directory — starship's
+    // docker_context module renders `• [Docker] ❯` on its own prompt line (the
+    // path lives on the line above, `root in /bin`), and reading the decoration as
+    // the cwd made every ls-link click resolve to `[Docker]/name`. Same for a
+    // token made only of punctuation/symbols (`• ❯` leaves just the bullet).
+    const plausible = (d: string) => !!d && !/^\[.*\]$/.test(d) && !/^[\p{P}\p{S}]+$/u.test(d)
     const colon = before.lastIndexOf(':')
     if (colon >= 0) {
       const dir = before.slice(colon + 1).trim()
-      if (dir) return dir
+      if (plausible(dir)) return dir
     }
     const tokens = before.split(/\s+/)
     const dir = tokens[tokens.length - 1]
-    return dir || null
+    return plausible(dir) ? dir : null
   }
   return null
 }
