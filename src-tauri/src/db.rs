@@ -827,6 +827,25 @@ pub fn reorder_command_snippets(
   Ok(changed)
 }
 
+/// Clear the hand-picked order for the listed ids: `sort_order = 0` makes them
+/// fall back to the backend's default (`favorite DESC, updated_at DESC`) again.
+/// `updated_at` is deliberately untouched, so the reset restores the pre-drag
+/// order instead of freezing the current one.
+pub fn reset_command_snippet_order(conn: &Connection, ids: &[String]) -> Result<usize, String> {
+  let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+  let mut changed = 0usize;
+  {
+    let mut stmt = tx
+      .prepare("UPDATE command_snippets SET sort_order = 0 WHERE id = ?1")
+      .map_err(|e| e.to_string())?;
+    for id in ids {
+      changed += stmt.execute(params![id]).map_err(|e| e.to_string())?;
+    }
+  }
+  tx.commit().map_err(|e| e.to_string())?;
+  Ok(changed)
+}
+
 // ==================== Global Variable Queries ====================
 
 fn map_global_var_row(row: &rusqlite::Row) -> rusqlite::Result<GlobalVariable> {

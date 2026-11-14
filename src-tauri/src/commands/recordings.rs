@@ -572,6 +572,16 @@ pub async fn reorder_command_snippets(
   db::reorder_command_snippets(&conn, &ordered_ids)
 }
 
+/// Drop the hand-picked order of a group (back to the default sorting).
+#[tauri::command]
+pub async fn reset_command_snippet_order(
+  state: tauri::State<'_, AppState>,
+  ids: Vec<String>,
+) -> Result<usize, String> {
+  let conn = state.db.lock().map_err(|e| e.to_string())?;
+  db::reset_command_snippet_order(&conn, &ids)
+}
+
 // ==================== Global Variables (shared by command snippets) ====================
 
 #[tauri::command]

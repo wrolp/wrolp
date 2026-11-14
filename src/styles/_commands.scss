@@ -916,8 +916,27 @@
   }
 }
 
-// Drag & drop feedback (custom view only). `inset` shadow rather than the
-// section's own border, so a COLLAPSED section lights up as well.
+// Row-order picker: a native select next to the bucketing switch, styled to the
+// same height so the search row keeps one baseline.
+.cmd-list-sort-select {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  background: $bg-primary;
+  border: 1px solid $border;
+  border-radius: var(--r-1);
+  color: $text-secondary;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+
+  &:hover,
+  &:focus {
+    border-color: var(--border-focus);
+    color: $text-primary;
+  }
+}
+
+// Drag & drop feedback. `inset` shadow rather than the section's own border, so
+// a COLLAPSED section lights up as well.
 .cmd-list-section.drag-over {
   background: rgba($accent, 0.1);
   border-radius: var(--r-2);

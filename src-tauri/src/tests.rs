@@ -698,6 +698,70 @@ async fn command_snippet_reorder_updates_only_listed_ids() {
   );
 }
 
+/// "Reset order" clears the hand-picked numbers of one bucket and nothing else;
+/// unknown ids are ignored.
+#[tokio::test]
+async fn command_snippet_reset_order_clears_only_listed_ids() {
+  let app = build_test_app();
+
+  let snippet = |id: &str, sort_order: i64| CommandSnippetDto {
+    id: id.into(),
+    command: format!("cmd {id}"),
+    alias: None,
+    favorite: false,
+    hidden: false,
+    sort_order,
+    connection_id: None,
+    params: vec![],
+    options: vec![],
+    created_at: "2026-01-01T00:00:00Z".into(),
+    updated_at: "2026-01-01T00:00:00Z".into(),
+    group_name: None,
+    description: None,
+  };
+
+  for (id, order) in [("a", 0), ("b", 1024), ("c", 2048), ("other", 5000)] {
+    commands::save_command_snippet(app.state(), snippet(id, order))
+      .await
+      .expect("save");
+  }
+
+  let changed =
+    commands::reset_command_snippet_order(app.state(), vec!["a".into(), "b".into(), "c".into()])
+      .await
+      .expect("reset");
+  assert_eq!(changed, 3);
+
+  let list = commands::list_command_snippets(app.state())
+    .await
+    .expect("list");
+  let order_of = |id: &str| {
+    list
+      .iter()
+      .find(|s| s.id == id)
+      .map(|s| s.sort_order)
+      .expect("row present")
+  };
+  assert_eq!(order_of("a"), 0);
+  assert_eq!(order_of("b"), 0);
+  assert_eq!(order_of("c"), 0);
+  // Not in the list: its number survives.
+  assert_eq!(order_of("other"), 5000);
+
+  assert_eq!(
+    commands::reset_command_snippet_order(app.state(), vec!["missing".into()])
+      .await
+      .expect("unknown reset"),
+    0
+  );
+  assert_eq!(
+    commands::reset_command_snippet_order(app.state(), vec![])
+      .await
+      .expect("empty reset"),
+    0
+  );
+}
+
 /// Rows written before the connection_id / params / options / group_name
 /// migration must still load: NULL columns default to "general" scope, empty
 /// defs and no group label.

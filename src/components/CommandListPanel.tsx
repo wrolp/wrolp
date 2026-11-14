@@ -14,6 +14,7 @@ import {
   saveCommandSnippet,
   deleteCommandSnippet,
   reorderCommandSnippets,
+  resetCommandSnippetOrder,
   listGlobalVariables,
   saveGlobalVariable,
   deleteGlobalVariable,
@@ -578,21 +579,54 @@ interface ListedGroup {
   empty: boolean
 }
 
+/** How the rows inside each bucket are ordered (a display preference). */
+type SnippetSortMode = 'manual' | 'name' | 'recent'
+
 /**
- * One bucket's display order: favourite first, then the hand-picked
- * `sortOrder`, then most-recently-updated — exactly the backend's
- * `ORDER BY favorite DESC, sort_order ASC, updated_at DESC`. Sorting here (and
- * not trusting the IPC order) is what makes a drag stick: after a renumber the
- * new numbers must win over whatever order the previous response cached.
+ * One bucket's display order. Favourites always come first, mirroring the
+ * backend's `ORDER BY favorite DESC`; the mode then decides the rest:
+ * `manual` = the hand-picked `sortOrder` (then newest), `name` = alias/command
+ * alphabetically, `recent` = most recently updated. Sorting here (and not
+ * trusting the IPC order) is what makes a drag stick: after a renumber the new
+ * numbers must win over whatever order the previous response cached.
  */
-function sortSnippets(items: CommandSnippetDto[]): CommandSnippetDto[] {
+function sortSnippets(
+  items: CommandSnippetDto[],
+  mode: SnippetSortMode = 'manual',
+): CommandSnippetDto[] {
   return [...items].sort((a, b) => {
     if (a.favorite !== b.favorite) return a.favorite ? -1 : 1
+    if (mode === 'name') {
+      const an = (a.alias ?? a.command).toLocaleLowerCase()
+      const bn = (b.alias ?? b.command).toLocaleLowerCase()
+      const byName = an.localeCompare(bn)
+      if (byName !== 0) return byName
+    }
+    if (mode === 'recent') {
+      const byRecent = (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')
+      if (byRecent !== 0) return byRecent
+    }
     const ao = a.sortOrder ?? 0
     const bo = b.sortOrder ?? 0
     if (ao !== bo) return ao - bo
     return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')
   })
+}
+
+/**
+ * Persisted as its own localStorage key, NOT inside `wrolp.cmdListPrefs` — that
+ * object is an e2e contract (specs seed it directly), so new preferences stay
+ * out of it.
+ */
+const SORT_MODE_KEY = 'wrolp.cmdSnippetSortMode'
+
+function loadSortMode(): SnippetSortMode {
+  const raw = localStorage.getItem(SORT_MODE_KEY)
+  return raw === 'name' || raw === 'recent' ? raw : 'manual'
+}
+
+function saveSortMode(mode: SnippetSortMode) {
+  localStorage.setItem(SORT_MODE_KEY, mode)
 }
 
 interface CommandListPanelProps {
@@ -754,14 +788,21 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [expandedCustomGroups, setExpandedCustomGroups] = useState<Set<string>>(new Set())
   const [groupMode, setGroupMode] = useState<GroupMode>(() => loadCmdListPrefs().groupMode)
+  /** Row order inside every bucket; `manual` is the only one that can be dragged. */
+  const [sortMode, setSortMode] = useState<SnippetSortMode>(() => loadSortMode())
   const [groupOrder, setGroupOrder] = useState<string[]>(() => loadGroupOrder())
   /** Inline "new group" input row at the end of the custom view. */
   const [newGroupOpen, setNewGroupOpen] = useState(false)
   const [newGroupDraft, setNewGroupDraft] = useState('')
   /** Inline rename of a group header (Enter/blur commits, Esc cancels). */
   const [renamingGroup, setRenamingGroup] = useState<{ name: string; draft: string } | null>(null)
-  /** Right-clicked group header (rename / delete). */
-  const [groupMenu, setGroupMenu] = useState<{ x: number; y: number; name: string } | null>(null)
+  /** Right-clicked group header (rename / delete in the group view, reset order in both). */
+  const [groupMenu, setGroupMenu] = useState<{
+    x: number
+    y: number
+    name: string
+    groupId: string
+  } | null>(null)
   /** Group name typed in the add/edit snippet dialog. */
   const [editingGroupName, setEditingGroupName] = useState('')
   /** Free-form note typed in the add/edit snippet dialog (may be multi-line). */
@@ -928,6 +969,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     })
   }, [pos, size, panelOpacity, favoriteOnly, showHidden, activeConnectionOnly, groupMode])
 
+  useEffect(() => {
+    saveSortMode(sortMode)
+  }, [sortMode])
+
   // Auto-declare a param row for every `${name}` that has no definition yet.
   // Placeholders owned by an option's value slot are skipped. Debounced so a
   // placeholder being typed inside `${}` does not spawn one row per keystroke
@@ -1001,7 +1046,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   const buildCustomGroups = (): ListedGroup[] => {
     const groups: ListedGroup[] = knownGroupNames
       .map((name) => {
-        const items = sortSnippets(scoped.filter((s) => s.groupName === name))
+        const items = sortSnippets(
+          scoped.filter((s) => s.groupName === name),
+          sortMode,
+        )
         return { id: `g:${name}`, title: name, items, empty: items.length === 0 }
       })
       // A created-but-empty group is listed only when nothing is searched for,
@@ -1009,7 +1057,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
       .filter((g) => g.items.length > 0 || (query.length === 0 && groupOrder.includes(g.title)))
     // "Ungrouped" always sits last, mirroring the connection view's trailing
     // general bucket.
-    const ungrouped = sortSnippets(scoped.filter((s) => !s.groupName))
+    const ungrouped = sortSnippets(
+      scoped.filter((s) => !s.groupName),
+      sortMode,
+    )
     if (ungrouped.length > 0) {
       groups.push({ id: UNGROUPED_KEY, title: t('ungrouped'), items: ungrouped, empty: false })
     }
@@ -1024,7 +1075,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     const groups: ListedGroup[] = []
     const knownConnIds = new Set(connections.map((c) => c.id))
     for (const c of connections) {
-      const items = sortSnippets(scoped.filter((s) => s.connectionId === c.id))
+      const items = sortSnippets(
+        scoped.filter((s) => s.connectionId === c.id),
+        sortMode,
+      )
       // Prefix the group so two connections that share a name (and possibly IP)
       // in different groups are told apart — mirrors the editor's grouped
       // <optgroup> labels.
@@ -1039,6 +1093,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     }
     const unknownItems = sortSnippets(
       scoped.filter((s) => s.connectionId && !knownConnIds.has(s.connectionId)),
+      sortMode,
     )
     if (unknownItems.length > 0) {
       groups.push({
@@ -1048,7 +1103,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
         empty: false,
       })
     }
-    const generalItems = sortSnippets(scoped.filter((s) => !s.connectionId))
+    const generalItems = sortSnippets(
+      scoped.filter((s) => !s.connectionId),
+      sortMode,
+    )
     if (generalItems.length > 0) {
       groups.push({
         id: '__general__',
@@ -1213,11 +1271,30 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   }
 
   /**
-   * Reordering is only safe when every row of a bucket is on screen: with a
-   * search or a filter the visible neighbours are not the real ones, so a
-   * renumber would scramble the hidden rows too.
+   * Clearing a bucket's hand-picked order: `sort_order = 0` puts it back under
+   * the backend default (favourite, then newest). `updated_at` is not touched,
+   * so the pre-drag order returns instead of being frozen.
    */
-  const dragDisabled = searchActive || favoriteOnly || showHidden
+  const resetGroupOrder = async (group: ListedGroup) => {
+    setGroupMenu(null)
+    const ids = group.items.map((s) => s.id)
+    if (ids.length === 0) return
+    try {
+      await resetCommandSnippetOrder(ids)
+      await reload()
+      setToast(t('snippetSortResetDone'))
+    } catch (err) {
+      console.error('Failed to reset command snippet order:', err)
+      setToast(t('snippetSaveFailed', { err: String(err) }))
+    }
+  }
+
+  /**
+   * Reordering is only safe when every row of a bucket is on screen and the
+   * order is hand-picked: with a search / filter the visible neighbours are not
+   * the real ones, and in `name` / `recent` mode a drag has nothing to write.
+   */
+  const dragDisabled = sortMode !== 'manual' || searchActive || favoriteOnly || showHidden
 
   /** Highlight a section while a snippet or another header hovers it. */
   const onGroupDragOver = (e: React.DragEvent, groupId: string) => {
@@ -2065,6 +2142,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   // One localStorage read, reused for every row's quick-send button.
   const snippetMemory = loadAllSnippetStates()
 
+  // Resolve the right-clicked header once, so the menu can act on its rows
+  // (reset order works in both views).
+  const menuGroup = groupMenu ? groups.find((g) => g.id === groupMenu.groupId) : null
+
   return (
     <div className="cmd-list-float" style={panelStyle}>
       <div
@@ -2168,6 +2249,19 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
               {t('snippetGroupByCustom')}
             </button>
           </div>
+          {/* Display preference: only `manual` is draggable, the other two are
+              derived orders. Kept out of `wrolp.cmdListPrefs` (e2e contract). */}
+          <select
+            className="cmd-list-sort-select"
+            value={sortMode}
+            title={t('snippetSortMode')}
+            aria-label={t('snippetSortMode')}
+            onChange={(e) => setSortMode(e.target.value as SnippetSortMode)}
+          >
+            <option value="manual">{t('snippetSortManual')}</option>
+            <option value="name">{t('snippetSortName')}</option>
+            <option value="recent">{t('snippetSortRecent')}</option>
+          </select>
         </div>
 
         <div className="cmd-list-body">
@@ -2200,15 +2294,13 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                     onClick={() => {
                       if (!renamingGroup) toggleGroup(g.id)
                     }}
-                    onContextMenu={
-                      groupHeaderActions
-                        ? (e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            setGroupMenu({ x: e.clientX, y: e.clientY, name: g.title })
-                          }
-                        : undefined
-                    }
+                    onContextMenu={(e) => {
+                      // Renaming owns the input; leave the browser menu alone there.
+                      if (renamingGroup) return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setGroupMenu({ x: e.clientX, y: e.clientY, name: g.title, groupId: g.id })
+                    }}
                     draggable={groupHeaderActions && !renamingGroup}
                     onDragStart={
                       groupHeaderActions
@@ -2497,31 +2589,48 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
           </div>
         )}
 
-        {groupMenu && customView && (
+        {groupMenu && (
           <div
             className="context-menu cmd-list-menu"
             style={{ left: groupMenu.x, top: groupMenu.y, position: 'fixed' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div
-              className="context-menu-item"
-              onClick={() => {
-                setRenamingGroup({ name: groupMenu.name, draft: groupMenu.name })
-                setGroupMenu(null)
-              }}
-            >
-              <Icon name="edit" size={12} /> {t('snippetGroupRename')}
-            </div>
-            <div
-              className="context-menu-item danger"
-              onClick={() => {
-                const name = groupMenu.name
-                setGroupMenu(null)
-                void deleteGroup(name)
-              }}
-            >
-              <Icon name="trash" size={12} /> {t('snippetGroupDelete')}
-            </div>
+            {customView && groupMenu.groupId !== UNGROUPED_KEY && (
+              <>
+                <div
+                  className="context-menu-item"
+                  onClick={() => {
+                    setRenamingGroup({ name: groupMenu.name, draft: groupMenu.name })
+                    setGroupMenu(null)
+                  }}
+                >
+                  <Icon name="edit" size={12} /> {t('snippetGroupRename')}
+                </div>
+                <div
+                  className="context-menu-item danger"
+                  onClick={() => {
+                    const name = groupMenu.name
+                    setGroupMenu(null)
+                    void deleteGroup(name)
+                  }}
+                >
+                  <Icon name="trash" size={12} /> {t('snippetGroupDelete')}
+                </div>
+              </>
+            )}
+            {/* Resetting is about the hand-picked order, which both views can
+                carry — and it stays available in every sort mode (that is how a
+                user gets back to the default order). */}
+            {menuGroup && menuGroup.items.length > 0 && (
+              <>
+                {customView && groupMenu.groupId !== UNGROUPED_KEY && (
+                  <div className="context-menu-divider" />
+                )}
+                <div className="context-menu-item" onClick={() => void resetGroupOrder(menuGroup)}>
+                  <Icon name="refresh" size={12} /> {t('snippetSortReset')}
+                </div>
+              </>
+            )}
           </div>
         )}
 

@@ -812,6 +812,11 @@ export async function reorderCommandSnippets(orderedIds: string[]): Promise<numb
   return await invoke<number>('reorder_command_snippets', { orderedIds })
 }
 
+/** Clear the hand-picked order of a group (back to the default sorting). */
+export async function resetCommandSnippetOrder(ids: string[]): Promise<number> {
+  return await invoke<number>('reset_command_snippet_order', { ids })
+}
+
 // ===== Global Variables (shared by command snippets) =====
 
 export async function listGlobalVariables(): Promise<GlobalVariable[]> {

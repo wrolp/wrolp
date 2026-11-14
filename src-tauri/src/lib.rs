@@ -355,6 +355,7 @@ pub fn run() {
       commands::save_command_snippet,
       commands::delete_command_snippet,
       commands::reorder_command_snippets,
+      commands::reset_command_snippet_order,
       commands::list_global_variables,
       commands::save_global_variable,
       commands::delete_global_variable,

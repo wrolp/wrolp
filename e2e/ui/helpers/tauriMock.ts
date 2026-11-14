@@ -824,6 +824,20 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             })
             return changed
           }
+          case 'reset_command_snippet_order': {
+            // Mirrors `db.rs::reset_command_snippet_order`: sort_order back to 0,
+            // updatedAt untouched so the default order is restored, not frozen.
+            const ids = (args.ids ?? []) as string[]
+            let changed = 0
+            ids.forEach((id) => {
+              const target = snippets.find((s) => s.id === id)
+              if (target) {
+                target.sortOrder = 0
+                changed += 1
+              }
+            })
+            return changed
+          }
           // `target_*` is the dispatch path for every non-session target (jump remote,
           // container on the jump host, container on this machine, …); it answers the same
           // way as the tab-based `list_files`.

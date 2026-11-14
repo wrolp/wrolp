@@ -505,3 +505,97 @@ test('a group header add button uses the accent hover, like the connections grou
   await page.mouse.move(0, 0)
   await expect(add).toBeHidden()
 })
+
+// The sort picker derives an order instead of editing one; only `manual` rows
+// may be dragged, because the other two modes would overwrite the sort on the
+// next render.
+test('the sort picker reorders rows and disables dragging', async ({ page }) => {
+  await openPanel(page, [
+    baseSnippet({
+      id: 's1',
+      command: 'echo zebra',
+      connectionId: 'c1',
+      updatedAt: '2026-08-03T00:00:00Z',
+    }),
+    baseSnippet({
+      id: 's2',
+      command: 'echo alpha',
+      connectionId: 'c1',
+      updatedAt: '2026-08-02T00:00:00Z',
+    }),
+    baseSnippet({
+      id: 's3',
+      command: 'echo mike',
+      connectionId: 'c1',
+      updatedAt: '2026-08-01T00:00:00Z',
+    }),
+  ])
+
+  // Manual mode with all sortOrder 0 = newest first.
+  await expect(page.locator('.cmd-list-command')).toHaveText([
+    'echo zebra',
+    'echo alpha',
+    'echo mike',
+  ])
+  await expect(page.locator('.cmd-list-item').first()).toHaveAttribute('draggable', 'true')
+
+  await page.locator('.cmd-list-sort-select').selectOption('name')
+  await expect(page.locator('.cmd-list-command')).toHaveText([
+    'echo alpha',
+    'echo mike',
+    'echo zebra',
+  ])
+  await expect(page.locator('.cmd-list-item').first()).toHaveAttribute('draggable', 'false')
+
+  await page.locator('.cmd-list-sort-select').selectOption('recent')
+  await expect(page.locator('.cmd-list-command')).toHaveText([
+    'echo zebra',
+    'echo alpha',
+    'echo mike',
+  ])
+
+  // The preference is its own key, not part of the cmdListPrefs contract.
+  expect(await page.evaluate(() => localStorage.getItem('wrolp.cmdSnippetSortMode'))).toBe('recent')
+})
+
+// "Reset order" clears the hand-picked numbers so the backend default comes back.
+test('resetting a bucket restores the default order', async ({ page }) => {
+  await openPanel(page, [
+    baseSnippet({
+      id: 's1',
+      command: 'echo one',
+      connectionId: 'c1',
+      sortOrder: 2048,
+      updatedAt: '2026-08-03T00:00:00Z',
+    }),
+    baseSnippet({
+      id: 's2',
+      command: 'echo two',
+      connectionId: 'c1',
+      sortOrder: 0,
+      updatedAt: '2026-08-02T00:00:00Z',
+    }),
+    baseSnippet({
+      id: 's3',
+      command: 'echo three',
+      connectionId: 'c1',
+      sortOrder: 1024,
+      updatedAt: '2026-08-01T00:00:00Z',
+    }),
+  ])
+
+  // Hand-picked order wins over updatedAt while it exists.
+  await expect(page.locator('.cmd-list-command')).toHaveText(['echo two', 'echo three', 'echo one'])
+
+  await page.locator('.cmd-list-section-header').first().click({ button: 'right' })
+  await page.locator('.cmd-list-menu .context-menu-item').filter({ hasText: 'Reset order' }).click()
+
+  await expect
+    .poll(
+      async () =>
+        (await invokedCalls(page)).filter((c) => c.cmd === 'reset_command_snippet_order').length,
+    )
+    .toBe(1)
+  // Back to the default: most recently updated first.
+  await expect(page.locator('.cmd-list-command')).toHaveText(['echo one', 'echo two', 'echo three'])
+})
