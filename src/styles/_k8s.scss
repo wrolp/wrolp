@@ -244,6 +244,10 @@ $ns-label-colors: (
   .k8s-select {
     width: auto;
     min-width: 80px;
+    // Room for the chevron drawn by the global `select` rule.
+    padding-right: 24px;
+    border: 1px solid $border;
+    border-radius: var(--r-2);
   }
 
   &.k8s-check {

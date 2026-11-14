@@ -1,0 +1,61 @@
+@use 'variables' as *;
+
+// The custom popup drawn by SelectOverlay. It replaces the OS-drawn <select>
+// list, whose hover highlight cannot be styled (it stayed light grey even with
+// `color-scheme: dark`). Every colour here is a theme token, so the highlight
+// stays in the dark family on the dark theme.
+.wl-select-menu {
+  position: fixed;
+  // Above modal overlays: selects live inside dialogs, and the menu is portaled
+  // to <body>. One step above the tooltip rung (10000).
+  z-index: 10001;
+  box-sizing: border-box;
+  padding: 4px;
+  overflow-y: auto;
+  background: $bg-secondary;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  box-shadow: 0 8px 24px var(--shadow-2);
+  color: $text-primary;
+  font-size: var(--fs-md);
+  font-family: inherit;
+}
+
+.wl-select-group {
+  padding: 7px 9px 3px;
+  color: $text-muted;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.wl-select-option {
+  padding: 6px 9px;
+  border-radius: var(--r-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+
+  // Hover / keyboard-active highlight: a dark wash, never the OS's white.
+  &.active {
+    background: $bg-hover;
+  }
+
+  // The currently chosen value keeps a quiet accent tint.
+  &.selected {
+    color: $accent;
+    background: rgba($accent, 0.14);
+  }
+
+  &.active.selected {
+    background: rgba($accent, 0.26);
+  }
+
+  &.disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+}

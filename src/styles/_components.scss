@@ -520,3 +520,57 @@ html[data-status-shapes='off'] .dot {
     background: var(--scrollbar-thumb);
   }
 }
+
+// ===== Native <select> =====
+//
+// Two things the OS draws cannot be reached while `appearance` is native: the
+// arrow (which sits flush against the border) and the popup's hover highlight
+// (a system grey that flashes white on the dark panel). The arrow is replaced by
+// an inline SVG placed with real padding, and `color-scheme` — the only CSS
+// handle on the OS-drawn list — makes the highlight follow the theme.
+//
+// Every `.some-select` rule that paints a background must use `background-color`
+// (not the `background` shorthand) and leave room on the right, or it wipes the
+// chevron / prints the value under it.
+$_select-chevron-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+$_select-chevron-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2357606a' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  color-scheme: dark;
+  background-image: $_select-chevron-dark;
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 12px 12px;
+  // Room for the 12px chevron plus 7px of right edge, so the value never prints
+  // underneath it.
+  padding-right: 26px;
+  border: 1px solid $border;
+  // Matches the panels' card radius; specific rules below may still override it.
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    border-color var(--d-2),
+    background-color var(--d-2);
+
+  &:hover {
+    border-color: rgba($accent, 0.45);
+  }
+
+  &:focus-visible {
+    border-color: $accent;
+  }
+
+  // The popup rows: the OS paints the highlight, but an explicit background keeps
+  // the list from flashing the light UA surface between rows.
+  option {
+    background-color: $bg-secondary;
+    color: $text-primary;
+  }
+}
+
+html[data-theme='light'] select {
+  color-scheme: light;
+  background-image: $_select-chevron-light;
+}

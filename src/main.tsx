@@ -2,6 +2,7 @@ import ReactDOM from 'react-dom/client'
 import App, { ErrorBoundary } from './App'
 import { I18nProvider } from './i18n'
 import { TooltipProvider } from './components/Tooltip'
+import { SelectOverlay } from './components/SelectOverlay'
 import './editor/monacoSetup'
 import './styles/index.scss'
 import { initTheme } from './lib/themeStore'
@@ -15,6 +16,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <App />
       <TooltipProvider />
+      <SelectOverlay />
     </ErrorBoundary>
   </I18nProvider>,
 )

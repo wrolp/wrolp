@@ -36,10 +36,15 @@
   }
 
   // `.form-group input` is sized for a dialog; the column wants the same
-  // controls, smaller.
-  .form-group input,
-  .form-group select {
+  // controls, smaller. The select keeps room on the right for the chevron drawn
+  // by the global `select` rule.
+  .form-group input {
     padding: 4px 6px;
+    font-size: var(--fs-sm);
+  }
+
+  .form-group select {
+    padding: 4px 24px 4px 6px;
     font-size: var(--fs-sm);
   }
 }

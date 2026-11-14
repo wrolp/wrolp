@@ -438,12 +438,13 @@
 
   .filter-select,
   .speed-select {
-    background: $bg-primary;
+    background-color: $bg-primary;
     border: 1px solid $border;
     color: $text-primary;
     font-size: var(--fs-sm);
-    padding: 2px 6px;
-    border-radius: var(--r-1);
+    // Right padding leaves room for the chevron drawn by the global `select` rule.
+    padding: 2px 24px 2px 6px;
+    border-radius: var(--r-2);
   }
 
   .refresh-btn,
@@ -660,12 +661,12 @@
     }
 
     .speed-select {
-      background: $bg-primary;
+      background-color: $bg-primary;
       border: 1px solid $border;
       color: $text-primary;
       font-size: var(--fs-sm);
-      padding: 1px 4px;
-      border-radius: var(--r-1);
+      padding: 1px 22px 1px 4px;
+      border-radius: var(--r-2);
     }
 
     .time-display {

@@ -117,7 +117,9 @@
 
 .settings-input {
   width: 100%;
-  background: $bg-input;
+  // `background-color`, not the shorthand: the global `select` rule paints the
+  // chevron with `background-image`, which the shorthand would wipe.
+  background-color: $bg-input;
   border: 1px solid $border;
   color: $text-primary;
   font-family: inherit;
@@ -564,10 +566,11 @@
 
 .settings-select {
   margin-top: 8px;
-  padding: 6px 10px;
+  // Right padding leaves room for the chevron drawn by the global `select` rule.
+  padding: 6px 26px 6px 10px;
   border: 1px solid $border;
   border-radius: var(--r-2);
-  background: $bg-secondary;
+  background-color: $bg-secondary;
   color: $text-primary;
   font-size: var(--fs-lg);
   cursor: pointer;
@@ -575,4 +578,11 @@
   &:hover {
     border-color: $accent;
   }
+}
+
+// `.settings-input` is used on both inputs and selects; only the latter needs the
+// extra right padding for the chevron.
+select.settings-input {
+  padding-right: 26px;
+  border-radius: var(--r-2);
 }

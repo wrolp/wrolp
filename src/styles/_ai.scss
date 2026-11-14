@@ -293,10 +293,12 @@
   max-width: 150px;
   font-size: var(--fs-xs);
   color: $text-secondary;
-  background: $bg-input;
+  // `background-color`: the chevron comes from the global `select` rule, which a
+  // `background` shorthand here would wipe.
+  background-color: $bg-input;
   border: 1px solid $border;
-  padding: 2px 8px;
-  border-radius: var(--r-3);
+  padding: 2px 22px 2px 8px;
+  border-radius: var(--r-2);
   &:focus:not(:focus-visible) {
     outline: none;
   }

@@ -13,10 +13,16 @@
 :root {
   @include theme.emit-tokens(dark);
   @include layout.emit-structural;
+  // Tells the UA which scheme to paint its own widgets in — most visibly the
+  // <select> popup, whose hover highlight is OS-drawn and otherwise comes out
+  // light grey on a dark panel. On `:root` (not on `select`) because the popup
+  // is a separate surface that inherits the document's scheme.
+  color-scheme: dark;
 }
 
 html[data-theme='light'] {
   @include theme.emit-tokens(light);
+  color-scheme: light;
 }
 
 // Density only re-declares the `--h-*` band heights emitted by
@@ -167,7 +173,9 @@ body,
 .nt-input,
 .nt-select {
   width: 100%;
-  background: $bg-input;
+  // `background-color`, not the shorthand: the global `select` rule paints the
+  // chevron with `background-image`.
+  background-color: $bg-input;
   border: 1px solid $border;
   color: $text-primary;
   border-radius: 4px;
@@ -181,6 +189,13 @@ body,
   &:disabled {
     opacity: 0.55;
   }
+}
+
+// Chevron room plus the panel-wide radius (the shared rule above is written for
+// the text inputs that pair with it).
+.nt-select {
+  padding-right: 24px;
+  border-radius: var(--r-2);
 }
 
 .nt-check {
