@@ -1635,6 +1635,20 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
     }
   }
 
+  // The backend drops a borrowed SFTP identity once it has been idle long
+  // enough, but that check only runs on the next operation. Re-read the cheap
+  // status so the header chip disappears on its own instead of claiming an
+  // identity that is no longer used.
+  useEffect(() => {
+    if (sftpUser == null || sessionTabId == null) return
+    const timer = window.setInterval(() => {
+      getSftpUser(sessionTabId)
+        .then(setSftpUser)
+        .catch(() => {})
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [sftpUser, sessionTabId])
+
   /* ---- header actions ---- */
 
   // The directory actually on screen, which is not always what `currentPath`
@@ -2006,7 +2020,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           {sessionTabId != null &&
             (sftpUser ? (
               <>
-                <span className="file-sftp-user" title={t('sftpAs', { user: sftpUser })}>
+                <span
+                  className="file-sftp-user"
+                  title={`${t('sftpAs', { user: sftpUser })} — ${t('sftpUserTtl')}`}
+                >
                   <Icon name="lock" />
                   {sftpUser}
                 </span>

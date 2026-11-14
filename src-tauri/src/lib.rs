@@ -286,6 +286,7 @@ pub fn run() {
       commands::download_directory,
       commands::read_file_content,
       commands::write_file_content,
+      commands::sudo_write_file,
       commands::upload_file,
       commands::upload_local_dir,
       commands::upload_file_bytes,

@@ -1344,14 +1344,34 @@ mod tests {
 
 #[tauri::command]
 pub async fn switch_sftp_user(
+  app: tauri::AppHandle,
   state: tauri::State<'_, AppState>,
   tab_id: u32,
   username: String,
   password: String,
+  // `one_shot` comes from the editor's save banner, which needs exactly one
+  // write; the file panel's own switch keeps the identity until it goes idle.
+  one_shot: Option<bool>,
 ) -> Result<(), String> {
+  let config = {
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    sessions
+      .get(&tab_id)
+      .ok_or("Session not found")?
+      .config
+      .clone()
+  };
+  // Prove the credentials first: storing them unchecked meant a typo looked like
+  // a successful switch and only failed on the next file operation.
+  crate::remote_fs::verify_sftp_credentials(&app, tab_id, &config, &username, &password).await?;
+
   let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
   let session = sessions.get_mut(&tab_id).ok_or("Session not found")?;
-  session.switched_sftp_user = Some(SwitchedUser { username, password });
+  session.switched_sftp_user = Some(if one_shot.unwrap_or(false) {
+    SwitchedUser::one_shot(username, password)
+  } else {
+    SwitchedUser::new(username, password)
+  });
   Ok(())
 }
 
@@ -1371,8 +1391,17 @@ pub async fn get_sftp_user(
   state: tauri::State<'_, AppState>,
   tab_id: u32,
 ) -> Result<Option<String>, String> {
-  let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-  let session = sessions.get(&tab_id).ok_or("Session not found")?;
+  let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+  let session = sessions.get_mut(&tab_id).ok_or("Session not found")?;
+  // Report an idle identity as already gone, so the header chip disappears at
+  // the same time the backend stops using it.
+  if session
+    .switched_sftp_user
+    .as_ref()
+    .is_some_and(|su| su.expired())
+  {
+    session.switched_sftp_user = None;
+  }
   Ok(
     session
       .switched_sftp_user

@@ -630,11 +630,78 @@ pub struct SshSession {
   pub alive: bool,
 }
 
+/// How long a switched SFTP identity may sit unused before the original user is
+/// restored. A borrowed identity — often root — that outlives the single save it
+/// was granted for is exactly the standing privilege this app should not keep.
+pub const SWITCHED_USER_IDLE_TIMEOUT: std::time::Duration =
+  std::time::Duration::from_secs(15 * 60);
+
 /// Switched SFTP user — allows operating files with a different user's permissions
 #[derive(Debug, Clone)]
 pub struct SwitchedUser {
   pub username: String,
   pub password: String,
+  /// Last time this identity was used for an SFTP operation.
+  pub since: std::time::Instant,
+  /// Granted for exactly one operation (the editor's "save as another user"),
+  /// instead of staying available until it goes idle.
+  pub one_shot: bool,
+}
+
+impl SwitchedUser {
+  pub fn new(username: String, password: String) -> Self {
+    Self {
+      username,
+      password,
+      since: std::time::Instant::now(),
+      one_shot: false,
+    }
+  }
+
+  /// Granted by the editor's save banner: usable for that one write and nothing
+  /// else, so the identity never outlives the save it was typed for.
+  pub fn one_shot(username: String, password: String) -> Self {
+    Self {
+      one_shot: true,
+      ..Self::new(username, password)
+    }
+  }
+
+  /// Idle for too long: the caller must drop the identity and fall back to the
+  /// connection's own user.
+  pub fn expired(&self) -> bool {
+    self.since.elapsed() >= SWITCHED_USER_IDLE_TIMEOUT
+  }
+
+  /// Mark the identity as used, which restarts the idle window.
+  pub fn touch(&mut self) {
+    self.since = std::time::Instant::now();
+  }
+
+  /// Count one use. Returns true when that use exhausts the grant.
+  pub fn take_for_use(&mut self) -> bool {
+    self.touch();
+    self.one_shot
+  }
+}
+
+/// Decide which identity the next SFTP operation runs as, retiring the grant
+/// when it expired or when it was only good for a single operation.
+pub fn take_switched_user(slot: &mut Option<SwitchedUser>) -> Option<SwitchedUser> {
+  let expired = slot.as_ref().is_some_and(|su| su.expired());
+  let mut spent = false;
+  let taken = if expired {
+    None
+  } else {
+    slot.as_mut().map(|su| {
+      spent = su.take_for_use();
+      su.clone()
+    })
+  };
+  if expired || spent {
+    *slot = None;
+  }
+  taken
 }
 
 /// Active serial (COM port) terminal session.
@@ -1034,6 +1101,15 @@ pub struct LocalTerminalEntry {
   pub name: String,
   pub cwd: String,
   pub shell: String,
+  /// Workspace this entry belongs to. Absent on entries written before local
+  /// terminals became workspace-scoped, and those resolve to `default`.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub workspace_id: Option<String>,
+}
+
+/// The workspace a local terminal entry belongs to (`default` for legacy rows).
+pub fn local_entry_workspace(entry: &LocalTerminalEntry) -> &str {
+  entry.workspace_id.as_deref().unwrap_or("default")
 }
 
 /// One active SSH local port-forwarding tunnel (`ssh -L`). Lives only while
@@ -1387,5 +1463,54 @@ mod kind_inference_tests {
   #[test]
   fn a_plain_record_stays_undifferentiated() {
     assert_eq!(loaded(base()), None);
+  }
+}
+
+#[cfg(test)]
+mod switched_user_tests {
+  use super::{take_switched_user, SwitchedUser, SWITCHED_USER_IDLE_TIMEOUT};
+  use std::time::{Duration, Instant};
+
+  #[test]
+  fn a_fresh_switch_is_alive_and_reports_itself_as_used() {
+    let su = SwitchedUser::new("root".into(), "pw".into());
+    assert!(!su.expired());
+  }
+
+  #[test]
+  fn an_idle_identity_expires_and_using_it_restarts_the_window() {
+    let mut su = SwitchedUser::new("root".into(), "pw".into());
+    su.since = Instant::now() - SWITCHED_USER_IDLE_TIMEOUT - Duration::from_secs(1);
+    assert!(su.expired());
+
+    su.touch();
+    assert!(!su.expired());
+  }
+
+  #[test]
+  fn an_idle_identity_is_dropped_instead_of_being_handed_out() {
+    let mut slot = Some(SwitchedUser::new("root".into(), "pw".into()));
+    slot.as_mut().unwrap().since =
+      Instant::now() - SWITCHED_USER_IDLE_TIMEOUT - Duration::from_secs(1);
+
+    assert!(take_switched_user(&mut slot).is_none());
+    // The grant is gone for good, not just skipped this once.
+    assert!(slot.is_none());
+  }
+
+  #[test]
+  fn a_standing_grant_survives_its_uses() {
+    let mut slot = Some(SwitchedUser::new("root".into(), "pw".into()));
+    assert_eq!(take_switched_user(&mut slot).unwrap().username, "root");
+    assert!(slot.is_some());
+    assert_eq!(take_switched_user(&mut slot).unwrap().username, "root");
+  }
+
+  #[test]
+  fn a_one_shot_grant_is_retired_by_its_first_use() {
+    let mut slot = Some(SwitchedUser::one_shot("deploy".into(), "pw".into()));
+    assert_eq!(take_switched_user(&mut slot).unwrap().username, "deploy");
+    assert!(slot.is_none(), "a one-shot grant must not be reusable");
+    assert!(take_switched_user(&mut slot).is_none());
   }
 }

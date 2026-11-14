@@ -597,12 +597,18 @@ export async function cancelTransfer(tabId: number): Promise<void> {
 
 // ===== SFTP User Switching =====
 
+/**
+ * Operate SFTP as another user. `oneShot` grants exactly one operation (the
+ * editor's "save as another user" banner); otherwise the identity stays until it
+ * has been idle for a while, and either way it is reverted explicitly.
+ */
 export async function switchSftpUser(
   tabId: number,
   username: string,
   password: string,
+  oneShot = false,
 ): Promise<void> {
-  await invoke('switch_sftp_user', { tabId, username, password })
+  await invoke('switch_sftp_user', { tabId, username, password, oneShot })
 }
 
 export async function revertSftpUser(tabId: number): Promise<void> {
@@ -751,6 +757,26 @@ export async function writeFileContent(
   encoding?: string,
 ): Promise<boolean> {
   return await invoke<boolean>('write_file_content', { tabId, path, content, encoding })
+}
+
+/**
+ * Save a file the logged-in user cannot write by copying it into place with
+ * `sudo`. The password is only sent over the SSH exec channel's stdin.
+ */
+export async function sudoWriteFile(
+  tabId: number,
+  path: string,
+  content: string,
+  password: string,
+  encoding?: string,
+): Promise<boolean> {
+  return await invoke<boolean>('sudo_write_file', {
+    tabId,
+    path,
+    content,
+    password,
+    encoding,
+  })
 }
 
 // ===== Command Sets =====

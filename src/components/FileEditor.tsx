@@ -12,6 +12,8 @@ import { loadEditorPrefs, saveEditorPrefs, subscribeEditorPrefs } from '../lib/e
 import { matchShortcut } from '../lib/keybindings'
 import { useShortcutLabel } from '../hooks/useShortcuts'
 import { useI18n } from '../i18n'
+import { copyText } from '../lib/clipboard'
+import { switchSftpUser, sudoWriteFile } from '../commands'
 
 export interface EditorTab {
   key: string
@@ -28,7 +30,14 @@ export interface EditorTab {
   loading: boolean
   size: number
   saving?: boolean
+  /** Open/read failure: replaces the editing surface with the error message. */
   error?: string
+  /**
+   * Save (write) failure, kept apart from `error` on purpose: a failed save must
+   * leave the editor, and the text the user typed, on screen. The banner shows
+   * the reason plus "copy content" / "save as another user" escape hatches.
+   */
+  saveError?: string
   /** Raw bytes as Base64 for binary files (hex view). */
   hexBase64?: string
   /** MIME type for image files — when set the file renders as a preview. */
@@ -56,6 +65,12 @@ interface FileEditorProps {
    * names its own filesystem); null when that session has been closed.
    */
   describeOrigin?: (sshTabId: number, targetRef?: TargetRef) => string | null
+  /**
+   * A save completed outside the normal write path (sudo wrote the bytes as
+   * root). The caller reconciles `savedContent` / `isDirty` since a normal
+   * retry would still be refused by the file's permissions.
+   */
+  onSudoSaved?: (key: string) => void
 }
 
 const EOF_SEQ: Record<string, monaco.editor.EndOfLineSequence> = {
@@ -73,6 +88,7 @@ export function FileEditor({
   onChangeLineEnding,
   onFloat,
   describeOrigin,
+  onSudoSaved,
 }: FileEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -100,6 +116,69 @@ export function FileEditor({
   const active = tabs.find((tab) => tab.key === activeKey) || null
   // Resolved once: the toolbar needs it twice (the label and its tooltip).
   const origin = active ? (describeOrigin?.(active.sshTabId, active.targetRef) ?? null) : null
+
+  // Save-failure banner state: the "copy content" feedback and the inline
+  // SFTP-user switch (which retries the save under a user with write access).
+  const [saveCopied, setSaveCopied] = useState(false)
+  const [switchUserOpen, setSwitchUserOpen] = useState(false)
+  const [switchUsername, setSwitchUsername] = useState('')
+  const [switchPassword, setSwitchPassword] = useState('')
+  const [switchError, setSwitchError] = useState<string | null>(null)
+  const [switching, setSwitching] = useState(false)
+  const [sudoOpen, setSudoOpen] = useState(false)
+  const [sudoPassword, setSudoPassword] = useState('')
+  const [sudoError, setSudoError] = useState<string | null>(null)
+  const [savingWithSudo, setSavingWithSudo] = useState(false)
+
+  // Moving to another file must not carry the previous banner's form over.
+  useEffect(() => {
+    setSwitchUserOpen(false)
+    setSwitchError(null)
+    setSwitchUsername('')
+    setSwitchPassword('')
+    setSudoOpen(false)
+    setSudoError(null)
+    setSudoPassword('')
+  }, [activeKey])
+
+  /** Non-null only while a save has failed for the active tab. */
+  const saveErrorTab = active && active.saveError ? active : null
+  /**
+   * Switching the SFTP user only makes sense on a plain SSH session — docker /
+   * WSL / jump / local targets write through their own filesystem, not the
+   * session's SFTP user.
+   */
+  const canSwitchUser =
+    !!saveErrorTab && (!saveErrorTab.targetRef || saveErrorTab.targetRef.kind === 'session')
+
+  /**
+   * Sudo save, shared by the Save button and Enter in the password field: the
+   * password is the form's only input, so typing it and hitting Enter is the
+   * whole flow (the button stays for discoverability).
+   */
+  const saveWithSudo = async () => {
+    if (!saveErrorTab || savingWithSudo || !sudoPassword) {
+      return
+    }
+    setSavingWithSudo(true)
+    setSudoError(null)
+    try {
+      await sudoWriteFile(
+        saveErrorTab.sshTabId,
+        saveErrorTab.path,
+        saveErrorTab.content,
+        sudoPassword,
+        saveErrorTab.encoding,
+      )
+      setSudoOpen(false)
+      setSudoPassword('')
+      onSudoSaved?.(saveErrorTab.key)
+    } catch (e) {
+      setSudoError(String(e))
+    } finally {
+      setSavingWithSudo(false)
+    }
+  }
 
   // Monaco's scrollbar is a 4px sliver by default — widen it while the pointer
   // is in the grab zone so it can actually be grabbed and dragged.
@@ -500,6 +579,130 @@ export function FileEditor({
                 {t('save')}
               </button>
             </div>
+            {saveErrorTab && (
+              <div className="editor-save-error" role="alert">
+                <div className="editor-save-error-row">
+                  <span className="editor-save-error-text">
+                    {t('fileSaveFailed', { err: saveErrorTab.saveError ?? '' })}
+                  </span>
+                  <button
+                    type="button"
+                    className="editor-save-error-btn"
+                    onClick={() => {
+                      void copyText(saveErrorTab.content).then(() => {
+                        setSaveCopied(true)
+                        window.setTimeout(() => setSaveCopied(false), 1500)
+                      })
+                    }}
+                  >
+                    <Icon name="copy" size={12} />
+                    {saveCopied ? t('copied') : t('fileSaveCopyContent')}
+                  </button>
+                  {canSwitchUser && (
+                    <button
+                      type="button"
+                      className="editor-save-error-btn"
+                      aria-expanded={switchUserOpen}
+                      onClick={() => {
+                        setSwitchUserOpen((v) => !v)
+                        setSudoOpen(false)
+                        setSwitchError(null)
+                      }}
+                    >
+                      <Icon name="user" size={12} />
+                      {t('fileSaveAsUser')}
+                    </button>
+                  )}
+                  {canSwitchUser && (
+                    <button
+                      type="button"
+                      className="editor-save-error-btn"
+                      aria-expanded={sudoOpen}
+                      onClick={() => {
+                        setSudoOpen((v) => !v)
+                        setSwitchUserOpen(false)
+                        setSudoError(null)
+                      }}
+                    >
+                      <Icon name="lock" size={12} />
+                      {t('fileSaveWithSudo')}
+                    </button>
+                  )}
+                </div>
+                {switchUserOpen && canSwitchUser && (
+                  <div className="editor-save-user-form">
+                    <input
+                      value={switchUsername}
+                      onChange={(e) => setSwitchUsername(e.target.value)}
+                      placeholder={t('username')}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <input
+                      type="password"
+                      value={switchPassword}
+                      onChange={(e) => setSwitchPassword(e.target.value)}
+                      placeholder={t('password')}
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="editor-save-error-btn primary"
+                      disabled={switching || !switchUsername.trim() || !switchPassword}
+                      onClick={() => {
+                        void (async () => {
+                          setSwitching(true)
+                          setSwitchError(null)
+                          try {
+                            // Granted for this one save only: the retry below
+                            // is the only operation that may run as that user.
+                            await switchSftpUser(
+                              saveErrorTab.sshTabId,
+                              switchUsername.trim(),
+                              switchPassword,
+                              true,
+                            )
+                            setSwitchUserOpen(false)
+                            setSwitchPassword('')
+                            onSave(saveErrorTab.key)
+                          } catch (e) {
+                            setSwitchError(String(e))
+                          } finally {
+                            setSwitching(false)
+                          }
+                        })()
+                      }}
+                    >
+                      {switching ? t('saving') : t('fileSaveRetry')}
+                    </button>
+                    {switchError && <span className="editor-save-user-error">{switchError}</span>}
+                  </div>
+                )}
+                {sudoOpen && canSwitchUser && (
+                  <div className="editor-save-user-form">
+                    <input
+                      type="password"
+                      value={sudoPassword}
+                      onChange={(e) => setSudoPassword(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void saveWithSudo()
+                      }}
+                      placeholder={t('sudoPassword')}
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      className="editor-save-error-btn primary"
+                      disabled={savingWithSudo || !sudoPassword}
+                      onClick={() => void saveWithSudo()}
+                    >
+                      {savingWithSudo ? t('saving') : t('fileSaveWithSudoRetry')}
+                    </button>
+                    {sudoError && <span className="editor-save-user-error">{sudoError}</span>}
+                  </div>
+                )}
+              </div>
+            )}
             {active.saving && <div className="editor-saving">{t('saving')}</div>}
             <div className={`editor-views${previewOn ? ' is-preview' : ''}`}>
               {/* Monaco stays mounted (only hidden) while previewing — unmounting its

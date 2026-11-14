@@ -4691,8 +4691,10 @@ export default function App() {
     async (key: string): Promise<boolean> => {
       const target = editorTabs.find((t) => t.key === key)
       if (!target || target.isBinary || target.isTooLarge) return false
+      // Clear the previous SAVE failure only — `error` is the open/read failure
+      // that replaces the editing surface, and a retry must not touch it.
       setEditorTabs((prev) =>
-        prev.map((t) => (t.key === key ? { ...t, saving: true, error: undefined } : t)),
+        prev.map((t) => (t.key === key ? { ...t, saving: true, saveError: undefined } : t)),
       )
       try {
         await fsWriteFileContent(tabTarget(target), target.path, target.content, target.encoding)
@@ -4705,6 +4707,7 @@ export default function App() {
                   savedContent: t.content,
                   isDirty: false,
                   needsEncoding: false,
+                  saveError: undefined,
                 }
               : t,
           ),
@@ -4717,14 +4720,42 @@ export default function App() {
         fileTreeRef.current?.refreshForFile(target.path)
         return true
       } catch (e) {
+        // A save failure goes to `saveError`, NOT `error`: `error` swaps the
+        // whole editing surface for the message, which is how a permission
+        // denial used to make the user's text "disappear". The banner keeps the
+        // editor (and the unsaved text) on screen.
         setEditorTabs((prev) =>
-          prev.map((t) => (t.key === key ? { ...t, saving: false, error: String(e) } : t)),
+          prev.map((t) => (t.key === key ? { ...t, saving: false, saveError: String(e) } : t)),
         )
         return false
       }
     },
     [editorTabs],
   )
+
+  /**
+   * Reconcile the tab after a save that happened OUTSIDE the normal write path
+   * (sudo wrote the bytes as root). A normal retry would still be refused by
+   * the file's permissions, so the current content becomes the saved baseline.
+   */
+  const handleEditorSavedExternally = useCallback((key: string) => {
+    setEditorTabs((prev) =>
+      prev.map((t) =>
+        t.key === key
+          ? {
+              ...t,
+              saving: false,
+              savedContent: t.content,
+              isDirty: false,
+              needsEncoding: false,
+              saveError: undefined,
+            }
+          : t,
+      ),
+    )
+    const target = editorTabsRef.current.find((t) => t.key === key)
+    if (target) fileTreeRef.current?.refreshForFile(target.path)
+  }, [])
 
   const confirmCloseSave = useCallback(async () => {
     const key = pendingCloseEditorKey
@@ -5804,12 +5835,15 @@ export default function App() {
         await switchWorkspace(workspaceId)
         setActiveWorkspaceId(workspaceId)
         loadConnections()
+        // Local terminals are workspace-scoped too — the sidebar's 本地 section
+        // must follow the switch instead of showing the previous workspace's.
+        reloadLocalTerminals()
       } catch (err) {
         console.error('Failed to switch workspace:', err)
         toastErrorOnce(t('workspaceSwitchFailed', { err: errorText(err) }))
       }
     },
-    [toastErrorOnce, t],
+    [toastErrorOnce, t, reloadLocalTerminals],
   )
 
   const handleWorkspaceCreate = useCallback(
@@ -6031,6 +6065,7 @@ export default function App() {
       onChangeLineEnding={changeEditorTabLineEnding}
       onFloat={onFloat}
       describeOrigin={describeFileOrigin}
+      onSudoSaved={handleEditorSavedExternally}
     />
   )
 

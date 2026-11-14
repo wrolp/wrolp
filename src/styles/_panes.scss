@@ -928,12 +928,13 @@
     color: $text-muted;
 
     select {
-      background: $bg-input;
+      background-color: $bg-input;
       border: 1px solid $border;
-      border-radius: var(--r-1);
+      border-radius: var(--r-2);
       color: $text-primary;
       font-size: var(--fs-xs);
-      padding: 1px 4px;
+      // Right padding leaves room for the chevron drawn by the global `select` rule.
+      padding: 1px 22px 1px 4px;
       &:focus:not(:focus-visible) {
         outline: none;
       }
@@ -1164,6 +1165,85 @@
     .editor-readonly-hint {
       font-size: var(--fs-sm);
     }
+  }
+
+  // Save failure sits ABOVE the editor instead of replacing it: the text the
+  // user typed is still on screen and still selectable, and the banner carries
+  // the two escape hatches (copy it out, or retry under another SFTP user).
+  .editor-save-error {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border-bottom: 1px solid $border;
+    background: rgba($danger, 0.12);
+    font-size: var(--fs-sm);
+  }
+
+  .editor-save-error-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .editor-save-error-text {
+    flex: 1 1 240px;
+    min-width: 0;
+    color: var(--danger-soft-40);
+    word-break: break-word;
+  }
+
+  .editor-save-error-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    background: $bg-secondary;
+    color: $text-primary;
+    font-size: var(--fs-xs);
+    cursor: pointer;
+
+    &:hover {
+      background: $bg-hover;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    &.primary {
+      border-color: transparent;
+      background: var(--accent);
+      color: var(--text-on-accent);
+    }
+  }
+
+  .editor-save-user-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+
+    input {
+      flex: 0 1 160px;
+      min-width: 110px;
+      padding: 3px 6px;
+      border: 1px solid $border;
+      border-radius: var(--r-1);
+      background: $bg-primary;
+      color: $text-primary;
+      font-size: var(--fs-sm);
+    }
+  }
+
+  .editor-save-user-error {
+    color: var(--danger-soft-40);
+    font-size: var(--fs-xs);
+    word-break: break-word;
   }
 
   .editor-saving {

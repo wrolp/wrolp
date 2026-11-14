@@ -123,9 +123,13 @@ pub async fn open_session_sftp(
   tab_id: u32,
 ) -> Result<SftpSession, String> {
   let (config, switched_user) = {
-    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    let session = sessions.get(&tab_id).ok_or("Session not found")?;
-    (session.config.clone(), session.switched_sftp_user.clone())
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    let session = sessions.get_mut(&tab_id).ok_or("Session not found")?;
+    // A borrowed identity expires while idle (and a one-shot grant is spent by
+    // its first use) — this is the enforcement point, so it works even when the
+    // panel is closed and the UI timer never fires.
+    let switched = crate::ssh_session::take_switched_user(&mut session.switched_sftp_user);
+    (session.config.clone(), switched)
   };
 
   let ssh_config = Arc::new(client::Config::default());
@@ -160,6 +164,42 @@ pub async fn open_session_sftp(
   }
 
   sftp_over_handle(handle, sftp_close).await
+}
+
+/// Prove that `username`/`password` is accepted before the caller stores it as
+/// the switched SFTP user. Opens a throwaway SSH connection and drops it: the
+/// alternative is what used to happen — the switch reports success and the typo
+/// surfaces on the next file operation, when the user has no idea what changed.
+pub async fn verify_sftp_credentials(
+  app: &tauri::AppHandle,
+  tab_id: u32,
+  config: &crate::ssh_session::ConnectionConfig,
+  username: &str,
+  password: &str,
+) -> Result<(), String> {
+  let handler = SshHandler {
+    app_handle: app.clone(),
+    tab_id,
+    session_id: None,
+    is_sftp: true,
+    // Auxiliary handler: no device record, no enforcement (see `SshHandler::host_key`).
+    host_key: None,
+    shell_channel_id: None,
+    sftp_close_notify: None,
+    utf8_tail_out: Vec::new(),
+    utf8_tail_err: Vec::new(),
+  };
+  let ssh_config = Arc::new(client::Config::default());
+  // Bounded: the switch happens on a click, and a wedged handshake must not
+  // leave the panel sitting there with no answer.
+  tokio::time::timeout(std::time::Duration::from_secs(20), async move {
+    let mut handle = client::connect(ssh_config, (config.host.as_str(), config.port), handler)
+      .await
+      .map_err(|e| format!("Connection failed: {e}"))?;
+    authenticate_handle(&mut handle, username, Some(password), None, None).await
+  })
+  .await
+  .map_err(|_| "Timed out checking those credentials".to_string())?
 }
 
 /// Establish a nested SSH+SFTP connection through a jump host (ProxyJump).
