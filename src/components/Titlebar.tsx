@@ -11,6 +11,8 @@ interface TitlebarProps {
   onCommandList?: () => void
   /** Open the Ctrl+K command palette. */
   onCommandPalette?: () => void
+  /** Hide every panel and give the whole window to the terminal. */
+  onMinimalMode?: () => void
   /** Put the built-in FTP/HTTP/TFTP tools in the rail's mode column. */
   onNetTools?: () => void
   /**
@@ -28,11 +30,14 @@ export const Titlebar: React.FC<TitlebarProps> = ({
   onCommandList,
   onCommandPalette,
   onNetTools,
+  onMinimalMode,
   workspace,
 }) => {
   const { t } = useI18n()
   // The trigger quotes the palette's combo, so it has to follow a rebind.
   const paletteKeys = useShortcutLabel('togglePalette')
+  // Same for the minimal-mode entry: it names the key that gets you back out.
+  const minimalKeys = useShortcutLabel('toggleMinimalMode')
   const [isMaximized, setIsMaximized] = useState(false)
   const [alwaysOnTop, setAlwaysOnTop] = useState(false)
   const titlebarRef = useRef<HTMLDivElement>(null)
@@ -173,6 +178,16 @@ export const Titlebar: React.FC<TitlebarProps> = ({
             title={t('titlebarSettings')}
           >
             <Icon name="settings" size={14} />
+          </button>
+        )}
+        {onMinimalMode && (
+          <button
+            className="titlebar-btn minimal-btn"
+            onClick={onMinimalMode}
+            title={`${t('shortcutToggleMinimalMode')} (${minimalKeys})`}
+            aria-label={t('shortcutToggleMinimalMode')}
+          >
+            <Icon name="minimal" size={14} />
           </button>
         )}
         <span className="vdiv" />

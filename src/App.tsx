@@ -6,6 +6,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { check } from '@tauri-apps/plugin-updater'
 import type { Update, DownloadEvent } from '@tauri-apps/plugin-updater'
 import { Titlebar } from './components/Titlebar'
+import { MinimalModeBar } from './components/MinimalModeBar'
 import { WorkspaceSelector } from './components/WorkspaceSelector'
 import { ActivityRail, type RailMode } from './components/ActivityRail'
 import { CommandPalette } from './components/CommandPalette'
@@ -1228,11 +1229,16 @@ function AppearanceSettingsCard({
   const [showStatusBar, setShowStatusBar] = useState(
     () => readSetting('ui.showStatusBar')?.value !== false,
   )
+  // The one persisted part of minimal mode: whether entering it goes fullscreen.
+  const [minimalFullscreen, setMinimalFullscreen] = useState(
+    () => readSetting('ui.minimalFullscreen')?.value === true,
+  )
   useEffect(
     () =>
       subscribeAppSettings(() => {
         setAlwaysShowHome(readSetting('ui.alwaysShowHome')?.value !== false)
         setShowStatusBar(readSetting('ui.showStatusBar')?.value !== false)
+        setMinimalFullscreen(readSetting('ui.minimalFullscreen')?.value === true)
       }),
     [],
   )
@@ -1446,6 +1452,20 @@ function AppearanceSettingsCard({
           />
           <span className="settings-label">{t('statusBarLabel')}</span>
           <span className="settings-help">{t('statusBarHelp')}</span>
+        </div>
+
+        <div className="settings-field switch-field">
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={minimalFullscreen}
+            aria-label={t('minimalFullscreenLabel')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => write({ 'ui.minimalFullscreen': !minimalFullscreen })}
+          />
+          <span className="settings-label">{t('minimalFullscreenLabel')}</span>
+          <span className="settings-help">{t('minimalFullscreenHelp')}</span>
         </div>
 
         <div className="settings-field">
@@ -2021,6 +2041,14 @@ export default function App() {
   const [showStatusBar, setShowStatusBar] = useState(
     () => readSetting('ui.showStatusBar')?.value !== false,
   )
+  // Minimal mode hides every piece of window chrome and leaves the terminal
+  // alone on the stage. Deliberately NOT persisted: a restart must always come
+  // back to the normal window, never to a canvas with no visible way out.
+  const [minimalMode, setMinimalMode] = useState(false)
+  // Whether the current minimal session also took the OS fullscreen. Only the
+  // setting that decides it is persisted (`ui.minimalFullscreen`); the live
+  // state drives whether the exit bar shows window controls.
+  const [minimalFullscreen, setMinimalFullscreen] = useState(false)
   // Per-tab current working directory, reported by the Terminal so the FilePanel
   // shell-sync can follow the real (interactive) directory instead of $HOME.
   const [cwdByTab, setCwdByTab] = useState<Record<string, string | null>>({})
@@ -5671,6 +5699,29 @@ export default function App() {
     if (conn) openInSplit(conn, 'row')
   }, [openInSplit])
 
+  const toggleMinimalMode = useCallback(() => {
+    setMinimalMode((prev) => !prev)
+  }, [])
+
+  // Fullscreen follows the mode only when the setting asks for it. Clearing it
+  // on every exit (whatever the setting says now) keeps a window from being
+  // stranded fullscreen after the user has turned the option off mid-session.
+  // The ref skips the initial render: mounting the app must not touch the
+  // window's fullscreen state.
+  const minimalPrevRef = useRef(false)
+  useEffect(() => {
+    if (minimalPrevRef.current === minimalMode) return
+    minimalPrevRef.current = minimalMode
+    const win = getCurrentWindow()
+    if (minimalMode && readSetting('ui.minimalFullscreen')?.value === true) {
+      setMinimalFullscreen(true)
+      void win.setFullscreen(true)
+      return
+    }
+    setMinimalFullscreen(false)
+    void win.setFullscreen(false)
+  }, [minimalMode])
+
   // Every app-level combination key, read from the shortcut table. This one
   // listener replaces the six that used to spell their combos out inline
   // (Settings → Shortcuts now edits them):
@@ -5682,6 +5733,7 @@ export default function App() {
   //   Ctrl+B / Ctrl+Alt+B      sidebar: visibility / side
   //   Ctrl+J / Ctrl+Alt+J      panel: visibility / bottom <-> right
   //   Ctrl+Alt+I        inspector column
+  //   Ctrl+Shift+Z      minimal mode (hide every panel, keep the terminal)
   //   Ctrl+\            split the active session
   // Keys that live inside a view — the terminal's completion and scrollback, the
   // editor's save, an overlay's dismiss — are matched where that view has focus
@@ -5754,6 +5806,10 @@ export default function App() {
             inspector: { ...l.inspector, visible: !l.inspector.visible },
           }))
           return
+        case 'toggleMinimalMode':
+          e.preventDefault()
+          toggleMinimalMode()
+          return
         case 'splitTerminal':
           e.preventDefault()
           handleSplitTerminal()
@@ -5764,7 +5820,14 @@ export default function App() {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [updateLayout, openDualPane, handleSplitTerminal, focusedLeafId, focusedLeafTabId])
+  }, [
+    updateLayout,
+    openDualPane,
+    handleSplitTerminal,
+    toggleMinimalMode,
+    focusedLeafId,
+    focusedLeafTabId,
+  ])
 
   // Handle connection changes (reload list)
 
@@ -9126,43 +9189,49 @@ export default function App() {
       className="app-container"
       style={{ '--win-opacity': isLightTheme ? 1 : opacity } as React.CSSProperties}
     >
-      {/* Custom titlebar */}
-      <Titlebar
-        onSettings={handleOpenSettings}
-        onAiChat={() => handleOpenAiChat()}
-        onCommandList={() => setCommandListOpen((prev) => !prev)}
-        onNetTools={() => openRailMode('nettools')}
-        onCommandPalette={() => setPaletteOpen(true)}
-        workspace={
-          <WorkspaceSelector
-            workspaces={workspaces}
-            activeId={activeWorkspaceId}
-            onSwitch={handleWorkspaceSwitch}
-            onCreate={handleWorkspaceCreate}
-            onDelete={handleWorkspaceDelete}
-            onRename={handleWorkspaceRename}
-          />
-        }
-      />
+      {/* Custom titlebar. Unmounted in minimal mode along with every other band
+          — `MinimalModeBar` is what takes over dragging the window there. */}
+      {!minimalMode && (
+        <Titlebar
+          onSettings={handleOpenSettings}
+          onAiChat={() => handleOpenAiChat()}
+          onCommandList={() => setCommandListOpen((prev) => !prev)}
+          onNetTools={() => openRailMode('nettools')}
+          onCommandPalette={() => setPaletteOpen(true)}
+          onMinimalMode={toggleMinimalMode}
+          workspace={
+            <WorkspaceSelector
+              workspaces={workspaces}
+              activeId={activeWorkspaceId}
+              onSwitch={handleWorkspaceSwitch}
+              onCreate={handleWorkspaceCreate}
+              onDelete={handleWorkspaceDelete}
+              onRename={handleWorkspaceRename}
+            />
+          }
+        />
+      )}
 
       {/* v8 shell: the rail is the window's mode switcher and always sits on the
           left edge, outside the sidebar's own left/right placement. */}
       <div className="app-body">
-        <ActivityRail
-          mode={railMode}
-          onModeChange={toggleRailMode}
-          // Same test the Files section used to apply to itself: a connected
-          // session, or a local container target (which needs no session).
-          filesAvailable={
-            tabs.some((tab) => tab.status === 'connected') ||
-            fileTarget?.kind === 'dockerLocal' ||
-            fileTarget?.kind === 'k8sPod'
-          }
-          containersAvailable={!!dockerHost}
-          k8sAvailable={!!k8sHost}
-          gitAvailable={!!gitHost}
-          onSettings={handleOpenSettings}
-        />
+        {!minimalMode && (
+          <ActivityRail
+            mode={railMode}
+            onModeChange={toggleRailMode}
+            // Same test the Files section used to apply to itself: a connected
+            // session, or a local container target (which needs no session).
+            filesAvailable={
+              tabs.some((tab) => tab.status === 'connected') ||
+              fileTarget?.kind === 'dockerLocal' ||
+              fileTarget?.kind === 'k8sPod'
+            }
+            containersAvailable={!!dockerHost}
+            k8sAvailable={!!k8sHost}
+            gitAvailable={!!gitHost}
+            onSettings={handleOpenSettings}
+          />
+        )}
 
         {/* The three regions are ordered by which edge each column is docked to, not
           by DOM order — see the `order` rules on `.main-content`. */}
@@ -9171,8 +9240,8 @@ export default function App() {
             layout.inspector.side === 'left' ? 'insp-left' : 'insp-right'
           }`}
         >
-          {layout.sidebar.side === 'left' && sidebarEl}
-          {layout.sidebar.side === 'left' && showSidebar && (
+          {!minimalMode && layout.sidebar.side === 'left' && sidebarEl}
+          {!minimalMode && layout.sidebar.side === 'left' && showSidebar && (
             <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
           )}
 
@@ -9181,90 +9250,93 @@ export default function App() {
             className={`terminal-area ${layout.bottomPanel.pos === 'right' ? 'panel-right' : ''}`}
           >
             <div className="terminal-main">
-              {/* Tab bar */}
-              <div className="tab-bar">
-                {tabs
-                  .filter((tab) => !tab.embedded)
-                  .map((tab, idx) => {
-                    // A file tab's unsaved marker comes from the buffer it points
-                    // at; the TabInfo itself never knows about edits.
-                    const file =
-                      tab.tabType === 'fileEditor'
-                        ? editorTabs.find((e) => e.key === tab.editorKey)
-                        : undefined
-                    // A file's tooltip says where it came from as well as what it is:
-                    // the same path can be open from two different boxes, and the tab
-                    // label alone cannot tell them apart.
-                    const origin = file ? describeFileOrigin(file.sshTabId, file.targetRef) : null
-                    return (
-                      <div
-                        key={tab.tabId}
-                        className={`tab-item ${tab.tabType === 'home' ? 'tab-home' : ''}${tab.tabId === activeTabId ? ' active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
-                        draggable={tab.tabType !== 'home'}
-                        title={
-                          file
-                            ? origin
-                              ? `${file.path}\n${t('openedFrom', { name: origin })}`
-                              : file.path
-                            : undefined
-                        }
-                        onClick={() => handleTabClick(tab.tabId)}
-                        onDragStart={(e) => handleTabDragStart(e, idx)}
-                        onDragOver={(e) => handleTabDragOver(e, idx)}
-                        onDrop={(e) => handleTabDrop(e, idx)}
-                        onDragEnd={handleTabDragEnd}
-                        onContextMenu={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
-                        }}
-                      >
-                        <Icon className="tab-icon" name={getTabIcon(tab)} size={13} />
-                        <span className="tab-label">{getTabLabel(tab)}</span>
-                        {file?.isDirty && (
-                          <span className="tab-dirty" title={t('unsavedChanges')} />
-                        )}
-                        <button
-                          type="button"
-                          className="tab-close"
-                          onClick={(e) => {
+              {/* Tab bar — hidden in minimal mode, since the mode exists to give
+                  the terminal the whole window. Ctrl+Shift+Z brings it back. */}
+              {!minimalMode && (
+                <div className="tab-bar">
+                  {tabs
+                    .filter((tab) => !tab.embedded)
+                    .map((tab, idx) => {
+                      // A file tab's unsaved marker comes from the buffer it points
+                      // at; the TabInfo itself never knows about edits.
+                      const file =
+                        tab.tabType === 'fileEditor'
+                          ? editorTabs.find((e) => e.key === tab.editorKey)
+                          : undefined
+                      // A file's tooltip says where it came from as well as what it is:
+                      // the same path can be open from two different boxes, and the tab
+                      // label alone cannot tell them apart.
+                      const origin = file ? describeFileOrigin(file.sshTabId, file.targetRef) : null
+                      return (
+                        <div
+                          key={tab.tabId}
+                          className={`tab-item ${tab.tabType === 'home' ? 'tab-home' : ''}${tab.tabId === activeTabId ? ' active' : ''}${tabDragIndex === idx ? ' drag-over' : ''}`}
+                          draggable={tab.tabType !== 'home'}
+                          title={
+                            file
+                              ? origin
+                                ? `${file.path}\n${t('openedFrom', { name: origin })}`
+                                : file.path
+                              : undefined
+                          }
+                          onClick={() => handleTabClick(tab.tabId)}
+                          onDragStart={(e) => handleTabDragStart(e, idx)}
+                          onDragOver={(e) => handleTabDragOver(e, idx)}
+                          onDrop={(e) => handleTabDrop(e, idx)}
+                          onDragEnd={handleTabDragEnd}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
                             e.stopPropagation()
-                            // An editor tab closes the file (with the unsaved-changes
-                            // prompt), not the session it came from.
-                            if (tab.tabType === 'fileEditor' && tab.editorKey)
-                              requestCloseEditorTab(tab.editorKey)
-                            else closeTab(tab.tabId)
+                            setTabContextMenu({ x: e.clientX, y: e.clientY, tab })
                           }}
-                          aria-label={tab.tabType === 'home' ? t('unpinHome') : t('closeTab')}
-                          title={tab.tabType === 'home' ? t('unpinHome') : undefined}
                         >
-                          <Icon name="x" size={11} />
-                        </button>
-                      </div>
-                    )
-                  })}
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => {
-                    // `hideInspector` rather than a bare visibility flip, so the
-                    // tab-bar control and the column's own ✕ leave the same state.
-                    if (inspectorOpen) {
-                      hideInspector()
-                      return
-                    }
-                    updateLayout((l) => ({
-                      ...l,
-                      inspector: { ...l.inspector, visible: true },
-                    }))
-                  }}
-                  aria-label={inspectorOpen ? t('closeInspector') : t('openInspector')}
-                  title={`${inspectorOpen ? t('closeInspector') : t('openInspector')} (${shortcutLabel('toggleInspector')})`}
-                  data-on={inspectorOpen ? 'true' : undefined}
-                >
-                  <Icon name="inspector" size={14} />
-                </button>
-              </div>
+                          <Icon className="tab-icon" name={getTabIcon(tab)} size={13} />
+                          <span className="tab-label">{getTabLabel(tab)}</span>
+                          {file?.isDirty && (
+                            <span className="tab-dirty" title={t('unsavedChanges')} />
+                          )}
+                          <button
+                            type="button"
+                            className="tab-close"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // An editor tab closes the file (with the unsaved-changes
+                              // prompt), not the session it came from.
+                              if (tab.tabType === 'fileEditor' && tab.editorKey)
+                                requestCloseEditorTab(tab.editorKey)
+                              else closeTab(tab.tabId)
+                            }}
+                            aria-label={tab.tabType === 'home' ? t('unpinHome') : t('closeTab')}
+                            title={tab.tabType === 'home' ? t('unpinHome') : undefined}
+                          >
+                            <Icon name="x" size={11} />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => {
+                      // `hideInspector` rather than a bare visibility flip, so the
+                      // tab-bar control and the column's own ✕ leave the same state.
+                      if (inspectorOpen) {
+                        hideInspector()
+                        return
+                      }
+                      updateLayout((l) => ({
+                        ...l,
+                        inspector: { ...l.inspector, visible: true },
+                      }))
+                    }}
+                    aria-label={inspectorOpen ? t('closeInspector') : t('openInspector')}
+                    title={`${inspectorOpen ? t('closeInspector') : t('openInspector')} (${shortcutLabel('toggleInspector')})`}
+                    data-on={inspectorOpen ? 'true' : undefined}
+                  >
+                    <Icon name="inspector" size={14} />
+                  </button>
+                </div>
+              )}
 
               {/* Tab right-click context menu (SSH terminals + local shell tabs) */}
               {tabContextMenu &&
@@ -9550,13 +9622,19 @@ export default function App() {
             {/* Bottom panel — session recordings & command sets. `shown` is the
                 status bar's toggle: false unmounts the drawer entirely, header
                 strip included, so the workspace gets the room back. */}
-            {bottomPanelShown && layout.bottomPanel.pos === 'right' && bottomPanelExpanded && (
-              <div className="panel-divider-v" onMouseDown={handlePanelDividerMouseDown} />
-            )}
-            {bottomPanelShown && layout.bottomPanel.pos === 'bottom' && bottomPanelExpanded && (
-              <div className="panel-divider-h" onMouseDown={handleBottomDividerMouseDown} />
-            )}
-            {bottomPanelShown && (
+            {!minimalMode &&
+              bottomPanelShown &&
+              layout.bottomPanel.pos === 'right' &&
+              bottomPanelExpanded && (
+                <div className="panel-divider-v" onMouseDown={handlePanelDividerMouseDown} />
+              )}
+            {!minimalMode &&
+              bottomPanelShown &&
+              layout.bottomPanel.pos === 'bottom' &&
+              bottomPanelExpanded && (
+                <div className="panel-divider-h" onMouseDown={handleBottomDividerMouseDown} />
+              )}
+            {!minimalMode && bottomPanelShown && (
               <BottomPanel
                 connections={connections}
                 activeTabId={focusedLeafTabId}
@@ -9582,7 +9660,7 @@ export default function App() {
           window edge; floated, it leaves the row entirely (`position: fixed`), so
           the resizer goes with it and the workspace takes back the column's
           width. Same element in both states — see `InspectorPanel`. */}
-          {inspectorOpen && (
+          {!minimalMode && inspectorOpen && (
             <InspectorPanel
               connections={connections}
               activeTabId={focusedLeafTabId}
@@ -9606,14 +9684,14 @@ export default function App() {
               network={networkPanelNode}
             />
           )}
-          {layout.sidebar.side === 'right' && showSidebar && (
+          {!minimalMode && layout.sidebar.side === 'right' && showSidebar && (
             <div className="panel-divider" onMouseDown={handleDividerMouseDown} />
           )}
-          {layout.sidebar.side === 'right' && sidebarEl}
+          {!minimalMode && layout.sidebar.side === 'right' && sidebarEl}
         </div>
       </div>
 
-      {showStatusBar && (
+      {!minimalMode && showStatusBar && (
         <StatusBar
           tab={statusBarTab}
           termSize={focusedLeafId ? termSizes[focusedLeafId] : undefined}
@@ -9634,6 +9712,11 @@ export default function App() {
           onDismissUpdate={() => setShowUpdateBanner(false)}
         />
       )}
+
+      {/* The way out of minimal mode. It is the only chrome the mode keeps — a
+          strip on the top edge that reveals itself on hover and doubles as the
+          window's drag handle once the titlebar is gone. */}
+      {minimalMode && <MinimalModeBar onExit={toggleMinimalMode} fullscreen={minimalFullscreen} />}
 
       {/* Ctrl+K command palette — the shell's one entry point for "open this /
           do that". It is portalled to <body>, so DOM order here is irrelevant. */}

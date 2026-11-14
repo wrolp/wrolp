@@ -464,6 +464,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   shortcutFlipPanelPositionDesc: '同一个抽屉，换一条边停靠。',
   shortcutToggleInspector: '显示或隐藏检视器',
   shortcutToggleInspectorDesc: '显示主机与容器详情的那一列。',
+  shortcutToggleMinimalMode: '极简模式',
+  shortcutToggleMinimalModeDesc:
+    '隐藏标题栏、活动栏、侧栏、标签栏、面板与状态栏，把整个窗口让给终端。',
+  exitMinimalMode: '退出极简',
   shortcutSplitTerminal: '分屏终端',
   shortcutSplitTerminalDesc: '把当前连接再开成一个并排面板。',
   shortcutToggleCommandList: '命令片段列表',
@@ -528,6 +532,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   statusBarLabel: '显示状态栏',
   statusBarHelp:
     '窗口底部的状态栏显示连接状态、终端行列数、录制中标记与可用更新。关闭后，这些状态仍可从各窗格标题栏读到。',
+  minimalFullscreenLabel: '极简模式下进入全屏',
+  minimalFullscreenHelp: '进入极简时同时进入系统全屏。关闭时只隐藏周围的界面，窗口尺寸不变。',
   alwaysShowHomeLabel: '一直显示首页',
   alwaysShowHomeHelp:
     '把首页固定为第一个页签，会话开着的时候也能一键点回去。关闭后，首页只在没有任何页签时出现。',

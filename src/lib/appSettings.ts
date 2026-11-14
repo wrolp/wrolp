@@ -514,6 +514,16 @@ const DEFS: SettingDef[] = [
     describe: 'Show the status bar along the bottom edge of the window.',
   },
   {
+    key: 'ui.minimalFullscreen',
+    kind: 'boolean',
+    group: 'ui',
+    default: false,
+    // The one part of minimal mode that is persisted: whether entering it also
+    // goes fullscreen. The mode itself never survives a restart (see MinimalModeBar).
+    storage: { kind: 'localStorage', key: 'wrolp-minimal-fullscreen' },
+    describe: 'Enter fullscreen when toggling minimal mode.',
+  },
+  {
     key: 'ui.recentRemoteCount',
     kind: 'number',
     min: HOME_RECENT_COUNT.min,

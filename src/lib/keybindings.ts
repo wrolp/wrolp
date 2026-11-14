@@ -35,6 +35,7 @@ export type ShortcutActionId =
   | 'toggleBottomPanel'
   | 'flipPanelPosition'
   | 'toggleInspector'
+  | 'toggleMinimalMode'
   | 'splitTerminal'
   // Commands.
   | 'toggleCommandList'
@@ -138,6 +139,13 @@ export const SHORTCUT_DEFS: readonly ShortcutDef[] = [
     default: 'ctrl+alt+i',
     titleKey: 'shortcutToggleInspector',
     descKey: 'shortcutToggleInspectorDesc',
+  },
+  {
+    id: 'toggleMinimalMode',
+    group: 'panel',
+    default: 'ctrl+shift+z',
+    titleKey: 'shortcutToggleMinimalMode',
+    descKey: 'shortcutToggleMinimalModeDesc',
   },
   {
     id: 'splitTerminal',

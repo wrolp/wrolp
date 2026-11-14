@@ -484,6 +484,10 @@ const en = {
   shortcutFlipPanelPositionDesc: 'The same drawer, docked on the other axis.',
   shortcutToggleInspector: 'Show or hide the inspector',
   shortcutToggleInspectorDesc: 'The column with host and container detail.',
+  shortcutToggleMinimalMode: 'Minimal mode',
+  shortcutToggleMinimalModeDesc:
+    'Hide the titlebar, rail, sidebar, tab bar, panel and status bar, and give the whole window to the terminal.',
+  exitMinimalMode: 'Exit minimal mode',
   shortcutSplitTerminal: 'Split the terminal',
   shortcutSplitTerminalDesc: 'Opens the current connection again as a second pane.',
   shortcutToggleCommandList: 'Command snippets list',
@@ -554,6 +558,9 @@ const en = {
   statusBarLabel: 'Show the status bar',
   statusBarHelp:
     'The bar along the bottom edge reads out the connection state, the terminal grid, an active recording and an available update. Off, the pane headers still carry the state.',
+  minimalFullscreenLabel: 'Enter fullscreen in minimal mode',
+  minimalFullscreenHelp:
+    'Minimal mode also takes the window fullscreen. Off, it only hides the surrounding panels.',
   alwaysShowHomeLabel: 'Always show Home',
   alwaysShowHomeHelp:
     'Keep the Home page pinned as the first tab, so it is one click away while sessions are open. Off, it only appears while no tab is left.',

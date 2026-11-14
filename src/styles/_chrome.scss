@@ -212,14 +212,15 @@
   }
 }
 
-// The five action buttons are 20px glyphs in a 44px-wide band, so their hit area is
+// The six action buttons are 20px glyphs in a 44px-wide band, so their hit area is
 // the glyph box; the radius lives on the base rule (it used to appear only with the
 // hover background, which drew a rounded wash over a square hover).
 .settings-btn,
 .ai-chat-btn,
 .pin-btn,
 .cmd-list-btn,
-.net-tools-btn {
+.net-tools-btn,
+.minimal-btn {
   width: 20px;
   height: 20px;
   border-radius: var(--r-1);
@@ -1234,4 +1235,88 @@
   color: $text-muted;
   font-size: var(--fs-lg);
   line-height: 1.6;
+}
+
+// ===== Minimal mode =====
+//
+// With every other band unmounted, this strip is the whole escape hatch — and
+// the only drag surface left (the titlebar is gone). It stays collapsed to a
+// 5px sliver at the top edge so the mode really does give the terminal the
+// window, and slides fully into view on hover / keyboard focus.
+.minimal-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 0 8px;
+  background: linear-gradient(180deg, var(--titlebar-bg), var(--titlebar-bg-2));
+  border-bottom: 1px solid $border;
+  transform: translateY(calc(-100% + 5px));
+  opacity: 0.35;
+  transition:
+    transform var(--d-1) var(--e-out),
+    opacity var(--d-1) var(--e-out);
+  z-index: var(--z-above-float);
+  user-select: none;
+  -webkit-app-region: drag;
+  app-region: drag;
+
+  &:hover,
+  &:focus-within {
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  .tb-left {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.minimal-exit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: $bg-input;
+  color: $text-secondary;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  transition:
+    border-color var(--d-1) var(--e-out),
+    color var(--d-1) var(--e-out);
+
+  &:hover {
+    border-color: $border-focus;
+    color: $text-primary;
+  }
+
+  kbd {
+    flex-shrink: 0;
+    height: 18px;
+    padding: 0 6px;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    background: $bg-tertiary;
+    color: $text-muted;
+    font-family: inherit;
+    font-size: var(--fs-xs);
+    line-height: 16px;
+  }
+}
+
+.minimal-window-controls {
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }

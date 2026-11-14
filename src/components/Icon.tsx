@@ -59,6 +59,8 @@ export type IconName =
   | 'settings'
   | 'externalLink'
   | 'minimize'
+  // Enter minimal mode: four corner arrows pointing inward (lucide minimize-2).
+  | 'minimal'
   | 'panelTop'
   | 'panelBottom'
   | 'panelLeft'
@@ -478,6 +480,16 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   // lucide: minus
   minimize: <path d="M5 12h14" />,
+  // lucide: minimize-2 — arrows pulling inward, the "give the terminal the
+  // whole window" gesture rather than a generic fullscreen square.
+  minimal: (
+    <>
+      <polyline points="4 14 10 14 10 20" />
+      <polyline points="20 10 14 10 14 4" />
+      <line x1="14" x2="21" y1="10" y2="3" />
+      <line x1="3" x2="10" y1="21" y2="14" />
+    </>
+  ),
   // Detach a panel into its own window: the front frame sits offset from the
   // surface it leaves. Replaces the `⤢` text glyph, whose size and baseline
   // varied with whatever font the WebView fell back to.
