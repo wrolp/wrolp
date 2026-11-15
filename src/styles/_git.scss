@@ -62,16 +62,21 @@
   word-break: break-word;
 }
 
-.git-path-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+// The picker's fields. A dialog's `.form-group input` is sized for a 480px modal;
+// in a 264px rail it overflows, and without these rules the clone form fell back
+// to the UA's grey 3D boxes — visibly a different control from the Open row.
+// `min-height` matches `.btn`'s own 24px so an input and the button beside it sit
+// on the same line instead of one towering over the other.
+.git-path-row,
+.git-clone-row {
   width: 100%;
 
   input {
-    flex: 1;
     min-width: 0;
-    padding: 4px 6px;
+    width: 100%;
+    min-height: 24px;
+    box-sizing: border-box;
+    padding: 0 6px;
     border: 1px solid $border;
     border-radius: var(--r-1);
     background: $bg-input;
@@ -79,14 +84,41 @@
     font-family: inherit;
     font-size: var(--fs-sm);
 
+    &::placeholder {
+      color: $text-dim;
+    }
+
     &:focus {
       outline: none;
       border-color: $border-focus;
     }
   }
+}
+
+.git-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  input {
+    flex: 1;
+  }
 
   button {
     flex: none;
+  }
+}
+
+// Clone asks two questions, so the URL gets its own line and the destination
+// shares the second with the button; side by side in a 264px column both fields
+// were too narrow to read a path.
+.git-clone-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+
+  input:first-child {
+    grid-column: 1 / -1;
   }
 }
 
@@ -132,6 +164,14 @@
     flex: 1;
     min-width: 0;
   }
+}
+
+// The picker centres everything; an error is a sentence, so each wrapped line
+// would otherwise be centred and read like a headline.
+.git-empty .git-error {
+  width: 100%;
+  margin: 0;
+  text-align: left;
 }
 
 .git-error-close {
