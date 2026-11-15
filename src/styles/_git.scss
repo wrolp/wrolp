@@ -435,6 +435,15 @@
   white-space: nowrap;
 }
 
+// The picker centres its children and has no top bar to sit under, so the clone
+// progress row claims the full width and drops the repo view's separator.
+.git-empty .git-progress {
+  width: 100%;
+  padding: 0;
+  border-bottom: none;
+  text-align: left;
+}
+
 .git-section {
   flex: none;
   padding: 4px 6px 2px;

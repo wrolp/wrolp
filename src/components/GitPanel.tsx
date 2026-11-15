@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { useGit, HISTORY_PAGE_SIZES } from '../hooks/useGit'
@@ -14,6 +14,7 @@ import {
 import { groupGitStatus, gitEntryKey, gitEntryLetter } from '../lib/gitStatus'
 import { computeLanes, graphLaneCount, GRAPH_PALETTE_SIZE } from '../lib/gitGraph'
 import { gitRefColor } from '../lib/gitRefColor'
+import { defaultCloneDest } from '../lib/gitClone'
 import type { GitCommitFile, GitHostRef, GitStatusEntry } from '../types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitBlameView } from './GitBlameView'
@@ -143,6 +144,12 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const [cloneOpen, setCloneOpen] = useState(false)
   const [cloneUrl, setCloneUrl] = useState('')
   const [cloneDest, setCloneDest] = useState('')
+  /**
+   * Whether the destination has been typed into. Until it has, it follows the
+   * URL's project name (`…/demo.git` → `<folder>/demo`); after that a URL edit
+   * must not overwrite what the user chose.
+   */
+  const cloneDestTouched = useRef(false)
 
   const groups = useMemo(() => groupGitStatus(git.status), [git.status])
   const stagedPaths = uniquePaths(groups.staged)
@@ -476,7 +483,25 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               )}
             </div>
           )}
-          {cloneOpen ? (
+          {git.networkKind === 'clone' ? (
+            // The picker is what is on screen while a clone runs — the repo view's
+            // own progress bar is unreachable until the clone finishes, so without
+            // this the panel looked frozen for the whole transfer.
+            <div className="git-progress">
+              <span className="git-progress-text">
+                {git.progress?.percent != null
+                  ? `${t('gitClone')} ${git.progress.percent}%`
+                  : git.progress?.text || t('gitClone')}
+              </span>
+              <button
+                type="button"
+                className="git-link-btn"
+                onClick={() => void git.cancelNetwork()}
+              >
+                {t('gitCancelOp')}
+              </button>
+            </div>
+          ) : cloneOpen ? (
             <form
               className="git-clone-row"
               onSubmit={(e) => {
@@ -490,13 +515,21 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                 type="text"
                 value={cloneUrl}
                 placeholder={t('gitCloneUrlPlaceholder')}
-                onChange={(e) => setCloneUrl(e.target.value)}
+                onChange={(e) => {
+                  const url = e.target.value
+                  setCloneUrl(url)
+                  // Follow the project name until the destination is edited.
+                  if (!cloneDestTouched.current) setCloneDest(defaultCloneDest(pathInput, url))
+                }}
               />
               <input
                 type="text"
                 value={cloneDest}
                 placeholder={t('gitCloneDestPlaceholder')}
-                onChange={(e) => setCloneDest(e.target.value)}
+                onChange={(e) => {
+                  cloneDestTouched.current = true
+                  setCloneDest(e.target.value)
+                }}
               />
               <button
                 type="submit"
@@ -512,14 +545,36 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               className="git-link-btn"
               disabled={busy}
               onClick={() => {
-                setCloneDest(pathInput.trim())
+                // Fresh form: the destination starts as the folder being browsed
+                // plus the project name, and follows the URL until it is edited.
+                cloneDestTouched.current = false
+                setCloneDest(defaultCloneDest(pathInput, cloneUrl))
                 setCloneOpen(true)
               }}
             >
               {t('gitCloneOpen')}
             </button>
           )}
-          {git.error && <div className="git-error">{describeGitError(git.error, t)}</div>}
+          {/* `error` is the picker's own failure (probe / open); `actionError` is
+              what clone reported. Both belong here — a clone that failed or was
+              cancelled used to set `actionError`, which only the repo view
+              rendered, so the picker silently went back to its form. */}
+          {(git.actionError ?? git.error) && (
+            <div className="git-error">
+              <span>{describeGitError((git.actionError ?? git.error) as string, t)}</span>
+              {git.actionError && (
+                <button
+                  type="button"
+                  className="git-error-close"
+                  onClick={git.dismissActionError}
+                  title={t('close')}
+                  aria-label={t('close')}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )}
           {recent.length > 0 && (
             <div className="git-recent">
               <div className="git-recent-head">{t('gitRecentRepos')}</div>

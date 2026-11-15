@@ -224,6 +224,13 @@ export interface TauriMockOptions {
    * non-bare root — what opening any ordinary folder looks like.
    */
   gitRepoInfo?: { root: string; bare: boolean }
+  /**
+   * Keep `git_clone` pending (after one `git-progress` tick) until the test
+   * finishes it with `resolvePendingCall()`. `git_cancel` then rejects it with
+   * `git_cancelled:…`, the way the real command does — that is what makes the
+   * picker's in-flight progress row and its Cancel button observable at all.
+   */
+  gitCloneHold?: boolean
   /** Paths `git_repo_info` refuses with `git_not_repo:` (the picker's error row). */
   gitNotRepoPaths?: string[]
   /**
@@ -371,6 +378,15 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     // Commands that can take arbitrarily long (the subnet scan) hold their
     // resolution here so a test can look at the UI while they are still running.
     let finishPendingCall: (() => void) | null = null
+    // A `git_clone` held by `gitCloneHold`, plus the way to settle it: `git_cancel`
+    // rejects it (the real command stops the transfer), `resolvePendingCall` lets
+    // it succeed.
+    let heldClone: {
+      opId: string
+      result: { root: string; bare: boolean }
+      resolve: (value: unknown) => void
+      reject: (reason: unknown) => void
+    } | null = null
 
     /** Deliver an event to every `plugin:event|listen` handler for `event`. */
     const emit = (event: string, payload?: unknown) => {
@@ -1064,8 +1080,23 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'git_remote_add':
           case 'git_remote_remove':
             return opts.gitRemotes ?? []
-          case 'git_clone':
-            return { root: String(args.dest ?? ''), bare: false }
+          case 'git_clone': {
+            const result = { root: String(args.dest ?? ''), bare: false }
+            if (!opts.gitCloneHold) return result
+            const opId = String(args.opId ?? '')
+            // One tick, so the picker's progress row has a percentage to show.
+            emit('git-progress', {
+              opId,
+              phase: 'remote',
+              received: 0,
+              total: 0,
+              percent: 42,
+              text: 'Receiving objects',
+            })
+            return new Promise<unknown>((resolve, reject) => {
+              heldClone = { opId, result, resolve, reject }
+            })
+          }
           case 'git_branch_delete':
             return opts.gitBranches ?? []
           case 'git_fetch':
@@ -1084,8 +1115,16 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             })
             return opts.gitNetworkResult ?? { stdout: '', stderr: '' }
           }
-          case 'git_cancel':
+          case 'git_cancel': {
+            const opId = String(args.opId ?? '')
+            if (heldClone?.opId === opId) {
+              const held = heldClone
+              heldClone = null
+              // The real command kills git and reports `git_cancelled:`.
+              held.reject('git_cancelled:cancelled by the user')
+            }
             return null
+          }
           default:
             return null
         }
@@ -1119,6 +1158,12 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     // test decides when that work is over rather than racing it.
     Object.defineProperty(window, '__TAURI_FINISH_CALL__', {
       value: () => {
+        if (heldClone) {
+          const held = heldClone
+          heldClone = null
+          held.resolve(held.result)
+          return
+        }
         const finish = finishPendingCall
         finishPendingCall = null
         if (finish) finish()

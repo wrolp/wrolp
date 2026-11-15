@@ -1330,6 +1330,11 @@ pub async fn git_clone(
   let dest = checked_dest(&dest)?;
   let op_id = checked_op_id(&op_id)?;
   let flag = cli.cancel_flag(&op_id);
+  // Did the destination exist before we started? `git clone` refuses a non-empty
+  // one, so in practice it is absent — but a cancel must never delete a folder the
+  // user already had, and a cancel races the first thing git writes.
+  let fs = build_fs(&app, &state, &git_target_ref(&host)).await?;
+  let existed_before = fs.metadata(&dest).await.is_ok();
   let result = exec_git_streaming(
     &app,
     &state,
@@ -1347,9 +1352,113 @@ pub async fn git_clone(
   )
   .await;
   cli.finish(&op_id);
-  let (out, err, code) = result?;
+  let (out, err, code) = match result {
+    Ok(done) => done,
+    // Cancelled (or the child could not be waited on): git was killed mid-write,
+    // so the destination holds a half-populated tree and no `.git` index.
+    Err(e) => {
+      discard_partial_clone(fs.as_ref(), &dest, existed_before).await;
+      return Err(e);
+    }
+  };
   if code != 0 {
+    discard_partial_clone(fs.as_ref(), &dest, existed_before).await;
     return Err(failed("clone", &out, &err, code));
   }
   git_repo_info(state, cli, host, dest).await
+}
+
+/// Delete whatever a failed or cancelled clone left at `dest`.
+///
+/// Only a destination this clone created is removed: an existing folder is the
+/// user's, and `git clone` refusing it is not a reason to delete it. Errors are
+/// swallowed — the clone's own failure is what the caller reports, and a host
+/// that refuses the delete must not replace it with a second, confusing error.
+async fn discard_partial_clone(
+  fs: &dyn crate::remote_fs::RemoteFs,
+  dest: &str,
+  existed_before: bool,
+) {
+  if existed_before {
+    return;
+  }
+  remove_tree(fs, dest).await;
+}
+
+/// Depth-first recursive delete through [`crate::remote_fs::RemoteFs`], which only
+/// offers non-recursive `remove_dir`. Symlinks are removed as links, not followed.
+async fn remove_tree(fs: &dyn crate::remote_fs::RemoteFs, path: &str) {
+  if let Ok(entries) = fs.list_dir(path).await {
+    for entry in entries {
+      if entry.name == "." || entry.name == ".." {
+        continue;
+      }
+      if entry.is_dir {
+        Box::pin(remove_tree(fs, &entry.path)).await;
+      } else {
+        let _ = fs.remove_file(&entry.path).await;
+      }
+    }
+  }
+  let _ = fs.remove_dir(path).await;
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// A throwaway destination with a nested tree and a `.git` — what an
+  /// interrupted clone leaves behind.
+  fn partial_clone(label: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("wrolp-clone-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("demo").join(".git").join("objects")).unwrap();
+    std::fs::write(
+      root.join("demo").join(".git").join("HEAD"),
+      "ref: refs/heads/main",
+    )
+    .unwrap();
+    std::fs::write(root.join("demo").join("README.md"), "half a clone").unwrap();
+    root
+  }
+
+  #[tokio::test]
+  async fn a_cancelled_clone_deletes_what_it_created() {
+    let root = partial_clone("a");
+    let dest = root.join("demo");
+    let fs = crate::local_fs::LocalFs::new();
+
+    discard_partial_clone(&fs, dest.to_str().unwrap(), false).await;
+
+    assert!(!dest.exists(), "the half-written tree is gone");
+    assert!(root.exists(), "only the destination is removed");
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[tokio::test]
+  async fn a_cancelled_clone_leaves_a_preexisting_folder_alone() {
+    let root = partial_clone("b");
+    let dest = root.join("demo");
+    let fs = crate::local_fs::LocalFs::new();
+
+    // The clone refused to touch it, so nothing may delete the user's folder.
+    discard_partial_clone(&fs, dest.to_str().unwrap(), true).await;
+
+    assert!(dest.join("README.md").exists());
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[tokio::test]
+  async fn an_already_removed_destination_is_not_an_error() {
+    let root = partial_clone("c");
+    let dest = root.join("demo");
+    let fs = crate::local_fs::LocalFs::new();
+
+    discard_partial_clone(&fs, dest.to_str().unwrap(), false).await;
+    // git may have failed before creating anything; a second pass must stay quiet.
+    discard_partial_clone(&fs, dest.to_str().unwrap(), false).await;
+
+    assert!(!dest.exists());
+    let _ = std::fs::remove_dir_all(&root);
+  }
 }
