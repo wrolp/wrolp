@@ -201,9 +201,7 @@ async fn sudo_copy(
 ) -> Result<bool, String> {
   let handle = {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    sessions
-      .get(&tab_id)
-      .and_then(|s| s.session_handle.clone())
+    sessions.get(&tab_id).and_then(|s| s.session_handle.clone())
   }
   .ok_or_else(|| "SSH session is no longer available".to_string())?;
 
@@ -381,7 +379,10 @@ mod tests {
   fn the_sudo_line_wraps_the_script_and_afterwards_prints_the_status() {
     let line = sudo_line("/tmp/x", "/etc/app.conf", "abcd1234");
     assert!(line.starts_with("sudo -S -p '' sh -c '"), "{line}");
-    assert!(line.ends_with("' 2>&1; echo __WROLP_SUDO_EXIT__$?"), "{line}");
+    assert!(
+      line.ends_with("' 2>&1; echo __WROLP_SUDO_EXIT__$?"),
+      "{line}"
+    );
     assert!(line.contains("mv -f --"), "{line}");
   }
 
@@ -439,7 +440,10 @@ mod tests {
   #[test]
   fn a_short_password_does_not_mangle_the_message() {
     // "cp" must stay readable in sudo's own wording; only the echoed line goes.
-    let (detail, _) = parse_attempt(b"cp\r\nsudo: cp is not allowed\r\n__WROLP_SUDO_EXIT__1", "cp");
+    let (detail, _) = parse_attempt(
+      b"cp\r\nsudo: cp is not allowed\r\n__WROLP_SUDO_EXIT__1",
+      "cp",
+    );
     assert_eq!(detail, "sudo: cp is not allowed");
   }
 

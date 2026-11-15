@@ -8,16 +8,10 @@
 
 /// Unmerged paths, NUL-separated.
 pub fn list_args() -> Vec<String> {
-  [
-    "diff",
-    "--name-only",
-    "--diff-filter=U",
-    "-z",
-    "--no-color",
-  ]
-  .iter()
-  .map(|s| s.to_string())
-  .collect()
+  ["diff", "--name-only", "--diff-filter=U", "-z", "--no-color"]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 /// `rev-parse -q --verify <ref>` for the marker file of one operation. Empty
@@ -81,13 +75,7 @@ mod tests {
   fn the_conflict_list_is_nul_separated() {
     assert_eq!(
       list_args(),
-      vec![
-        "diff",
-        "--name-only",
-        "--diff-filter=U",
-        "-z",
-        "--no-color"
-      ]
+      vec!["diff", "--name-only", "--diff-filter=U", "-z", "--no-color"]
     );
   }
 
@@ -97,10 +85,7 @@ mod tests {
       in_progress_probe_args("merge").unwrap(),
       vec!["rev-parse", "-q", "--verify", "MERGE_HEAD"]
     );
-    assert_eq!(
-      in_progress_probe_args("revert").unwrap()[3],
-      "REVERT_HEAD"
-    );
+    assert_eq!(in_progress_probe_args("revert").unwrap()[3], "REVERT_HEAD");
     assert!(in_progress_probe_args("bogus").is_none());
   }
 

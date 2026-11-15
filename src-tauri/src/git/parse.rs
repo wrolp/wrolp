@@ -112,11 +112,13 @@ pub fn parse_status(raw: &[u8], limit: usize) -> GitStatus {
       continue;
     }
     if let Some(path) = line.strip_prefix("? ") {
-      st.entries.push(entry(path.to_string(), "?", "?", "untracked"));
+      st.entries
+        .push(entry(path.to_string(), "?", "?", "untracked"));
       continue;
     }
     if let Some(path) = line.strip_prefix("! ") {
-      st.entries.push(entry(path.to_string(), "!", "!", "ignored"));
+      st.entries
+        .push(entry(path.to_string(), "!", "!", "ignored"));
     }
   }
   let limit = limit.min(MAX_STATUS_ENTRIES);
@@ -170,10 +172,7 @@ pub fn parse_log(raw: &[u8], limit: usize) -> GitLogPage {
       author_name: fields[2].clone(),
       author_email: fields[3].clone(),
       timestamp: fields[4].parse().unwrap_or(0),
-      parents: fields[5]
-        .split_whitespace()
-        .map(str::to_string)
-        .collect(),
+      parents: fields[5].split_whitespace().map(str::to_string).collect(),
       refs: fields[6]
         .split(',')
         .map(|r| r.trim().to_string())
@@ -251,7 +250,11 @@ pub fn parse_remotes(raw: &[u8]) -> Vec<GitRemote> {
       }
       None => out.push(GitRemote {
         name: name.to_string(),
-        fetch_url: if kind == "push" { String::new() } else { url.clone() },
+        fetch_url: if kind == "push" {
+          String::new()
+        } else {
+          url.clone()
+        },
         push_url: if kind == "push" { url } else { String::new() },
       }),
     }
@@ -295,12 +298,8 @@ pub fn parse_commit_files(raw: &[u8]) -> Vec<GitCommitFile> {
 /// oversized side is cut with `truncated` so the IPC payload stays bounded.
 pub fn parse_diff(raw: &[u8]) -> GitDiff {
   let binary = raw.contains(&0)
-    || raw
-      .windows(13)
-      .any(|w| w == b"Binary files ")
-    || raw
-      .windows(13)
-      .any(|w| w == b"GIT binary pa");
+    || raw.windows(13).any(|w| w == b"Binary files ")
+    || raw.windows(13).any(|w| w == b"GIT binary pa");
   if binary {
     return GitDiff {
       text: String::new(),

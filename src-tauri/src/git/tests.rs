@@ -59,13 +59,17 @@ fn status_parses_every_record_type_and_the_branch_headers() {
 
 #[test]
 fn status_models_detached_and_unborn_heads() {
-  let detached = "# branch.oid abcd\0# branch.head (detached)\0".as_bytes().to_vec();
+  let detached = "# branch.oid abcd\0# branch.head (detached)\0"
+    .as_bytes()
+    .to_vec();
   let st = parse::parse_status(&detached, MAX_STATUS_ENTRIES);
   assert!(st.detached);
   assert_eq!(st.branch, None);
   assert_eq!(st.head_oid.as_deref(), Some("abcd"));
 
-  let unborn = "# branch.oid (initial)\0# branch.head main\0".as_bytes().to_vec();
+  let unborn = "# branch.oid (initial)\0# branch.head main\0"
+    .as_bytes()
+    .to_vec();
   let st = parse::parse_status(&unborn, MAX_STATUS_ENTRIES);
   assert!(st.unborn);
   assert_eq!(st.branch.as_deref(), Some("main"));
@@ -250,8 +254,14 @@ fn stash_rows_carry_the_index_git_printed() {
 
 #[test]
 fn remote_urls_are_argv_safe() {
-  assert_eq!(remote::checked_url("https://github.com/x/y.git").unwrap(), "https://github.com/x/y.git");
-  assert_eq!(remote::checked_url("git@host:repo.git").unwrap(), "git@host:repo.git");
+  assert_eq!(
+    remote::checked_url("https://github.com/x/y.git").unwrap(),
+    "https://github.com/x/y.git"
+  );
+  assert_eq!(
+    remote::checked_url("git@host:repo.git").unwrap(),
+    "git@host:repo.git"
+  );
   assert!(remote::checked_url("").is_err());
   assert!(remote::checked_url("  ").is_err());
   assert!(remote::checked_url("--upload-pack=x").is_err());
@@ -265,7 +275,10 @@ fn remote_add_and_remove_keep_the_name_then_the_url() {
     remote::add_args("origin", "https://example.com/r.git"),
     vec!["remote", "add", "origin", "https://example.com/r.git"]
   );
-  assert_eq!(remote::remove_args("origin"), vec!["remote", "remove", "origin"]);
+  assert_eq!(
+    remote::remove_args("origin"),
+    vec!["remote", "remove", "origin"]
+  );
 }
 
 #[test]
@@ -290,7 +303,13 @@ fn network_argv_covers_remote_and_branch_variants() {
   // A forced push is always `--force-with-lease`, never a bare `--force`.
   assert_eq!(
     remote::push_args(Some("origin"), Some("main"), true),
-    vec!["push", "--force-with-lease", "--set-upstream", "origin", "main"]
+    vec![
+      "push",
+      "--force-with-lease",
+      "--set-upstream",
+      "origin",
+      "main"
+    ]
   );
   assert!(!remote::push_args(Some("origin"), None, true).contains(&"--force".to_string()));
 }
@@ -299,7 +318,13 @@ fn network_argv_covers_remote_and_branch_variants() {
 fn blame_argv_terminates_options_and_pins_the_oid() {
   assert_eq!(
     history::blame_args("src/main.ts", None),
-    vec!["blame", "--line-porcelain", "--no-progress", "--", "src/main.ts"]
+    vec![
+      "blame",
+      "--line-porcelain",
+      "--no-progress",
+      "--",
+      "src/main.ts"
+    ]
   );
   assert_eq!(
     history::blame_args("src/main.ts", Some("abc123")),
@@ -350,7 +375,10 @@ fn errors_are_staged_by_what_stderr_says() {
   let stderr = b"fatal: Authentication failed for 'https://example.com/x.git/'";
   assert!(classify_error("fetch", stderr).starts_with("git_auth_required:"));
   // Unknown text keeps the caller's stage, so it is never silently swallowed.
-  assert_eq!(classify_error("commit", b"something else"), "git_commit:something else");
+  assert_eq!(
+    classify_error("commit", b"something else"),
+    "git_commit:something else"
+  );
 }
 
 /// Against a real git: `cargo test --lib git::tests -- --ignored`.
@@ -388,7 +416,9 @@ fn parses_a_real_local_repository() {
       }
     }
   };
-  let Some(_) = git(&["init", "-q"]) else { return };
+  let Some(_) = git(&["init", "-q"]) else {
+    return;
+  };
   std::fs::write(dir.path().join("a b.txt"), "one").unwrap();
   let Some(_) = git(&["add", "--", "a b.txt"]) else {
     return;

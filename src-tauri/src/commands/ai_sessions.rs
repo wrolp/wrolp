@@ -32,7 +32,10 @@ fn session_file_path(state: &AppState, save: &db::AiSessionSave) -> std::path::P
     .unwrap_or_else(chrono::Local::now);
   crate::ai_session_file::derive_session_file(
     &root,
-    save.workspace_id.as_deref().unwrap_or(crate::rec_file::DEFAULT_WORKSPACE),
+    save
+      .workspace_id
+      .as_deref()
+      .unwrap_or(crate::rec_file::DEFAULT_WORKSPACE),
     save.connection_name.as_deref().unwrap_or(""),
     &local,
     &save.id,
@@ -156,13 +159,20 @@ pub async fn save_ai_session(
   let visible_count = incoming.len() as i64;
   let now = chrono::Utc::now().to_rfc3339();
   let conn = state.db.lock().map_err(|e| e.to_string())?;
-  db::upsert_ai_session(&conn, &session, &path.to_string_lossy(), visible_count, &now)?;
+  db::upsert_ai_session(
+    &conn,
+    &session,
+    &path.to_string_lossy(),
+    visible_count,
+    &now,
+  )?;
 
   // Retention: past the cap, the oldest non-pinned sessions are *moved* to the
   // archive directory (never deleted) and their index rows dropped.
   enforce_ai_session_retention(&conn, state.base_dir.as_deref())?;
 
-  let row = db::get_ai_session(&conn, &session.id)?.ok_or_else(|| "session row vanished".to_string())?;
+  let row =
+    db::get_ai_session(&conn, &session.id)?.ok_or_else(|| "session row vanished".to_string())?;
   Ok(summary_from_row(row, visible_count))
 }
 
@@ -293,7 +303,8 @@ pub async fn rebuild_ai_sessions(
         .map(str::to_string),
       connection_name: crate::ai_session_file::header_string(&records, "connectionName")
         .map(str::to_string),
-      workspace_id: crate::ai_session_file::header_string(&records, "workspaceId").map(str::to_string),
+      workspace_id: crate::ai_session_file::header_string(&records, "workspaceId")
+        .map(str::to_string),
       profile_id: crate::ai_session_file::header_string(&records, "profileId").map(str::to_string),
       model: crate::ai_session_file::header_string(&records, "model").map(str::to_string),
       mode: crate::ai_session_file::header_string(&records, "mode")

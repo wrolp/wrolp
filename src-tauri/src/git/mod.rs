@@ -5,10 +5,10 @@
 //! reference implementation's `git_<stage>:<message>` convention: the frontend maps
 //! the stage to a translated sentence and shows the rest verbatim.
 
-pub mod parse;
 pub mod branch;
 pub mod conflict;
 pub mod history;
+pub mod parse;
 pub mod remote;
 pub mod scan;
 pub mod stash;

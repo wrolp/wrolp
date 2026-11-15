@@ -548,7 +548,10 @@ pub async fn connect_telnet(
       push_output_chunk(
         &mut buffers,
         tab_id,
-        format!("\x1b[33m=== Telnet {} ({}x{}) ===\x1b[0m\r\n", addr, cols, rows),
+        format!(
+          "\x1b[33m=== Telnet {} ({}x{}) ===\x1b[0m\r\n",
+          addr, cols, rows
+        ),
       );
     }
   }

@@ -16,7 +16,11 @@ pub fn checked_remote(name: &str) -> Result<String, String> {
   if n.is_empty() {
     return Err(super::git_error("remote", "missing remote name"));
   }
-  if n.starts_with('-') || n.chars().any(|c| c.is_control() || c == ' ' || c == '~' || c == '^') {
+  if n.starts_with('-')
+    || n
+      .chars()
+      .any(|c| c.is_control() || c == ' ' || c == '~' || c == '^')
+  {
     return Err(super::git_error(
       "remote",
       format!("invalid remote name: {name}"),
@@ -96,7 +100,10 @@ pub fn checked_url(url: &str) -> Result<String, String> {
     return Err(super::git_error("remote", "missing remote URL"));
   }
   if u.starts_with('-') || u.chars().any(|c| c.is_control() || c.is_whitespace()) {
-    return Err(super::git_error("remote", format!("invalid remote URL: {u}")));
+    return Err(super::git_error(
+      "remote",
+      format!("invalid remote URL: {u}"),
+    ));
   }
   Ok(u.to_string())
 }

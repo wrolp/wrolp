@@ -58,7 +58,10 @@ pub fn derive_session_file(
   let c = segment_or(conn, crate::rec_file::UNNAMED);
   let stamp = created_local.format("%Y%m%d-%H%M%S");
   let short: String = session_id.chars().take(8).collect();
-  root.join(ws).join(c).join(format!("{}_{}.jsonl", stamp, short))
+  root
+    .join(ws)
+    .join(c)
+    .join(format!("{}_{}.jsonl", stamp, short))
 }
 
 /// Current wall-clock epoch milliseconds (same helper as `commands::now_ms`,
@@ -137,7 +140,10 @@ pub fn read_records(abs: &Path) -> Result<Vec<Value>, String> {
       Ok(v) => records.push(v),
       Err(e) => {
         skipped += 1;
-        eprintln!("[ai_session] skipping unparseable line: {} ({})", trimmed, e);
+        eprintln!(
+          "[ai_session] skipping unparseable line: {} ({})",
+          trimmed, e
+        );
       }
     }
   }
@@ -223,17 +229,30 @@ pub fn visible_messages(records: &[Value]) -> Vec<Value> {
 ///   then the new tail.
 pub fn align_lines(records: &[Value], session_id: &str, incoming: &[Value]) -> Vec<String> {
   let visible = visible_messages(records);
-  let persisted_ids: Vec<String> = visible.iter().filter_map(|m| message_id(m).map(str::to_string)).collect();
-  let incoming_ids: Vec<String> = incoming.iter().filter_map(|m| message_id(m).map(str::to_string)).collect();
+  let persisted_ids: Vec<String> = visible
+    .iter()
+    .filter_map(|m| message_id(m).map(str::to_string))
+    .collect();
+  let incoming_ids: Vec<String> = incoming
+    .iter()
+    .filter_map(|m| message_id(m).map(str::to_string))
+    .collect();
   let mut prefix = 0usize;
-  while prefix < persisted_ids.len() && prefix < incoming_ids.len() && persisted_ids[prefix] == incoming_ids[prefix] {
+  while prefix < persisted_ids.len()
+    && prefix < incoming_ids.len()
+    && persisted_ids[prefix] == incoming_ids[prefix]
+  {
     prefix += 1;
   }
 
   let mut lines: Vec<String> = Vec::new();
   // Divergence or shrink (not a pure extension) → reset the window first.
   if prefix < persisted_ids.len() {
-    let keep = if prefix > 0 { Some(persisted_ids[prefix - 1].clone()) } else { None };
+    let keep = if prefix > 0 {
+      Some(persisted_ids[prefix - 1].clone())
+    } else {
+      None
+    };
     let reset = serde_json::json!({
       "type": "reset",
       "sid": session_id,
@@ -417,12 +436,23 @@ mod tests {
   #[test]
   fn derive_prevents_folders_escaping_root() {
     let root = tmpdir("e").join("root");
-    let path = derive_session_file(&root, "../..", "../../escape", &chrono::Local::now(), "sess1");
+    let path = derive_session_file(
+      &root,
+      "../..",
+      "../../escape",
+      &chrono::Local::now(),
+      "sess1",
+    );
     assert!(path.starts_with(&root));
     let rel = path.strip_prefix(&root).unwrap();
     assert_eq!(rel.components().count(), 3, "ws/conn/file layout");
     for comp in rel.components() {
-      assert_ne!(comp.as_os_str(), "..", "escaping component in {}", path.display());
+      assert_ne!(
+        comp.as_os_str(),
+        "..",
+        "escaping component in {}",
+        path.display()
+      );
     }
     let _ = fs::remove_dir_all(root.parent().unwrap());
   }
@@ -468,12 +498,9 @@ mod tests {
 
   #[test]
   fn visible_messages_applies_last_reset() {
-    let mk = |t: &str, id: &str| {
-      serde_json::json!({ "type": t, "sid": "s", "msg": msg(id, if t == "user" { "user" } else { "assistant" }) })
-    };
-    let reset = |keep: Option<&str>| {
-      serde_json::json!({ "type": "reset", "sid": "s", "keepId": keep })
-    };
+    let mk = |t: &str, id: &str| serde_json::json!({ "type": t, "sid": "s", "msg": msg(id, if t == "user" { "user" } else { "assistant" }) });
+    let reset =
+      |keep: Option<&str>| serde_json::json!({ "type": "reset", "sid": "s", "keepId": keep });
     // No reset → all visible.
     let records = vec![mk("user", "m1"), mk("assistant", "m2")];
     assert_eq!(visible_messages(&records).len(), 2);
@@ -497,9 +524,7 @@ mod tests {
 
   #[test]
   fn align_lines_is_idempotent_and_handles_extension_shrink_and_diverge() {
-    let mk = |t: &str, id: &str| {
-      serde_json::json!({ "type": t, "sid": "s", "seq": 1, "ts": 1, "msg": msg(id, if t == "user" { "user" } else { "assistant" }) })
-    };
+    let mk = |t: &str, id: &str| serde_json::json!({ "type": t, "sid": "s", "seq": 1, "ts": 1, "msg": msg(id, if t == "user" { "user" } else { "assistant" }) });
 
     // Extension: persisted [m1], incoming [m1, m2] → append m2 only, no reset.
     let records = vec![mk("user", "m1")];

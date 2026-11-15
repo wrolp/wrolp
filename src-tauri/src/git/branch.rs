@@ -14,11 +14,7 @@ pub fn list_args() -> Vec<String> {
 /// `git switch -c <name> [start]` (checkout) or `git branch <name> [start]`.
 pub fn create_args(name: &str, start_point: Option<&str>, checkout: bool) -> Vec<String> {
   let mut argv = if checkout {
-    vec![
-      "switch".to_string(),
-      "-c".to_string(),
-      name.to_string(),
-    ]
+    vec!["switch".to_string(), "-c".to_string(), name.to_string()]
   } else {
     vec!["branch".to_string(), name.to_string()]
   };

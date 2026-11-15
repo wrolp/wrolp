@@ -439,11 +439,7 @@ async fn run_command_on_terminal(
     // Telnet output lands in `output_buffers` too, so it shares the SSH arm.
     LiveShell::Ssh | LiveShell::Telnet => {
       if let Ok(mut buffers) = state.output_buffers.lock() {
-        push_output_chunk(
-          &mut buffers,
-          tab_id,
-          "\x1b[2m[AI]\x1b[0m ".to_string(),
-        );
+        push_output_chunk(&mut buffers, tab_id, "\x1b[2m[AI]\x1b[0m ".to_string());
       }
     }
     LiveShell::Local => {

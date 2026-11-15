@@ -629,8 +629,7 @@ pub async fn download_directory(
         .unwrap_or("download")
         .to_string()
     });
-  let dir_name =
-    sanitize_relative_name(&raw_dir_name).unwrap_or_else(|| "download".to_string());
+  let dir_name = sanitize_relative_name(&raw_dir_name).unwrap_or_else(|| "download".to_string());
   let local_root = std::path::Path::new(&local_dir).join(&dir_name);
 
   // Create local directory skeleton (root + all subdirs).

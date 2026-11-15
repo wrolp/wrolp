@@ -54,11 +54,7 @@ pub fn unstage_args(paths: &[String]) -> Vec<String> {
 /// Unborn-HEAD fallback for unstage: there is no commit for `restore --staged`
 /// to read, so the index entry is removed directly.
 pub fn unstage_unborn_args(paths: &[String]) -> Vec<String> {
-  let mut argv = vec![
-    "rm".to_string(),
-    "--cached".to_string(),
-    "--".to_string(),
-  ];
+  let mut argv = vec!["rm".to_string(), "--cached".to_string(), "--".to_string()];
   argv.extend(paths.iter().cloned());
   argv
 }
@@ -85,22 +81,14 @@ pub fn clean_args(paths: &[String]) -> Vec<String> {
 /// Which of the candidate paths git actually tracks. Used to split discard into
 /// `restore --worktree` (tracked) and `clean -f` (untracked).
 pub fn ls_files_args(paths: &[String]) -> Vec<String> {
-  let mut argv = vec![
-    "ls-files".to_string(),
-    "-z".to_string(),
-    "--".to_string(),
-  ];
+  let mut argv = vec!["ls-files".to_string(), "-z".to_string(), "--".to_string()];
   argv.extend(paths.iter().cloned());
   argv
 }
 
 /// `git commit -F -` — the message goes over stdin so it never becomes argv text.
 pub fn commit_args(amend: bool) -> Vec<String> {
-  let mut argv = vec![
-    "commit".to_string(),
-    "-F".to_string(),
-    "-".to_string(),
-  ];
+  let mut argv = vec!["commit".to_string(), "-F".to_string(), "-".to_string()];
   if amend {
     argv.push("--amend".to_string());
   }
@@ -133,10 +121,19 @@ pub fn checked_branch_name(name: &str) -> Result<String, String> {
     return Err(super::git_error("branch", "missing branch name"));
   }
   if n.starts_with('-') {
-    return Err(super::git_error("branch", format!("invalid branch name: {n}")));
+    return Err(super::git_error(
+      "branch",
+      format!("invalid branch name: {n}"),
+    ));
   }
-  if n.chars().any(|c| c.is_control() || c == ' ' || c == '~' || c == '^' || c == ':') {
-    return Err(super::git_error("branch", format!("invalid branch name: {n}")));
+  if n
+    .chars()
+    .any(|c| c.is_control() || c == ' ' || c == '~' || c == '^' || c == ':')
+  {
+    return Err(super::git_error(
+      "branch",
+      format!("invalid branch name: {n}"),
+    ));
   }
   Ok(n.to_string())
 }

@@ -681,7 +681,14 @@ async fn stream_upload_file(
         .await
         .map_err(|e| format!("Failed to write data to '{}': {}", remote_path, e))?;
       written += n as u64;
-      emit_upload_progress(app, tab_id, filename, written, total, start.elapsed().as_millis());
+      emit_upload_progress(
+        app,
+        tab_id,
+        filename,
+        written,
+        total,
+        start.elapsed().as_millis(),
+      );
     }
     Ok::<(), String>(())
   }
@@ -801,9 +808,8 @@ async fn stream_upload_local_dir(
     let bytes = done_bytes.load(std::sync::atomic::Ordering::Relaxed);
     let files_done = done_files.load(std::sync::atomic::Ordering::Relaxed);
     let mut last = last_tick.lock().map_err(|e| e.to_string())?;
-    let due = force
-      || bytes >= total_bytes
-      || last.elapsed() >= std::time::Duration::from_millis(120);
+    let due =
+      force || bytes >= total_bytes || last.elapsed() >= std::time::Duration::from_millis(120);
     if !due {
       return Ok(());
     }

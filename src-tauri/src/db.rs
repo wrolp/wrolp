@@ -1771,7 +1771,9 @@ pub fn list_ai_sessions(
 /// Read one index row (for `load_ai_session` to find the message file and meta).
 pub fn get_ai_session(conn: &Connection, id: &str) -> Result<Option<AiSessionSummary>, String> {
   let mut stmt = conn
-    .prepare(&format!("SELECT {AI_SESSION_COLS} FROM ai_sessions WHERE id = ?1"))
+    .prepare(&format!(
+      "SELECT {AI_SESSION_COLS} FROM ai_sessions WHERE id = ?1"
+    ))
     .map_err(|e| e.to_string())?;
   let row = stmt
     .query_map(params![id], map_ai_session_row)
@@ -2285,15 +2287,27 @@ mod ai_sessions_tests {
   #[test]
   fn upsert_preserves_created_at_but_moves_updated_at() {
     let conn = conn_with_schema();
-    upsert_ai_session(&conn, &save("a", "first", None, 1), "/tmp/a.jsonl", 1, "2026-10-31T00:00:00Z")
-      .unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("a", "first", None, 1),
+      "/tmp/a.jsonl",
+      1,
+      "2026-10-31T00:00:00Z",
+    )
+    .unwrap();
     let row = get_ai_session(&conn, "a").unwrap().unwrap();
     assert_eq!(row.created_at, "2026-10-31T00:00:00Z");
     assert_eq!(row.message_count, 1);
 
     // Second save: created_at stays, updated_at / count move.
-    upsert_ai_session(&conn, &save("a", "renamed", None, 5), "/tmp/a.jsonl", 5, "2026-10-31T01:00:00Z")
-      .unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("a", "renamed", None, 5),
+      "/tmp/a.jsonl",
+      5,
+      "2026-10-31T01:00:00Z",
+    )
+    .unwrap();
     let row = get_ai_session(&conn, "a").unwrap().unwrap();
     assert_eq!(row.created_at, "2026-10-31T00:00:00Z");
     assert_eq!(row.updated_at, "2026-10-31T01:00:00Z");
@@ -2304,9 +2318,30 @@ mod ai_sessions_tests {
   #[test]
   fn list_orders_pinned_first_then_newest_and_scopes_by_connection() {
     let conn = conn_with_schema();
-    upsert_ai_session(&conn, &save("a", "A", Some("c1"), 1), "/a.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
-    upsert_ai_session(&conn, &save("b", "B", Some("c2"), 1), "/b.jsonl", 1, "2026-10-31T01:00:00Z").unwrap();
-    upsert_ai_session(&conn, &save("c", "C", Some("c1"), 1), "/c.jsonl", 1, "2026-10-31T02:00:00Z").unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("a", "A", Some("c1"), 1),
+      "/a.jsonl",
+      1,
+      "2026-10-31T00:00:00Z",
+    )
+    .unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("b", "B", Some("c2"), 1),
+      "/b.jsonl",
+      1,
+      "2026-10-31T01:00:00Z",
+    )
+    .unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("c", "C", Some("c1"), 1),
+      "/c.jsonl",
+      1,
+      "2026-10-31T02:00:00Z",
+    )
+    .unwrap();
 
     let all = list_ai_sessions(&conn, None, 100).unwrap();
     assert_eq!(all.len(), 3);
@@ -2314,7 +2349,9 @@ mod ai_sessions_tests {
 
     let scoped = list_ai_sessions(&conn, Some("c1"), 100).unwrap();
     assert_eq!(scoped.len(), 2);
-    assert!(scoped.iter().all(|s| s.connection_id.as_deref() == Some("c1")));
+    assert!(scoped
+      .iter()
+      .all(|s| s.connection_id.as_deref() == Some("c1")));
 
     // Pin B → it jumps to the front regardless of recency.
     pin_ai_session(&conn, "b", true).unwrap();
@@ -2325,9 +2362,19 @@ mod ai_sessions_tests {
   #[test]
   fn delete_returns_the_file_and_load_unknown_is_none() {
     let conn = conn_with_schema();
-    upsert_ai_session(&conn, &save("a", "A", None, 1), "/tmp/a.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("a", "A", None, 1),
+      "/tmp/a.jsonl",
+      1,
+      "2026-10-31T00:00:00Z",
+    )
+    .unwrap();
     assert_eq!(get_ai_session(&conn, "missing").unwrap().is_none(), true);
-    assert_eq!(delete_ai_session(&conn, "a").unwrap().as_deref(), Some("/tmp/a.jsonl"));
+    assert_eq!(
+      delete_ai_session(&conn, "a").unwrap().as_deref(),
+      Some("/tmp/a.jsonl")
+    );
     assert!(get_ai_session(&conn, "a").unwrap().is_none());
   }
 
@@ -2335,22 +2382,48 @@ mod ai_sessions_tests {
   fn rebuild_preserves_title_and_pin_but_refreshes_count() {
     let conn = conn_with_schema();
     // First save establishes the row, then the user renames and pins it.
-    upsert_ai_session(&conn, &save("a", "original", None, 1), "/tmp/a.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("a", "original", None, 1),
+      "/tmp/a.jsonl",
+      1,
+      "2026-10-31T00:00:00Z",
+    )
+    .unwrap();
     rename_ai_session(&conn, "a", "user-renamed").unwrap();
     pin_ai_session(&conn, "a", true).unwrap();
 
     // Rebuild (fresh title from the file's first user message) must not clobber
     // the rename or the pin, but must refresh message_count / updated_at.
-    rebuild_ai_session(&conn, &save("a", "derived-from-file", None, 0), "/tmp/a.jsonl", 9, "2026-10-31T00:00:00Z", "2026-11-01T00:00:00Z").unwrap();
+    rebuild_ai_session(
+      &conn,
+      &save("a", "derived-from-file", None, 0),
+      "/tmp/a.jsonl",
+      9,
+      "2026-10-31T00:00:00Z",
+      "2026-11-01T00:00:00Z",
+    )
+    .unwrap();
     let row = get_ai_session(&conn, "a").unwrap().unwrap();
     assert_eq!(row.title, "user-renamed");
     assert!(row.pinned);
     assert_eq!(row.message_count, 9);
     assert_eq!(row.updated_at, "2026-11-01T00:00:00Z");
-    assert_eq!(row.created_at, "2026-10-31T00:00:00Z", "created_at preserved");
+    assert_eq!(
+      row.created_at, "2026-10-31T00:00:00Z",
+      "created_at preserved"
+    );
 
     // A fresh rebuild row (unknown id) takes the derived title and defaults.
-    rebuild_ai_session(&conn, &save("b", "derived-b", None, 0), "/tmp/b.jsonl", 2, "2026-10-31T00:00:00Z", "2026-10-31T00:00:00Z").unwrap();
+    rebuild_ai_session(
+      &conn,
+      &save("b", "derived-b", None, 0),
+      "/tmp/b.jsonl",
+      2,
+      "2026-10-31T00:00:00Z",
+      "2026-10-31T00:00:00Z",
+    )
+    .unwrap();
     let b = get_ai_session(&conn, "b").unwrap().unwrap();
     assert_eq!(b.title, "derived-b");
     assert!(!b.pinned);
@@ -2360,8 +2433,22 @@ mod ai_sessions_tests {
   fn count_ai_sessions_counts_rows() {
     let conn = conn_with_schema();
     assert_eq!(count_ai_sessions(&conn).unwrap(), 0);
-    upsert_ai_session(&conn, &save("a", "A", None, 1), "/a.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
-    upsert_ai_session(&conn, &save("b", "B", None, 1), "/b.jsonl", 1, "2026-10-31T00:00:00Z").unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("a", "A", None, 1),
+      "/a.jsonl",
+      1,
+      "2026-10-31T00:00:00Z",
+    )
+    .unwrap();
+    upsert_ai_session(
+      &conn,
+      &save("b", "B", None, 1),
+      "/b.jsonl",
+      1,
+      "2026-10-31T00:00:00Z",
+    )
+    .unwrap();
     assert_eq!(count_ai_sessions(&conn).unwrap(), 2);
   }
 }

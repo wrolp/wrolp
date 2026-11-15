@@ -62,9 +62,9 @@ pub async fn record_local_terminal_used(
   let known = {
     let terminals = state.local_terminals.lock().map_err(|e| e.to_string())?;
     entry_id == db::DEFAULT_LOCAL_ENTRY_ID
-      || terminals.iter().any(|t| {
-        t.id == entry_id && crate::ssh_session::local_entry_workspace(t) == active_id
-      })
+      || terminals
+        .iter()
+        .any(|t| t.id == entry_id && crate::ssh_session::local_entry_workspace(t) == active_id)
   };
   if !known {
     return Ok(false);

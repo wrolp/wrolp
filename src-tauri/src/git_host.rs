@@ -215,8 +215,7 @@ async fn local_git_bin(cli: &GitState) -> Result<String, String> {
       return Ok(bin);
     }
   }
-  Err("git_no_git:git was not found on PATH or in the usual Windows install locations"
-    .to_string())
+  Err("git_no_git:git was not found on PATH or in the usual Windows install locations".to_string())
 }
 
 /// Probe whether the host has git. Never an `Err`: "not installed" is a state the
@@ -391,9 +390,12 @@ async fn remote_exec(
     }
     Ok((stdout, stderr, status))
   };
-  tokio::time::timeout(timeout, fut)
-    .await
-    .map_err(|_| format!("git_timeout:git did not finish within {}s", timeout.as_secs()))?
+  tokio::time::timeout(timeout, fut).await.map_err(|_| {
+    format!(
+      "git_timeout:git did not finish within {}s",
+      timeout.as_secs()
+    )
+  })?
 }
 
 /// The local half of [`exec_git`]: argv goes straight to the process, so no
@@ -433,7 +435,12 @@ async fn local_exec(
   let joined = argv.join(" ");
   tokio::time::timeout(timeout, child.wait_with_output())
     .await
-    .map_err(|_| format!("git_timeout:`{joined}` timed out after {}s", timeout.as_secs()))?
+    .map_err(|_| {
+      format!(
+        "git_timeout:`{joined}` timed out after {}s",
+        timeout.as_secs()
+      )
+    })?
     .map_err(|e| format!("`{joined}` failed: {e}"))
     .map(|out| {
       (
@@ -656,9 +663,12 @@ async fn streaming_remote(
     let _ = channel.close().await;
     Ok((stdout, stderr, status))
   };
-  tokio::time::timeout(timeout, fut)
-    .await
-    .map_err(|_| format!("git_timeout:git did not finish within {}s", timeout.as_secs()))?
+  tokio::time::timeout(timeout, fut).await.map_err(|_| {
+    format!(
+      "git_timeout:git did not finish within {}s",
+      timeout.as_secs()
+    )
+  })?
 }
 
 async fn streaming_local(

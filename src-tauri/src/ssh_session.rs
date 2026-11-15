@@ -501,9 +501,9 @@ impl SshHandler {
     match self.session_id {
       None => true,
       Some(id) => state.sessions.lock().is_ok_and(|sessions| {
-        sessions.get(&self.tab_id).is_some_and(|s| {
-          crate::commands::session_is_current(s.session_id, s.alive, id)
-        })
+        sessions
+          .get(&self.tab_id)
+          .is_some_and(|s| crate::commands::session_is_current(s.session_id, s.alive, id))
       }),
     }
   }
@@ -633,8 +633,7 @@ pub struct SshSession {
 /// How long a switched SFTP identity may sit unused before the original user is
 /// restored. A borrowed identity — often root — that outlives the single save it
 /// was granted for is exactly the standing privilege this app should not keep.
-pub const SWITCHED_USER_IDLE_TIMEOUT: std::time::Duration =
-  std::time::Duration::from_secs(15 * 60);
+pub const SWITCHED_USER_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// Switched SFTP user — allows operating files with a different user's permissions
 #[derive(Debug, Clone)]
@@ -902,8 +901,7 @@ impl TransferRegistry {
 
   pub fn lock(
     &self,
-  ) -> std::sync::LockResult<std::sync::MutexGuard<'_, HashMap<u32, Vec<Arc<TransferControl>>>>>
-  {
+  ) -> std::sync::LockResult<std::sync::MutexGuard<'_, HashMap<u32, Vec<Arc<TransferControl>>>>> {
     self.0.lock()
   }
 }

@@ -43,7 +43,15 @@ mod tests {
 
   #[test]
   fn heavy_and_hidden_directories_are_skipped() {
-    for name in [".git", ".cache", "node_modules", "target", "dist", "build", "venv"] {
+    for name in [
+      ".git",
+      ".cache",
+      "node_modules",
+      "target",
+      "dist",
+      "build",
+      "venv",
+    ] {
       assert!(skipped_dir(name), "{name} should be skipped");
     }
     for name in ["src", "repo-a", "work_space", "tooling"] {

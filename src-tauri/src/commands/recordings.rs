@@ -366,7 +366,8 @@ pub async fn set_recording_enabled(
     }
   };
 
-  if let Some((session_id, connection_id, connection_name, workspace, group, started_at)) = created {
+  if let Some((session_id, connection_id, connection_name, workspace, group, started_at)) = created
+  {
     if let Ok(conn) = state.db.lock() {
       let _ = db::create_session(
         &conn,

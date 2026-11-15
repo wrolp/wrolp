@@ -581,10 +581,7 @@ pub(crate) async fn spawn_local_pty(
     // delete the *new* shell and tell the frontend it had closed.
     if let Some(state) = app.try_state::<AppState>() {
       if let Ok(mut shells) = state.local_shells.lock() {
-        let is_current = entry_is_ours(
-          shells.get(&reader_tab).map(|s| s.session_id),
-          session_id,
-        );
+        let is_current = entry_is_ours(shells.get(&reader_tab).map(|s| s.session_id), session_id);
         if !is_current {
           return;
         }

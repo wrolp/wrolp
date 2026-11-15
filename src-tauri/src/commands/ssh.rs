@@ -635,7 +635,12 @@ pub async fn connect(
         match handle.authenticate_password(&cfg.username, pw).await {
           Ok(res) if res.success() => {}
           Ok(_) => {
-            fail_session(&app_handle, tid, session_id, "Authentication failed: wrong password");
+            fail_session(
+              &app_handle,
+              tid,
+              session_id,
+              "Authentication failed: wrong password",
+            );
             return;
           }
           Err(e) => {
@@ -676,7 +681,12 @@ pub async fn connect(
         {
           Ok(res) if res.success() => {}
           Ok(_) => {
-            fail_session(&app_handle, tid, session_id, "Authentication failed: invalid key");
+            fail_session(
+              &app_handle,
+              tid,
+              session_id,
+              "Authentication failed: invalid key",
+            );
             return;
           }
           Err(e) => {
