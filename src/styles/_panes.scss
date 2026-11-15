@@ -842,6 +842,30 @@
     }
   }
 
+  // Same slot as the Markdown preview, but an isolated document in a sandboxed frame.
+  // A bare HTML document defaults to a transparent canvas — give it white, since static
+  // pages are written assuming one (even under the dark theme).
+  .html-preview {
+    .html-preview-frame {
+      flex: 1;
+      border: none;
+      background: #fff;
+    }
+
+    .html-preview-raw {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      margin: 0;
+      padding: 16px 22px 48px;
+      color: $text-secondary;
+      font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+      font-size: var(--fs-md);
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
+  }
+
   .editor-textarea {
     width: 100%;
     height: 100%;

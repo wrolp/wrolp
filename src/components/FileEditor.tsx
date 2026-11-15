@@ -3,6 +3,7 @@ import monaco from '../editor/monacoSetup'
 import { LANGUAGE_OPTIONS_SORTED, ENCODING_OPTIONS } from '../editor/languages'
 import type { TargetRef } from '../types'
 import HexViewer from './HexViewer'
+import HtmlPreview from './HtmlPreview'
 import MarkdownPreview from './MarkdownPreview'
 import { Icon } from './Icon'
 import { useScrollbarGrabZone } from '../hooks/useScrollbarGrabZone'
@@ -97,7 +98,7 @@ export function FileEditor({
   handlersRef.current = { onContentChange, onSave }
 
   const [showMinimap, setShowMinimap] = useState(false)
-  // Rendering the Markdown instead of the source (only offered for `markdown` files).
+  // Rendering the file instead of its source (offered for Markdown and HTML).
   // Pane-scoped, like `showWhitespace` / `showMinimap` — no persistence.
   const [showPreview, setShowPreview] = useState(false)
   const [showWhitespace, setShowWhitespace] = useState<'none' | 'all' | 'boundary' | 'trailing'>(
@@ -348,10 +349,11 @@ export function FileEditor({
   const editable =
     active && !active.loading && !active.error && !active.isBinary && !active.isTooLarge
 
-  // Markdown files can be read as source or as rendered HTML (the toggle is only shown
+  // Markdown / HTML files can be read as source or rendered (the toggle is only shown
   // for them). The language select drives this, so it also follows a manual switch.
   const isMarkdown = active?.language === 'markdown'
-  const previewOn = isMarkdown && showPreview
+  const isHtml = active?.language === 'html'
+  const previewOn = (isMarkdown || isHtml) && showPreview
 
   return (
     <div className="file-editor">
@@ -551,7 +553,7 @@ export function FileEditor({
               >
                 {showMinimap ? '◫' : '▢'} {t('minimap')}
               </button>
-              {isMarkdown && (
+              {(isMarkdown || isHtml) && (
                 <button
                   className={`editor-btn preview-toggle${showPreview ? ' active' : ''}`}
                   aria-pressed={showPreview}
@@ -709,9 +711,12 @@ export function FileEditor({
                   host would leave the editor instance without a home and the source
                   view would come back blank. */}
               <div className="editor-host" ref={containerRef} />
-              {previewOn && (
-                <MarkdownPreview content={active.content} onSave={() => onSave(active.key)} />
-              )}
+              {previewOn &&
+                (isMarkdown ? (
+                  <MarkdownPreview content={active.content} onSave={() => onSave(active.key)} />
+                ) : (
+                  <HtmlPreview content={active.content} />
+                ))}
             </div>
           </>
         )}
