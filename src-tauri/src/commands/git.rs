@@ -288,6 +288,78 @@ pub async fn git_commit_files(
   Ok(parse::parse_commit_files(&out))
 }
 
+/// What the commit-message prompt needs from the index.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStagedContext {
+  /// `git diff --cached --stat` — the file list with its +/- counts.
+  pub stat: String,
+  /// `git diff --cached`, clipped to [`crate::git::MAX_PROMPT_PATCH_BYTES`].
+  pub patch: String,
+  /// Whether the patch above is only the beginning of the change.
+  pub truncated: bool,
+}
+
+/// Package the staged changes for the AI commit-message prompt.
+///
+/// This command deliberately does not call a model: the panel sends the result to
+/// `ai_chat` with the endpoint the user configured, so the Git feature works with
+/// whatever provider is active (or reports "no endpoint configured" in its words).
+#[tauri::command]
+pub async fn git_staged_context(
+  state: tauri::State<'_, AppState>,
+  cli: tauri::State<'_, GitState>,
+  host: GitHostRef,
+  root: String,
+) -> Result<GitStagedContext, String> {
+  let root = checked_root(&root)?;
+  let argv = |extra: &[&str]| -> Vec<String> {
+    ["diff", "--cached", "--no-color"]
+      .iter()
+      .chain(extra.iter())
+      .map(|s| (*s).to_string())
+      .collect()
+  };
+
+  let (stat_out, stat_err, stat_code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &argv(&["--stat"]),
+    None,
+    READ_TIMEOUT,
+  )
+  .await?;
+  if stat_code != 0 {
+    return Err(failed("commit", &stat_out, &stat_err, stat_code));
+  }
+
+  let (patch_out, patch_err, patch_code) = exec_git(
+    &state,
+    cli.inner(),
+    &host,
+    Some(&root),
+    &argv(&["--unified=2"]),
+    None,
+    READ_TIMEOUT,
+  )
+  .await?;
+  if patch_code != 0 {
+    return Err(failed("commit", &patch_out, &patch_err, patch_code));
+  }
+
+  let (patch, truncated) = crate::git::clip_patch(
+    &String::from_utf8_lossy(&patch_out),
+    crate::git::MAX_PROMPT_PATCH_BYTES,
+  );
+  Ok(GitStagedContext {
+    stat: String::from_utf8_lossy(&stat_out).trim_end().to_string(),
+    patch,
+    truncated,
+  })
+}
+
 /// `git blame --line-porcelain` for one tracked path, optionally at a commit.
 #[tauri::command]
 pub async fn git_blame(

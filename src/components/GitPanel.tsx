@@ -3,7 +3,7 @@ import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { useGit, HISTORY_PAGE_SIZES } from '../hooks/useGit'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
-import { gitCommitFiles } from '../commands'
+import { aiChat, gitCommitFiles, gitStagedContext } from '../commands'
 import {
   forgetGitRepo,
   gitErrorDetail,
@@ -15,6 +15,7 @@ import { groupGitStatus, gitEntryKey, gitEntryLetter } from '../lib/gitStatus'
 import { computeLanes, graphLaneCount, GRAPH_PALETTE_SIZE } from '../lib/gitGraph'
 import { gitRefColor } from '../lib/gitRefColor'
 import { defaultCloneDest } from '../lib/gitClone'
+import { COMMIT_SYSTEM_PROMPT, buildCommitPrompt, cleanCommitMessage } from '../lib/commitMessage'
 import type { GitCommitFile, GitHostRef, GitStatusEntry } from '../types'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitBlameView } from './GitBlameView'
@@ -132,6 +133,9 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
   const [remoteUrl, setRemoteUrl] = useState('')
   const [message, setMessage] = useState('')
   const [amend, setAmend] = useState(false)
+  /** The AI commit-message request runs on its own: it must not block the panel. */
+  const [aiCommitBusy, setAiCommitBusy] = useState(false)
+  const [aiCommitError, setAiCommitError] = useState<string | null>(null)
   const [stashUntracked, setStashUntracked] = useState(false)
   const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null)
   const [discardPaths, setDiscardPaths] = useState<string[] | null>(null)
@@ -238,6 +242,35 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
 
   const openPath = (path: string) => {
     void git.open(path)
+  }
+
+  /**
+   * Fill the commit box from the staged diff using the configured AI endpoint.
+   *
+   * The message is only a draft — it goes into the textarea, where the user can
+   * edit it before committing; nothing is committed on the AI's word.
+   */
+  const generateCommitMessage = async () => {
+    if (!git.root || aiCommitBusy) return
+    setAiCommitBusy(true)
+    setAiCommitError(null)
+    try {
+      const context = await gitStagedContext(host, git.root)
+      const reply = await aiChat([
+        { role: 'system', content: COMMIT_SYSTEM_PROMPT },
+        { role: 'user', content: buildCommitPrompt(context) },
+      ])
+      const cleaned = cleanCommitMessage(reply)
+      if (!cleaned) {
+        setAiCommitError(t('gitAiCommitEmpty'))
+        return
+      }
+      setMessage(cleaned)
+    } catch (e: unknown) {
+      setAiCommitError(`${t('gitAiCommitFailed')} — ${String(e)}`)
+    } finally {
+      setAiCommitBusy(false)
+    }
   }
 
   const renderRow = (entry: GitStatusEntry, section: string, staged: boolean) => {
@@ -985,6 +1018,7 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
               placeholder={t('gitCommitMessage')}
               onChange={(e) => setMessage(e.target.value)}
             />
+            {aiCommitError && <div className="git-error">{aiCommitError}</div>}
             <div className="git-commit-actions">
               <label className="git-amend">
                 <input
@@ -994,21 +1028,32 @@ export function GitPanel({ host, suggestedPath }: GitPanelProps) {
                 />
                 {t('gitAmend')}
               </label>
-              <button
-                type="button"
-                className="btn pri"
-                disabled={busy || groups.staged.length === 0 || !message.trim()}
-                onClick={() => {
-                  void git.commit(message, amend).then((ok) => {
-                    if (ok) {
-                      setMessage('')
-                      setAmend(false)
-                    }
-                  })
-                }}
-              >
-                {t('gitCommit')}
-              </button>
+              <div className="git-commit-buttons">
+                <button
+                  type="button"
+                  className="git-link-btn git-ai-commit"
+                  title={t('gitAiCommitHint')}
+                  disabled={busy || aiCommitBusy || groups.staged.length === 0}
+                  onClick={() => void generateCommitMessage()}
+                >
+                  {aiCommitBusy ? t('gitAiCommitBusy') : t('gitAiCommit')}
+                </button>
+                <button
+                  type="button"
+                  className="btn pri"
+                  disabled={busy || groups.staged.length === 0 || !message.trim()}
+                  onClick={() => {
+                    void git.commit(message, amend).then((ok) => {
+                      if (ok) {
+                        setMessage('')
+                        setAmend(false)
+                      }
+                    })
+                  }}
+                >
+                  {t('gitCommit')}
+                </button>
+              </div>
             </div>
             <div className="git-stash-row">
               <label className="git-amend">

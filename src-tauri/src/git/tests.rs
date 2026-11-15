@@ -472,3 +472,45 @@ fn parses_a_real_local_repository() {
     assert_eq!(page.commits[0].subject, "first");
   }
 }
+
+#[test]
+fn a_small_patch_is_passed_through_untouched() {
+  let text = "diff --git a/a b/a\n@@ -1 +1 @@\n-a\n+b\n";
+  let (kept, truncated) = clip_patch(text, 1024);
+  assert_eq!(kept, text);
+  assert!(
+    !truncated,
+    "nothing was lost, so the prompt may say it is complete"
+  );
+}
+
+#[test]
+fn a_long_patch_is_cut_on_a_line_boundary() {
+  let text = "+aaaa\n+bbbb\n+cccc\n+dddd\n";
+  // 11 bytes holds the first line (6) but not the second (12): the second is
+  // dropped whole rather than halved.
+  let (kept, truncated) = clip_patch(text, 11);
+  assert_eq!(kept, "+aaaa\n");
+  assert!(truncated);
+
+  // A limit that fits two lines keeps both.
+  let (kept, truncated) = clip_patch(text, 12);
+  assert_eq!(kept, "+aaaa\n+bbbb\n");
+  assert!(truncated);
+}
+
+#[test]
+fn a_single_line_longer_than_the_limit_is_cut_on_a_char_boundary() {
+  // No newline to cut at, and the tail byte would land inside a multi-byte char.
+  let text = "+终端输出非常长的一行";
+  let (kept, truncated) = clip_patch(text, 5);
+  assert!(truncated);
+  assert!(kept.len() <= 5);
+  assert!(text.starts_with(&kept));
+  assert!(std::str::from_utf8(kept.as_bytes()).is_ok());
+}
+
+#[test]
+fn an_empty_patch_stays_empty() {
+  assert_eq!(clip_patch("", 10), (String::new(), false));
+}

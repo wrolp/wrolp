@@ -24,6 +24,38 @@ use serde::{Deserialize, Serialize};
 pub const MAX_STATUS_ENTRIES: usize = 5000;
 /// One side of a diff. Beyond this the viewer asks the user to use a terminal.
 pub const MAX_DIFF_BYTES: usize = 2 * 1024 * 1024;
+/// How much of the staged patch goes into the commit-message prompt. Enough for a
+/// normal change, small enough that one generated or vendored file cannot eat the
+/// model's whole context window.
+pub const MAX_PROMPT_PATCH_BYTES: usize = 24 * 1024;
+
+/// Cut `text` down to at most `limit` bytes, on a line boundary.
+///
+/// Returns `(text, truncated)`. The prompt builder uses this so a huge diff is
+/// clipped at a line end (a half line reads like a syntax error to the model)
+/// and the caller can tell the model the patch is incomplete.
+pub fn clip_patch(text: &str, limit: usize) -> (String, bool) {
+  if text.len() <= limit {
+    return (text.to_string(), false);
+  }
+  let mut kept = String::new();
+  for line in text.split_inclusive('\n') {
+    if kept.len() + line.len() > limit {
+      break;
+    }
+    kept.push_str(line);
+  }
+  if kept.is_empty() {
+    // One line longer than the limit: keep a character-boundary prefix rather
+    // than nothing at all.
+    let mut end = limit.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+      end -= 1;
+    }
+    kept.push_str(&text[..end]);
+  }
+  (kept, true)
+}
 
 // ==================== Models ====================
 

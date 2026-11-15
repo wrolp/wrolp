@@ -985,6 +985,16 @@ export interface GitCommitFile {
   status: string
 }
 
+/** The staged changes, packaged by the backend for the commit-message prompt. */
+export interface GitStagedContext {
+  /** `git diff --cached --stat` — file list with +/- counts. */
+  stat: string
+  /** `git diff --cached`, clipped to the prompt budget. */
+  patch: string
+  /** Whether `patch` stops before the end of the change. */
+  truncated: boolean
+}
+
 export interface GitBranch {
   /** `main` or `origin/main` (refs prefix stripped). */
   name: string

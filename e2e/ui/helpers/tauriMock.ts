@@ -231,6 +231,16 @@ export interface TauriMockOptions {
    * picker's in-flight progress row and its Cancel button observable at all.
    */
   gitCloneHold?: boolean
+  /**
+   * Answer to `git_staged_context` — the summary and patch the AI commit-message
+   * button forwards into its prompt. A spec asserts on what the model was shown
+   * through the recorded `ai_chat` arguments.
+   */
+  gitStagedContext?: { stat?: string; patch?: string; truncated?: boolean }
+  /** Answer to `ai_chat`: the draft message the Git panel puts in the textarea. */
+  aiChatReply?: string
+  /** Reject `ai_chat` with this message, to cover the "AI failed" path. */
+  aiChatError?: string
   /** Paths `git_repo_info` refuses with `git_not_repo:` (the picker's error row). */
   gitNotRepoPaths?: string[]
   /**
@@ -1114,6 +1124,18 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
               text: 'mock transfer',
             })
             return opts.gitNetworkResult ?? { stdout: '', stderr: '' }
+          }
+          case 'git_staged_context': {
+            const ctx = opts.gitStagedContext ?? {}
+            return {
+              stat: ctx.stat ?? '',
+              patch: ctx.patch ?? '',
+              truncated: ctx.truncated ?? false,
+            }
+          }
+          case 'ai_chat': {
+            if (opts.aiChatError) throw opts.aiChatError
+            return opts.aiChatReply ?? ''
           }
           case 'git_cancel': {
             const opId = String(args.opId ?? '')

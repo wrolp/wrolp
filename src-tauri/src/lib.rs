@@ -447,6 +447,7 @@ pub fn run() {
       commands::git_push,
       commands::git_cancel,
       commands::git_clone,
+      commands::git_staged_context,
       commands::command_help,
       commands::get_app_version,
       commands::open_config_dir,

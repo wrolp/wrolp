@@ -640,9 +640,25 @@
 
 .git-commit-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+}
+
+// The amend label breaks mid-phrase in a 264px column once the AI draft joins
+// the row; wrapping moves the controls to a second line instead.
+.git-commit-actions .git-amend {
+  white-space: nowrap;
+}
+
+// The AI draft and Commit travel as one unit so a wrap moves both, keeping them
+// right-aligned instead of stranding the primary button on the left.
+.git-commit-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
 }
 
 .git-stash-row {

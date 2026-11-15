@@ -67,6 +67,7 @@ import type {
   GitDiff,
   GitLogPage,
   GitCommitFile,
+  GitStagedContext,
   GitBranch,
   GitRemote,
   GitCommitResult,
@@ -1796,6 +1797,16 @@ export async function gitLocalIgnore(
   paths: string[],
 ): Promise<void> {
   await invoke('git_local_ignore', { host, root, paths })
+}
+
+/**
+ * The staged summary and patch, for the AI commit-message prompt.
+ *
+ * The backend does not talk to a model here: the panel sends this to `aiChat`, so
+ * the feature uses whatever endpoint the user already configured.
+ */
+export async function gitStagedContext(host: GitHostRef, root: string): Promise<GitStagedContext> {
+  return await invoke<GitStagedContext>('git_staged_context', { host, root })
 }
 
 export async function gitBlame(
