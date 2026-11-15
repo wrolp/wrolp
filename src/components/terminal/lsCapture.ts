@@ -15,6 +15,13 @@ export const LS_MAX_BYTES = 128 * 1024
 export interface LsCaptureState {
   format: 'long' | 'dir' | 'multi' | 'multiF'
   prompt: string
+  /**
+   * The invariant opening of a RENDERED prompt (powerlevel10k's leading icon
+   * glyphs). Such a prompt never comes back byte-for-byte — its clock ticks — so
+   * this is what lets the capture notice the next prompt instead of waiting out
+   * `LS_CAPTURE_TIMEOUT_MS`. Empty for a plain prompt.
+   */
+  promptHead: string
   /** Absolute buffer row of the echoed command line (captured at submit). */
   startRow: number
   buf: string

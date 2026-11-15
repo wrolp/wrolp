@@ -141,6 +141,57 @@ const findBracketPrompt = (text: string): { pos: number; len: number } | null =>
   return null
 }
 
+// Glyphs a RENDERED prompt draws on the same row as the command: Nerd Font /
+// Powerline private-use icons (powerlevel10k segments and separators), box
+// drawing (p10k's multi-line connectors) and the decorative arrows/checks the
+// themes use. ASCII and CJK are deliberately absent — those start real command
+// text, not an ornament.
+const PROMPT_ORNAMENT =
+  /[\ue000-\uf8ff\u2500-\u259f\u276f\u276e\u279c\u2794\u21a9\u2713\u2714\u2717\u2718\u25b6\u25c0]/
+const PROMPT_ORNAMENT_RUN = new RegExp(`^\\s*(?:${PROMPT_ORNAMENT.source}\\s*){1,3}`, 'u')
+
+/**
+ * The invariant opening of a rendered prompt: the ornament glyphs (and blanks) it
+ * starts with. A powerlevel10k prompt can never be matched whole — its clock
+ * changes on every draw — but the icons it opens with are the same each time,
+ * which is what lets an `ls` capture notice the next prompt. Answers `''` for a
+ * plain prompt, where there is nothing to anchor on.
+ */
+export function renderedPromptHead(prompt: string): string {
+  return PROMPT_ORNAMENT_RUN.exec(prompt)?.[0] ?? ''
+}
+
+/**
+ * Split an input row whose prompt is *rendered* rather than marked.
+ *
+ * powerlevel10k (and spaceship/oh-my-posh in the same style) paints its segments
+ * — OS icon, directory, git status, time — on the SAME buffer row as the typed
+ * command, and prints the `❯` prompt char only in the transient prompt that
+ * replaces the line after Enter. The live row therefore carries no `$ `/`❯ `
+ * marker at all, so `splitPromptCommand` finds nothing and every feature keyed on
+ * it (live recolor, `ls` capture, history, `cd` tracking) silently does nothing.
+ *
+ * The command starts right after the LAST ornament glyph of the line and the
+ * blanks following it; everything before that is the prompt. `text` must be the
+ * row cut at the caret, because the right prompt (the clock in the screenshot's
+ * bottom row) sits past it and would otherwise be read as command text.
+ *
+ * Answers `null` for a row without a single ornament: a plain row cannot be
+ * identified as a prompt, and guessing there is what B46 was about.
+ */
+export function splitRenderedPrompt(text: string): { prompt: string; command: string } | null {
+  let last = -1
+  for (let i = 0; i < text.length; i++) {
+    if (PROMPT_ORNAMENT.test(text[i])) last = i
+  }
+  if (last < 0) return null
+  let end = last + 1
+  while (end < text.length && (text[end] === ' ' || text[end] === '\t')) end++
+  // An ornament at the end of the row (nothing typed yet) is still a prompt: the
+  // command comes back empty, which is how a bare prompt gets its symbol coloured.
+  return { prompt: text.slice(0, end), command: text.slice(end).trimEnd() }
+}
+
 // Remove ANSI escape sequences and split a submitted buffer line into its
 // leading shell prompt (plain text) and the command that follows.
 export function splitPromptCommand(line: string): { prompt: string; command: string } {
@@ -165,6 +216,21 @@ export function splitPromptCommand(line: string): { prompt: string; command: str
   if (hit) {
     const end = hit.pos + hit.len
     return { prompt: noAnsi.slice(0, end), command: noAnsi.slice(end).trimEnd() }
+  }
+  // Pass 4 — a prompt ornament no fixed marker list can cover: oh-my-zsh's
+  // robbyrussell `➜`, the Nerd Font chevron (U+F054 …) themes substitute for
+  // `❯`, spaceship's failure `❮`. The ornament has to be the line's whole head,
+  // followed by whitespace. ASCII and CJK are excluded because they start real
+  // commands, not ornaments.
+  //
+  // A command starting with a path is deliberately NOT split: `➜  /opt ls` is
+  // robbyrussell's cwd followed by a command, and treating `/opt` as command
+  // text would recolor (and record as a command) the prompt's own path. The
+  // trade-off is that an actual path command typed after a glyph-only prompt
+  // stays unparsed — the previous behaviour for every one of these prompts.
+  const glyph = /^([^\s\x00-\x7f\p{Script=Han}]{1,4}\s+)(?![~/.])(\S.*)$/u.exec(noAnsi) ?? null
+  if (glyph) {
+    return { prompt: glyph[1], command: glyph[2].trimEnd() }
   }
   return { prompt: '', command: noAnsi.trim() }
 }
@@ -248,6 +314,88 @@ export function stripPrompt(line: string): string {
   return splitPromptCommand(line).command
 }
 
+/**
+ * The caret's row cut at the caret, split as a RENDERED prompt (see
+ * `splitRenderedPrompt`). Answers `null` when the row is plain or is a wrapped
+ * continuation — cutting a wrapped line at the caret would hand back its last
+ * visual row instead of the command.
+ */
+function renderedInputRow(
+  term: Terminal,
+): { text: string; parsed: { prompt: string; command: string } } | null {
+  const buffer = term.buffer.active
+  const line = buffer.getLine(buffer.baseY + buffer.cursorY)
+  if (!line || line.isWrapped) return null
+  const text = stripAnsi(rowCells(line, 0, buffer.cursorX))
+  const parsed = splitRenderedPrompt(text)
+  return parsed ? { text, parsed } : null
+}
+
+/**
+ * The submitted input line, parsed. A rendered prompt (powerlevel10k) draws its
+ * right prompt past the caret, so a whole-row read ends in the clock/branch
+ * segment and `splitPromptCommand` sees trailing text it cannot classify — the
+ * command then never matches `ls`/`cd` and history records garbage. Read the row
+ * cut at the caret in that case.
+ */
+export function readSubmittedLine(
+  term: Terminal,
+): { prompt: string; command: string; rendered: boolean } | null {
+  const rawLine = getCurrentCommandLine(term)
+  if (!rawLine) return null
+  const split = splitPromptCommand(stripAnsi(rawLine))
+  if (split.prompt) return { ...split, rendered: false }
+  const rendered = renderedInputRow(term)
+  return rendered ? { ...rendered.parsed, rendered: true } : null
+}
+
+/**
+ * Repaint the row ABOVE the caret after the shell has redrawn a submitted line.
+ *
+ * powerlevel10k replaces the submitted line with its *transient* prompt — `❯ cmd`
+ * with no SGR at all — as the first thing it writes after Enter, so the colours
+ * painted before sending the command are gone the moment the user hits Enter.
+ * Once the shell has moved off that row (caret exactly one below) and left it
+ * blank past the command, rewrite it from the saved cursor position so the live
+ * caret is untouched.
+ *
+ * Answers `false` when there is nothing safe to repaint yet: the row still carries
+ * a live prompt (its RIGHT prompt would be erased), or the shell has scrolled on.
+ */
+export function repaintSubmittedRow(term: Terminal, submitRow: number, command: string): boolean {
+  const buffer = term.buffer.active
+  const cols = term.cols
+  const delta = buffer.baseY + buffer.cursorY - submitRow
+  // The shell leaves the line for the input row below, which on a rendered prompt
+  // is a couple of rows down (its status line sits in between).
+  if (delta < 1 || delta > 5) return false
+  const line = buffer.getLine(submitRow)
+  if (!line) return false
+  const text = stripAnsi(rowCells(line, 0, cols))
+  // Only the line we submitted: the shell may have scrolled it away or rewritten
+  // the row with output by now.
+  if (!text.trimEnd().endsWith(command)) return false
+  const { prompt } = splitPromptCommand(text.trimEnd())
+  if (!prompt) return false
+  const widthAt = (col: number) => line.getCell(col)?.getWidth() ?? 1
+  const promptWidth = columnsOfText(prompt, widthAt)
+  const typed = text.slice(prompt.length)
+  if (!typed.trim()) return false
+  // Only a row the shell has finished with: a live prompt keeps its RIGHT prompt
+  // to the right of the command, and clearing there would delete it.
+  if (
+    rowCells(line, promptWidth + columnsOfText(typed, widthAt, promptWidth), cols).trim() !== ''
+  ) {
+    return false
+  }
+  term.write(
+    `\x1b7\x1b[${delta}A\r\x1b[${promptWidth}C\x1b[0m` +
+      colorizeCommand(typed) +
+      `\x1b[0m\x1b[K\x1b8`,
+  )
+  return true
+}
+
 // Recolor the currently-displayed input line (prompt + typed command) in place.
 // The remote shell has already echoed the uncolored line onto the screen; we
 // tokenize the command and rewrite just that line with SGR colors.
@@ -266,13 +414,24 @@ export function stripPrompt(line: string): string {
 export function highlightCurrentCommandLine(term: Terminal) {
   const rawLine = getCurrentCommandLine(term)
   if (!rawLine) return
-  const plain = stripAnsi(rawLine)
-  const { prompt, command } = splitPromptCommand(plain)
+  let plain = stripAnsi(rawLine)
+  let { prompt, command } = splitPromptCommand(plain)
+  if (!prompt) {
+    // A RENDERED prompt (powerlevel10k) has no marker to split on: its segments
+    // share the row with the typed command and its right prompt sits past the
+    // caret. Read the row cut at the caret and split on the last ornament.
+    const rendered = renderedInputRow(term)
+    if (!rendered) {
+      // No prompt marker was found — this is program output, not a shell command
+      // line. Recoloring it would strip indentation and color unrelated text (e.g.
+      // network device help listings like "  install     Perform ...").
+      return
+    }
+    plain = rendered.text
+    prompt = rendered.parsed.prompt
+    command = rendered.parsed.command
+  }
   if (!command && !prompt) return
-  // No prompt marker was found — this is program output, not a shell command line.
-  // Recoloring it would strip indentation and color unrelated text (e.g. network
-  // device help listings like "  install     Perform ...").
-  if (!prompt) return
   // Never recolor a screen an interactive application owns (vi/nano/less/tmux, and
   // inline TUIs such as CodeBuddy CLI). Those manage their own styling; rewriting a
   // line here strips their colours and corrupts their frame — see isApplicationScreen.
@@ -336,7 +495,11 @@ export function highlightCurrentCommandLine(term: Terminal) {
   // style doesn't leak, and rewrite the colored command. Clear the tail in case
   // the command just shrank (backspace). The move is in CELLS: see promptWidth.
   term.write(`\r\x1b[${promptWidth}C\x1b[0m` + coloredCmd)
-  term.write(`\x1b[0m\x1b[K`)
+  // Clear the tail only when nothing sits right of the caret. A rendered prompt
+  // (powerlevel10k) keeps its RIGHT prompt there — the clock and branch segments —
+  // and clearing to end of line would wipe them until the next prompt redraw.
+  const tail = rowLine ? rowCells(rowLine, buffer.cursorX, cols) : ''
+  if (!tail.trim()) term.write(`\x1b[0m\x1b[K`)
   // Put the caret back, or editing in the middle of a line would jump it to the
   // end on every echo — the recolor must be invisible, including to the caret.
   // `endCol < cols` because at exactly the last column the write wraps onto the
@@ -394,8 +557,9 @@ export function getPendingInputText(term: Terminal): string | null {
   // A pager prompt (`---- More ----`) is device output, not a typed command.
   if (isPagerPrompt(plain)) return null
   const { prompt, command } = splitPromptCommand(plain)
-  // No prompt marker — this is program output, not a shell command line.
-  if (!prompt) return null
+  // No marker: a RENDERED prompt (powerlevel10k) still has a command on the row —
+  // its segments share the line and its right prompt sits past the caret.
+  if (!prompt) return renderedInputRow(term)?.parsed.command ?? null
   return command
 }
 
@@ -431,13 +595,17 @@ export function getInputTextBeforeCaret(term: Terminal): string | null {
   if (rowCells(line, buffer.cursorX, term.cols).trim() !== '') return null
   const toCaret = rowCells(line, 0, buffer.cursorX)
   const { prompt } = splitPromptCommand(toCaret)
-  if (!prompt) return null
+  // A caret sitting right after a RENDERED prompt (powerlevel10k segments) has no
+  // marker to split on; fall back to the ornament boundary so the completion still
+  // hangs off the caret.
+  const split = prompt ? null : splitRenderedPrompt(toCaret)
+  if (!prompt && !split) return null
   // Cut at the prompt's own length instead of taking `splitPromptCommand`'s second
   // half: that one `trimEnd()`s, so a line ending in a space would read back
   // shorter than it is — and the caller's not-yet-echoed-lag bookkeeping clears
   // itself only when the line it read really ends with what it sent, which a
   // trimmed line never does.
-  return toCaret.slice(prompt.length)
+  return toCaret.slice(prompt ? prompt.length : split!.prompt.length)
 }
 
 // Capture commands submitted by the user. A single Enter commits the current
@@ -447,9 +615,9 @@ export function commitSubmittedCommands(term: Terminal, data: string, tabId: num
   const commit = (cmd: string) =>
     commitCommand(tabId, cmd).catch((e) => console.error('commit_command error:', e))
   if (/^[\r\n]+$/.test(data)) {
-    const rawLine = getCurrentCommandLine(term)
-    if (!rawLine) return
-    const { prompt, command } = splitPromptCommand(rawLine)
+    const parsed = readSubmittedLine(term)
+    if (!parsed) return
+    const { prompt, command } = parsed
     // No prompt marker — not a submitted command (e.g. pager output / help text).
     if (!prompt) return
     const cmd = command.trim()

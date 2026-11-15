@@ -130,6 +130,10 @@ function openLocalPty(
 // carry no move) are passed through untouched too. Above the 100ms poll cadence and
 // the 300ms flush delay, short enough to resume highlighting promptly on a shell.
 const APP_FRAME_HOLD_MS = 600
+// How long a submitted line may be waiting to be repainted after the shell redraws
+// it (powerlevel10k's transient prompt). Long enough for the redraw to arrive on a
+// slow link, short enough that a stale row is never addressed after a scroll.
+const SUBMIT_REPAINT_HOLD_MS = 1500
 import {
   LS_CAPTURE_TIMEOUT_MS,
   LS_MAX_BYTES,
@@ -148,6 +152,9 @@ import type { CwdQueryStripper } from './terminal/cwdQuery'
 import { computeRowLabels, continuationGlyph, lineNumberDigits } from './terminal/lineNumbers'
 import {
   getCurrentCommandLine,
+  readSubmittedLine,
+  repaintSubmittedRow,
+  renderedPromptHead,
   splitPromptCommand,
   highlightCurrentCommandLine,
   getInputLineAtCursorEnd,
@@ -1175,6 +1182,20 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       void finalizeLsCapture(term, ls, ls.prompt)
       return
     }
+    // A RENDERED prompt (powerlevel10k) never repeats byte-for-byte — its clock
+    // ticks — so `endsWith` above can never see it and the links would sit out
+    // LS_CAPTURE_TIMEOUT_MS. Its opening icons do repeat: the row that starts with
+    // them is the next prompt, so cut the buffer there and finalize now.
+    if (ls.promptHead) {
+      const tailStart = ls.buf.lastIndexOf('\n') + 1
+      if (ls.buf.slice(tailStart).startsWith(ls.promptHead)) {
+        ls.buf = ls.buf.slice(0, tailStart)
+        ls.prompt = ''
+        ls.promptHead = ''
+        void finalizeLsCapture(term, ls, null)
+        return
+      }
+    }
     if (ls.timeout) clearTimeout(ls.timeout)
     ls.timeout = setTimeout(() => {
       ls.timeout = null
@@ -1259,6 +1280,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const ls: LsCaptureState = {
       format,
       prompt: prompt || '',
+      promptHead: renderedPromptHead(prompt || ''),
       startRow: buf.baseY + buf.cursorY,
       buf: '',
       bytes: 0,
@@ -1333,6 +1355,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // in absolute cursor moves (`ESC[4;20Hdir ESC[4;23H`) — indistinguishable from
   // an app frame by `CURSOR_REPOSITION` alone.
   const pendingSubmitEchoRef = useRef(false)
+  /** Row the shell is expected to redraw after Enter, for `repaintSubmittedRow`. */
+  const submittedRepaintRef = useRef<{ row: number; at: number; command: string } | null>(null)
   // The streaming highlighter holds back a trailing token fragment until it is
   // complete (or a newline arrives). A short debounce ensures such a fragment is
   // still flushed when output goes quiet (e.g. a prompt ending in a path char),
@@ -1543,6 +1567,18 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // post-input write is parsed synchronously).
     const afterWrite = () => {
       if (shellReadyRef.current) recolorLiveLine()
+      // powerlevel10k repaints the accepted line as its *transient* prompt — `❯ cmd`
+      // with no SGR — as the first thing it writes after Enter, wiping the colours
+      // painted before the command was sent. Repaint that row once the shell has
+      // moved off it; armed by the Enter handler below.
+      const repaint = submittedRepaintRef.current
+      if (repaint) {
+        if (performance.now() - repaint.at > SUBMIT_REPAINT_HOLD_MS) {
+          submittedRepaintRef.current = null
+        } else if (repaintSubmittedRow(term, repaint.row, repaint.command)) {
+          submittedRepaintRef.current = null
+        }
+      }
     }
     // The highlighter holds a chunk's trailing word back when it may be the
     // leading fragment of a longer token (an IPv6 address, a path, `0%` …) and
@@ -2563,6 +2599,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         const isLoneEnter = /^[\r\n]+$/.test(data) && !appScreen
         const submitRow = term.buffer.active.baseY + term.buffer.active.cursorY
         const submitLine = isLoneEnter ? getCurrentCommandLine(term) : ''
+        // The parsed form of that same line. `splitPromptCommand` alone cannot read a
+        // RENDERED prompt (powerlevel10k): its segments share the row with the
+        // command and its right prompt follows it, so the whole-row read would make
+        // `cd "/opt"` look like `<icons> /opt cd "/opt"` — no `cd`, no `ls`, no
+        // colours. `readSubmittedLine` cuts the row at the caret instead.
+        const submitParsed = isLoneEnter ? readSubmittedLine(term) : null
         // A shell takes an Enter by moving to the next line, so the caret sitting on
         // the SAME row as the previous Enter means the screen has not repainted since
         // — this submit's own line is nowhere on screen yet, and the row under the
@@ -2586,7 +2628,17 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // capture machines. The prompt is captured from the same buffer line so
         // capture can end precisely when the next prompt arrives.
         if (isLoneEnter) {
-          const { prompt, command: echoed } = splitPromptCommand(submitLine)
+          const { prompt, command: echoed } = submitParsed ?? splitPromptCommand(submitLine)
+          // A RENDERED prompt (powerlevel10k) repaints this very row right after
+          // Enter with its transient prompt, so the pre-Enter recolor is lost —
+          // queue one repaint for the row once the shell has moved off it.
+          if (submitParsed?.rendered && echoed.trim()) {
+            submittedRepaintRef.current = {
+              row: submitRow,
+              at: performance.now(),
+              command: echoed.trim(),
+            }
+          }
           // The buffer is one echo behind whenever the shell has not repainted the
           // input line yet — ConPTY does that a poll later, so `docker ps` can read
           // back as `docker p`, or as a bare prompt with nothing echoed at all.

@@ -880,6 +880,15 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           case 'list_files':
           case 'target_list_files':
             return opts.filesByDir?.[String(args.path)] ?? opts.fileEntries ?? []
+          // The terminal's `cd` handler verifies a computed cwd before tracking
+          // it. Exists = the mock has a listing for it, or it is a listed entry.
+          case 'file_exists':
+          case 'target_file_exists': {
+            const path = String(args.path ?? '')
+            if (opts.filesByDir && path in opts.filesByDir) return true
+            const entries = (opts.fileEntries ?? []) as Array<{ path?: string }>
+            return entries.some((e) => e.path === path)
+          }
           case 'download_file':
           case 'target_download_file':
             if (!opts.holdDownload) return true
