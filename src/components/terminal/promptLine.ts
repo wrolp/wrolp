@@ -151,6 +151,24 @@ const PROMPT_ORNAMENT =
 const PROMPT_ORNAMENT_RUN = new RegExp(`^\\s*(?:${PROMPT_ORNAMENT.source}\\s*){1,3}`, 'u')
 
 /**
+ * Is the text right of the caret a RIGHT prompt rather than typed input?
+ *
+ * Normally anything non-blank there means the caret is mid-line, and a suggestion
+ * hanging off it would paint over what the user typed. A RENDERED prompt breaks
+ * that assumption: powerlevel10k paints its status/clock segments as a right
+ * prompt on the SAME row, at a fixed column right of the input (the live `❯`
+ * prompt char only appears after Enter). Such a tail opens — after the blanks
+ * that separate it from the input — with an ornament glyph (a powerline
+ * separator, an icon), while text typed after the caret starts with the
+ * character just typed. A plain-text right prompt (`[12:00]`) is not recognised
+ * and keeps answering "mid-line", exactly as before.
+ */
+function isRightPromptTail(right: string): boolean {
+  const head = right.replace(/^\s+/, '')
+  return head.length > 0 && PROMPT_ORNAMENT.test(head[0])
+}
+
+/**
  * The invariant opening of a rendered prompt: the ornament glyphs (and blanks) it
  * starts with. A powerlevel10k prompt can never be matched whole — its clock
  * changes on every draw — but the icons it opens with are the same each time,
@@ -520,9 +538,6 @@ export function getInputLineAtCursorEnd(
   const rawLine = getCurrentCommandLine(term)
   if (!rawLine) return null
   const plain = stripAnsi(rawLine)
-  const { prompt, command } = splitPromptCommand(plain)
-  // No prompt marker — not a live shell command line.
-  if (!prompt) return null
   const buffer = term.buffer.active
   // An interactive application owns the screen: the line under the caret is its
   // own input, not a shell command line, so never treat it as one.
@@ -536,12 +551,21 @@ export function getInputLineAtCursorEnd(
   // — asked of the cells, not of a character count. `prompt.length + command.length`
   // counts characters while the caret column counts cells, so a prompt with wide
   // characters made a finished line look mid-command (no recolor, and the command
-  // was not recorded either).
+  // was not recorded either). A rendered prompt's RIGHT prompt also lives right of
+  // the caret; that is not typed text (see `isRightPromptTail`).
   const line = buffer.getLine(row)
-  if (!line || rowCells(line, buffer.cursorX, term.cols).trim() !== '') return null
+  if (!line) return null
+  const right = rowCells(line, buffer.cursorX, term.cols)
+  if (right.trim() !== '' && !isRightPromptTail(right)) return null
   // If the next row is a wrapped continuation, the caret is mid-wrap, not at the end.
   if (nextWrapped) return null
-  return { prompt, command }
+  const { prompt, command } = splitPromptCommand(plain)
+  if (prompt) return { prompt, command }
+  // No marker: a RENDERED prompt (powerlevel10k) draws its segments on this same
+  // row, so read the row cut at the caret and split on the last ornament — the
+  // whole-row read would carry the right prompt's clock/branch past the command.
+  if (line.isWrapped) return null
+  return splitRenderedPrompt(rowCells(line, 0, buffer.cursorX))
 }
 
 // The command text the user has typed on the current input line but not yet
@@ -573,7 +597,9 @@ export function getPendingInputText(term: Terminal): string | null {
  * is `null`. A trailing space is exactly where a completion has the most to say,
  * so this reads the caret column directly and only asks the complementary
  * question — is there any non-blank content to the RIGHT of the caret, which would
- * be what the tail tries to paint over.
+ * be what the tail tries to paint over. A rendered prompt's right prompt
+ * (powerlevel10k's status/clock segments) is not typed text and is allowed
+ * through (see `isRightPromptTail`).
  *
  * `null` for the same reasons the other reader is: program output, a pager prompt,
  * an application-owned screen, or no prompt marker on the row. A command wrapped
@@ -590,9 +616,10 @@ export function getInputTextBeforeCaret(term: Terminal): string | null {
   // Both halves are read cell by cell: the caret position is a COLUMN while the
   // row's characters are one-per-cell only until a wide character appears, so
   // slicing the string by the column drifts past the caret on a CJK prompt.
-  // Nothing but blanks may sit to the right of the caret, or the caret is mid-word
-  // and a tail there would be a lie.
-  if (rowCells(line, buffer.cursorX, term.cols).trim() !== '') return null
+  // Nothing but blanks (or a rendered right prompt) may sit to the right of the
+  // caret, or the caret is mid-word and a tail there would be a lie.
+  const right = rowCells(line, buffer.cursorX, term.cols)
+  if (right.trim() !== '' && !isRightPromptTail(right)) return null
   const toCaret = rowCells(line, 0, buffer.cursorX)
   const { prompt } = splitPromptCommand(toCaret)
   // A caret sitting right after a RENDERED prompt (powerlevel10k segments) has no

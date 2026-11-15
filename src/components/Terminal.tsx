@@ -4072,10 +4072,26 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const pos = computeLinkAnchor(term, buffer.baseY + row, col % term.cols)
     if (!pos) return null
     const right = term.element?.getBoundingClientRect().right
+    if (right === undefined) return { ...pos, row: buffer.baseY + row, maxW: 0 }
+    const colInRow = col % term.cols
+    const colsLeft = Math.max(1, term.cols - colInRow)
+    // A rendered prompt (powerlevel10k) keeps its RIGHT prompt on this row; grey
+    // text painted over the clock/branch segments reads as garbage. Stop the tail
+    // at the first non-blank cell to its right — for an ordinary prompt that cell
+    // is the row's end, so the width is unchanged.
+    const rowLine = buffer.getLine(buffer.baseY + row)
+    let gapCells = colsLeft
+    for (let x = colInRow; x < term.cols; x++) {
+      if ((rowLine?.getCell(x)?.getChars() ?? '').trim() !== '') {
+        gapCells = x - colInRow
+        break
+      }
+    }
+    const cellW = (right - pos.x) / colsLeft
     return {
       ...pos,
       row: buffer.baseY + row,
-      maxW: right === undefined ? 0 : Math.max(0, right - pos.x - 4),
+      maxW: Math.max(0, Math.min(right - pos.x - 4, gapCells * cellW)),
     }
   }
 
