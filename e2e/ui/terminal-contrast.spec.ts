@@ -35,7 +35,10 @@ test.describe('dircolors colour legibility (B29)', () => {
   })
 
   test('the guard has a floor: it never leaves a pair below the ratio', () => {
-    const fixed = fixLowContrastSgr('\x1b[30;43msuid-ish\x1b[0m', DARK)
+    // `90;43` (bright black on yellow) is the SGID pair's sibling: 2.8:1 on this
+    // palette, i.e. below the floor. `30;43` is no longer a candidate — the
+    // palette's `black` is a dark surface now, so black-on-yellow reads fine.
+    const fixed = fixLowContrastSgr('\x1b[90;43msuid-ish\x1b[0m', DARK)
     const fg = fixed.includes('38;2;0;0;0') ? { r: 0, g: 0, b: 0 } : { r: 255, g: 255, b: 255 }
     expect(contrastRatio(fg, rgbOf('#dcdcaa')!)).toBeGreaterThanOrEqual(MIN_CONTRAST_RATIO)
     expect(bestLegibleForeground(rgbOf('#dcdcaa')!)).toEqual({ r: 0, g: 0, b: 0 })
@@ -145,4 +148,50 @@ test('world-writable dirs stay readable in the live terminal', async ({ page }) 
   const plain = await cellAt(page, 'network-manager')
   expect(plain).not.toBeNull()
   expect(plain!.color).toBe('rgb(91, 127, 181)')
+})
+
+// The ANSI red is the one palette entry that was re-tinted: `#f44747` (VS Code's
+// bright red) reads as glare on a dark pane, and a shell prompt that prints it
+// over the palette's own `black` (a *light* grey — SGR 30 has to stay readable
+// on a dark background) made it worse. Softening must not cost legibility, and a
+// red still has to read as red.
+function saturationOf(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  if (max === min) return 0
+  const l = (max + min) / 2
+  return (max - min) / (1 - Math.abs(2 * l - 1))
+}
+
+test('the dark palette red is muted but still readable', () => {
+  const dark = xtermTheme('dark')
+  const red = dark.red as string
+  const bg = dark.background as string
+
+  // AA on the terminal background: the softening did not cost legibility.
+  expect(contrastRatio(rgbOf(red)!, rgbOf(bg)!)).toBeGreaterThanOrEqual(4.5)
+  // Chroma, but not too little: `#f44747` was 0.89 (glare) and an attempt at 0.47
+  // was reported unreadable. Below ~0.6 the red stops reading as red.
+  expect(saturationOf(red)).toBeGreaterThan(0.6)
+  expect(saturationOf(red)).toBeLessThan(0.75)
+  // Normal and bright red stay distinguishable — `ls` uses both.
+  expect(dark.brightRed).not.toBe(red)
+  expect(contrastRatio(rgbOf(dark.brightRed as string)!, rgbOf(bg)!)).toBeGreaterThanOrEqual(4.5)
+})
+
+// A prompt (`oh-my-posh` and friends) paints its segments with SGR 40 / `48;5;0`,
+// i.e. the palette's `black` as a *background*, and writes their labels in red.
+// When `black` was a light grey that pair measured 1.15:1 — reported twice, first
+// as glare and then as unreadable. `black` is a dark surface now and the pair has
+// to clear the 3:1 floor on its own, because `sgrContrast` only rewrites a pair
+// that one sequence decides itself (a prompt emits fg and bg separately).
+test('a prompt segment (red on the palette black) is readable', () => {
+  const dark = xtermTheme('dark')
+  const pill = rgbOf(dark.black as string)!
+  for (const key of ['red', 'brightRed', 'foreground', 'white'] as const) {
+    expect(contrastRatio(rgbOf(dark[key] as string)!, pill)).toBeGreaterThanOrEqual(3)
+  }
+  // The pane background must not be mistaken for the segment background either.
+  expect(contrastRatio(pill, rgbOf(dark.background as string)!)).toBeGreaterThan(1.3)
 })

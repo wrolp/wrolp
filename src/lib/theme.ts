@@ -18,13 +18,30 @@ import type { ResolvedTheme } from './themeStore'
 // own colour choices are not ours to re-tint. Only the *base* pair moves, and it
 // has to, because xterm paints its own canvas — a `#1e1e1e` rectangle inside a
 // `#0e1116` pane is the first thing you see.
+//
+// Two entries moved after real sessions, both for the same reason: prompts paint
+// ANSI colours as *backgrounds* as well as text, and a palette tuned only for text
+// makes those blocks unreadable.
+//
+//   `black`  was `#a0a0a0` — a light grey, chosen so SGR 30 *text* stays visible on
+//            a dark pane. But a prompt draws its segments with `48;5;0`/SGR 40, so
+//            that light grey became a pale pill, and the red text on it measured
+//            1.15:1 — "看不清". It is now a dark surface, which is what a terminal
+//            background colour is for. Cost: SGR 30 *text* is dim on the pane
+//            (1.6:1); that is how every other terminal behaves, and the ANSI→HTML
+//            renderer (`ansi.ts`) already maps 30 to the base foreground.
+//
+//   red      was `#f44747` (0.89 saturation), reported as eye-searing — and the
+//            glare was partly the pale pill above. Now `#e27474` / `#ea7d7d`: 6.3:1
+//            and 7.0:1 on `#0e1116` (more legible than before) at ~0.65 saturation.
+//            Both dials matter — do not take luminance down or chroma below ~0.6.
 const DARK_XTERM_THEME: ITheme = {
   background: '#0e1116',
   foreground: '#e7edf3',
   cursor: '#aeafad',
   selectionBackground: '#264f78',
-  black: '#a0a0a0',
-  red: '#f44747',
+  black: '#33363c',
+  red: '#e27474',
   green: '#3a8558',
   yellow: '#dcdcaa',
   blue: '#5b7fb5',
@@ -32,7 +49,7 @@ const DARK_XTERM_THEME: ITheme = {
   cyan: '#4dc9b0',
   white: '#ffffff',
   brightBlack: '#808080',
-  brightRed: '#f44747',
+  brightRed: '#ea7d7d',
   brightGreen: '#4daa6a',
   brightYellow: '#dcdcaa',
   brightBlue: '#5b7fb5',

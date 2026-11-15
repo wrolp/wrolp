@@ -19,7 +19,7 @@ const FG_3BIT: Record<number, string> = {
 
 const FG_BRIGHT: Record<number, string> = {
   90: '#5c6370',
-  91: '#f44747',
+  91: '#ea7d7d',
   92: '#89d185',
   93: '#f9e174',
   94: '#7daeec',
@@ -41,7 +41,7 @@ const BG_3BIT: Record<number, string> = {
 
 const BG_BRIGHT: Record<number, string> = {
   100: '#5c6370',
-  101: '#f44747',
+  101: '#ea7d7d',
   102: '#89d185',
   103: '#f9e174',
   104: '#7daeec',
