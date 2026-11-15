@@ -49,18 +49,9 @@ export const MinimalModeBar: React.FC<MinimalModeBarProps> = ({ onExit, fullscre
           title={`${t('exitMinimalMode')} (${keys})`}
           aria-label={t('exitMinimalMode')}
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+          {/* No glyph: a downward chevron used to sit here and read as "open a
+              menu" / "collapse the bar", for a button that leaves the mode. The
+              label and its shortcut are the whole affordance. */}
           <span>{t('exitMinimalMode')}</span>
           <kbd>{keys.replace(/\+/g, ' ')}</kbd>
         </button>
