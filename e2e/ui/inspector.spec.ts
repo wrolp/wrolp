@@ -133,7 +133,7 @@ test('the drawer keeps its own tabs; analysis and Docker stay in the inspector',
   // copies of them. The transfer queue is the one it added in v8-P4 — it has no
   // home anywhere else now that the rows outlive the file panel.
   await expect(page.locator('.bottom-panel-tabs .tab-btn')).toHaveText([
-    'Sessions',
+    'Recordings',
     'Command Sets',
     'Transfer Queue',
   ])

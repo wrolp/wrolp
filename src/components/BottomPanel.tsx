@@ -111,7 +111,10 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
           className={`tab-btn${activeTab === 'sessions' ? ' active' : ''}`}
           onClick={() => setActiveTab('sessions')}
         >
-          <Icon name="record" /> {t('sessions')}
+          {/* A recordings archive, not the record control: the bare dot was
+              indistinguishable from a status pip. Clock matches the rail's
+              Recordings entry. */}
+          <Icon name="history" /> {t('sessions')}
         </button>
         <button
           className={`tab-btn${activeTab === 'cmdsets' ? ' active' : ''}`}

@@ -46,7 +46,7 @@ const en = {
   railFiles: 'Files',
   railContainers: 'Containers',
   railK8s: 'Kubernetes',
-  railSessions: 'Sessions',
+  railSessions: 'Recordings',
   railNetTools: 'Network tools',
 
   // Command palette (Ctrl+K)
@@ -316,7 +316,7 @@ const en = {
 
   // Bottom panel and inspector tabs. `analysis` / `docker` moved to the
   // inspector in P2-4 but keep their keys — they name the same tool.
-  sessions: 'Sessions',
+  sessions: 'Recordings',
   commandSets: 'Command Sets',
   analysis: 'Analysis',
   docker: 'Docker',

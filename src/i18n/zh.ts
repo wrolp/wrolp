@@ -48,7 +48,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   railFiles: '文件',
   railContainers: '容器',
   railK8s: 'Kubernetes',
-  railSessions: '会话',
+  railSessions: '录制',
   railNetTools: '网络工具',
 
   // 命令面板（Ctrl+K）
@@ -314,7 +314,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
 
   // 底部面板与检查器页签。P2-4 把 `analysis` / `docker` 搬进了检查器，
   // 但键名保留 —— 它们指的是同一个工具。
-  sessions: '会话',
+  sessions: '录制',
   commandSets: '命令集',
   analysis: '分析',
   docker: 'Docker',
