@@ -71,6 +71,9 @@ export type IconName =
   | 'drag'
   | 'image'
   | 'network'
+  // Subnet scan: a radar sweep, deliberately not the connected-squares `network`
+  // — the two tools shared that glyph and were indistinguishable at 14px.
+  | 'scan'
   | 'check'
   // The activity rail's two modes: a rack for 主机 and a clock-arrow for
   // 会话（`record` is the *recording* dot, a different meaning).
@@ -573,6 +576,18 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="9" y="2" width="6" height="6" rx="1" />
       <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
       <path d="M12 12V8" />
+    </>
+  ),
+  // Subnet scan: a radar, redrawn. lucide's radar spends eight hairlines on
+  // detail that turns to noise at 14px, so this keeps only what still reads at
+  // that size — one ring broken at 45°, the sweep beam leaving through the gap
+  // and running slightly past it, and the emitter dot. A second inner ring was
+  // dropped: together with the beam it turned into a check mark at 14px.
+  scan: (
+    <>
+      <path d="M19.73 9.93A8 8 0 1 1 14.07 4.27" />
+      <path d="M12 12l7.07-7.07" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
     </>
   ),
   // lucide: check

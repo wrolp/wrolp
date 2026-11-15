@@ -184,7 +184,7 @@ export const InspectorPanel: React.FC<Props> = ({
           className={`tab-btn${tab === 'network' ? ' active' : ''}`}
           onClick={() => onTabChange('network')}
         >
-          <Icon name="network" /> {t('inspNetwork')}
+          <Icon name="scan" /> {t('inspNetwork')}
         </button>
       </div>
 

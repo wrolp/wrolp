@@ -219,36 +219,32 @@
 .ai-chat-btn,
 .pin-btn,
 .cmd-list-btn,
-.net-tools-btn,
+.scan-btn,
 .minimal-btn {
   width: 20px;
   height: 20px;
   border-radius: var(--r-1);
 }
 
-// Identity hues, so the five buttons stay apart without reading their tooltips.
-// These were raw hexes from the previous palette (#8ab4f8 / #7cc7ff / #4ec9b0),
-// which meant three pale glyphs on the light theme's near-white bar. Hovering lifts
-// them all to `--text-primary` like the band's other buttons — the hue is the
-// resting signature, not something to hold onto while pointed at.
-.cmd-list-btn {
-  color: var(--info);
+// No identity hues in this band. The blue command-list, purple assistant and
+// amber scan glyphs turned the corner into a legend, and the icons already
+// differ by shape; the resting colour is the band's one neutral. In the dark
+// theme every one of them is pure white, which is the only value that holds on
+// the gradient bar; the light theme keeps `--text-secondary`, the value that has
+// contrast on a near-white bar. Hover still lifts to `--text-primary`.
+html[data-theme='dark'] .titlebar-btn {
+  color: #fff;
 }
 
-.ai-chat-btn {
-  color: var(--purple);
-}
-
-.net-tools-btn {
-  color: var(--cyan);
-}
-
+// Pinned is a state, not an identity, so it is carried by the pressed fill
+// rather than a hue — the glyph stays as neutral as its neighbours.
 .pin-btn.active {
-  color: var(--warning);
+  color: var(--text-primary);
+  background: var(--bg-active);
 
   &:hover {
     color: var(--text-primary);
-    background: rgba($warning, 0.16);
+    background: var(--bg-active);
   }
 }
 

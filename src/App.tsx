@@ -9301,7 +9301,12 @@ export default function App() {
           onSettings={handleOpenSettings}
           onAiChat={() => handleOpenAiChat()}
           onCommandList={() => setCommandListOpen((prev) => !prev)}
-          onNetTools={() => openRailMode('nettools')}
+          onNetworkScan={() =>
+            updateLayout((l) => ({
+              ...l,
+              inspector: { ...l.inspector, visible: true, tab: 'network' },
+            }))
+          }
           onCommandPalette={() => setPaletteOpen(true)}
           onMinimalMode={toggleMinimalMode}
           workspace={

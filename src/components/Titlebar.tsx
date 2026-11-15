@@ -13,8 +13,8 @@ interface TitlebarProps {
   onCommandPalette?: () => void
   /** Hide every panel and give the whole window to the terminal. */
   onMinimalMode?: () => void
-  /** Put the built-in FTP/HTTP/TFTP tools in the rail's mode column. */
-  onNetTools?: () => void
+  /** Open the subnet scan in the inspector column. */
+  onNetworkScan?: () => void
   /**
    * The workspace pill. It lives here rather than at the top of the mode panel
    * because it describes the whole window, not the panel — and the panel can be
@@ -29,7 +29,7 @@ export const Titlebar: React.FC<TitlebarProps> = ({
   onAiChat,
   onCommandList,
   onCommandPalette,
-  onNetTools,
+  onNetworkScan,
   onMinimalMode,
   workspace,
 }) => {
@@ -154,14 +154,14 @@ export const Titlebar: React.FC<TitlebarProps> = ({
             </svg>
           </button>
         )}
-        {onNetTools && (
+        {onNetworkScan && (
           <button
-            className="titlebar-btn net-tools-btn"
-            onClick={onNetTools}
-            title={t('netToolTitle')}
-            aria-label={t('netToolTitle')}
+            className="titlebar-btn scan-btn"
+            onClick={onNetworkScan}
+            title={t('scanNetwork')}
+            aria-label={t('scanNetwork')}
           >
-            <Icon name="network" size={14} />
+            <Icon name="scan" size={14} />
           </button>
         )}
         <button
