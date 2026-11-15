@@ -65,6 +65,8 @@ import {
   latestTerminalByTab,
   scrollbackCache,
   replayScrollback,
+  registerSerialize,
+  unregisterSerialize,
   registerPaste,
   unregisterPaste,
   registerExpectEcho,
@@ -261,6 +263,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   reconnectTrigger,
   connectConfig,
   autoConnect,
+  attachOnly = false,
   maxScrollback,
   onStatusChange,
   tailRoomOverride,
@@ -288,6 +291,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  /** Serializes this instance's screen for the float-window hand-over. */
+  const serializeRef = useRef<(() => string) | null>(null)
   // True until cleanup runs. Guards the deferred connect/poll timers from firing
   // on a disposed xterm instance after the pane closes (they can't all be
   // tracked by id, so a mount check is the reliable gate).
@@ -1761,8 +1766,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const cfg = connectConfigRef.current
     console.log('[Terminal] connectConfig=', cfg)
     // Local shells have no SSH connectConfig — only SSH sessions need it. Without
-    // this guard, opening a local terminal would bail here and never start.
-    if (!cfg && !isLocal) {
+    // this guard, opening a local terminal would bail here and never start. A
+    // float window (`attachOnly`) never connects, so it needs no config either.
+    if (!cfg && !isLocal && !attachOnly) {
       console.log('[Terminal] no cfg, return')
       return
     }
@@ -1846,6 +1852,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // instance (float pop-out / dock-back) can replay it exactly.
     const serializeAddon = new SerializeAddon()
     term.loadAddon(serializeAddon)
+    // Published so the pane can be handed to a float window *before* this
+    // instance is unmounted (the teardown snapshot below only reaches this
+    // window's cache, and the float window has its own heap).
+    serializeRef.current = () => serializeAddon.serialize()
     // Unicode 11 width table: the xterm default (v6) sizes emoji like 🌐 as one
     // cell while the emoji font draws them ~2 cells wide, so the glyph swallows
     // the following space and prompts (starship `$os`) render cramped. Other
@@ -2987,6 +2997,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       lastColsRef.current = cols
       lastRowsRef.current = rows
       closedDuringConnectRef.current = false
+      // A float window adopts a session the main window already opened (see
+      // `attachOnly`): there is nothing to connect — only to size, observe and
+      // type into. Connecting again would replace the live session.
+      if (attachOnly) {
+        connectedRef.current = true
+        onStatusChangeRef.current('connected')
+        sendResize(term)
+        startPolling()
+        return
+      }
       onStatusChangeRef.current('connecting')
       if (isLocal) {
         openLocalPty(
@@ -3787,6 +3807,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     registerPaste(tabId, pasteIntoTerminal)
     return () => unregisterPaste(tabId, pasteIntoTerminal)
   }, [pasteIntoTerminal, tabId])
+
+  // Publish this instance's screen serializer: popping the pane out to an OS window
+  // has to snapshot the buffer here, before the instance is unmounted (the float
+  // window is a different webview and cannot read this one's cache).
+  useEffect(() => {
+    const fn = () => serializeRef.current?.() ?? ''
+    registerSerialize(tabId, fn)
+    return () => unregisterSerialize(tabId, fn)
+  }, [tabId])
 
   // Expose the "awaiting input echo" gate so a programmatic send that bypasses
   // `onData` (a snippet appended to a non-empty input line via `sendInput`) is

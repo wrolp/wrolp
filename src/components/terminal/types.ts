@@ -62,6 +62,15 @@ export interface TerminalComponentProps {
   /** WSL only: distribution to launch (empty/absent = system default). */
   localDistro?: string
   autoConnect: boolean
+  /**
+   * Adopt an existing session instead of opening one.
+   *
+   * A float window is handed a session the main window already opened. Its
+   * `tabId` is live in the backend, so the terminal must mount, fit, tell the PTY
+   * the new geometry and start polling — but connecting again would replace the
+   * session (and lose whatever the shell was running).
+   */
+  attachOnly?: boolean
   /** Maximum scrollback lines to retain (default 5000). */
   maxScrollback?: number
   onStatusChange: (

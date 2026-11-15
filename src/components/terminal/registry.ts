@@ -96,3 +96,42 @@ export const replayScrollback = (term: Terminal, tabId: number): void => {
   term.write(cached)
   term.scrollToBottom()
 }
+
+/**
+ * Seed the replay cache with a screen serialized in *another* webview.
+ *
+ * A float window has its own JS heap, so the cache above cannot travel with the
+ * pane on its own; `src/lib/floatWindow.ts` carries the string across and drops it
+ * here before the terminal mounts.
+ */
+export const seedScrollback = (tabId: number, data: string): void => {
+  if (data) scrollbackCache.set(tabId, data)
+}
+
+/** Per-tab serialize functions, registered by the mounted {@link Terminal}. */
+const serializeByTab = new Map<number, () => string>()
+
+export const registerSerialize = (tabId: number, fn: () => string): void => {
+  serializeByTab.set(tabId, fn)
+}
+
+// Only clear our entry when it still belongs to this instance: during a transient
+// double-mount the superseding instance overwrites the map entry.
+export const unregisterSerialize = (tabId: number, fn: () => string): void => {
+  if (serializeByTab.get(tabId) === fn) serializeByTab.delete(tabId)
+}
+
+/**
+ * The current screen of `tabId` (colours and scrollback included), or null when
+ * that tab has no mounted terminal. Used when handing the session to/from a float
+ * window, before the local instance is torn down.
+ */
+export const serializeTerminal = (tabId: number): string | null => {
+  const fn = serializeByTab.get(tabId)
+  if (!fn) return null
+  try {
+    return fn()
+  } catch {
+    return null
+  }
+}
