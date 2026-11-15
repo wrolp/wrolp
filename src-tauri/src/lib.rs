@@ -114,6 +114,8 @@ pub fn run() {
       // Git panel state (repository locks, cancellation flags, local CLI cache).
       // Deliberately separate from AppState: nothing else constructs that struct.
       app.manage(git_host::GitState::default());
+      // Float windows: the scrollback hand-over buffer and the label → session map.
+      app.manage(commands::FloatState::default());
 
       // Spawn periodic recording flush task (every 5 seconds)
       {
@@ -448,6 +450,13 @@ pub fn run() {
       commands::git_cancel,
       commands::git_clone,
       commands::git_staged_context,
+      commands::open_float_window,
+      commands::close_float_window,
+      commands::float_scrollback_put,
+      commands::float_scrollback_take,
+      commands::float_context_put,
+      commands::float_context_take,
+      commands::focus_main_window,
       commands::command_help,
       commands::get_app_version,
       commands::open_config_dir,

@@ -19,6 +19,15 @@ import {
   pasteToTerminal,
 } from './components/Terminal'
 import { FilePanel } from './components/FilePanel'
+import { serializeTerminal, seedScrollback } from './components/terminal/registry'
+import {
+  closeFloatWindow,
+  onFloatWindowClosed,
+  openTerminalFloatWindow,
+  putFloatContext,
+  putFloatScrollback,
+  takeFloatScrollback,
+} from './lib/floatWindow'
 import { buildGhostPool, type GhostCandidate } from './components/terminal/ghostComplete'
 import { BottomPanel } from './components/BottomPanel'
 import { SessionListPanel } from './components/SessionListPanel'
@@ -174,6 +183,7 @@ import { open } from '@tauri-apps/plugin-shell'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import AiChatPanel from './components/AiChatPanel'
 import type { AiConv, ChatMessage } from './aiChatRun'
+import { emptyAiConv } from './lib/aiConv'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { detectLanguage } from './editor/languages'
 import { useI18n, LANG_LABELS, type LangPref } from './i18n'
@@ -242,6 +252,39 @@ import './styles/App.scss'
 
 // Global connection cache
 let cachedConnections: ConnectionConfig[] = []
+
+/**
+ * The tab's connection details in the shape `TerminalComponent` connects with.
+ *
+ * Extracted because two windows need it now: the pane in this one, and the float
+ * window's `Reconnect` (which is why it is handed over with the pane).
+ */
+function connectConfigOf(conn: ConnectionConfig) {
+  return {
+    id: conn.id,
+    name: conn.name,
+    host: conn.host,
+    port: conn.port,
+    username: conn.username,
+    password: conn.password,
+    keyPath: conn.keyPath,
+    startupDir: conn.startupDir,
+    // Carried through so the backend can file the recording under the
+    // connection's real workspace/group instead of default/__ungrouped__.
+    group: conn.group,
+    workspaceId: conn.workspaceId,
+    // Serial-port fields (only meaningful when kind === 'serial').
+    kind: conn.kind,
+    portName: conn.portName,
+    baudRate: conn.baudRate,
+    dataBits: conn.dataBits,
+    stopBits: conn.stopBits,
+    parity: conn.parity,
+    flowControl: conn.flowControl,
+    // Telnet fields (only meaningful when kind === 'telnet').
+    autoLogin: conn.autoLogin,
+  }
+}
 
 // Auto-incrementing tab id counter
 let nextTabId = 1
@@ -3028,21 +3071,8 @@ export default function App() {
   const didInitExpand = useRef(false)
   // AI conversation state is keyed per tab (tabId) so each shell tab keeps its
   // own conversation, and survives tab switches / panel remounts.
-  const emptyConv = (): AiConv => ({
-    sessionId: crypto.randomUUID(),
-    sessionTitle: '',
-    messages: [],
-    input: '',
-    streaming: false,
-    streamingText: '',
-    error: null,
-    toolCalls: [],
-    showSuggestions: true,
-    toolCallFormat: 'nested',
-    mode: 'command',
-    flow: null,
-    run: null,
-  })
+  // Shared with the float window's own AI panel (`src/lib/aiConv.ts`).
+  const emptyConv = emptyAiConv
   const [aiConversations, setAiConversations] = useState<Record<number, AiConv>>({})
   const aiConversationsRef = useRef(aiConversations)
   aiConversationsRef.current = aiConversations
@@ -5297,7 +5327,7 @@ export default function App() {
   const floatingZRef = useRef(1000)
 
   const floatPane = useCallback(
-    (leafId: string, force?: { kind?: 'dockerLog'; dockerLogTabId?: number }) => {
+    async (leafId: string, force?: { kind?: 'dockerLog'; dockerLogTabId?: number }) => {
       // Locate the leaf + its workspace root.
       let rootId: number | null = null
       let leaf: SplitLeaf | null = null
@@ -5365,8 +5395,44 @@ export default function App() {
         floatRestoreRef.current[floatId] = { rootId, tree: null, shellView: restoreShellView }
         setShellViewFor(tabId, 'terminal')
       } else {
-        // Terminal float: snapshot the tree, prune the leaf (session is NOT
-        // torn down), and clear the pane's focus.
+        // Terminal float: a real OS window now owns this session.
+        //
+        // Order matters. The screen is serialized while this window still has the
+        // terminal, then the window is opened, and only then is the leaf pruned —
+        // pruning unmounts the terminal, and output is *polled* per session, so
+        // this window must stop reading it exactly when the float window starts.
+        // The float window cannot read this window's React state, and it needs more
+        // than the session id: which kind of shell this is, and the connection
+        // fields that make its "Reconnect" able to re-open the same host.
+        const floatTab = tabsRef.current.find((t) => t.tabId === tabId)
+        const floatConn = floatTab?.connectionId
+          ? cachedConnections.find((c) => c.id === floatTab.connectionId)
+          : undefined
+        await putFloatContext(tabId, {
+          title,
+          tabType: floatTab?.tabType ?? 'terminal',
+          host: floatConn?.host,
+          connectConfig: floatConn ? connectConfigOf(floatConn) : undefined,
+          isLocal: floatTab?.tabType === 'localShell',
+          isSerial: floatTab?.tabType === 'serial',
+          isTelnet: floatTab?.tabType === 'telnet',
+          dockerContainer: floatTab?.dockerContainer ?? null,
+          kubectlExec: floatTab?.kubectlExec ?? undefined,
+          localCwd: floatTab?.localShellCwd,
+          localShellType: floatTab?.localShellType,
+          localDistro: floatTab?.localShellDistro,
+        }).catch(() => {})
+        const screen = serializeTerminal(tabId)
+        if (screen) await putFloatScrollback(tabId, screen).catch(() => {})
+        try {
+          await openTerminalFloatWindow(floatId, tabId, title, { width: 760, height: 460 })
+        } catch {
+          // No window, no float: leave the pane exactly where it is rather than
+          // stranding the session in a window that never opened.
+          return
+        }
+        // Snapshot the tree, prune the leaf (session is NOT torn down), and clear
+        // the pane's focus.
         floatRestoreRef.current[floatId] = { rootId, tree: splitTreesRef.current[rootId] }
         setSplitTrees((prev) => {
           const tree = prev[rootId]
@@ -5403,6 +5469,9 @@ export default function App() {
           w: 640,
           h: 420,
           z,
+          // A terminal float lives in its own OS window: tracked here so the pane
+          // can be restored and cleaned up, but not rendered inside this one.
+          os: kind === 'terminal',
         },
       ])
     },
@@ -5476,6 +5545,58 @@ export default function App() {
     setFloatingItems((prev) => prev.filter((i) => i.floatId !== floatId))
   }, [])
 
+  // A float window reports its own destruction. Take the session's screen back
+  // first (the window left it in the backend), then restore the pane where it came
+  // from — same path as closing an in-window overlay.
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void onFloatWindowClosed(({ label, tabId: closedTabId }) => {
+      void (async () => {
+        if (closedTabId != null) {
+          const screen = await takeFloatScrollback(closedTabId).catch(() => null)
+          if (screen) seedScrollback(closedTabId, screen)
+        }
+        closeFloating(label)
+      })()
+    }).then((fn) => {
+      if (disposed) fn()
+      else unlisten = fn
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [closeFloating])
+
+  // A popped-out pane's terminal lives in the float window, so *it* hears the shell
+  // disconnect. Mirror that onto the tab: the pane, its title and the status bar in
+  // this window would otherwise keep claiming "connected".
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void listen<{ tabId: number; status: string; errorMessage?: string }>(
+      'float-window-status',
+      (e) => {
+        const { tabId: statusTabId, status, errorMessage } = e.payload
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.tabId === statusTabId
+              ? { ...tab, status: status as TabInfo['status'], errorMessage }
+              : tab,
+          ),
+        )
+      },
+    ).then((fn) => {
+      if (disposed) fn()
+      else unlisten = fn
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
   // Drop a floating window whose subject is gone — its session closed, or its
   // file buffer was removed. The pre-float snapshot is discarded rather than
   // restored: the pane it pointed at is gone too.
@@ -5498,7 +5619,12 @@ export default function App() {
       return false
     })
     if (dead.length === 0) return
-    for (const i of dead) delete floatRestoreRef.current[i.floatId]
+    for (const i of dead) {
+      delete floatRestoreRef.current[i.floatId]
+      // An OS-window float outlives this list: close it, or it would keep polling
+      // a session that no longer exists.
+      if (i.os) void closeFloatWindow(i.floatId).catch(() => {})
+    }
     const deadIds = new Set(dead.map((i) => i.floatId))
     setFloatingItems((prev) => prev.filter((i) => !deadIds.has(i.floatId)))
   }, [tabs, editorTabs, floatingItems])
@@ -6363,36 +6489,10 @@ export default function App() {
     leafId?: string,
     isVisible = true,
   ) => {
-    const connectConfig = tab.connectionId
-      ? (() => {
-          const conn = cachedConnections.find((c) => c.id === tab.connectionId)
-          if (!conn) return undefined
-          return {
-            id: conn.id,
-            name: conn.name,
-            host: conn.host,
-            port: conn.port,
-            username: conn.username,
-            password: conn.password,
-            keyPath: conn.keyPath,
-            startupDir: conn.startupDir,
-            // Carried through so the backend can file the recording under the
-            // connection's real workspace/group instead of default/__ungrouped__.
-            group: conn.group,
-            workspaceId: conn.workspaceId,
-            // Serial-port fields (only meaningful when kind === 'serial').
-            kind: conn.kind,
-            portName: conn.portName,
-            baudRate: conn.baudRate,
-            dataBits: conn.dataBits,
-            stopBits: conn.stopBits,
-            parity: conn.parity,
-            flowControl: conn.flowControl,
-            // Telnet fields (only meaningful when kind === 'telnet').
-            autoLogin: conn.autoLogin,
-          }
-        })()
+    const tabConn = tab.connectionId
+      ? cachedConnections.find((c) => c.id === tab.connectionId)
       : undefined
+    const connectConfig = tabConn ? connectConfigOf(tabConn) : undefined
     const isLocalShell = tab.tabType === 'localShell'
     const isSerial = tab.tabType === 'serial'
     const isTelnet = tab.tabType === 'telnet'
@@ -8084,7 +8184,7 @@ export default function App() {
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation()
-                floatPane(leaf.id)
+                void floatPane(leaf.id)
               }}
               title={t('floatPane')}
             >
@@ -8120,7 +8220,7 @@ export default function App() {
                       e.stopPropagation()
                       // Float the docker log overlay directly (explicit kind), so
                       // it doesn't depend on the global shellView / focus state.
-                      floatPane(leaf.id, { kind: 'dockerLog', dockerLogTabId: dt.tabId })
+                      void floatPane(leaf.id, { kind: 'dockerLog', dockerLogTabId: dt.tabId })
                     }}
                     title={t('floatPane')}
                   >
@@ -8622,6 +8722,9 @@ export default function App() {
   // scrollback/output). Map tabId -> floating-body pane id used as the portal dest.
   const floatingTerminalDest = new Map<number, string>()
   for (const fi of floatingItems) {
+    // An OS-window float has no body in this window: its terminal must be unmounted
+    // here (output is polled per session, so only one window may own it).
+    if (fi.os) continue
     if (fi.kind === 'terminal' && fi.tabId != null) {
       floatingTerminalDest.set(fi.tabId, `floatbody-${fi.floatId}`)
     }
@@ -8752,34 +8855,36 @@ export default function App() {
         {/* Floating (pop-out) panes: draggable overlays rendered inside the
               same window. Each mirrors a pane currently removed from the split
               tree; closing one restores the pane to its original spot. */}
-        {floatingItems.map((item) => (
-          <FloatingWindow
-            key={item.floatId}
-            item={item}
-            t={t}
-            onClose={() => closeFloating(item.floatId)}
-            onFocus={() => bringFloatingToFront(item.floatId)}
-            onMove={(x, y) => moveFloating(item.floatId, x, y)}
-            onResize={(w, h) => resizeFloating(item.floatId, w, h)}
-          >
-            {/* Terminal floats reuse the SAME mounted TerminalComponent instance
+        {floatingItems
+          .filter((item) => !item.os)
+          .map((item) => (
+            <FloatingWindow
+              key={item.floatId}
+              item={item}
+              t={t}
+              onClose={() => closeFloating(item.floatId)}
+              onFocus={() => bringFloatingToFront(item.floatId)}
+              onMove={(x, y) => moveFloating(item.floatId, x, y)}
+              onResize={(w, h) => resizeFloating(item.floatId, w, h)}
+            >
+              {/* Terminal floats reuse the SAME mounted TerminalComponent instance
                   (routed into this body by terminalPortals), so its scrollback and
                   output survive the pop-out. Overlay floats (file editor / docker
                   log) render their own content here as before. */}
-            <div
-              ref={getPaneBodyRef(`floatbody-${item.floatId}`)}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-              }}
-            >
-              {item.kind === 'terminal' ? null : renderFloatingContent(item)}
-            </div>
-          </FloatingWindow>
-        ))}
+              <div
+                ref={getPaneBodyRef(`floatbody-${item.floatId}`)}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                }}
+              >
+                {item.kind === 'terminal' ? null : renderFloatingContent(item)}
+              </div>
+            </FloatingWindow>
+          ))}
         <div
           ref={settingsOverlayRef}
           className="settings-overlay"

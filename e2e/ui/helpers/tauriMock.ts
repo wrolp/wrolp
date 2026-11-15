@@ -241,6 +241,12 @@ export interface TauriMockOptions {
   aiChatReply?: string
   /** Reject `ai_chat` with this message, to cover the "AI failed" path. */
   aiChatError?: string
+  /**
+   * Context a float window finds when it boots (`float_context_take`), standing in
+   * for what the main window leaves behind: tab title, shell kind and the
+   * connection fields its Reconnect needs.
+   */
+  floatContext?: Record<string, unknown>
   /** Paths `git_repo_info` refuses with `git_not_repo:` (the picker's error row). */
   gitNotRepoPaths?: string[]
   /**
@@ -388,6 +394,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     // Commands that can take arbitrarily long (the subnet scan) hold their
     // resolution here so a test can look at the UI while they are still running.
     let finishPendingCall: (() => void) | null = null
+    // Hand-over buffers for float windows (`float_scrollback_put` / `take` and
+    // `float_context_put` / `take`), keyed by session tabId.
+    const floatScrollback = new Map<number, string>()
+    const floatContexts = new Map<number, string>()
     // A `git_clone` held by `gitCloneHold`, plus the way to settle it: `git_cancel`
     // rejects it (the real command stops the transfer), `resolvePendingCall` lets
     // it succeed.
@@ -1124,6 +1134,35 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
               text: 'mock transfer',
             })
             return opts.gitNetworkResult ?? { stdout: '', stderr: '' }
+          }
+          // ===== Float windows =====
+          // The real commands create/destroy native windows, which a browser test
+          // cannot show. What it *can* verify is the contract: the hand-over
+          // buffer round-trips, and the main window lets go of / takes back the
+          // session around those calls.
+          case 'open_float_window':
+          case 'close_float_window':
+            return null
+          case 'float_scrollback_put': {
+            floatScrollback.set(Number(args.tabId), String(args.data ?? ''))
+            return null
+          }
+          case 'float_scrollback_take': {
+            const id = Number(args.tabId)
+            const data = floatScrollback.get(id) ?? null
+            floatScrollback.delete(id)
+            return data
+          }
+          case 'float_context_put': {
+            floatContexts.set(Number(args.tabId), String(args.data ?? ''))
+            return null
+          }
+          case 'float_context_take': {
+            const id = Number(args.tabId)
+            const stored = floatContexts.get(id)
+            floatContexts.delete(id)
+            if (stored) return stored
+            return opts.floatContext ? JSON.stringify(opts.floatContext) : null
           }
           case 'git_staged_context': {
             const ctx = opts.gitStagedContext ?? {}

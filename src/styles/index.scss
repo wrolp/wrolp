@@ -59,6 +59,157 @@ body,
   color: $text-primary;
 }
 
+// A float window is an ordinary OS window with chrome, unlike the transparent
+// custom-chrome main window, so it paints its own opaque surface.
+body.float-window {
+  background: $bg-primary;
+}
+
+.float-window-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: $bg-primary;
+}
+
+// Per-pane controls for a floated terminal. The float window has no pane header and
+// no app status bar, so reconnect / recording / the AI shortcut live here — the
+// main window's copies of them are hidden behind the pane this window took over.
+.float-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  // A status bar, not a toolbar: 20px is one line of `--fs-xs` plus a little air,
+  // and the buttons are sized (not just padded) to fit inside it.
+  height: 20px;
+  padding: 0 6px;
+  background: $bg-secondary;
+  // It sits on the bottom edge now, so it is separated from the terminal above it
+  // rather than from a bar that no longer exists up there.
+  border-top: 1px solid $border;
+  color: $text-muted;
+  font-size: var(--fs-xs);
+  user-select: none;
+}
+
+// The session name in the titlebar's workspace slot (the float window has no
+// workspace, so that slot names what the window is showing).
+.float-tb-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-primary;
+}
+
+// A float window's titlebar is pure chrome — one session, no palette, no
+// workspace pill — so it gives the terminal back a dozen pixels instead of wearing
+// the main window's 42px (48px at comfy density). The buttons are `height: 100%`,
+// so they narrow with it.
+body.float-window .titlebar {
+  height: 28px;
+  padding-left: 6px;
+
+  .titlebar-title {
+    font-size: var(--fs-sm);
+  }
+
+  .titlebar-btn {
+    width: 36px;
+  }
+}
+
+.float-host {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-dim;
+}
+
+.float-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.float-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  // Fixed height inside the 20px bar: padding alone would let a 12px icon plus
+  // line-height push the row taller than the bar and clip it.
+  height: 16px;
+  padding: 0 5px;
+  border: none;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--control-hover);
+    color: $text-primary;
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  // Active toggle (AI panel shown) vs. an active recording, which keeps the
+  // palette's danger colour because it *is* recording.
+  &.is-on {
+    color: $accent;
+  }
+
+  &.is-rec {
+    color: $danger;
+  }
+}
+
+.float-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+.float-term {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+// The seam between the terminal and the AI column reuses `.panel-divider` (the
+// app's own 4px strip with the accent gradient that fades at both ends); this
+// class only marks it for automation.
+.float-ai-resizer {
+  flex: none;
+}
+
+// The AI panel docked inside the float window. It belongs to this window's
+// session — the main window's inspector is a different conversation.
+.float-ai {
+  flex: none;
+  // The bounds live in `FloatTerminal.tsx` (`aiWidthBounds`): they scale with the
+  // window, so a fixed `max-width` here would fight the drag at some arbitrary
+  // size. Only the minimum is fixed — the same 240px.
+  min-width: 240px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid $border;
+  background: $bg-secondary;
+}
+
 // Global scrollbar — hidden until hover
 ::-webkit-scrollbar {
   width: 4px;

@@ -1075,10 +1075,14 @@ export interface GitProgressEvent {
 export type FloatingKind = 'terminal' | 'editor' | 'dockerLog'
 
 /**
- * A pane that has been "popped out" of the main split tree into a draggable,
- * top-most overlay inside the same window. The underlying session (keyed by
- * `tabId` in the Rust backend) keeps running; on close the leaf is re-inserted
- * into the split tree so the pane returns to the layout.
+ * A pane that has been "popped out". Two flavours share this record so the pane
+ * can be restored the same way:
+ *
+ *   * `os: true` — a real OS window (`float-*`) owns the session; nothing is drawn
+ *     in the main window, and the entry exists only to restore the leaf/shell view
+ *     when that window closes;
+ *   * `os` absent — the older in-window overlay (editor, docker log), drawn as a
+ *     draggable box inside this window.
  */
 export interface FloatingItem {
   floatId: string
@@ -1095,6 +1099,8 @@ export interface FloatingItem {
   w: number
   h: number
   z: number
+  /** Rendered by a separate OS window instead of an overlay in this one. */
+  os?: boolean
 }
 
 // ===== App Version =====
