@@ -543,7 +543,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             title={t('scanNetwork')}
             aria-label={t('scanNetwork')}
           >
-            <Icon name="search" size={13} />
+            {/* Same glyph and size as the titlebar's scan button — the magnifier
+                here read as "search the list", which the nav filter already does. */}
+            <Icon name="scan" size={14} />
           </button>
           <button
             type="button"
