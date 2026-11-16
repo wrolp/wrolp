@@ -1,4 +1,5 @@
 import { highlightMultiline, isPrintLike } from '../../lib/termHighlight'
+import { detectLanguage } from '../../editor/languages'
 
 // Map a filename to a highlight language (self-contained, no async worker).
 const EXT_LANG: Record<string, string> = {
@@ -65,6 +66,9 @@ export const langFromPrintCommand = (cmd: string): string => {
     if (base === 'makefile') return 'makefile'
     if (base === 'gemfile') return 'ruby'
     if (base.startsWith('.') && base.includes('git')) return 'ini'
+    // Names these tables don't know (`ssh_config`, `sshd_config`, `.bashrc`…).
+    const known = detectLanguage(f)
+    if (known !== 'plaintext') return known
   }
   return 'plaintext'
 }

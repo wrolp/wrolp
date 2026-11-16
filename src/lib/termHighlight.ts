@@ -12,7 +12,7 @@
  * returns empty tokens for them — the old approach silently produced NO
  * highlighting at all. Our own tokenizer is synchronous and always works.
  */
-import { detectLanguage } from '../editor/languages'
+import { detectLanguage, detectLanguageFromText } from '../editor/languages'
 import { parseLsBlock, LsFormat, LsEntry } from './lsParse'
 import { lsListingPalette, type LsListingPalette } from './themeColors'
 
@@ -284,6 +284,54 @@ const tokenizeIni: LineTokenizer = (line) =>
     NUMBER(),
   ])
 
+/**
+ * OpenSSH config (`ssh_config` / `sshd_config`): one `Keyword value` line,
+ * `#` comments, `%h`-style tokens. The directive is only the FIRST word — the
+ * rest of the line is its value, even when it spells another keyword.
+ */
+const SSH_CONFIG_WORDS = new Set(
+  (
+    'host match include hostname user port identityfile certificatefile proxyjump proxycommand ' +
+    'forwardagent forwardx11 forwardx11trusted identitiesonly addkeystoagent usekeychain ' +
+    'stricthostkeychecking userknownhostsfile globalknownhostsfile hashknownhosts checkhostip ' +
+    'passwordauthentication pubkeyauthentication kbdinteractiveauthentication ' +
+    'challengeresponseauthentication hostbasedauthentication gssapiauthentication ' +
+    'gssapicleanupcredentials kerberosauthentication permitrootlogin permitemptypasswords usepam ' +
+    'maxauthtries maxsessions maxstartups logingracetime usedns ignorerhosts ' +
+    'allowusers denyusers allowgroups denygroups allowagentforwarding allowtcpforwarding ' +
+    'gatewayports x11forwarding x11uselocalhost permittunnel permitopen clearallforwardings ' +
+    'exitonforwardfailure localforward remoteforward dynamicforward ' +
+    'serveraliveinterval serveralivecountmax clientaliveinterval clientalivecountmax tcpkeepalive ' +
+    'connectionattempts connecttimeout compression loglevel syslogfacility subsystem ' +
+    'acceptenv setenv sendenv banner printmotd printlastlog authorizedkeysfile ' +
+    'authorizedprincipalsfile ciphers macs kexalgorithms hostkeyalgorithms hostkey ' +
+    'addressfamily listenaddress pidfile protocol controlmaster controlpath controlpersist ' +
+    'canonicalizehostname canonicaldomains canonicalizefallbacklocal rekeylimit ipqos ' +
+    'versionaddendum'
+  ).split(/\s+/),
+)
+
+function tokenizeSshConfig(line: string): RawToken[] {
+  const tokens: RawToken[] = []
+  const hash = line.indexOf('#')
+  const code = hash >= 0 ? line.slice(0, hash) : line
+  if (hash >= 0) tokens.push({ offset: hash, type: 'comment' })
+  const m = /^(\s*)([A-Za-z][\w-]*)/.exec(code)
+  if (m) {
+    const word = m[2].toLowerCase()
+    tokens.push({ offset: m[1].length, type: SSH_CONFIG_WORDS.has(word) ? 'keyword' : 'key' })
+    const rest = code.slice(m[0].length)
+    const base = m[0].length
+    for (const vm of rest.matchAll(/%[a-zA-Z]/g)) {
+      tokens.push({ offset: base + (vm.index ?? 0), type: 'variable' })
+    }
+    for (const nm of rest.matchAll(/\b\d+\b/g)) {
+      tokens.push({ offset: base + (nm.index ?? 0), type: 'number' })
+    }
+  }
+  return tokens.sort((a, b) => a.offset - b.offset)
+}
+
 /** Shell script: comments, quoted strings, common keywords, numbers, variables. */
 const tokenizeShellLang: LineTokenizer = (line) =>
   scan(line, [
@@ -472,6 +520,7 @@ const LANG_TOKENIZERS: Record<string, LineTokenizer> = {
   yaml: tokenizeYaml,
   ini: tokenizeIni,
   properties: tokenizeIni,
+  sshconfig: tokenizeSshConfig,
   shell: tokenizeShellLang,
   python: tokenizePython,
   javascript: tokenizeCLike,
@@ -571,20 +620,6 @@ function colorizeLine(line: string, tokens: RawToken[]): string {
   return res
 }
 
-/** Guess a language from a `#!` shebang line (for extension-less scripts). */
-function detectLanguageFromShebang(text: string): string | null {
-  const first = text.slice(0, 200).split('\n')[0]
-  if (!first.startsWith('#!')) return null
-  const interp = first.slice(2).trim().split(/\s+/)[0].toLowerCase()
-  const name = (interp.split('/').pop() ?? '').replace(/[^a-z0-9]/g, '')
-  if (name === 'python' || name === 'python2' || name === 'python3') return 'python'
-  if (name === 'bash' || name === 'sh' || name === 'zsh' || name === 'ksh' || name === 'dash')
-    return 'shell'
-  if (name === 'node' || name === 'nodejs') return 'javascript'
-  if (name === 'ruby') return 'ruby'
-  return null
-}
-
 /** No-op retained for API compatibility (previously warmed Monaco grammars). */
 export function preloadHighlightLanguages(): void {
   /* built-in tokenizer needs no warm-up */
@@ -598,8 +633,9 @@ export function preloadHighlightLanguages(): void {
 export function highlightLines(text: string, lang: string): string[] {
   let l = lang
   if (!l || l === 'plaintext') {
-    const fromShebang = detectLanguageFromShebang(text)
-    if (fromShebang) l = fromShebang
+    // Same content signals the editor uses (shebang / modeline / markup) — an
+    // extension-less `cat` gets coloured exactly like the file would in a tab.
+    l = detectLanguageFromText(text) ?? l
   }
   const lines = text.split('\n')
   const tokenizer = (l && LANG_TOKENIZERS[l]) || null
@@ -802,8 +838,7 @@ function applyMultilineSpans(text: string, lang: string): string[] {
 export function highlightMultiline(text: string, lang: string): string[] {
   let l = lang
   if (!l || l === 'plaintext') {
-    const fromShebang = detectLanguageFromShebang(text)
-    if (fromShebang) l = fromShebang
+    l = detectLanguageFromText(text) ?? l
   }
   if (BLOCK_TOKENIZERS[l]) return BLOCK_TOKENIZERS[l](text)
   return applyMultilineSpans(text, l)
