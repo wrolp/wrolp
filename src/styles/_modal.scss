@@ -880,4 +880,15 @@ input[type='password']::-ms-clear {
   &-item.active {
     color: var(--accent-soft-40);
   }
+
+  // Destructive actions (delete / remove / uninstall) read red in EVERY menu.
+  // This used to exist only under `.tab-context-menu`, so the same modifier was
+  // a no-op in the connection, file, snippet, session and K8s menus.
+  &-item.ctx-danger {
+    color: var(--danger-soft-40);
+
+    &:hover {
+      background: rgba($danger, 0.15);
+    }
+  }
 }

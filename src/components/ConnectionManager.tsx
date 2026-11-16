@@ -1391,7 +1391,7 @@ const LocalTerminalsSection: React.FC<LocalTerminalsSectionProps> = ({
             <Icon name="copy" /> {t('duplicateLocalTerminal')}
           </div>
           <div
-            className="context-menu-item danger"
+            className="context-menu-item ctx-danger"
             onClick={() => {
               setConfirmLocalDelete(localMenu.entry)
               setLocalMenu(null)
@@ -2385,7 +2385,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({
       <div className="context-menu-item" onClick={onDuplicate}>
         <Icon name="copy" /> {t('duplicateConnection')}
       </div>
-      <div className="context-menu-item" onClick={onDelete}>
+      <div className="context-menu-item ctx-danger" onClick={onDelete}>
         <Icon name="trash" /> {t('delete')}
       </div>
     </div>
@@ -2425,7 +2425,7 @@ const GroupContextMenu: React.FC<GroupContextMenuProps> = ({
       <div className="context-menu-item" onClick={onRename}>
         <Icon name="edit" /> {t('renameGroup')}
       </div>
-      <div className="context-menu-item" onClick={onDelete}>
+      <div className="context-menu-item ctx-danger" onClick={onDelete}>
         <Icon name="trash" /> {t('deleteGroup')}
       </div>
     </div>

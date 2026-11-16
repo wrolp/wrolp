@@ -907,6 +907,12 @@ html[data-theme='dark'] .titlebar-btn {
     }
   }
 
+  // Deleting a saved local terminal is destructive: the row's `×` reads red on
+  // hover, unlike the neutral edit / duplicate actions beside it.
+  .conn-item-del:hover {
+    color: var(--danger-soft-40);
+  }
+
   // The `×` glyph, not an icon: pinned off the scale on purpose (see the type-scale
   // note in `_layout.scss`).
   .conn-item-del {

@@ -144,7 +144,7 @@ export const CommandSetPanel: React.FC<CommandSetPanelProps> = ({
                 >
                   <Icon name="edit" />
                 </button>
-                <button onClick={() => handleDelete(cs.id)} title={t('delete')}>
+                <button className="danger" onClick={() => handleDelete(cs.id)} title={t('delete')}>
                   <Icon name="trash" />
                 </button>
               </div>

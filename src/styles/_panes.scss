@@ -488,7 +488,8 @@
 
     &:hover,
     &:focus-visible {
-      color: $text-primary;
+      // Removing a history entry is a delete, not a neutral row action.
+      color: var(--danger-soft-40);
       outline: none;
     }
   }

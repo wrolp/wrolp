@@ -571,6 +571,11 @@
         background: $bg-hover;
         color: $text-primary;
       }
+      // Deleting the set itself — red, unlike the run / edit actions next to it.
+      &.danger:hover {
+        background: rgba($danger, 0.35);
+        color: var(--danger-soft-40);
+      }
       &:disabled {
         opacity: 0.3;
         cursor: default;

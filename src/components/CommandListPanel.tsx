@@ -2583,7 +2583,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             <div className="context-menu-item" onClick={() => startEdit(menu.snippet)}>
               <Icon name="edit" size={12} /> {t('edit')}
             </div>
-            <div className="context-menu-item danger" onClick={() => remove(menu.snippet)}>
+            <div className="context-menu-item ctx-danger" onClick={() => remove(menu.snippet)}>
               <Icon name="trash" size={12} /> {t('delete')}
             </div>
           </div>
@@ -2607,7 +2607,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
                   <Icon name="edit" size={12} /> {t('snippetGroupRename')}
                 </div>
                 <div
-                  className="context-menu-item danger"
+                  className="context-menu-item ctx-danger"
                   onClick={() => {
                     const name = groupMenu.name
                     setGroupMenu(null)

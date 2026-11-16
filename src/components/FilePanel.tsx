@@ -2609,7 +2609,10 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             </div>
           )}
           {contextMenu.node && (
-            <div className="context-menu-item" onClick={() => handleDelete(contextMenu.node!)}>
+            <div
+              className="context-menu-item ctx-danger"
+              onClick={() => handleDelete(contextMenu.node!)}
+            >
               <Icon name="trash" /> Delete
             </div>
           )}
