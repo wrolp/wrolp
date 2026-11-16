@@ -1253,6 +1253,7 @@ html[data-theme='dark'] .titlebar-btn {
   height: 32px;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   padding: 0 0 0 8px;
   background: linear-gradient(180deg, var(--titlebar-bg), var(--titlebar-bg-2));
@@ -1272,14 +1273,15 @@ html[data-theme='dark'] .titlebar-btn {
     transform: translateY(0);
     opacity: 1;
   }
-
-  .tb-left {
-    flex: 1;
-    min-width: 0;
-  }
 }
 
 .minimal-exit {
+  // Horizontal centre of the WINDOW, not of the space the window controls
+  // leave over: the bar is a drag strip and this is its one button.
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
   gap: 8px;

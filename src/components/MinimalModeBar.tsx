@@ -41,21 +41,22 @@ export const MinimalModeBar: React.FC<MinimalModeBarProps> = ({ onExit, fullscre
 
   return (
     <div className="minimal-bar" data-tauri-drag-region>
-      <div className="tb-left">
-        <button
-          type="button"
-          className="minimal-exit"
-          onClick={onExit}
-          title={`${t('exitMinimalMode')} (${keys})`}
-          aria-label={t('exitMinimalMode')}
-        >
-          {/* No glyph: a downward chevron used to sit here and read as "open a
-              menu" / "collapse the bar", for a button that leaves the mode. The
-              label and its shortcut are the whole affordance. */}
-          <span>{t('exitMinimalMode')}</span>
-          <kbd>{keys.replace(/\+/g, ' ')}</kbd>
-        </button>
-      </div>
+      {/* Centred in the window (the stylesheet pins it at 50%), because the
+          exit hatch is the one thing a user reaches for by position on a bar
+          that is otherwise an empty drag strip. */}
+      <button
+        type="button"
+        className="minimal-exit"
+        onClick={onExit}
+        title={`${t('exitMinimalMode')} (${keys})`}
+        aria-label={t('exitMinimalMode')}
+      >
+        {/* No glyph: a downward chevron used to sit here and read as "open a
+            menu" / "collapse the bar", for a button that leaves the mode. The
+            label and its shortcut are the whole affordance. */}
+        <span>{t('exitMinimalMode')}</span>
+        <kbd>{keys.replace(/\+/g, ' ')}</kbd>
+      </button>
 
       {!fullscreen && (
         <div className="minimal-window-controls">
