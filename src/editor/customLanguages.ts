@@ -12,6 +12,10 @@ import { shellMonarchLanguage } from './shellLanguage'
 export function registerCustomLanguages(): void {
   registerNginx()
   registerProperties()
+  registerSshConfig()
+  registerIni()
+  registerMakefile()
+  registerDockerfileComments()
   registerShell()
 }
 
@@ -32,6 +36,9 @@ function registerShell(): void {
 
 function registerNginx(): void {
   monaco.languages.register({ id: 'nginx' })
+  // Without a comment token the editor's Ctrl+/ (`editor.action.commentLine`)
+  // has nothing to insert.
+  monaco.languages.setLanguageConfiguration('nginx', { comments: { lineComment: '#' } })
 
   // Combine all known nginx directives into one flat list for the regex.
   // The first group are block-openers (transition to afterContext to capture {).
@@ -106,6 +113,9 @@ function registerNginx(): void {
 
 function registerProperties(): void {
   monaco.languages.register({ id: 'properties' })
+  // `#` is the primary comment marker; `.properties` also accepts `!`, but a
+  // language configuration can name only one line comment.
+  monaco.languages.setLanguageConfiguration('properties', { comments: { lineComment: '#' } })
   monaco.languages.setMonarchTokensProvider('properties', {
     ignoreCase: true,
     tokenizer: {
@@ -130,6 +140,135 @@ function registerProperties(): void {
         [/\$\{[^}]+\}/, 'variable'],
       ],
     },
+  })
+}
+
+// ── SSH CONFIG (ssh_config / sshd_config) ──────────────────────────────────
+
+/**
+ * OpenSSH config syntax: one directive per line (`Keyword value`, `=` optional),
+ * `#` comments and `%h`-style value tokens. The files carry no extension, and
+ * neither Monaco nor the terminal tokenizer has this language built in.
+ */
+function registerSshConfig(): void {
+  monaco.languages.register({ id: 'sshconfig' })
+  monaco.languages.setLanguageConfiguration('sshconfig', { comments: { lineComment: '#' } })
+  const keywords =
+    'Host|Match|Include|HostName|User|Port|IdentityFile|CertificateFile|ProxyJump|ProxyCommand|' +
+    'ForwardAgent|ForwardX11|ForwardX11Trusted|IdentitiesOnly|AddKeysToAgent|UseKeychain|' +
+    'StrictHostKeyChecking|UserKnownHostsFile|GlobalKnownHostsFile|HashKnownHosts|CheckHostIP|' +
+    'PasswordAuthentication|PubkeyAuthentication|KbdInteractiveAuthentication|' +
+    'ChallengeResponseAuthentication|HostbasedAuthentication|GSSAPIAuthentication|' +
+    'GSSAPICleanupCredentials|KerberosAuthentication|PermitRootLogin|PermitEmptyPasswords|UsePAM|' +
+    'MaxAuthTries|MaxSessions|MaxStartups|LoginGraceTime|UseDNS|IgnoreRhosts|' +
+    'AllowUsers|DenyUsers|AllowGroups|DenyGroups|AllowAgentForwarding|AllowTcpForwarding|' +
+    'GatewayPorts|X11Forwarding|X11UseLocalhost|PermitTunnel|PermitOpen|ClearAllForwardings|' +
+    'ExitOnForwardFailure|LocalForward|RemoteForward|DynamicForward|' +
+    'ServerAliveInterval|ServerAliveCountMax|ClientAliveInterval|ClientAliveCountMax|TCPKeepAlive|' +
+    'ConnectionAttempts|ConnectTimeout|Compression|LogLevel|SyslogFacility|Subsystem|' +
+    'AcceptEnv|SetEnv|SendEnv|Banner|PrintMotd|PrintLastLog|AuthorizedKeysFile|' +
+    'AuthorizedPrincipalsFile|Ciphers|MACs|KexAlgorithms|HostKeyAlgorithms|HostKey|' +
+    'AddressFamily|ListenAddress|PidFile|Protocol|ControlMaster|ControlPath|ControlPersist|' +
+    'CanonicalizeHostname|CanonicalDomains|CanonicalizeFallbackLocal|CanonicalizePermittedCNAMEs|' +
+    'RekeyLimit|IPQoS|VersionAddendum'
+  monaco.languages.setMonarchTokensProvider('sshconfig', {
+    ignoreCase: true,
+    defaultToken: '',
+    tokenizer: {
+      root: [
+        [/#.*$/, 'comment'],
+        [new RegExp(`^[ \\t]*(${keywords})\\b`), 'keyword'],
+        // Any other leading word is still a directive — future OpenSSH options
+        // should read as keys rather than values.
+        [/^[ \t]*[A-Za-z][\w-]*/, 'key'],
+        [/%[a-zA-Z]/, 'variable'],
+        [/\b\d+\b/, 'number'],
+        [/"[^"]*"/, 'string'],
+        [/'[^']*'/, 'string'],
+        [/=/, 'delimiter'],
+        // Values: paths, host patterns, algorithm lists — one run to the next blank.
+        [/[^\s#=]+/, 'string'],
+      ],
+    },
+  })
+}
+
+// ── INI ────────────────────────────────────────────────────────────────────
+
+/**
+ * Replace Monaco's built-in ini tokenizer. It only recognises a `^\w+=` key:
+ * `key: value` (accepted by many INI readers), dotted/dashed keys and the
+ * leading indentation other tools emit (`[user]` then a tabbed `name = …` in a
+ * .gitconfig) all fell through, and an unquoted value was never tokenised at
+ * all — the line rendered as one colour. This provider keeps the built-in
+ * language configuration (comments, brackets, Ctrl+/) and only swaps tokenizing.
+ */
+function registerIni(): void {
+  monaco.languages.setMonarchTokensProvider('ini', {
+    defaultToken: '',
+    tokenizer: {
+      root: [
+        // Indentation is its own token so the key below matches after it.
+        [/[ \t]+/, ''],
+        [/[#;].*$/, 'comment'],
+        [/\[[^\]]*\]/, 'metatag'],
+        // `key = value`, `key: value`, `key=value`, dotted or dashed. The
+        // lookahead is what keeps a bare value word from reading as a key.
+        [/[\w.-]+(?=[ \t]*[=:])/, 'key'],
+        [/[ \t]*[=:][ \t]*/, 'delimiter'],
+        [/\b(?:true|false|yes|no|on|off)\b/i, 'keyword'],
+        [/\b\d+(?:\.\d+)?\b/, 'number'],
+        [/"(?:[^"\\]|\\.)*"/, 'string'],
+        [/'(?:[^'\\]|\\.)*'/, 'string'],
+        // Unquoted value text: a different colour from the key on the same line.
+        [/[^#;\s][^#;]*/, 'string'],
+      ],
+    },
+  })
+}
+
+// ── MAKEFILE ──────────────────────────────────────────────────────────────
+
+/**
+ * Monaco ships no Makefile language, yet the picker offers it. Registering the
+ * id makes that choice real and gives Ctrl+/ the `#` it needs; tokenising is
+ * left to the default (plain) tokenizer.
+ */
+function registerMakefile(): void {
+  monaco.languages.register({ id: 'makefile' })
+  monaco.languages.setLanguageConfiguration('makefile', { comments: { lineComment: '#' } })
+}
+
+// ── DOCKERFILE COMMENTS ───────────────────────────────────────────────────
+
+/**
+ * Monaco's built-in dockerfile configuration declares brackets and auto-close
+ * pairs but NO comment tokens, so Ctrl+/ did nothing in a Dockerfile. Re-state
+ * the built-in parts alongside `#` (a language configuration replaces, not
+ * merges).
+ */
+function registerDockerfileComments(): void {
+  monaco.languages.setLanguageConfiguration('dockerfile', {
+    comments: { lineComment: '#' },
+    brackets: [
+      ['{', '}'],
+      ['[', ']'],
+      ['(', ')'],
+    ],
+    autoClosingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+    ],
+    surroundingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+    ],
   })
 }
 
