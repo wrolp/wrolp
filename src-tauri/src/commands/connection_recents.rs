@@ -138,6 +138,26 @@ pub async fn list_recent_connections(
   )
 }
 
+/// Forget one row of the welcome page's recency card.
+///
+/// `recent_id` is the row's stored id: a saved connection's id, or
+/// `local:<entryId>` for a local terminal. Only the HISTORY entry goes away —
+/// the connection / saved terminal itself is untouched, and the row simply
+/// reappears if the user opens it again.
+#[tauri::command]
+pub async fn forget_recent_entry(
+  state: tauri::State<'_, AppState>,
+  recent_id: String,
+) -> Result<bool, String> {
+  let db = state.db.clone();
+  tokio::task::spawn_blocking(move || {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    db::forget_connection(&conn, &recent_id).map(|removed| removed > 0)
+  })
+  .await
+  .map_err(|e| e.to_string())?
+}
+
 /// Drop a deleted connection's recency row. Best effort, and never fails the
 /// caller's delete: `list_recent_connections` filters orphans out anyway, so a
 /// missed row costs a few bytes until the next write trims it.

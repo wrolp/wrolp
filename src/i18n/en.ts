@@ -74,6 +74,7 @@ const en = {
   welcomeRecentHosts: 'Recent remote hosts',
   welcomeNoHosts: 'No saved hosts yet',
   welcomeRecentLocal: 'Recent local terminals',
+  welcomeForgetRecent: 'Remove from recent',
   welcomeNoLocalTerms: 'No saved local terminals yet',
   welcomeSftp: 'File transfer',
   welcomeSftpDesc: 'Browse the remote filesystem and transfer files over SFTP',

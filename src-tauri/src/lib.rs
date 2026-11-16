@@ -265,6 +265,7 @@ pub fn run() {
       commands::record_connection_used,
       commands::record_local_terminal_used,
       commands::list_recent_connections,
+      commands::forget_recent_entry,
       commands::connect,
       commands::disconnect,
       commands::send_input,

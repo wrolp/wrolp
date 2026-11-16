@@ -76,6 +76,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   welcomeRecentHosts: '最近远程主机',
   welcomeNoHosts: '还没有保存的主机',
   welcomeRecentLocal: '最近本地终端',
+  welcomeForgetRecent: '从最近列表移除',
   welcomeNoLocalTerms: '还没有保存的本地终端',
   welcomeSftp: '文件传输',
   welcomeSftpDesc: '浏览远程文件系统，通过 SFTP 传输文件',

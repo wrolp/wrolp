@@ -478,7 +478,20 @@
   margin-top: 8px;
   list-style: none;
 
-  button {
+  li {
+    display: flex;
+    align-items: center;
+    border-radius: var(--r-2);
+
+    // Hovering the forget button is hovering the row: the open button's wash
+    // must not depend on which of the two cells the pointer is over.
+    &:hover .welcome-open {
+      background: $bg-hover;
+      color: $text-primary;
+    }
+  }
+
+  .welcome-open {
     display: flex;
     // `center`, not the `baseline` this had: the row now carries a 20px protocol
     // tile and a timestamp, neither of which has a baseline to sit on.
@@ -487,7 +500,8 @@
     // and `.wl-text` takes the slack, so the time hugs the right edge and the
     // address ellipsizes instead of being pushed off the end.
     gap: 8px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 6px 8px;
     border: 0;
     border-radius: var(--r-2);
@@ -496,6 +510,35 @@
     font: inherit;
     text-align: left;
     cursor: pointer;
+
+    &:hover {
+      background: $bg-hover;
+      color: $text-primary;
+    }
+  }
+
+  // Removing the recency row, not the connection: the host stays in the sidebar
+  // and opening it again puts it back on this card.
+  .welcome-forget {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-right: 2px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-1);
+    background: transparent;
+    color: $text-dim;
+    font: inherit;
+    font-size: var(--fs-md);
+    line-height: 1;
+    cursor: pointer;
+    transition:
+      background var(--d-1) var(--e-out),
+      color var(--d-1) var(--e-out);
 
     &:hover {
       background: $bg-hover;

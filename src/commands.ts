@@ -199,6 +199,11 @@ export async function listRecentConnections(limit?: number): Promise<RecentConne
   return await invoke<RecentConnectionEntry[]>('list_recent_connections', { limit })
 }
 
+/** Forget one welcome-page recency row (`connectionId`, or `local:<entryId>`). */
+export async function forgetRecentEntry(recentId: string): Promise<boolean> {
+  return await invoke<boolean>('forget_recent_entry', { recentId })
+}
+
 export async function reorderConnections(
   orderedIds: string[],
   groupUpdates?: Record<string, string>,

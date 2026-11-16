@@ -136,7 +136,10 @@ test('clicking a row opens that connection', async ({ page }) => {
     recentConnections: [{ connectionId: 'c3', usedAtMs: Date.now() - 1000 }],
   })
 
-  await remoteCard(page).locator('.welcome-list li', { hasText: 'Gw' }).locator('button').click()
+  await remoteCard(page)
+    .locator('.welcome-list li', { hasText: 'Gw' })
+    .locator('.welcome-open')
+    .click()
 
   // A Telnet connection reaches the backend as `connect_telnet` (not `connect`),
   // dispatched once the terminal pane mounts rather than on the click. That the
@@ -213,7 +216,7 @@ test('recent local terminals are listed on the card and reopen their entry', asy
 
   // Clicking the saved entry reopens THAT shell — its directory and shell reach
   // the backend, which the built-in default (no cwd, no shell) never would.
-  await localRows(page).first().locator('button').click()
+  await localRows(page).first().locator('.welcome-open').click()
   const call = (await invokedCalls(page)).find((c) => c.cmd === 'open_local_shell')!
   expect(JSON.stringify(call.args)).toContain(LT.cwd)
 })
@@ -251,6 +254,56 @@ test('each list keeps its own configured number of rows', async ({ page }) => {
 
   await expect(remoteRows(page)).toHaveCount(3)
   await expect(localRows(page)).toHaveCount(1)
+})
+
+test('a remote recency row can be removed without deleting the connection', async ({ page }) => {
+  const now = Date.now()
+  await boot(page, {
+    connections: BASE,
+    recentConnections: [{ connectionId: 'c3', usedAtMs: now - 1000 }],
+  })
+  await expect(remoteRows(page)).toHaveCount(1)
+
+  await remoteCard(page).locator('.welcome-forget').click()
+
+  // The row is gone — and the "no history" fallback must not bring it back.
+  await expect(remoteCard(page).locator('.welcome-list')).not.toContainText('Gw')
+  await expect(remoteCard(page).locator('.wl-name')).toHaveText(['Web', 'DB', 'Bench'])
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'forget_recent_entry')
+        .map((c) => c.args.recentId),
+    )
+    .toEqual(['c3'])
+  // Removing the HISTORY row is not deleting the connection: the sidebar still
+  // lists it, and no delete command ran.
+  await expect(page.locator('.connection-item', { hasText: 'Gw' })).toBeVisible()
+  expect((await invokedCalls(page)).filter((c) => c.cmd === 'delete_connection')).toHaveLength(0)
+})
+
+test('a local recency row can be removed the same way', async ({ page }) => {
+  const now = Date.now()
+  await boot(page, {
+    connections: BASE,
+    localTerminals: [LT],
+    recentConnections: [
+      { connectionId: `local:${LT.id}`, usedAtMs: now - 1000, kind: 'localTerminal' },
+    ],
+  })
+  await expect(localRows(page)).toHaveCount(1)
+
+  await localCard(page).locator('.welcome-forget').click()
+  await expect(localRows(page)).toHaveCount(0)
+  // The fallback would show every saved local entry; the removed one stays hidden.
+  await expect(localCard(page)).toContainText('No saved local terminals yet')
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page))
+        .filter((c) => c.cmd === 'forget_recent_entry')
+        .map((c) => c.args.recentId),
+    )
+    .toEqual([`local:${LT.id}`])
 })
 
 test('the Settings → Appearance counts resize the Home lists', async ({ page }) => {

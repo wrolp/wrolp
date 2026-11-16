@@ -335,6 +335,11 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
     // Stateful local-terminal store: the section duplicates by writing the whole
     // list and re-reading it, so the mock has to answer with what was written.
     const localTerminals: unknown[] = [...(opts.localTerminals ?? [])]
+    // Stateful recency rows: the welcome card's forget button removes one, and a
+    // later `list_recent_connections` (a remount) must not bring it back.
+    const recentRows: RecentConnectionEntry[] = (opts.recentConnections ?? []).map((r) => ({
+      ...r,
+    }))
     // Which workspace the backend is currently on. `switch_workspace` moves it,
     // and `get_local_terminals` answers from `localTerminalsByWorkspace` so a spec
     // can see the sidebar follow the switch.
@@ -614,7 +619,15 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
           // rather than on an empty card. It needs a case at all: the component
           // maps over the answer, and the `default: return null` below would throw.
           case 'list_recent_connections':
-            return opts.recentConnections ?? []
+            return recentRows.map((r) => ({ ...r }))
+          // Forget one recency row (a connection id, or `local:<entryId>`). The
+          // connection / saved terminal itself is untouched, like the backend.
+          case 'forget_recent_entry': {
+            const id = String(args.recentId ?? '')
+            const i = recentRows.findIndex((r) => r.connectionId === id)
+            if (i >= 0) recentRows.splice(i, 1)
+            return i >= 0
+          }
           // Fired from the connect transition; a spec asserts it was called (and
           // with what) through `invokedCalls()`.
           case 'record_connection_used':

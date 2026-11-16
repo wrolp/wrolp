@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ConnectionConfig, LocalTerminalEntry, RecentConnectionEntry } from '../types'
 import { useI18n } from '../i18n'
-import { listRecentConnections } from '../commands'
+import { listRecentConnections, forgetRecentEntry } from '../commands'
 import { readHomeRecentCount, subscribeAppSettings } from '../lib/appSettings'
 import { formatRelativeTime } from '../lib/format'
 import { Icon } from './Icon'
@@ -76,6 +76,10 @@ export function WelcomePage({
   // remounts us and re-reads, and a workspace switch changes the dependency. No
   // polling, and no invalidation to wire for deletes — see the join below.
   const [recentConnections, setRecentConnections] = useState<RecentConnectionEntry[]>([])
+  // Rows the user removed during this visit. The card falls back to "every saved
+  // host" when no recency rows remain, so without this the removed row would
+  // reappear (timestampless) the moment the list emptied.
+  const [removed, setRemoved] = useState<Set<string>>(() => new Set())
   useEffect(() => {
     let live = true
     listRecentConnections()
@@ -110,6 +114,7 @@ export function WelcomePage({
     const usedRemotes: RecentRow[] = []
     const usedLocals: RecentRow[] = []
     for (const r of recentConnections) {
+      if (removed.has(r.connectionId)) continue
       // A row whose connection was deleted — or moved to another workspace, and
       // is therefore absent from this `connections` list — resolves to nothing and
       // drops out here. That is the whole dangling-row defence on this side. A
@@ -135,18 +140,34 @@ export function WelcomePage({
     }
     // Fall back per list, not globally: a workspace with host history but no local
     // history should still offer its saved local terminals, and vice versa. The
-    // fallback keeps a fresh install a way in rather than two empty boxes.
+    // fallback keeps a fresh install a way in rather than two empty boxes; rows
+    // the user just removed stay hidden from it too.
     return {
       remotes: (usedRemotes.length > 0
         ? usedRemotes
-        : connections.map((conn): RecentRow => ({ kind: 'connection', conn, usedAtMs: null }))
+        : connections
+            .filter((conn) => !removed.has(conn.id))
+            .map((conn): RecentRow => ({ kind: 'connection', conn, usedAtMs: null }))
       ).slice(0, limits.remote),
       locals: (usedLocals.length > 0
         ? usedLocals
-        : localTerminals.map((entry): RecentRow => ({ kind: 'local', entry, usedAtMs: null }))
+        : localTerminals
+            .filter((entry) => !removed.has(`${LOCAL_PREFIX}${entry.id}`))
+            .map((entry): RecentRow => ({ kind: 'local', entry, usedAtMs: null }))
       ).slice(0, limits.local),
     }
-  }, [recentConnections, connections, localTerminals, limits.remote, limits.local, t])
+  }, [recentConnections, connections, localTerminals, limits.remote, limits.local, removed, t])
+
+  /** Remove one row from the recency card (the saved connection/terminal stays). */
+  const forgetRow = async (recentId: string) => {
+    try {
+      await forgetRecentEntry(recentId)
+      setRecentConnections((prev) => prev.filter((r) => r.connectionId !== recentId))
+      setRemoved((prev) => new Set(prev).add(recentId))
+    } catch (e) {
+      console.error('Failed to forget recent entry:', e)
+    }
+  }
 
   const renderRows = (rows: RecentRow[]) => (
     <ul className="welcome-list">
@@ -158,6 +179,7 @@ export function WelcomePage({
           <li key={key}>
             <button
               type="button"
+              className="welcome-open"
               onClick={() =>
                 row.kind === 'local'
                   ? // The built-in shortcut is not a saved entry, so it is
@@ -184,6 +206,18 @@ export function WelcomePage({
               {row.usedAtMs !== null && (
                 <span className="wl-when">{formatRelativeTime(row.usedAtMs, t)}</span>
               )}
+            </button>
+            <button
+              type="button"
+              className="welcome-forget"
+              title={t('welcomeForgetRecent')}
+              aria-label={t('welcomeForgetRecent')}
+              onClick={(e) => {
+                e.stopPropagation()
+                void forgetRow(key)
+              }}
+            >
+              ×
             </button>
           </li>
         )
