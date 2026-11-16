@@ -241,6 +241,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   tunnelNamePlaceholder: '例如：数据库隧道',
   tunnelBindError: '无法绑定本地端口',
   renameGroup: '重命名分组',
+  groupNameRequired: '分组名不能为空。',
   deleteGroup: '删除分组',
 
   // Network scan

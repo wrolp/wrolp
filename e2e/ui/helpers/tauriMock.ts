@@ -509,6 +509,21 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             if (i >= 0) conns.splice(i, 1)
             return true
           }
+          // Group rename rewrites the connections in the store, so the sidebar's
+          // next `list_connections` shows the new header (the real backend does
+          // exactly this). An empty name ungroups, matching the command.
+          case 'rename_group': {
+            const oldName = String(args.oldName ?? '')
+            const newName = String(args.newName ?? '').trim()
+            let any = false
+            for (const c of conns) {
+              if ((c.group ?? '') === oldName) {
+                c.group = newName || undefined
+                any = true
+              }
+            }
+            return any
+          }
           case 'list_workspaces':
             return JSON.stringify(
               opts.workspaces ?? { workspaces: [], activeWorkspaceId: 'default' },

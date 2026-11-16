@@ -242,6 +242,7 @@ const en = {
   tunnelNamePlaceholder: 'e.g. database tunnel',
   tunnelBindError: 'Cannot bind local port',
   renameGroup: 'Rename Group',
+  groupNameRequired: 'Group name cannot be empty.',
   deleteGroup: 'Delete Group',
 
   // Network scan

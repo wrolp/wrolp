@@ -12,6 +12,7 @@ import type {
   TunnelInfo,
 } from '../types'
 import { isWslShell } from '../lib/pasteGuard'
+import { isDismissKey } from '../lib/keybindings'
 import {
   saveConnection as saveConn,
   deleteConnection,
@@ -146,6 +147,13 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     x: number
     y: number
     group: string
+  } | null>(null)
+  // In-app rename dialog (the native `window.prompt` looked like an OS popup in
+  // the WebView and cannot be themed). `error` is a backend/validation message.
+  const [groupRename, setGroupRename] = useState<{
+    oldName: string
+    value: string
+    error: string
   } | null>(null)
   const [tunnelForm, setTunnelForm] = useState<ConnectionConfig | null>(null)
   // When set, the tunnel form edits the definition with this id instead of adding a new one.
@@ -415,19 +423,48 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
     }
   }
 
-  const handleRenameGroup = async (oldName: string) => {
-    const newName = window.prompt('Rename group', oldName)
-    if (newName === null) return
-    const trimmed = newName.trim()
-    if (trimmed === oldName) return
-    await renameGroup(oldName, trimmed)
-    // Keep collapsed state in sync with the renamed group
-    if (collapsedGroups.includes(oldName)) {
-      onCollapsedGroupsChange?.(collapsedGroups.filter((g) => g !== oldName).concat(trimmed))
-    }
-    onConnectionChange()
+  const openGroupRename = (oldName: string) => {
     setGroupContextMenu(null)
+    setGroupRename({ oldName, value: oldName, error: '' })
   }
+
+  const submitGroupRename = async () => {
+    if (!groupRename) return
+    const newName = groupRename.value.trim()
+    if (!newName) {
+      setGroupRename({ ...groupRename, error: t('groupNameRequired') })
+      return
+    }
+    if (newName === groupRename.oldName) {
+      setGroupRename(null)
+      return
+    }
+    try {
+      await renameGroup(groupRename.oldName, newName)
+      // Keep collapsed state in sync with the renamed group
+      if (collapsedGroups.includes(groupRename.oldName)) {
+        onCollapsedGroupsChange?.(
+          collapsedGroups.filter((g) => g !== groupRename.oldName).concat(newName),
+        )
+      }
+      setGroupRename(null)
+      onConnectionChange()
+    } catch (e) {
+      setGroupRename({ ...groupRename, error: String(e) })
+    }
+  }
+
+  useEffect(() => {
+    if (!groupRename) return
+    const onKey = (e: KeyboardEvent) => {
+      if (isDismissKey(e)) {
+        e.preventDefault()
+        setGroupRename(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [groupRename])
 
   const handleDeleteGroup = async (groupName: string) => {
     if (confirm(t('deleteGroupConfirm', { group: groupName }))) {
@@ -843,7 +880,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         <GroupContextMenu
           x={groupContextMenu.x}
           y={groupContextMenu.y}
-          onRename={() => handleRenameGroup(groupContextMenu.group)}
+          onRename={() => openGroupRename(groupContextMenu.group)}
           onDelete={() => handleDeleteGroup(groupContextMenu.group)}
           onClose={() => setGroupContextMenu(null)}
         />
@@ -870,6 +907,42 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {groupRename && (
+        <div className="modal-overlay">
+          <form
+            className="modal"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void submitGroupRename()
+            }}
+          >
+            <div className="modal-title">{t('renameGroup')}</div>
+            <div className="modal-body" style={{ padding: '12px 20px' }}>
+              <div className="form-group">
+                <label>{t('group')}</label>
+                <input
+                  autoFocus
+                  value={groupRename.value}
+                  onChange={(e) =>
+                    setGroupRename({ ...groupRename, value: e.target.value, error: '' })
+                  }
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+              </div>
+              {groupRename.error && <div className="form-error">{groupRename.error}</div>}
+            </div>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setGroupRename(null)}>
+                {t('cancel')}
+              </button>
+              <button type="submit" className="primary">
+                {t('rename')}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
