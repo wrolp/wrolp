@@ -7,11 +7,13 @@
 .wl-select-menu {
   position: fixed;
   // Above modal overlays: selects live inside dialogs, and the menu is portaled
-  // to <body>. One step above the tooltip rung (10000).
-  z-index: 10001;
+  // to <body>. The menu rung sits one step above the tooltip, so an open list is
+  // never covered by the label of the control it belongs to.
+  z-index: var(--z-menu);
   box-sizing: border-box;
-  padding: 4px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: $bg-secondary;
   border: 1px solid $border;
   border-radius: var(--r-2);
@@ -19,6 +21,23 @@
   color: $text-primary;
   font-size: var(--fs-md);
   font-family: inherit;
+}
+
+// The scrollport. A native bar here is the platform's overlay — invisible until
+// scrolled — so a long language list gave no hint that more rows exist. The
+// shared `.sidebar-scrollbar` thumb (rendered by SelectOverlay) takes over.
+.wl-select-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+  // The wheel must scroll this list, not the page: a page scroll dismisses the
+  // menu (its anchor would move), which then looks like the list snapping shut.
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .wl-select-group {

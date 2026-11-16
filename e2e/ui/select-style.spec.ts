@@ -1,5 +1,6 @@
 import { test, expect, type Page } from './helpers/fixtures'
 import { installTauriMock } from './helpers/tauriMock'
+import { selectRailMode } from './helpers/sections'
 
 // Native <select>: the OS arrow sits flush against the border and the popup's
 // hover highlight is an OS grey that flashes white on the dark panel. Both are
@@ -35,17 +36,20 @@ async function openConnectionEditor(page: Page, connections: unknown[] = [DEMO_C
 }
 
 const selectStyle = (page: Page) =>
-  page.locator('.modal .form-group select').first().evaluate((el) => {
-    const cs = getComputedStyle(el)
-    return {
-      appearance: cs.appearance,
-      backgroundImage: cs.backgroundImage,
-      paddingRight: parseFloat(cs.paddingRight),
-      colorScheme: cs.colorScheme,
-      borderRadius: parseFloat(cs.borderRadius),
-      borderWidth: parseFloat(cs.borderTopWidth),
-    }
-  })
+  page
+    .locator('.modal .form-group select')
+    .first()
+    .evaluate((el) => {
+      const cs = getComputedStyle(el)
+      return {
+        appearance: cs.appearance,
+        backgroundImage: cs.backgroundImage,
+        paddingRight: parseFloat(cs.paddingRight),
+        colorScheme: cs.colorScheme,
+        borderRadius: parseFloat(cs.borderRadius),
+        borderWidth: parseFloat(cs.borderTopWidth),
+      }
+    })
 
 /** The scheme the UA paints its own widgets (the popup) in — set on `:root`. */
 const rootScheme = (page: Page) =>
@@ -152,27 +156,26 @@ test('a long group list scrolls inside the viewport instead of running off it', 
   await select.click()
 
   const menu = page.locator('.wl-select-menu')
+  const list = menu.locator('.wl-select-list')
   await expect(menu).toBeVisible()
 
-  const metrics = await menu.evaluate((el) => {
+  const metrics = await list.evaluate((el) => ({
+    clientHeight: el.clientHeight,
+    scrollHeight: el.scrollHeight,
+    overflowY: getComputedStyle(el).overflowY,
+  }))
+  const frame = await menu.evaluate((el) => {
     const r = el.getBoundingClientRect()
-    return {
-      clientHeight: el.clientHeight,
-      scrollHeight: el.scrollHeight,
-      overflowY: getComputedStyle(el).overflowY,
-      top: r.top,
-      bottom: r.bottom,
-      viewport: window.innerHeight,
-    }
+    return { top: r.top, bottom: r.bottom, viewport: window.innerHeight }
   })
-  // There IS a scrollbar, and the menu itself stays fully on screen.
+  // The list is the scrollport, and the menu frame itself stays on screen.
   expect(metrics.overflowY).toBe('auto')
   expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight)
-  expect(metrics.top).toBeGreaterThanOrEqual(0)
-  expect(metrics.bottom).toBeLessThanOrEqual(metrics.viewport)
+  expect(frame.top).toBeGreaterThanOrEqual(0)
+  expect(frame.bottom).toBeLessThanOrEqual(frame.viewport)
 
   // Scrolling the menu must not dismiss it (only page scrolling closes it).
-  await menu.evaluate((el) => {
+  await list.evaluate((el) => {
     el.scrollTop = el.scrollHeight
   })
   await expect(menu).toBeVisible()
@@ -180,6 +183,102 @@ test('a long group list scrolls inside the viewport instead of running off it', 
   // The tail of the list is still reachable and clickable.
   await menu.locator('.wl-select-option', { hasText: '+ New Group…' }).click()
   await expect(page.getByPlaceholder('New group name')).toBeVisible()
+})
+
+test('a tall language list opens below the toolbar instead of parking above', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  const name = 'app.ini'
+  const path = `/srv/${name}`
+  const content = 'key=value\n'
+  await installTauriMock(page, {
+    connections: [DEMO_CONN],
+    pollOutputChunks: [['root@demo:~$ ']],
+    fileEntries: [
+      { name, path, isDir: false, size: content.length, mode: '-rw-r--r--', modified: '' },
+    ],
+    fileContent: {
+      path,
+      content,
+      size: content.length,
+      mode: '-rw-r--r--',
+      isBinary: false,
+      isTooLarge: false,
+      encoding: 'utf-8',
+      needsEncoding: false,
+    },
+  })
+  await page.goto('/')
+  await page.locator('.connection-item').click()
+  await selectRailMode(page, 'files')
+  await page.locator('.tree-row.file', { hasText: name }).click()
+  await expect(page.locator('.monaco-editor')).toBeVisible()
+
+  // The editor toolbar sits near the top, so the language list has far more
+  // room BELOW it — yet ~29 rows do not fit on one screen. The old check
+  // measured the unconstrained height, decided "doesn't fit below" and opened
+  // above (at the viewport top); a later hover re-ran the layout and flipped it
+  // down — the user's "hover 后才翻转下来".
+  const select = page.locator('.editor-select select').first()
+  await select.click()
+  const menu = page.locator('.wl-select-menu')
+  await expect(menu).toBeVisible()
+
+  const sel = await select.boundingBox()
+  const box = await menu.boundingBox()
+  expect(sel).not.toBeNull()
+  expect(box).not.toBeNull()
+  expect(box!.y).toBeGreaterThanOrEqual(sel!.y + sel!.height)
+  const vh = await page.evaluate(() => window.innerHeight)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(vh)
+  // Capped, not pushed up: the tail is reached by scrolling this list.
+  expect(
+    await menu.locator('.wl-select-list').evaluate((el) => el.scrollHeight > el.clientHeight),
+  ).toBe(true)
+})
+
+test('the list shows its own scrollbar and keeps its place while rows hover', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await openConnectionEditor(page, MANY_GROUPS)
+
+  const select = page.locator('.modal .form-group select').first()
+  // Pin the chosen value to the FIRST row, so a reveal-the-selection bug would
+  // yank a bottom-scrolled list all the way back to the top.
+  await select.selectOption({ label: '(No Group)' })
+  await select.click()
+
+  const menu = page.locator('.wl-select-menu')
+  const list = menu.locator('.wl-select-list')
+  await expect(menu).toBeVisible()
+  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+
+  // The shared overlay thumb is this list's scrollbar: it exists once the list
+  // overflows and shows while the pointer is over it.
+  const thumb = menu.locator('.sidebar-scrollbar-thumb')
+  await menu.hover()
+  await expect(menu.locator('.sidebar-scrollbar')).toHaveClass(/show/)
+  await expect(thumb).toHaveCount(1)
+
+  // Scroll to the tail; the thumb follows.
+  const before = await list.evaluate((el) => {
+    el.scrollTop = el.scrollHeight
+    return el.scrollTop
+  })
+  expect(before).toBeGreaterThan(0)
+  await expect
+    .poll(async () =>
+      parseFloat((await thumb.getAttribute('style'))?.match(/top:\s*([\d.]+)px/)?.[1] ?? '0'),
+    )
+    .toBeGreaterThan(0)
+
+  // Move the POINTER over a row (hover changes the active row). The list must
+  // stay where the wheel left it instead of snapping back to the selection.
+  const box = await list.boundingBox()
+  expect(box).not.toBeNull()
+  await page.mouse.move(box!.x + 24, box!.y + box!.height - 16)
+  await page.waitForTimeout(150)
+  const after = await list.evaluate((el) => el.scrollTop)
+  expect(after).toBeGreaterThan(before - 40)
+  await expect(menu).toBeVisible()
 })
 
 test('the light theme gets its own chevron and a light-scheme list', async ({ page }) => {

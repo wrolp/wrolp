@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 
 /**
  * Custom popup for native <select> elements.
@@ -58,6 +59,24 @@ export function SelectOverlay() {
   const [open, setOpen] = useState<OpenMenu | null>(null)
   const [active, setActive] = useState(0)
   const menuRef = useRef<HTMLDivElement>(null)
+  // The app's shared overlay thumb: a native bar here is an OS overlay that is
+  // invisible until scrolled, so a long list gave no hint that more rows exist.
+  const {
+    listRef,
+    thumbHeight,
+    thumbTop,
+    showThumb,
+    updateThumb,
+    onScroll,
+    onThumbMouseDown,
+    onMouseEnter,
+    onMouseLeave,
+  } = useCustomScrollbar()
+  // Which row the next layout pass should reveal: the chosen value when the menu
+  // opens, or the row keyboard navigation just moved to. Mouse hover/scroll never
+  // sets it — re-revealing the chosen value on every hover was what snapped a
+  // wheel-scrolled list back to the current selection.
+  const revealRef = useRef<'selected' | 'active' | null>(null)
   // Read inside document-level listeners without re-binding them every render.
   const openRef = useRef<OpenMenu | null>(null)
   openRef.current = open
@@ -71,6 +90,7 @@ export function SelectOverlay() {
     if (items.length === 0) return
     setOpen({ select, items, rect: select.getBoundingClientRect() })
     const selected = items.findIndex((i) => i.value === select.value && !i.disabled)
+    revealRef.current = 'selected'
     setActive(selected >= 0 ? selected : items.findIndex((i) => !i.disabled))
     select.focus()
   }, [])
@@ -187,6 +207,7 @@ export function SelectOverlay() {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         const step = e.key === 'ArrowDown' ? 1 : -1
+        revealRef.current = 'active'
         setActive((cur) => {
           let next = cur
           for (let i = 0; i < open.items.length; i++) {
@@ -206,19 +227,39 @@ export function SelectOverlay() {
   }, [open, close, choose])
 
   // Position after measuring, so a menu near the bottom flips above the select
-  // and never runs off the viewport.
+  // and never runs off the viewport. The side is chosen from the list's NATURAL
+  // height against the room on each side — comparing the natural height against
+  // "room below" alone flipped a long list above even when above had less room,
+  // which left it parked at the top until some later render moved it down.
   useLayoutEffect(() => {
     const el = menuRef.current
     if (!open || !el) return
-    const h = el.getBoundingClientRect().height
     const r = open.rect
-    const below = r.bottom + 4 + h <= window.innerHeight - 8
+    const natural = el.getBoundingClientRect().height
+    const roomBelow = window.innerHeight - r.bottom - 12
+    const roomAbove = r.top - 12
+    const below = natural <= roomBelow || roomBelow >= roomAbove
+    const room = Math.max(120, below ? roomBelow : roomAbove)
     el.style.left = `${r.left}px`
-    el.style.top = `${below ? r.bottom + 4 : Math.max(8, r.top - h - 4)}px`
     el.style.minWidth = `${r.width}px`
-    el.style.maxHeight = `${below ? window.innerHeight - r.bottom - 12 : r.top - 12}px`
-    const selected = el.querySelector('.wl-select-option.selected')
-    selected?.scrollIntoView({ block: 'nearest' })
+    el.style.maxHeight = `${room}px`
+    const h = Math.min(natural, room)
+    el.style.top = `${below ? r.bottom + 4 : Math.max(8, r.top - h - 4)}px`
+    // The list's height just changed with `maxHeight`; size the thumb from it.
+    updateThumb()
+  }, [open, updateThumb])
+
+  // Reveal a row only when the MENU asked for it: on open (the chosen value) and
+  // on arrow-key navigation (the active row). Hovering an option also updates
+  // `active`, but must never scroll — otherwise a wheel-scrolled list snaps back
+  // to wherever the selection (or the pointer) is.
+  useLayoutEffect(() => {
+    const el = menuRef.current
+    if (!open || !el) return
+    const what = revealRef.current
+    if (!what) return
+    revealRef.current = null
+    el.querySelector(`.wl-select-option.${what}`)?.scrollIntoView({ block: 'nearest' })
   }, [open, active])
 
   if (!open) return null
@@ -231,32 +272,49 @@ export function SelectOverlay() {
       aria-label={open.select.getAttribute('aria-label') ?? undefined}
       onMouseDown={(e) => e.preventDefault()}
     >
-      {open.items.map((item, i) => (
-        <Fragment key={`${i}:${item.value}`}>
-          {item.group && (i === 0 || open.items[i - 1].group !== item.group) && (
-            <div className="wl-select-group" role="presentation">
-              {item.group}
+      <div
+        className="wl-select-list"
+        ref={listRef}
+        onScroll={onScroll}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
+        {open.items.map((item, i) => (
+          <Fragment key={`${i}:${item.value}`}>
+            {item.group && (i === 0 || open.items[i - 1].group !== item.group) && (
+              <div className="wl-select-group" role="presentation">
+                {item.group}
+              </div>
+            )}
+            <div
+              className={
+                'wl-select-option' +
+                (item.value === open.select.value ? ' selected' : '') +
+                (i === active ? ' active' : '') +
+                (item.disabled ? ' disabled' : '')
+              }
+              role="option"
+              aria-selected={item.value === open.select.value}
+              onMouseEnter={() => !item.disabled && setActive(i)}
+              onClick={(e) => {
+                e.stopPropagation()
+                choose(open, item)
+              }}
+            >
+              {item.label}
             </div>
-          )}
+          </Fragment>
+        ))}
+      </div>
+      {thumbHeight > 0 && (
+        <div className={`sidebar-scrollbar${showThumb ? ' show' : ''}`}>
           <div
-            className={
-              'wl-select-option' +
-              (item.value === open.select.value ? ' selected' : '') +
-              (i === active ? ' active' : '') +
-              (item.disabled ? ' disabled' : '')
-            }
-            role="option"
-            aria-selected={item.value === open.select.value}
-            onMouseEnter={() => !item.disabled && setActive(i)}
-            onClick={(e) => {
-              e.stopPropagation()
-              choose(open, item)
-            }}
-          >
-            {item.label}
-          </div>
-        </Fragment>
-      ))}
+            className="sidebar-scrollbar-thumb"
+            style={{ height: thumbHeight, top: thumbTop }}
+            onMouseDown={onThumbMouseDown}
+          />
+        </div>
+      )}
     </div>,
     document.body,
   )
