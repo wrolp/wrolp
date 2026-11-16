@@ -147,6 +147,7 @@ import {
 import type { LsCaptureState, LsClickableEntry, LsLinkCandidate } from './terminal/lsCapture'
 import { pickLsLinkEntry, resolveLsEntryPath, parseMvMove, type MvMove } from './terminal/lsCapture'
 import { fixLowContrastSgr } from './terminal/sgrContrast'
+import { resolveLsFsTarget } from './terminal/lsFsTarget'
 import { createCwdQueryStripper } from './terminal/cwdQuery'
 import type { CwdQueryStripper } from './terminal/cwdQuery'
 import { computeRowLabels, continuationGlyph, lineNumberDigits } from './terminal/lineNumbers'
@@ -454,9 +455,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Ask the interactive shell for its real absolute cwd. Resolves with the path
   // (or null on timeout/error). The query output is stripped by stripCwdQuery.
   const fetchRemoteCwd = (): Promise<string | null> => {
-    // Telnet has no SFTP channel, so there is nothing to query — skip it
-    // instead of firing an SSH-only request that is guaranteed to fail.
-    if (isLocal || isTelnet) return Promise.resolve(null)
+    // Telnet has no shell-side query path. A plain local shell tracks its cwd from
+    // `cd` already; a LOCAL `docker exec` / `kubectl exec` PTY does not — the
+    // container's prompt may carry no path at all (starship prints it on another
+    // row), and the local shell's own bookkeeping never learns the inner cwd. That
+    // shell gets the same hidden query SSH uses, sent through its own PTY.
+    if (isTelnet || (isLocal && !nestedShellRef.current)) return Promise.resolve(null)
     // Cancel any in-flight query so a stale result can't clobber a newer cwd.
     if (cwdQueryPendingRef.current) {
       const old = cwdQueryPendingRef.current
@@ -488,7 +492,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // shell would run `ls` + `echo …` as a single line (`lsecho …` — and `cd /`
       // + `echo …` as a `cd` with too many arguments). A macrotask lets the
       // newline go first, so the query lands as its own line at the next prompt.
-      setTimeout(() => sendInput(tabIdRef.current, `${cwdQuery.command}\r`), 0)
+      setTimeout(() => {
+        const line = `${cwdQuery.command}\r`
+        if (isLocal) localSendInput(tabIdRef.current, line).catch(() => {})
+        else sendInput(tabIdRef.current, line)
+      }, 0)
     })
   }
   // Seed the best-known remote cwd right after connecting: a configured startup
@@ -826,19 +834,55 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     return isPosixSession(kind, localShellTypeRef.current) ? 'posix' : 'windows'
   }, [isLocal, isSerial, isTelnet])
 
-  const lsFsTarget = (): TargetRef => {
-    const container = dockerContainerRef.current
-    if (isLocal) {
-      // A WSL tab must browse the DISTRIBUTION's filesystem — the plain `local`
-      // target lists the Windows drives instead (the Files panel already makes
-      // this distinction in App.tsx). `ls` click-to-open used to get this wrong.
-      return isWslShell(localShellTypeRef.current)
-        ? { kind: 'wsl', tabId: tabIdRef.current, distro: localDistroRef.current }
-        : { kind: 'local', tabId: tabIdRef.current }
+  const lsFsTarget = (): TargetRef =>
+    resolveLsFsTarget({
+      isLocal: isLocal === true,
+      isWsl: isWslShell(localShellTypeRef.current) ?? false,
+      tabId: tabIdRef.current,
+      distro: localDistroRef.current ?? null,
+      dockerContainer: dockerContainerRef.current ?? null,
+      k8sExec: kubectlExecRef.current,
+    })
+
+  /**
+   * Cache the INNER shell's directory map while the shell is idle.
+   *
+   * A bare `ls` prints names only, so painting it by kind needs the listing map
+   * before the first output row arrives. Inside a local container/pod PTY the cwd
+   * cannot come from the prompt (starship prints its path on another row), and a
+   * fetch started at submit (~200 ms through the docker CLI) loses that race
+   * against the shell's own output — so the map is pulled right after the shell
+   * opens, when nothing is on screen yet.
+   */
+  const prefetchInnerDirMap = (dir: string) => {
+    // `nestedShellRef` is recomputed during render; a container entered by a typed
+    // command sets `dockerContainerRef` mid-handler, so ask the refs themselves.
+    if (!(dockerContainerRef.current || kubectlExecRef.current)) return
+    if (!dir || lsDirCacheRef.current.has(dir)) return
+    void fsListFiles(lsFsTarget(), dir)
+      .then((got) => {
+        if (!lsDirCacheRef.current.has(dir)) {
+          lsDirCacheRef.current.set(dir, new Map(got.map((e) => [e.name, e.isDir])))
+        }
+      })
+      .catch(() => {
+        /* no map: names stay plain, links still work */
+      })
+  }
+
+  /** Ask the inner shell where it is, once, then remember and prefetch that dir. */
+  const seedInnerCwd = () => {
+    if (!isLocal || !(dockerContainerRef.current || kubectlExecRef.current)) return
+    if (nestedCwdRef.current) {
+      prefetchInnerDirMap(nestedCwdRef.current)
+      return
     }
-    return container
-      ? { kind: 'docker', jumpTabId: tabIdRef.current, container }
-      : { kind: 'session', tabId: tabIdRef.current }
+    void fetchRemoteCwd().then((cwd) => {
+      // A `cd` typed while the query was in flight already knows better.
+      if (!cwd || nestedCwdRef.current) return
+      nestedCwdRef.current = cwd
+      prefetchInnerDirMap(cwd)
+    })
   }
 
   const lookupIsDir = async (base: string | null, name: string): Promise<boolean | null> => {
@@ -908,6 +952,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // Container-side absolute path: remember it so the next `ls` reuses the
         // base instead of injecting another hidden query.
         nestedCwdRef.current = abs
+        prefetchInnerDirMap(abs)
       }
       // The click was on the floating tooltip card (or a ctrl+click on the link),
       // both of which can steal keyboard focus from xterm — give it back so the
@@ -1243,34 +1288,36 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const nested = nestedDepthRef.current > 0 || nestedShellRef.current
     const homePromise: Promise<string | null> =
       isLocal || nested ? Promise.resolve(null) : pollWorkingDir(tabIdRef.current).catch(() => null)
-    const cwdPromise: Promise<string | null> = isLocal
-      ? Promise.resolve(cwdRef.current ?? promptCwd ?? localCwd ?? null)
-      : (async () => {
+    const cwdPromise: Promise<string | null> = nested
+      ? (async () => {
           // Docker exec / nested ssh sessions: never take the cwd from the
-          // prompt — it either carries no path (bare `bash-5.0#`) or encodes the
-          // OUTER context. Query the interactive shell itself instead (it IS the
-          // container/remote shell) with the hidden marker-wrapped `pwd`, so ls
-          // links resolve to the real container-side absolute path and clicking
-          // a directory keeps working after the shell has `cd`'d elsewhere. On
-          // failure this resolves null and links fall back to relative paths
-          // (`cd -- 'x'`) resolved by the nested shell.
+          // prompt — it either carries no path (bare `bash-5.0#`, a starship
+          // prompt whose path sits on another row) or encodes the OUTER context.
+          // Query the interactive shell itself instead (it IS the container/remote
+          // shell) with the hidden marker-wrapped `pwd`, so ls links resolve to
+          // the real container-side absolute path and clicking a directory keeps
+          // working after the shell has `cd`'d elsewhere. On failure this resolves
+          // null and links fall back to relative paths (`cd -- 'x'`) resolved by
+          // the nested shell.
           // `fetchRemoteCwd` itself defers the injection by a macrotask, so it
           // can never splice into the command line the user just submitted.
-          if (nested) {
-            if (nestedCwdRef.current) return nestedCwdRef.current
-            const real = await fetchRemoteCwd()
-            if (real) nestedCwdRef.current = real
-            return real
-          }
-          if (cwdRef.current) return cwdRef.current
+          if (nestedCwdRef.current) return nestedCwdRef.current
           const real = await fetchRemoteCwd()
-          if (real) {
-            // Don't clobber a cwd set (by a `cd` handler) while we were awaiting.
-            if (cwdRef.current == null) setCwd(real)
-            return cwdRef.current ?? real
-          }
-          return seedRemoteCwd(promptCwd)
+          if (real) nestedCwdRef.current = real
+          return real
         })()
+      : isLocal
+        ? Promise.resolve(cwdRef.current ?? promptCwd ?? localCwd ?? null)
+        : (async () => {
+            if (cwdRef.current) return cwdRef.current
+            const real = await fetchRemoteCwd()
+            if (real) {
+              // Don't clobber a cwd set (by a `cd` handler) while we were awaiting.
+              if (cwdRef.current == null) setCwd(real)
+              return cwdRef.current ?? real
+            }
+            return seedRemoteCwd(promptCwd)
+          })()
     lsBaseDirPromiseRef.current = Promise.all([homePromise, cwdPromise]).then(([home, cwd]) => {
       if (!isLocal) homeRef.current = home ?? null
       const base = resolveLsBaseDir(cwd, targetArg)
@@ -2686,8 +2733,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 // A manually typed `docker exec` shell — remember the container so
                 // `ls` click type resolution queries the CONTAINER filesystem (not
                 // the host SFTP) and cwd tracking stays container-relative.
-                dockerContainerRef.current =
-                  parseDockerExecContainer(command) ?? dockerContainerRef.current
+                const entered = parseDockerExecContainer(command)
+                if (entered) {
+                  dockerContainerRef.current = entered
+                  // Ask the container shell where it is while nothing is on
+                  // screen: its prompt may carry no path (starship), and the
+                  // first bare `ls` needs a base + map to be painted by kind.
+                  seedInnerCwd()
+                }
                 cwdRef.current = null
               } else if (isNestedSessionExit(command)) {
                 // Leaving a nested session, or exiting a sidebar-opened docker exec
@@ -2739,7 +2792,24 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                   // on the first listing) and let an unknowable target (`cd ~`,
                   // `cd -`, bare `cd`) drop it so the next listing asks again.
                   if (nestedShellRef.current) {
-                    nestedCwdRef.current = resolveCdTarget(arg, nestedCwdRef.current)
+                    const next = resolveCdTarget(arg, nestedCwdRef.current)
+                    if (!next) {
+                      // `cd ~`, `cd -`, a bare `cd`: unknowable from the line —
+                      // drop it so the next listing asks the shell itself.
+                      nestedCwdRef.current = null
+                      return
+                    }
+                    // Same rule as the host branch below: a FAILED `cd` leaves the
+                    // shell where it was, so the computed path must not be adopted
+                    // before the container confirms it exists.
+                    try {
+                      if (await fsFileExists(lsFsTarget(), next)) {
+                        nestedCwdRef.current = next
+                        prefetchInnerDirMap(next)
+                      }
+                    } catch {
+                      /* keep the previous inner cwd */
+                    }
                     return
                   }
                   // SSH: seed the cwd from the shell's real directory (a hidden
@@ -3076,6 +3146,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
+            seedInnerCwd()
             // Defer startPolling until after a confirmed-good fit+resize.
             // If we start polling now, the shell may emit its prompt at the
             // initial (possibly undersized) cols/rows, and even a later SIGWINCH
@@ -3439,6 +3510,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             if (closedDuringConnectRef.current) return
             connectedRef.current = true
             onStatusChangeRef.current('connected')
+            seedInnerCwd()
             // Defer polling + post-connect fit so geometry is correct before
             // any output is rendered.
             setTimeout(() => {
