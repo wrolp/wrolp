@@ -8,6 +8,17 @@ const OFFSET = 12
 /** Minimum clearance from the viewport edges after clamping. */
 const EDGE_PAD = 4
 
+/**
+ * Right-click menus own the screen while they are open.
+ *
+ * They render inline — usually inside the very row whose `title` this provider
+ * just matched — and live inside panels that are themselves stacking contexts (the
+ * sidebar, a floating pane), where no `z-index` of theirs can outrank the tooltip.
+ * So the DOM is the only honest answer to "is a menu open?": while one exists,
+ * nothing is shown and whatever is showing is torn down.
+ */
+const MENU_SELECTOR = '.context-menu, .tab-context-menu'
+
 /** One element whose `title` we removed, so it can be put back later. */
 interface SuppressedTitle {
   el: Element
@@ -86,10 +97,67 @@ export function TooltipProvider() {
     setVisible(false)
   }, [clearTimer, restore])
 
+  /** Titles held back while a menu is open.
+   *
+   * A context menu cannot be lifted over a NATIVE tooltip: the browser paints that
+   * one above every HTML layer, so no `z-index` reaches it. The only way a menu
+   * stays readable is to keep the hovered row's `title` off until the menu closes —
+   * which is why `hide()` (which restores titles) must not be what a right-click
+   * calls.
+   */
+  const heldRef = useRef<SuppressedTitle[]>([])
+
+  const restoreHeld = useCallback(() => {
+    for (const item of heldRef.current) restore(item)
+    heldRef.current = []
+  }, [restore])
+
+  /** Stop showing, but keep the chain's titles suppressed: a menu owns the screen. */
+  const holdChain = useCallback(() => {
+    clearTimer()
+    visibleRef.current = false
+    setVisible(false)
+    heldRef.current.push(...chainRef.current)
+    chainRef.current = []
+  }, [clearTimer])
+
+  /**
+   * Give way to a right-click menu: drop the tooltip, keep every title it had
+   * stripped, and strip the one under the pointer too — a row right-clicked before
+   * its tooltip appeared still carries its `title`, and the browser's own tooltip
+   * would then paint over the menu.
+   */
+  const yieldToMenu = useCallback(
+    (e: MouseEvent) => {
+      holdChain()
+      const under = document.elementFromPoint(e.clientX, e.clientY)?.closest('[title]')
+      const title = under?.getAttribute('title') ?? null
+      if (under && title !== null) {
+        under.removeAttribute('title')
+        heldRef.current.push({ el: under, title, text: title })
+      }
+    },
+    [holdChain],
+  )
+
+  /** Restore held titles once the menu that was holding them has closed. */
+  const releaseHeld = useCallback(() => {
+    if (!heldRef.current.length) return
+    if (document.querySelector(MENU_SELECTOR)) return
+    restoreHeld()
+  }, [restoreHeld])
+
   const onMouseOver = useCallback(
     (e: MouseEvent) => {
       const target = e.target as Element | null
       if (!target || typeof target.closest !== 'function') return
+
+      // A menu may sit inside the hovered row: never cover it, and never leave a
+      // tooltip hanging over it (the pointer is usually still on that row).
+      if (document.querySelector(MENU_SELECTOR)) {
+        if (visibleRef.current || chainRef.current.length) holdChain()
+        return
+      }
 
       const chain = chainRef.current
       // The pointer may be over an element whose `title` WE removed, which the
@@ -146,7 +214,7 @@ export function TooltipProvider() {
         setVisible(true)
       }, SHOW_DELAY)
     },
-    [clearTimer, restore],
+    [clearTimer, restore, holdChain],
   )
 
   const onMouseOut = useCallback(
@@ -157,17 +225,26 @@ export function TooltipProvider() {
       // Moving between elements of the same chain (a row and its buttons) must
       // not tear the tooltip down — only leaving the outermost one ends it.
       if (related && chain.some((item) => item.el === related || item.el.contains(related))) return
+      // Leaving a row while its menu is open must not put the `title` back, or the
+      // browser would paint its tooltip over the menu.
+      if (document.querySelector(MENU_SELECTOR)) {
+        holdChain()
+        return
+      }
       hide()
     },
-    [hide],
+    [hide, holdChain],
   )
 
   const onMouseMove = useCallback(
     (e: MouseEvent) => {
       cursorRef.current = { x: e.clientX, y: e.clientY }
       if (chainRef.current.length) place()
+      // The menu that was holding titles back is gone (a click outside it, a pick):
+      // put them back so the rows keep their labels.
+      releaseHeld()
     },
-    [place],
+    [place, releaseHeld],
   )
 
   useEffect(() => {
@@ -176,14 +253,18 @@ export function TooltipProvider() {
     document.addEventListener('mousemove', onMouseMove, true)
     // Scrolling under a hover leaves the tooltip pointing at the wrong spot.
     document.addEventListener('scroll', hide, true)
+    // Right-click opens a menu on the row under the pointer: drop the tooltip and
+    // keep that row's `title` off for as long as the menu lives (see `heldRef`).
+    document.addEventListener('contextmenu', yieldToMenu, true)
     return () => {
       document.removeEventListener('mouseover', onMouseOver, true)
       document.removeEventListener('mouseout', onMouseOut, true)
       document.removeEventListener('mousemove', onMouseMove, true)
       document.removeEventListener('scroll', hide, true)
+      document.removeEventListener('contextmenu', yieldToMenu, true)
       clearTimer()
     }
-  }, [onMouseOver, onMouseOut, onMouseMove, hide, clearTimer])
+  }, [onMouseOver, onMouseOut, onMouseMove, hide, yieldToMenu, clearTimer])
 
   // Measure once it has text, then place it — before paint, so it never flashes at (0,0).
   useLayoutEffect(() => {

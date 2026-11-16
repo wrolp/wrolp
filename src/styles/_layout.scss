@@ -117,12 +117,18 @@ $easings: (
 // notice to <body>; they must beat their own window, and did so with 2200/2400.
 // `dock` (1500) went with the drawer's drag-to-re-dock overlay: the rung lost its
 // last reader, so per the rule above it is not kept "just in case".
+//
+// `menu` is the one rung above the tooltip (10000, hard-coded in `_tooltip.scss`
+// because that surface also has to beat the toast): a right-click menu is
+// interactive and must never be hidden behind the label describing the row it was
+// opened on.
 $z-layers: (
   modal: 1000,
   float: 2000,
   above-float: 2400,
   lightbox: 3000,
   toast: 9999,
+  menu: 10001,
 );
 
 @mixin emit-structural {

@@ -614,7 +614,9 @@
 }
 
 .cmd-list-menu {
-  z-index: 2100;
+  // A right-click menu for a row, so it takes the menu rung rather than one step
+  // above its own panel: a tooltip must never cover it.
+  z-index: var(--z-menu);
 }
 
 // The command-list dialogs are portaled to <body>, so they must stack above the

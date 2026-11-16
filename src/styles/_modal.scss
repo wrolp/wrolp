@@ -793,7 +793,7 @@ input[type='password']::-ms-clear {
   border: 1px solid $border;
   border-radius: var(--r-2);
   box-shadow: 0 4px 16px var(--shadow-1);
-  z-index: 2000;
+  z-index: var(--z-menu);
   padding: 4px 0;
   min-width: 140px;
 
@@ -845,7 +845,7 @@ input[type='password']::-ms-clear {
   border: 1px solid $border;
   border-radius: var(--r-2);
   box-shadow: 0 4px 16px var(--shadow-1);
-  z-index: 2000;
+  z-index: var(--z-menu);
   padding: 4px 0;
   min-width: 160px;
 

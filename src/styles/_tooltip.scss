@@ -12,7 +12,9 @@
   position: fixed;
   top: 0;
   left: 0;
-  // Above the toast rung (--z-toast: 9999): a tooltip is the last thing shown.
+  // Above the toast rung (--z-toast: 9999). Only menus outrank it
+  // (--z-menu: 10001): a right-click menu is interactive and must never hide
+  // behind the label describing the row it was opened on.
   z-index: 10000;
   max-width: 360px;
   padding: 4px 8px;
