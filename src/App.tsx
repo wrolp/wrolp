@@ -185,7 +185,7 @@ import AiChatPanel from './components/AiChatPanel'
 import type { AiConv, ChatMessage } from './aiChatRun'
 import { emptyAiConv } from './lib/aiConv'
 import { ConfirmDialog } from './components/ConfirmDialog'
-import { detectLanguage } from './editor/languages'
+import { detectLanguage, detectLanguageForFile } from './editor/languages'
 import { useI18n, LANG_LABELS, type LangPref } from './i18n'
 import type { TranslationKey } from './i18n/en'
 import { highlightStore } from './lib/highlightStore'
@@ -4599,7 +4599,7 @@ export default function App() {
           isDirty: false,
           loading: true,
           size: 0,
-          language: detectLanguage(path.split('/').pop() || path),
+          language: detectLanguage(path),
           encoding: 'utf-8',
           needsEncoding: false,
           lineEnding: 'LF' as const,
@@ -4652,6 +4652,13 @@ export default function App() {
                 needsEncoding: fc.needsEncoding,
                 hexBase64: fc.hexBase64,
                 imageMime: fc.imageMime,
+                // The name told us nothing (`deploy`, `unit.service`): the loaded
+                // text may (shebang / modeline / markup). Only ever fills in a
+                // language that is still the default — a manual pick is final.
+                language:
+                  t.language === 'plaintext' && !fc.isBinary && typeof fc.content === 'string'
+                    ? detectLanguageForFile(t.path, fc.content)
+                    : t.language,
                 lineEnding: (typeof fc.content === 'string' && /\r\n/.test(fc.content)
                   ? 'CRLF'
                   : 'LF') as 'LF' | 'CRLF',
