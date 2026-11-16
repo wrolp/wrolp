@@ -278,9 +278,20 @@ yarn build:clean     # cleans its own target dir first, then builds — use this
 yarn tauri build     # incremental dev build into src-tauri/target/
 ```
 
-`build:clean` builds into `src-tauri/target-release/` (bundle at `src-tauri/target-release/release/bundle/`), so cleaning never fights rust-analyzer or a running dev build over files in `src-tauri/target/` — on Windows that lock makes `cargo clean` fail with `os error 5`. Bundle target is `["msi"]` only.
+`build:clean` builds an MSI for both Windows architectures — x64 and arm64 — into `src-tauri/target-release/` (bundles at `target-release/<triple>/release/bundle/msi/`), so cleaning never fights rust-analyzer or a running dev build over files in `src-tauri/target/` — on Windows that lock makes `cargo clean` fail with `os error 5`. Bundle target is `["msi"]` only.
 
-After a successful build only `target-release/release/` is kept: `debug/`, `tmp/` and cargo's `.fingerprint` cache are deleted to reclaim disk, so the next release compiles the dependency tree again. Set `RELEASE_KEEP_TARGET=1` to keep them (useful while iterating on the packaging steps).
+The arm64 half needs its Rust target, the MSVC ARM64 toolset and LLVM's clang (`aws-lc-sys` and `ring` both refuse plain `cl.exe` on Windows ARM64):
+
+```bash
+rustup target add aarch64-pc-windows-msvc
+# Visual Studio Installer -> Build Tools -> Individual components:
+#   "MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools"
+#   "C++ Clang Compiler for Windows" (clang / clang-cl)
+```
+
+The Clang component installs under `VC\Tools\Llvm\x64\bin` but does not add that directory to `PATH`; `clang.exe` must be reachable by name for `ring`'s build script.
+
+After a successful build only each target's `release/` is kept: `debug/`, `tmp/` and cargo's `.fingerprint` cache are deleted to reclaim disk, so the next release compiles the dependency tree again. Set `RELEASE_KEEP_TARGET=1` to keep them (useful while iterating on the packaging steps).
 
 ### Clean Rebuild
 
@@ -299,7 +310,7 @@ gh auth login -h github.com
 yarn run publish
 ```
 
-`publish` wipes its own target dir (`src-tauri/target-release`) and only then builds, so a release bundle never inherits objects — icons above all — from an earlier build, and the clean cannot be blocked by locks in the dev target. Once the build succeeds, everything under that dir except `release/` is pruned to reclaim disk. Set `RELEASE_SKIP_CLEAN=1` to reuse the existing output while iterating on the packaging steps.
+`publish` wipes its own target dir (`src-tauri/target-release`) and only then builds, so a release bundle never inherits objects — icons above all — from an earlier build, and the clean cannot be blocked by locks in the dev target. It builds x64 and arm64, uploads both MSIs, and writes a `latest.json` carrying a `windows-x86_64` and a `windows-aarch64` entry so each architecture updates itself. Once the build succeeds, everything under that dir except each target's `release/` is pruned to reclaim disk. Set `RELEASE_SKIP_CLEAN=1` to reuse the existing output while iterating on the packaging steps.
 
 ## Testing
 

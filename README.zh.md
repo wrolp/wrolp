@@ -278,9 +278,20 @@ yarn build:clean     # 先清理自己的构建目录再构建，适合要交付
 yarn tauri build     # 增量开发构建，产物在 src-tauri/target/
 ```
 
-`build:clean` 构建到 `src-tauri/target-release/`（产物在 `src-tauri/target-release/release/bundle/`），因此清理时不会和 rust-analyzer 或正在运行的开发构建抢 `src-tauri/target/` 里的文件——Windows 上那个占用会让 `cargo clean` 直接报 `os error 5`。打包目标仅 `["msi"]`。
+`build:clean` 为两种 Windows 架构（x64 与 arm64）各构建一个 MSI 到 `src-tauri/target-release/`（产物在 `target-release/<triple>/release/bundle/msi/`），因此清理时不会和 rust-analyzer 或正在运行的开发构建抢 `src-tauri/target/` 里的文件——Windows 上那个占用会让 `cargo clean` 直接报 `os error 5`。打包目标仅 `["msi"]`。
 
-构建成功后只保留 `target-release/release/`：`debug/`、`tmp/` 与 cargo 的 `.fingerprint` 缓存会被删除以回收磁盘，因此下次发布会重新编译整棵依赖树。需要在调试打包步骤时保留它们，可设 `RELEASE_KEEP_TARGET=1`。
+arm64 一半需要一次性装好 Rust target、MSVC ARM64 工具链与 LLVM 的 clang（`aws-lc-sys` 和 `ring` 在 Windows ARM64 上都拒绝纯 `cl.exe`）：
+
+```bash
+rustup target add aarch64-pc-windows-msvc
+# Visual Studio Installer -> Build Tools -> 单个组件：
+#   “MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools”
+#   “C++ Clang Compiler for Windows”（clang / clang-cl）
+```
+
+Clang 组件安装在 `VC\Tools\Llvm\x64\bin` 下，但不会把该目录加进 `PATH`；`ring` 的构建脚本要求能直接按名字找到 `clang.exe`。
+
+构建成功后只保留各架构的 `release/`：`debug/`、`tmp/` 与 cargo 的 `.fingerprint` 缓存会被删除以回收磁盘，因此下次发布会重新编译整棵依赖树。需要在调试打包步骤时保留它们，可设 `RELEASE_KEEP_TARGET=1`。
 
 ### 清理重建
 
@@ -299,7 +310,7 @@ gh auth login -h github.com
 yarn run publish
 ```
 
-`publish` 会先清空自己的构建目录（`src-tauri/target-release`）再构建，因此发布产物不会继承上一次构建留下的对象——图标尤其如此，而且这个清理不会被开发目录里的文件占用挡住。构建成功后会删除该目录下除 `release/` 之外的全部内容以回收磁盘。若只是在调试打包步骤本身，可设 `RELEASE_SKIP_CLEAN=1` 复用已有产物。
+`publish` 会先清空自己的构建目录（`src-tauri/target-release`）再构建，因此发布产物不会继承上一次构建留下的对象——图标尤其如此，而且这个清理不会被开发目录里的文件占用挡住。它构建 x64 与 arm64 两个架构、上传两个 MSI，并生成同时带 `windows-x86_64` 与 `windows-aarch64` 条目的 `latest.json`，让各架构自行更新。构建成功后会删除该目录下除各架构 `release/` 之外的全部内容以回收磁盘。若只是在调试打包步骤本身，可设 `RELEASE_SKIP_CLEAN=1` 复用已有产物。
 
 ## 测试
 

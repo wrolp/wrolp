@@ -1,10 +1,11 @@
 // Reclaim disk space after a release build.
 //
-// A release leaves a lot behind that nothing reads again: `target-release/debug`,
-// `target-release/tmp`, cargo's `.fingerprint` / `.rustc_info.json`, and the
-// incremental caches. Only `target-release/release/` is kept — that directory
-// holds the bundle (`release/bundle/msi/…`) and the signature beside it, which
-// the packaging steps and `upload-release.mjs` read.
+// A release leaves a lot behind that nothing reads again: `debug/`, `tmp/`,
+// cargo's `.fingerprint` / `.rustc_info.json`, and the incremental caches. Only
+// the `release/` directories are kept — with `--target <triple>` builds that is
+// `target-release/<triple>/release/`, which holds the bundle
+// (`release/bundle/msi/…`) and the signature beside it that the packaging steps
+// and `upload-release.mjs` read.
 //
 // Consequence: the next release compiles the dependency tree from scratch unless
 // `CARGO_TARGET_DIR`/`RELEASE_SKIP_CLEAN` is used to reuse this directory.
@@ -16,7 +17,7 @@ import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { releaseTargetDir } from './release-paths.mjs'
 
-const KEEP = new Set(['release'])
+const KEEP = 'release'
 
 function sizeOf(path) {
   let total = 0
@@ -53,9 +54,9 @@ if (process.env.RELEASE_KEEP_TARGET === '1') {
 
 let freed = 0
 let removed = 0
-for (const entry of readdirSync(dir)) {
-  if (KEEP.has(entry)) continue
-  const full = join(dir, entry)
+const kept = []
+
+function prune(full) {
   const before = sizeOf(full)
   try {
     rmSync(full, { recursive: true, force: true })
@@ -67,6 +68,30 @@ for (const entry of readdirSync(dir)) {
   }
 }
 
+for (const entry of readdirSync(dir)) {
+  if (entry === KEEP) {
+    kept.push(join(dir, entry))
+    continue
+  }
+  const full = join(dir, entry)
+  let isDir = false
+  try {
+    isDir = statSync(full).isDirectory()
+  } catch {
+    continue
+  }
+  // A `--target <triple>` build dir: keep its release/ and drop the caches
+  // cargo left beside it.
+  if (isDir && existsSync(join(full, KEEP))) {
+    kept.push(join(full, KEEP))
+    for (const sub of readdirSync(full)) {
+      if (sub !== KEEP) prune(join(full, sub))
+    }
+    continue
+  }
+  prune(full)
+}
+
 console.log(
-  `[prune] kept ${join(dir, 'release')}; removed ${removed} entr${removed === 1 ? 'y' : 'ies'} (${mb(freed)})`,
+  `[prune] kept ${kept.join(', ') || 'nothing'}; removed ${removed} entr${removed === 1 ? 'y' : 'ies'} (${mb(freed)})`,
 )

@@ -5,7 +5,8 @@
 // (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD) for the Tauri build so the MSI gets
 // signed and a .sig is produced.
 //
-// Then it runs: tauri build -> strip _en-US suffix -> generate latest.json.
+// Then it runs: tauri build (x64 + arm64) -> strip _en-US suffix -> generate
+// latest.json.
 //
 // It stops before any of that unless HEAD carries the tag for the version being
 // built (see `release-tag-guard.mjs`), so an artifact is never labeled with a
@@ -18,7 +19,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { requireVersionTag } from './release-tag-guard.mjs'
-import { releaseTargetDir } from './release-paths.mjs'
+import { RELEASE_TARGETS, releaseTargetDir } from './release-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -70,7 +71,7 @@ function run(cmd, args) {
   if (res.status !== 0) process.exit(res.status ?? 1)
 }
 
-// 1. clean the release target, then build (signed)
+// 1. clean the release target, then build every architecture (signed)
 //
 // A release bundle must not inherit objects from earlier builds: icons and
 // embedded assets are fingerprint-free, so a stale target has shipped the old
@@ -85,8 +86,11 @@ if (process.env.RELEASE_SKIP_CLEAN === '1') {
   run(process.execPath, ['scripts/clean.mjs', '--release'])
 }
 
-run(process.execPath, [tauriCli, 'build'])
-// 1b. keep only `target-release/release/`: the bundle lives there, everything
+for (const target of RELEASE_TARGETS) {
+  console.log(`[release] building ${target.triple} (${target.arch})`)
+  run(process.execPath, [tauriCli, 'build', '--target', target.triple])
+}
+// 1b. keep only each target's `release/`: the bundle lives there, everything
 // else (`debug/`, `tmp/`, `.fingerprint`) is dead weight between releases.
 run(process.execPath, ['scripts/prune-release-target.mjs'])
 // 2. strip _en-US suffix

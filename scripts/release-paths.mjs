@@ -18,6 +18,19 @@ import { fileURLToPath } from 'node:url'
 
 export const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
+/**
+ * The Windows bundles a release ships: one MSI per architecture. A build run
+ * with `--target <triple>` puts cargo output under `<target dir>/<triple>/`,
+ * so these triples are both the cargo targets and a path segment.
+ *
+ * `arch` is the token the MSI filename carries (`_x64.msi` / `_arm64.msi`);
+ * `updater` is the key the Tauri updater looks up in latest.json.
+ */
+export const RELEASE_TARGETS = [
+  { triple: 'x86_64-pc-windows-msvc', arch: 'x64', updater: 'windows-x86_64' },
+  { triple: 'aarch64-pc-windows-msvc', arch: 'arm64', updater: 'windows-aarch64' },
+]
+
 /** The target dir a release builds into, absolute. */
 export function releaseTargetDir() {
   const configured = process.env.CARGO_TARGET_DIR?.trim()
@@ -27,10 +40,10 @@ export function releaseTargetDir() {
   return join(root, 'src-tauri', 'target-release')
 }
 
-export function releaseBundleDir() {
-  return join(releaseTargetDir(), 'release', 'bundle')
+export function releaseBundleDir(triple) {
+  return join(releaseTargetDir(), triple, 'release', 'bundle')
 }
 
-export function releaseMsiDir() {
-  return join(releaseBundleDir(), 'msi')
+export function releaseMsiDir(triple) {
+  return join(releaseBundleDir(triple), 'msi')
 }

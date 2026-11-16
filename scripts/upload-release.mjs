@@ -24,9 +24,10 @@
 //     --draft Create as a draft release (no auto-update until published)
 //     --pre   Mark the release as a pre-release
 //
-// The two files uploaded (from src-tauri/target/release/bundle/msi/):
+// The artifacts uploaded (from src-tauri/target-release/<triple>/release/bundle/msi/):
 //   - <productName>_<version>_x64.msi
-//   - latest.json
+//   - <productName>_<version>_arm64.msi
+//   - latest.json (both platforms)
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -34,7 +35,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { requireVersionTag } from './release-tag-guard.mjs'
-import { releaseMsiDir } from './release-paths.mjs'
+import { RELEASE_TARGETS, releaseMsiDir } from './release-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -67,21 +68,24 @@ const tag = tagOverride || `v${version}`
 requireVersionTag({ root, tag, version, label: 'upload' })
 
 // ---- locate artifacts ----
-const msiDir = releaseMsiDir()
-if (!existsSync(msiDir)) {
-  console.error(`[upload] MSI dir not found: ${msiDir}\n  Run "yarn release" first.`)
-  process.exit(1)
-}
-const msiFile = readdirSync(msiDir).find((f) => f.startsWith(productName) && f.endsWith('_x64.msi'))
-if (!msiFile) {
-  console.error(
-    `[upload] No suffix-free MSI found in ${msiDir}.\n` +
-      `  Expected "${productName}_${version}_x64.msi". Did you run "yarn release"?`,
-  )
-  process.exit(1)
-}
-const latestPath = join(msiDir, 'latest.json')
+const msiFiles = []
 const missing = []
+for (const target of RELEASE_TARGETS) {
+  const msiDir = releaseMsiDir(target.triple)
+  if (!existsSync(msiDir)) {
+    missing.push(`${msiDir} (${target.triple})`)
+    continue
+  }
+  const msiFile = readdirSync(msiDir).find(
+    (f) => f.startsWith(productName) && f.endsWith(`_${target.arch}.msi`),
+  )
+  if (!msiFile) {
+    missing.push(`${msiDir}/${productName}_${version}_${target.arch}.msi`)
+    continue
+  }
+  msiFiles.push(join(msiDir, msiFile))
+}
+const latestPath = join(releaseMsiDir(RELEASE_TARGETS[0].triple), 'latest.json')
 if (!existsSync(latestPath)) missing.push(latestPath)
 if (missing.length) {
   console.error(
@@ -91,9 +95,10 @@ if (missing.length) {
   process.exit(1)
 }
 
-// Only the MSI + latest.json are uploaded. The .sig is intentionally NOT
-// uploaded (it stays local; the signature is already embedded in latest.json).
-const files = [join(msiDir, msiFile), latestPath]
+// Only the MSIs + latest.json are uploaded. The .sig files are intentionally
+// NOT uploaded (they stay local; each signature is already embedded in
+// latest.json).
+const files = [...msiFiles, latestPath]
 
 // ---- check gh CLI ----
 // No `shell: true` anywhere below: `gh` is a real executable on every platform

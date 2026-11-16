@@ -13,7 +13,7 @@
 // Usage:
 //   node scripts/gen-latest-json.mjs [--out <path>] [--notes "..."] [--tag v0.0.3]
 //
-// Output: latest.json in the bundle msi dir (or --out), e.g.
+// Output: latest.json in the first target's bundle msi dir (or --out), e.g.
 // {
 //   "version": "0.0.3",
 //   "notes": "...",
@@ -22,6 +22,10 @@
 //     "windows-x86_64": {
 //       "signature": "<contents of .sig>",
 //       "url": "https://github.com/wrolp/wrolp/releases/download/v0.0.3/wrolp-terminal_0.0.3_x64.msi"
+//     },
+//     "windows-aarch64": {
+//       "signature": "<contents of .sig>",
+//       "url": "https://github.com/wrolp/wrolp/releases/download/v0.0.3/wrolp-terminal_0.0.3_arm64.msi"
 //     }
 //   }
 // }
@@ -32,7 +36,7 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import { releaseMsiDir } from './release-paths.mjs'
+import { RELEASE_TARGETS, releaseMsiDir } from './release-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -42,7 +46,6 @@ const keyPath = join(root, '.tauri', 'priv.key')
 if (existsSync(keyPath)) {
   process.env.TAURI_SIGNING_PRIVATE_KEY = readFileSync(keyPath, 'utf8').trim()
   console.log(`[gen-latest] TAURI_SIGNING_PRIVATE_KEY loaded from ${keyPath}`)
-  console.log(`[gen-latest] TAURI_SIGNING_PRIVATE_KEY=${process.env.TAURI_SIGNING_PRIVATE_KEY}`)
   const passPath = keyPath + '.pass'
   if (existsSync(passPath)) {
     process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = readFileSync(passPath, 'utf8').trim()
@@ -76,35 +79,22 @@ const owner = m?.[1] || 'wrolp'
 const repo = m?.[2] || 'wrolp'
 const tag = tagOverride || `v${version}`
 
-// ---- locate the built MSI (suffix-free) ----
-const msiDir = releaseMsiDir()
-if (!existsSync(msiDir)) {
-  console.error(`[gen-latest] MSI dir not found: ${msiDir}\n  Run "yarn release" first.`)
-  process.exit(1)
-}
-const msiFile = readdirSync(msiDir).find(
-  (f) => f.startsWith(productName) && f.endsWith('_x64.msi')
-)
-if (!msiFile) {
-  console.error(
-    `[gen-latest] No suffix-free MSI found in ${msiDir}.\n` +
-      `  Expected "${productName}_${version}_x64.msi". Did you run "yarn release"?`
-  )
-  process.exit(1)
-}
-const sigFile = msiFile + '.sig'
-const sigPath = join(msiDir, sigFile)
-if (!existsSync(sigPath)) {
+// ---- locate each target's built MSI (suffix-free) and signature ----
+
+/** Sign the MSI in place if the build did not leave a .sig beside it. */
+function ensureSignature(msiDir, msiFile) {
+  const sigPath = join(msiDir, msiFile + '.sig')
+  if (existsSync(sigPath)) return sigPath
   // Self-sign the MSI using the loaded private key so we can still produce a
   // valid .sig without a full rebuild.
   if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
     console.error(
       `[gen-latest] Signature file missing: ${sigPath}\n` +
-        `  No private key available to sign. Put your key at .tauri/priv.key.`
+        `  No private key available to sign. Put your key at .tauri/priv.key.`,
     )
     process.exit(1)
   }
-  console.log('[gen-latest] .sig missing — signing the MSI with loaded private key ...')
+  console.log(`[gen-latest] .sig missing — signing ${msiFile} with loaded private key ...`)
   // TAURI_SIGNING_PRIVATE_KEY is already set from .tauri/priv.key above, so the
   // signer will use it directly (no conflicting --private-key flag needed).
   //
@@ -124,24 +114,48 @@ if (!existsSync(sigPath)) {
     process.exit(1)
   }
   console.log(`[gen-latest] signed -> ${sigPath}`)
+  return sigPath
 }
 
-const signature = readFileSync(sigPath, 'utf8').trim()
-const url = `https://github.com/${owner}/${repo}/releases/download/${tag}/${msiFile}`
+const platforms = {}
+for (const target of RELEASE_TARGETS) {
+  const msiDir = releaseMsiDir(target.triple)
+  if (!existsSync(msiDir)) {
+    console.error(
+      `[gen-latest] MSI dir not found: ${msiDir}\n` +
+        `  Run "yarn release" first (it builds ${target.triple}).`,
+    )
+    process.exit(1)
+  }
+  const msiFile = readdirSync(msiDir).find(
+    (f) => f.startsWith(productName) && f.endsWith(`_${target.arch}.msi`),
+  )
+  if (!msiFile) {
+    console.error(
+      `[gen-latest] No ${target.arch} MSI found in ${msiDir}.\n` +
+        `  Expected "${productName}_${version}_${target.arch}.msi". Did you run "yarn release"?`,
+    )
+    process.exit(1)
+  }
+  const sigPath = ensureSignature(msiDir, msiFile)
+  platforms[target.updater] = {
+    signature: readFileSync(sigPath, 'utf8').trim(),
+    url: `https://github.com/${owner}/${repo}/releases/download/${tag}/${msiFile}`,
+  }
+}
 
 const latest = {
   version,
   notes: notes || `Release ${version}`,
   pub_date: new Date().toISOString(),
-  platforms: {
-    'windows-x86_64': {
-      signature,
-      url,
-    },
-  },
+  platforms,
 }
 
-const out = outPath ? resolve(root, outPath) : join(msiDir, 'latest.json')
+const defaultOutDir = releaseMsiDir(RELEASE_TARGETS[0].triple)
+const out = outPath ? resolve(root, outPath) : join(defaultOutDir, 'latest.json')
 writeFileSync(out, JSON.stringify(latest, null, 2) + '\n', 'utf8')
 console.log(`[gen-latest] wrote ${out}`)
-console.log(`[gen-latest] version=${version} url=${url}`)
+console.log(`[gen-latest] version=${version}`)
+for (const [key, entry] of Object.entries(platforms)) {
+  console.log(`[gen-latest] ${key}: ${entry.url}`)
+}
