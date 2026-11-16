@@ -4,6 +4,50 @@
 
 ---
 
+## v0.0.13 — 2026-11-16
+
+Gives the window to the terminal with a **minimal mode**, pops a pane out into its own OS window, and finishes replacing the last OS-drawn surfaces — native tooltips and select popups — with themed ones. The terminal learns to read zsh + powerlevel10k and CJK prompts, a local container shell browses its container's filesystem, the editor detects and colours config-file languages, and two dead ends gain a way out: saving a file the login user cannot write, and cloning into a folder named after the repository.
+
+### Features
+
+- **Minimal mode** — Ctrl+Shift+Z (or the titlebar button) unmounts the titlebar, rail, sidebar, tab bar, panels, inspector and status bar, leaving the window to the terminal; the saved layout is untouched, so exiting restores the previous arrangement. A hover-only top strip carries the drag surface, the window controls and the way out, and `ui.minimalFullscreen` can take the OS fullscreen too.
+- **A pane in its own OS window** — a popped-out terminal pane moves to a real undecorated window with the app's titlebar, carrying its screen and tab context; docking back keeps the scrollback, and the float window carries the per-pane recording, reconnect and an AI column bound to that session. A window that takes a live pane attaches to the session instead of reconnecting, so the shell the user is working in is never replaced.
+- **Themed select lists** — the OS popup and its unthemed hover highlight are gone (an in-DOM listbox draws the list); a long list now shows the app's own scrollbar thumb instead of an invisible OS overlay, opens above or below from its natural height against the room on each side, and no longer snaps back to the selection while the wheel has scrolled it.
+- **Themed tooltips** — every native `title` hover renders as a rounded, multi-line themed tooltip; nested titles no longer show two tooltips, and a right-click menu always paints above the label of the row it was opened on.
+- **Command list** — Manual / Name / Recent sort modes with a reset; snippets drag-reorder in the connection view; each group header carries a "+" already scoped to that group; row actions no longer shift the rows; the command field explains the `${name}` placeholder.
+- **Git panel** — an AI drafts a Conventional Commits message from the staged diff (nothing commits until Commit is pressed); a clone destination follows the URL's project name, shows git's progress and can be cancelled, removing only the tree it created; a coloured commit graph, branch/tag labels and paged history (100 → 1000, Load all, overlay scrollbar); repository scanning walks dot-directories.
+- **Save files the login user cannot write** — "Save with sudo" stages the bytes over SFTP and runs `sudo -S cp` on an exec channel (password only over stdin, temp file removed on every path), and "Save as another user" verifies the credentials and can be one-shot. A failed save stays in a banner, so the typed text is never lost.
+- **HTML preview** — an HTML file opens in a sandboxed iframe (scripts cannot run in the app's origin).
+- **Editor languages** — a name that says nothing is backed by the content (shebang, Vim/Emacs modeline, first-line markup), and the name table covers systemd units, shell rc files, `.env.*`, `ssh_config` and its drop-ins. An SSH Config grammar is registered, Ctrl+/ line comments work in nginx / properties / sshconfig / Makefile / Dockerfile, and ini is re-tokenised so `key: value`, indented or dotted keys and unquoted values no longer render as one colour.
+- **Terminal `cat` highlighting** — output is coloured from its content too, an unknown filename falls through to the editor's name table, and `ssh_config` gets its own tokenizer.
+- **Connections and Home** — rename a group in an app-styled modal (empty names are refused, Esc closes); a recent row can be forgotten without deleting the connection; local terminals are scoped to the workspace that created them; the connection editor is a draggable window above the command list.
+- **Terminal fonts** — font family dropdown, size, line height and cursor shape, with a live preview; the Nerd Font stays in the fallback chain.
+- **Status bar** — the bottom drawer can be hidden from the bar entirely; Ctrl+J on a hidden drawer opens it expanded.
+- **Titlebar and panels** — the top-right shortcut opens the network scan (with its own radar glyph), the hosts panel uses the same scan glyph, and the Sessions panel is now Recordings.
+
+### Fixes
+
+- **zsh + powerlevel10k** — the prompt is read as a rendered row, the submitted line up to the caret (past the right prompt), and the row p10k repaints without SGR is repainted once. Live recolouring, submitted-line colour, `ls` links, command history and `cd` tracking work under zsh again.
+- **CJK prompts** — the live input line is measured in buffer cells, not characters, so a Chinese prompt keeps its `#` and the first keystroke after a command no longer erases the prompt.
+- **Prompt parsing** — starship's `[Docker]` decoration is no longer taken for a working directory (`ls` links no longer resolve to `[Docker]/name`), and emoji are measured with Unicode 11 widths so they stop swallowing the following space.
+- **Local container shells** — a local `docker exec` / `kubectl exec` PTY browses its container's filesystem instead of the Windows drives: the inner cwd is seeded right after the shell opens, that directory's map is prefetched so a bare `ls` is painted by kind, and a failed `cd` keeps the previous directory.
+- **Menus** — every destructive action reads red (not only the tab menu's), and a menu is never covered by the tooltip of its own row.
+- **Docker** — the container ID chip is no longer selectable.
+- **Kubernetes** — the saved context / namespace scope survives an empty-namespace validation.
+- **Local terminals** — the section's collapsed state persists across restarts.
+- **Minimal mode** — the exit button sits in the centre of the bar rather than the left corner, and its decorative chevron is gone.
+- **Prompt colours** — the palette black is darkened so prompt segments stay readable on the dark theme.
+- **Release builds** — bundles build in their own target directory, so a clean cannot be blocked by rust-analyzer holding files open; the target is pruned to `release/` only after a build.
+
+### Internal
+
+- `SelectOverlay` (in-DOM listbox with the shared scrollbar thumb), `TooltipProvider` (title interception plus menu yielding), `MinimalModeBar`, and a serialized screen hand-over (`attachOnly`) for the float window.
+- New `forget_recent_entry` command and `lsFsTarget` module (resolves `dockerLocal` / `k8sPod` for local exec shells).
+- Language detection lives in `src/editor/languages.ts`, pinned by a Node self-check (`tests/check-lang-detect.mjs`); 26 e2e specs were added this cycle.
+- `cargo fmt` applied across the backend; README screenshots refreshed.
+
+---
+
 ## v0.0.12 — 2026-11-07
 
 Adds two working modes — **Kubernetes** and **Git** — that bring pod logs, exec, port-forwards and Helm into one panel, and cover status, commits, history, conflicts, stash and blame in another. Alongside them: single-instance protection, a hideable status bar, namespace-tinted resource lists, and a batch of upload and terminal reliability fixes.
