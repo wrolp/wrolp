@@ -246,6 +246,60 @@ async fn the_built_in_local_shell_is_recordable_without_an_entry() {
   assert_eq!(listed.len(), 1);
 }
 
+/// Typing `exit` must end a local session. ConPTY never reports EOF when the
+/// child exits (probed: the reader keeps blocking), so the reader thread stays
+/// parked — the child watcher has to notice via `try_wait` and emit
+/// `connection-closed`, or the tab keeps its "connected" dot forever.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_local_shell_that_exits_reports_connection_closed() {
+  use std::sync::{Arc, Mutex};
+  use std::time::Duration;
+  use tauri::Listener;
+
+  let app = build_test_app();
+  let closed = Arc::new(Mutex::new(Vec::<u32>::new()));
+  let seen = closed.clone();
+  app.app.listen_any("connection-closed", move |event| {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(event.payload()) {
+      if let Some(tab) = v["tabId"].as_u64() {
+        seen.lock().unwrap().push(tab as u32);
+      }
+    }
+  });
+
+  commands::spawn_local_pty(
+    app.app.handle().clone(),
+    &app.state(),
+    7,
+    "cmd.exe".into(),
+    vec![],
+    None,
+    80,
+    24,
+  )
+  .await
+  .expect("spawn local pty");
+
+  // Give the shell time to paint its prompt, then end it the way the user does.
+  tokio::time::sleep(Duration::from_millis(800)).await;
+  commands::local_send_input(app.state(), 7, "exit\r".into())
+    .await
+    .expect("send exit");
+
+  // The watcher polls `try_wait` every 400 ms.
+  let mut got = false;
+  for _ in 0..40 {
+    if closed.lock().unwrap().contains(&7) {
+      got = true;
+      break;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+  }
+  assert!(got, "no connection-closed for a local shell that exited");
+  assert!(!app.state().local_shells.lock().unwrap().contains_key(&7));
+}
+
 #[tokio::test]
 async fn a_local_terminal_deleted_since_drops_out_of_the_list() {
   let app = build_test_app();

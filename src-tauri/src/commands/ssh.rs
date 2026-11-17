@@ -180,6 +180,7 @@ async fn run_session_loop(
   channel: Arc<russh::ChannelWriteHalf<russh::client::Msg>>,
   mut data_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
   mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+  mut pty_closed_rx: tokio::sync::oneshot::Receiver<()>,
   tid: u32,
   session_id: u64,
 ) {
@@ -300,6 +301,14 @@ async fn run_session_loop(
             let _ = app2.emit("connection-suspect", serde_json::json!({ "tabId": tid }));
           }
         });
+      }
+      _ = &mut pty_closed_rx => {
+        // The remote shell exited (`exit`) or the server closed the PTY
+        // channel: the session is over even though the SSH connection itself
+        // is still up. Fall through to `connect()`'s cleanup so the tab turns
+        // disconnected and the recording/tunnels are finalized.
+        eprintln!("[russh] pty channel closed (shell exited) for tab={}", tid);
+        break;
       }
       _ = &mut shutdown_rx => {
         eprintln!("[russh] shutdown signal for tab={}", tid);
@@ -770,10 +779,21 @@ pub async fn connect(
       // callbacks.
       let (mut read_half, write_half) = channel.split();
       let channel = Arc::new(write_half);
+      // The drain task is also the only observer of the *end* of this channel.
+      // Output never reaches `run_session_loop` (the handler callback consumes
+      // it), and the keepalive probes the whole SSH connection — which stays
+      // open for SFTP/tunnels — so the remote shell exiting (`exit`) used to go
+      // unnoticed: the tab kept its "connected" dot until the next keystroke hit
+      // a closed channel. Signal the loop so `connect()`'s cleanup emits
+      // `connection-closed` right away.
+      let (pty_closed_tx, pty_closed_rx) = tokio::sync::oneshot::channel::<()>();
       tauri::async_runtime::spawn(async move {
         // `wait()` yields None once every `ChannelRef` to this channel is gone.
+        // The server sends CHANNEL_CLOSE after the shell's exit-status, which
+        // russh forwards as `ChannelMsg::Close` before dropping the sender.
         while read_half.wait().await.is_some() {}
         log::debug!("[ssh] pty read half closed for tab={}", tid);
+        let _ = pty_closed_tx.send(());
       });
 
       eprintln!(
@@ -840,6 +860,7 @@ pub async fn connect(
         channel,
         data_rx,
         shutdown_rx,
+        pty_closed_rx,
         tid,
         session_id,
       )

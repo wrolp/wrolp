@@ -376,6 +376,22 @@ fn pty_program(bin: &str) -> String {
   }
 }
 
+/// The tab's PTY child is gone: drop the registration — only when it is still
+/// ours, so a superseded shell cannot delete its replacement — and tell the
+/// frontend the session closed. Idempotent: the reader thread and the exit
+/// watcher may both call it, whichever notices first wins.
+fn finish_local_shell<R: tauri::Runtime>(app: &tauri::AppHandle<R>, tab_id: u32, session_id: u64) {
+  if let Some(state) = app.try_state::<AppState>() {
+    if let Ok(mut shells) = state.local_shells.lock() {
+      if !entry_is_ours(shells.get(&tab_id).map(|s| s.session_id), session_id) {
+        return;
+      }
+      shells.remove(&tab_id);
+    }
+  }
+  let _ = app.emit("connection-closed", serde_json::json!({ "tabId": tab_id }));
+}
+
 /// Start a PTY-backed local process for `tab_id` and register it as that tab's
 /// `LocalShell`. Shared by the local terminal (`open_local_shell`) and a local
 /// container shell (`open_local_docker_shell`): the only difference is which command
@@ -386,8 +402,8 @@ fn pty_program(bin: &str) -> String {
 /// origin, so a banner line written before the child speaks shifts xterm down while
 /// ConPTY keeps addressing row 0 — which is exactly why typed input used to land on the
 /// line above the prompt. Status goes to stderr instead.
-pub(crate) async fn spawn_local_pty(
-  app: tauri::AppHandle,
+pub(crate) async fn spawn_local_pty<R: tauri::Runtime>(
+  app: tauri::AppHandle<R>,
   state: &tauri::State<'_, AppState>,
   tab_id: u32,
   program: String,
@@ -528,11 +544,13 @@ pub(crate) async fn spawn_local_pty(
   }
 
   // Background reader thread: drain PTY output into this tab's own output queue.
-  // We hold an `Arc` clone of `output`, so we never reach back into the global
-  // `AppState` (which is unreliable from a plain `std::thread`). Each (re)open
-  // creates a fresh `output` Arc, so a superseded thread simply writes to an
-  // orphaned queue the frontend no longer reads from — no stale-data corruption.
+  // We hold an `Arc` clone of `output`, so the hot path never reaches back into
+  // the global `AppState` (only the exit path does, via `finish_local_shell`).
+  // Each (re)open creates a fresh `output` Arc, so a superseded thread simply
+  // writes to an orphaned queue the frontend no longer reads from — no
+  // stale-data corruption.
   let reader_tab = tab_id;
+  let reader_app = app.clone();
   let reader_output = output.clone();
   let reader_ai_capture = ai_capture.clone();
   std::thread::spawn(move || {
@@ -575,23 +593,34 @@ pub(crate) async fn spawn_local_pty(
       }
     }
     // Process exited — drop the shell registration and notify the frontend.
-    // Only if this reader still owns the tab's current registration: closing a
-    // tab and reopening it immediately leaves the old thread draining its (now
-    // orphaned) queue, and without the version check that stale thread would
-    // delete the *new* shell and tell the frontend it had closed.
-    if let Some(state) = app.try_state::<AppState>() {
-      if let Ok(mut shells) = state.local_shells.lock() {
-        let is_current = entry_is_ours(shells.get(&reader_tab).map(|s| s.session_id), session_id);
-        if !is_current {
-          return;
-        }
-        shells.remove(&reader_tab);
-      }
+    finish_local_shell(&reader_app, reader_tab, session_id);
+  });
+
+  // ConPTY does NOT report EOF when the child exits (probed: after `exit` the
+  // reader keeps blocking forever), so the reader thread alone never notices a
+  // shell that ended. Poll the child instead — `try_wait` is a no-wait syscall
+  // — and run the same cleanup. Polling (rather than a blocking `wait`) keeps
+  // the `local_shells` lock free for input and resize.
+  let watch_app = app.clone();
+  std::thread::spawn(move || loop {
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let exited = match watch_app.try_state::<AppState>() {
+      Some(state) => match state.local_shells.lock() {
+        Ok(mut shells) => match shells.get_mut(&tab_id) {
+          Some(shell) if entry_is_ours(Some(shell.session_id), session_id) => {
+            matches!(shell.child.try_wait(), Ok(Some(_)))
+          }
+          // Replaced or already removed: nothing left to watch.
+          _ => return,
+        },
+        Err(_) => return,
+      },
+      None => return,
+    };
+    if exited {
+      finish_local_shell(&watch_app, tab_id, session_id);
+      return;
     }
-    let _ = app.emit(
-      "connection-closed",
-      serde_json::json!({ "tabId": reader_tab }),
-    );
   });
 
   Ok(())
