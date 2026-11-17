@@ -672,8 +672,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       cellW = rect.width / Math.max(1, term.cols)
       cellH = rect.height / Math.max(1, term.rows)
     }
-    const baseY = term.buffer.active.baseY
-    const rowInViewport = bufferRow - baseY
+    // `viewportY` (the top of what is on screen), NOT `baseY`: the latter is the top
+    // of the *bottom* page and stays put while the view is scrolled back, so every
+    // anchor landed `baseY - viewportY` rows above the row under the cursor.
+    const rowInViewport = bufferRow - term.buffer.active.viewportY
     return {
       x: rect.left + col * cellW,
       // The content layer can be shifted up by the tail room — anchor on where it is.
