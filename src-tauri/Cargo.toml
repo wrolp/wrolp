@@ -15,9 +15,12 @@ dirs = "6"
 log = "0.4"
 simplelog = "0.12"
 # `russh-keys` was merged into `russh::keys` in 0.50 — the separate crate is gone.
-# 0.64.1 is the first release that fixes every published russh advisory
-# (see task/BUGS.md B19/B47); `russh-sftp` 3.x has no runtime russh dependency.
-russh = "0.64"
+# 0.65.0 is the first release that fixes RUSTSEC-2026-0495 (agent server signed
+# with confirm-constrained keys without calling `Agent::confirm`); the 2026-11-12
+# batch (unbounded packet allocations, zero-max-packet-size stall) lands by
+# 0.65.2. 0.64.x is affected by all of them (see task/BUGS.md B19/B47).
+# `russh-sftp` 3.x has no runtime russh dependency.
+russh = "0.65"
 russh-sftp = "3"
 async-trait = "0.1"
 encoding_rs = "0.8"
@@ -35,9 +38,12 @@ tauri-plugin-updater = "2"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
 walkdir = "2"
-windows = "0.61"
-windows-core = "0.61"
-webview2-com = "0.38"
+# Pinned to the generation tauri 2.12 itself links (webview2-com 0.39 →
+# windows-core 0.62). Mixing 0.38 with tauri's 0.39 puts two `Interface` traits in
+# the graph and the WebView2 event handlers stop satisfying either.
+windows = "0.62"
+windows-core = "0.62"
+webview2-com = "0.39"
 serialport = "4"
 suppaftp = { version = "11.0.0", features = ["tokio-async-native-tls", "deprecated"] }
 axum = { version = "0.8.9", features = ["multipart"] }
