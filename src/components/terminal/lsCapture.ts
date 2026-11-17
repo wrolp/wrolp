@@ -390,7 +390,7 @@ export function isNestedSessionEntry(command: string): boolean {
 
 /**
  * Extracts the container name/ID from a `docker exec` command line, e.g.
- * `docker exec -it lac-nacos /bin/bash` → "lac-nacos". Handles combined flags
+ * `docker exec -it nacos-app /bin/bash` → "nacos-app". Handles combined flags
  * (`-it`), `--flag=value`, and flags that take a separate value (`-u root`,
  * `-w /app`). Returns null when no container argument follows.
  */

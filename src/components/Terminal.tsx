@@ -375,6 +375,24 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     cwdRef.current = path
     onCwdChangeRef.current?.(path)
   }, [])
+  // Every directory change (a typed `cd`, an `ls` link click) is applied through
+  // ONE ordered chain. Adopting a target needs an async `fsFileExists` check over
+  // SFTP — and each check opens its own SSH connection — while a *relative* `cd`
+  // target is resolved from the tracked value. Run in parallel, a burst of
+  // quickly typed `cd`s all resolved against the same stale cwd, and whichever
+  // check finished last won: the tracked directory stalled several levels behind
+  // the shell (e.g. after `cd ..` + `cd /etc/rancher` it still held
+  // `/opt/k3s/prod-k3s/build/app-ws`), and every `ls` link then resolved
+  // against that stale base — clicking `org` inside
+  // `/opt/k3s/.../app-ws` produced `/opt/org`, and a file in
+  // `/etc/rancher/k3s` was `cd`-ed as `/opt/.../app-ws/k3s.yaml`.
+  // Serializing makes the last command win; `ls` captures join the chain before
+  // computing their base (see startLsCaptureIfMatch), so a listing submitted in
+  // the middle of a burst still gets the right directory.
+  const cwdTrackRef = useRef<Promise<void>>(Promise.resolve())
+  const queueCwdChange = (task: () => Promise<void> | void) => {
+    cwdTrackRef.current = cwdTrackRef.current.then(task).catch(() => {})
+  }
   // Cache of the SSH session's $HOME, fetched from poll_working_dir so a leading
   // `~` (from the prompt or `ls -l ~/docs`) can be expanded to an absolute path
   // (SFTP doesn't expand `~`, and the backend `expand_tilde` uses the *local*
@@ -909,6 +927,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // cwd so a moved file still opens — only when the captured path is confirmed
     // gone AND the cwd path exists, preserving every other behavior.
     const capturedBase = (await entry.baseDirPromise) ?? null
+    // The fallback below reads `cwdRef`; join the tracking chain first so a `cd`
+    // the user typed a moment ago is already applied (see queueCwdChange).
+    await cwdTrackRef.current
     const { abs, base } = await resolveLsEntryPath({
       capturedBase,
       name: entry.name,
@@ -946,8 +967,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       // container's prompt or is a bare relative name) — the host-tracked cwd
       // can't describe it, so skip the host-side tracking there.
       if (!nestedShellRef.current) {
-        const next = resolveCdTarget(abs, cwdRef.current)
-        if (next) setCwd(next)
+        // Queued (not applied inline): a click resolves asynchronously and must
+        // not overwrite a `cd` the user typed after it (see queueCwdChange).
+        queueCwdChange(() => {
+          const next = resolveCdTarget(abs, cwdRef.current)
+          if (next) setCwd(next)
+        })
       } else if (abs.startsWith('/')) {
         // Container-side absolute path: remember it so the next `ls` reuses the
         // base instead of injecting another hidden query.
@@ -1288,36 +1313,40 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     const nested = nestedDepthRef.current > 0 || nestedShellRef.current
     const homePromise: Promise<string | null> =
       isLocal || nested ? Promise.resolve(null) : pollWorkingDir(tabIdRef.current).catch(() => null)
-    const cwdPromise: Promise<string | null> = nested
-      ? (async () => {
-          // Docker exec / nested ssh sessions: never take the cwd from the
-          // prompt — it either carries no path (bare `bash-5.0#`, a starship
-          // prompt whose path sits on another row) or encodes the OUTER context.
-          // Query the interactive shell itself instead (it IS the container/remote
-          // shell) with the hidden marker-wrapped `pwd`, so ls links resolve to
-          // the real container-side absolute path and clicking a directory keeps
-          // working after the shell has `cd`'d elsewhere. On failure this resolves
-          // null and links fall back to relative paths (`cd -- 'x'`) resolved by
-          // the nested shell.
-          // `fetchRemoteCwd` itself defers the injection by a macrotask, so it
-          // can never splice into the command line the user just submitted.
-          if (nestedCwdRef.current) return nestedCwdRef.current
-          const real = await fetchRemoteCwd()
-          if (real) nestedCwdRef.current = real
-          return real
-        })()
-      : isLocal
-        ? Promise.resolve(cwdRef.current ?? promptCwd ?? localCwd ?? null)
-        : (async () => {
-            if (cwdRef.current) return cwdRef.current
-            const real = await fetchRemoteCwd()
-            if (real) {
-              // Don't clobber a cwd set (by a `cd` handler) while we were awaiting.
-              if (cwdRef.current == null) setCwd(real)
-              return cwdRef.current ?? real
-            }
-            return seedRemoteCwd(promptCwd)
-          })()
+    const cwdPromise: Promise<string | null> = (async () => {
+      // Join the ordered cd-tracking chain before reading `cwdRef`: a `cd` typed
+      // just before this `ls` may still be waiting on its existence check, and a
+      // base captured from a half-applied chain is several directories behind —
+      // every link of this listing would resolve against the wrong directory
+      // (see queueCwdChange).
+      await cwdTrackRef.current
+      if (nested) {
+        // Docker exec / nested ssh sessions: never take the cwd from the
+        // prompt — it either carries no path (bare `bash-5.0#`, a starship
+        // prompt whose path sits on another row) or encodes the OUTER context.
+        // Query the interactive shell itself instead (it IS the container/remote
+        // shell) with the hidden marker-wrapped `pwd`, so ls links resolve to
+        // the real container-side absolute path and clicking a directory keeps
+        // working after the shell has `cd`'d elsewhere. On failure this resolves
+        // null and links fall back to relative paths (`cd -- 'x'`) resolved by
+        // the nested shell.
+        // `fetchRemoteCwd` itself defers the injection by a macrotask, so it
+        // can never splice into the command line the user just submitted.
+        if (nestedCwdRef.current) return nestedCwdRef.current
+        const real = await fetchRemoteCwd()
+        if (real) nestedCwdRef.current = real
+        return real
+      }
+      if (isLocal) return cwdRef.current ?? promptCwd ?? localCwd ?? null
+      if (cwdRef.current) return cwdRef.current
+      const real = await fetchRemoteCwd()
+      if (real) {
+        // Don't clobber a cwd set (by a `cd` handler) while we were awaiting.
+        if (cwdRef.current == null) setCwd(real)
+        return cwdRef.current ?? real
+      }
+      return seedRemoteCwd(promptCwd)
+    })()
     lsBaseDirPromiseRef.current = Promise.all([homePromise, cwdPromise]).then(([home, cwd]) => {
       if (!isLocal) homeRef.current = home ?? null
       const base = resolveLsBaseDir(cwd, targetArg)
@@ -2773,7 +2802,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 ? /^[A-Za-z]:$/i.test(isCdCmd ? (trimmedCmd.split(/\s+/)[1] ?? '') : t0)
                 : false
               if (isLocal && onWindowsPath && driveSwitch) {
-                setCwd(null)
+                queueCwdChange(() => setCwd(null))
               } else if (isCdCmd) {
                 // Strip the `--` end-of-options marker and common flags (e.g.
                 // `cd -- /path`, `cd -L /path`) so the real target is parsed.
@@ -2785,13 +2814,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                 // absolute path follows, so a real `cd /d` on Unix is untouched.
                 if (isLocal) cdRaw = cdRaw.replace(/^\/d\s+(?=[A-Za-z]:[\\/])/i, '')
                 const arg = cdRaw.split(/\s+/)[0] ?? ''
-                void (async () => {
+                // Context as of the moment the line was submitted: the shell
+                // may have entered/left a nested session by the time the queued
+                // task runs, and this command belongs to the old context.
+                const nestedNow = nestedShellRef.current
+                // Queued, not fired in parallel — see queueCwdChange. Resolving
+                // a relative target from `cwdRef` while an older `cd` is still
+                // awaiting its existence check is what made the tracked cwd
+                // stall several directories behind the shell.
+                queueCwdChange(async () => {
                   // Docker exec shells: `cd` runs inside the container — the
                   // host-tracked cwd can't describe container paths, so track the
                   // inner shell's cwd separately (seeded by the hidden `pwd` query
                   // on the first listing) and let an unknowable target (`cd ~`,
                   // `cd -`, bare `cd`) drop it so the next listing asks again.
-                  if (nestedShellRef.current) {
+                  if (nestedNow) {
                     const next = resolveCdTarget(arg, nestedCwdRef.current)
                     if (!next) {
                       // `cd ~`, `cd -`, a bare `cd`: unknowable from the line —
@@ -2850,7 +2887,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
                   } catch {
                     /* fall through: keep old cwd; ls links will use prompt as fallback */
                   }
-                })()
+                })
               }
             }
             // F1: recolor the typed command (and, if the PS1 is uncolored, its
