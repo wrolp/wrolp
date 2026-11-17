@@ -4245,6 +4245,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     cdRef.current = next
     setCdView(next)
+    // The panel owns the line from here on, so the grey tail standing on it has to
+    // go with it. `evaluateGhost` refuses to paint while `cdRef.current` is set, but
+    // that only stops it *re-appearing*: a tail painted on an earlier keystroke
+    // stayed put, and a pick then types exactly those characters — the overlay ends
+    // up struck through the shell's echo of them (user screenshot: `cd prod-k3s` with
+    // `-offline-v2.0.0-amd64/` written twice) until some later keystroke retires it.
+    // The listing is debounced, so the panel can open with no keystroke following it.
+    ghostCloseRef.current()
   }
 
   /** Send bytes the shell will echo back, without going through `onData`. */
@@ -4254,6 +4262,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // Bypassing `onData` means the "awaiting echo" gate was never raised; do it
     // explicitly or the stream highlighter holds the echo's tail back (issue #26).
     markInputEcho(tabIdRef.current)
+    // Whatever was offered in grey is about to be typed by this injection. Retire
+    // it here, at the one choke point every injector goes through: the shell's echo
+    // of these very characters would otherwise be painted over by the overlay
+    // (grey text struck through itself, user screenshot 2026-11-17). A pick that
+    // wants a tail for the rest of the line re-creates it right after — see the
+    // `evaluateGhost` at the end of `acceptGhost`, which lands before React paints.
+    ghostCloseRef.current()
     termRef.current?.focus()
   }
 
@@ -5202,10 +5217,16 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
           top: ghostView?.anchor.y ?? 0,
           maxWidth: ghostView?.anchor.maxW ?? 0,
           lineHeight: `${ghostView?.anchor.cellH ?? 0}px`,
-          visibility: ghostView ? 'visible' : 'hidden',
+          // Never alongside the `cd` panel: the two hang off the same caret, and the
+          // panel's pick types exactly the characters a tail would be offering — the
+          // overlay would end up painted over the shell's echo of them. The state is
+          // retired when the panel takes the line (see `renderCdSuggest`); this is the
+          // belt to that brace, so no path can leave grey text on a line the panel
+          // owns.
+          visibility: ghostView && !cdView ? 'visible' : 'hidden',
         }}
       >
-        {ghostView ? ghostTail(ghostView) : ''}
+        {ghostView && !cdView ? ghostTail(ghostView) : ''}
       </div>
       {ghostView?.open && (
         <GhostSuggestPanel

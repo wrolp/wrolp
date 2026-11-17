@@ -150,6 +150,56 @@ test('typing a prefix paints the likeliest command’s tail in grey', async ({ p
   await expect(ghost(page)).toBeVisible()
 })
 
+test('the cd dropdown retires the grey tail instead of leaving it under the pick', async ({
+  page,
+}) => {
+  // User-reported (SSH, 2026-11-17): typing `cd k3s-offline` painted the grey
+  // `-offline-v2.0.0-amd64/` tail, the `cd` listing opened on the same line a
+  // moment later (its list is debounced, so no keystroke followed), and picking a
+  // row typed exactly those characters — the tail then sat struck through the
+  // shell's echo until some later keystroke retired it. The panel owns the line
+  // while it is up, so the tail has to go when it opens.
+  const DIR = 'k3s-offline-v2.0.0-amd64'
+  await openTerminal(page, {
+    connections: [
+      {
+        id: 'c1',
+        name: 'demo-node-01',
+        host: 'demo-node-01',
+        port: 22,
+        username: 'root',
+        startupDir: '/opt/k3s',
+      },
+    ],
+    commandHistory: [
+      { command: `cd ${DIR}/`, tabType: 'terminal', host: 'demo-node-01', usedAtMs: 2000 },
+    ],
+    filesByDir: {
+      '/opt/k3s': [
+        {
+          name: DIR,
+          path: `/opt/k3s/${DIR}`,
+          isDir: true,
+          size: 0,
+          mode: 'drwxr-xr-x',
+          modified: '',
+        },
+      ],
+    },
+  })
+
+  await page.keyboard.type('cd k3s-offline', { delay: 60 })
+  await expect(page.locator('.term-cd-suggest-row')).toHaveCount(1)
+  // Nothing is left standing over the line the panel now owns.
+  await expect(ghost(page)).toHaveText('')
+
+  // Drill into the only row: the applied text is exactly the tail that was there.
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowRight')
+  await expect(page.locator('.xterm-rows')).toContainText(`cd ${DIR}/`)
+  await expect(ghost(page)).toHaveText('')
+})
+
 test('the tail starts one cell right of the last glyph typed, not on top of it', async ({
   page,
 }) => {
