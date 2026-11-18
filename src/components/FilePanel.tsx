@@ -954,6 +954,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           total: 0,
           speed: '',
           tabId: sessionTabId ?? undefined,
+          ownerTabId: tabId,
         }
       })
       setTransferRows((prev) => mergeRows(prev, rows))
@@ -1017,6 +1018,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
           total: 0,
           speed: '',
           tabId: sessionTabId ?? undefined,
+          ownerTabId: tabId,
         }
       })
       setTransferRows((prev) => mergeRows(prev, rows))
@@ -1401,6 +1403,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
             total: 0,
             speed: '',
             tabId: sessionTabId ?? undefined,
+            ownerTabId: tabId,
           },
         ]),
       )
@@ -1452,6 +1455,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               total: 0,
               speed: '',
               tabId: sessionTabId ?? undefined,
+              ownerTabId: tabId,
             },
           ]),
         )
@@ -1499,6 +1503,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               total: 0,
               speed: '',
               tabId: sessionTabId ?? undefined,
+              ownerTabId: tabId,
             },
           ]),
         )
@@ -1569,6 +1574,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       total: 0,
       speed: '',
       tabId: sessionTabId ?? undefined,
+      ownerTabId: tabId,
     }))
     setTransferRows((prev) => mergeRows(prev, rows))
     for (let i = 0; i < items.length; i++) {
@@ -1794,7 +1800,13 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // the same key re-shows its row.
   const [transfersHovered, setTransfersHovered] = useState(false)
   const [hiddenTransferKeys, setHiddenTransferKeys] = useState<Set<string>>(new Set())
-  const visibleTransferRows = transferRows.filter(
+  // Only the rows this panel started. The queue itself is app-wide so the
+  // drawer can show every tab's transfers, and a row's `tabId` addresses the
+  // backend (a jump/docker target reports under its jump tab, or none), so the
+  // owning tab is stamped separately at creation. Without this scoping, opening
+  // a new connection replayed the previous connection's "Transfers complete".
+  const panelTransferRows = transferRows.filter((r) => r.ownerTabId === tabId)
+  const visibleTransferRows = panelTransferRows.filter(
     (r) => isLiveTransfer(r) || !hiddenTransferKeys.has(r.key),
   )
   // A row that is live again (its key was reused by a new transfer) must show,
@@ -1804,15 +1816,19 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       let changed = false
       const next = new Set(prev)
       for (const r of transferRows) {
-        if (isLiveTransfer(r) && next.delete(r.key)) changed = true
+        if (r.ownerTabId === tabId && isLiveTransfer(r) && next.delete(r.key)) changed = true
       }
       return changed ? next : prev
     })
-  }, [transferRows])
-  // Drop rows that have settled (and are still visible) after the delay.
+  }, [transferRows, tabId])
+  // Drop rows that have settled (and are still visible) after the delay. Only
+  // this panel's rows: a transfer that finishes while another tab is focused
+  // should still show its result when the user comes back to it.
   useEffect(() => {
     if (transfersHovered) return
-    const settled = transferRows.filter((r) => !isLiveTransfer(r) && !hiddenTransferKeys.has(r.key))
+    const settled = transferRows.filter(
+      (r) => r.ownerTabId === tabId && !isLiveTransfer(r) && !hiddenTransferKeys.has(r.key),
+    )
     if (settled.length === 0) return
     const timer = window.setTimeout(() => {
       setHiddenTransferKeys((prev) => {
@@ -1822,7 +1838,7 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       })
     }, TRANSFER_DISMISS_MS)
     return () => window.clearTimeout(timer)
-  }, [transferRows, hiddenTransferKeys, transfersHovered])
+  }, [transferRows, hiddenTransferKeys, transfersHovered, tabId])
 
   /* ---- transfers panel drag-to-resize ---- */
   const transfersDragRef = useRef<{ startY: number; startH: number } | null>(null)

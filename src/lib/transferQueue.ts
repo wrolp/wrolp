@@ -31,6 +31,13 @@ export interface TransferRow {
    * queue was hoisted (or from a tab that has since closed) leave it undefined.
    */
   tabId?: number
+  /**
+   * The UI tab whose file panel started the row — the only panel allowed to
+   * list it. `tabId` above cannot serve that purpose: it is the *backend*
+   * address of the transfer, so a jump/docker target reports under its jump tab
+   * (or none at all) rather than the connection the panel belongs to.
+   */
+  ownerTabId: number
 }
 
 /** Payload of the backend's `transfer-progress` event. */

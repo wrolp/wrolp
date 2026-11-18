@@ -90,6 +90,7 @@ export const DualFilePane: React.FC<DualFilePaneProps> = ({
             total: 0,
             speed: '',
             tabId: transferTabId,
+            ownerTabId: tabId,
           }
         : {
             key: item.isDir ? `directory:${item.path}` : `download:${item.path}`,
@@ -100,6 +101,7 @@ export const DualFilePane: React.FC<DualFilePaneProps> = ({
             total: 0,
             speed: '',
             tabId: transferTabId,
+            ownerTabId: tabId,
           }
     })
     addTransferRows(rows)

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from './helpers/fixtures'
 import { selectRailMode } from './helpers/sections'
-import { installTauriMock, resolvePendingCall } from './helpers/tauriMock'
+import { installTauriMock, resolvePendingCall, type MockConnection } from './helpers/tauriMock'
 
 // The file panel's transfer list closes itself once nothing is in flight, but it
 // only *hides*: the rows belong to the app-wide queue (v8-P4) and the drawer's
@@ -9,6 +9,15 @@ import { installTauriMock, resolvePendingCall } from './helpers/tauriMock'
 // starts, or the pointer was resting on it when the timer ran.
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
+// A second connection, so a spec can put another tab's panel in front of the
+// first tab's finished rows.
+const SECOND_CONN: MockConnection = {
+  id: 'c2',
+  name: 'Second',
+  host: 'second.local',
+  port: 22,
+  username: 'root',
+}
 const REMOTE_FILE = {
   name: 'app.log',
   path: '/home/root/app.log',
@@ -31,10 +40,10 @@ const list = (page: Page) => page.locator('.file-panel .file-transfers')
 const queueTab = (page: Page) =>
   page.locator('.bottom-panel-tabs .tab-btn', { hasText: 'Transfer Queue' })
 
-async function boot(page: Page) {
+async function boot(page: Page, extraConnections: MockConnection[] = []) {
   await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
   await installTauriMock(page, {
-    connections: [DEMO_CONN],
+    connections: [DEMO_CONN, ...extraConnections],
     pollOutputChunks: [['root@demo:~$ ']],
     fileEntries: [REMOTE_FILE, SECOND_FILE],
     // The save dialog is what names the local target; without an answer the
@@ -46,7 +55,7 @@ async function boot(page: Page) {
     layout: JSON.stringify({ bottomPanel: { visible: true, pos: 'bottom', size: 200 } }),
   })
   await page.goto('/')
-  await page.locator('.connection-item').click()
+  await page.locator('.connection-item').first().click()
   await expect(page.locator('.titlebar')).toBeVisible()
   await selectRailMode(page, 'files')
   await expect(page.locator('.file-panel')).toBeVisible()
@@ -135,4 +144,23 @@ test('a finished row drops while another transfer is still queued', async ({ pag
   await expect(list(page).locator('.file-transfer-row.done')).toHaveCount(0, { timeout: 12_000 })
   await expect(list(page).locator('.file-transfer-row.queued')).toHaveCount(1)
   await expect(list(page)).toBeVisible()
+})
+
+// The queue is app-wide (the drawer's transfer tab needs that), but the panel's
+// list is per connection. It used to read the whole queue, so opening a second
+// connection replayed the first one's "Transfers complete" rows — and the panel
+// remounts while the new session comes up, which reset the auto-close bookkeeping
+// and brought them back for a full delay each time.
+test("a new connection does not inherit the previous one's finished list", async ({ page }) => {
+  await boot(page, [SECOND_CONN])
+  await downloadTheFile(page)
+  await resolvePendingCall(page)
+  await expect(list(page).locator('.file-transfer-row.done')).toHaveCount(1)
+
+  // Open the second connection: the file panel follows the focused tab.
+  await selectRailMode(page, 'hosts')
+  await page.locator('.connection-item', { hasText: 'Second' }).click()
+  await selectRailMode(page, 'files')
+  await expect(page.locator('.file-panel')).toBeVisible()
+  await expect(list(page)).toHaveCount(0)
 })
