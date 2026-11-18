@@ -685,7 +685,12 @@
   resolved "https://registry.npmjs.org/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.62.0.tgz"
   integrity sha512-5L+T1fMX4RIEBoZzT0+sQ0PhTS36NULFmMXtl1TZo44TMAROIMHbZufSOjVWt/Y622BtxgxtaNOokbTDvfsrZA==
 
-"@tauri-apps/api@^2", "@tauri-apps/api@^2.10.1", "@tauri-apps/api@^2.11.0":
+"@tauri-apps/api@^2", "@tauri-apps/api@^2.10.1", "@tauri-apps/api@^2.12.0":
+  version "2.12.5"
+  resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-2.12.5.tgz#e7484e38aede505c74ec258b10b703262dcda787"
+  integrity sha512-G9QIMt5fzED+aS4QhVK3w1HWLKpLIwH/MnpCr9z1ugGEHnS2ORmqrLkc0uALOjRK4qXJy+4Yiw8LDl/KicC1Hg==
+
+"@tauri-apps/api@^2.11.0":
   version "2.11.0"
   resolved "https://registry.npmjs.org/@tauri-apps/api/-/api-2.11.0.tgz"
   integrity sha512-7CinYODhky9lmO23xHnUFv0Xt43fbtWMyxZcLcRBlFkcgXKuEirBvHpmtJ89YMhyeGcq20Wuc47Fa4XjyniywA==
@@ -777,11 +782,11 @@
     "@tauri-apps/api" "^2.10.1"
 
 "@tauri-apps/plugin-updater@^2.10.1":
-  version "2.10.1"
-  resolved "https://registry.npmjs.org/@tauri-apps/plugin-updater/-/plugin-updater-2.10.1.tgz"
-  integrity sha512-NFYMg+tWOZPJdzE/PpFj2qfqwAWwNS3kXrb1tm1gnBJ9mYzZ4WDRrwy8udzWoAnfGCHLuePNLY1WVCNHnh3eRA==
+  version "2.14.1"
+  resolved "https://registry.yarnpkg.com/@tauri-apps/plugin-updater/-/plugin-updater-2.14.1.tgz#f1ae182e36409a7d32cdfbfc897b1c848b7ff94d"
+  integrity sha512-Hr7nlBm1wT6xbwzjZ/S36YULazu8MNlj5vvOwMl47fXI7HTa5Bjl1PbDEwVHaZTAKzE1VZsUy35UqnbrQxmYQw==
   dependencies:
-    "@tauri-apps/api" "^2.10.1"
+    "@tauri-apps/api" "^2.12.0"
 
 "@types/babel__core@^7.20.5":
   version "7.20.5"
