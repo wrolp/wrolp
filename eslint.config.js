@@ -11,6 +11,9 @@ export default tseslint.config(
       'coverage/',
       'dist-check/',
       'src-tauri/target/',
+      // Release staging output (`scripts/prune-release-target.mjs`); its bundled
+      // JS is build artifact, not source.
+      'src-tauri/target-release/',
       'src-tauri/gen/',
       // Vendored/minified third-party bundles are not our code to lint.
       '**/*.min.js',
