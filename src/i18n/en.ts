@@ -573,6 +573,11 @@ const en = {
   homeRecentLocal: 'Local terminals',
   homeRecentCountHelp:
     'How many entries each list keeps (1–50). Both default to 10; the lists are sized independently.',
+  homeRecentOrderLabel: 'Home recency list sides',
+  homeRecentOrderLocalFirst: 'Local terminals on the left',
+  homeRecentOrderRemoteFirst: 'Remote hosts on the left',
+  homeRecentOrderHelp:
+    'Which of the two Home recency lists sits on the left. The default puts local terminals on the left.',
   homeUnpinnedHint:
     'Home is no longer pinned to the tab bar — turn "Always show Home" back on in Settings → Appearance.',
   windowOpacityLightDisabled:

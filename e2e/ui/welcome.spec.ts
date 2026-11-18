@@ -325,3 +325,22 @@ test('the Settings → Appearance counts resize the Home lists', async ({ page }
   await expect(remoteRows(page)).toHaveCount(2)
   await expect(localRows(page)).toHaveCount(0)
 })
+
+test('the recency cards sit local-first by default and swap sides when configured', async ({
+  page,
+}) => {
+  await boot(page, { connections: BASE })
+
+  // DOM order, not just placement: tab order has to follow what the eye sees.
+  const cards = page.locator('.welcome-recent-row > .welcome-card')
+  await expect(cards.nth(0)).toHaveAttribute('data-testid', 'welcome-recent-local')
+  await expect(cards.nth(1)).toHaveAttribute('data-testid', 'welcome-recent-remote')
+
+  await page.locator('.settings-btn').click()
+  await page.locator('#home-recent-order').selectOption('remote-first')
+  expect(await page.evaluate(() => localStorage.getItem('wrolp-recent-order'))).toBe('remote-first')
+
+  await page.locator('.tab-item.active .tab-close').click()
+  await expect(cards.nth(0)).toHaveAttribute('data-testid', 'welcome-recent-remote')
+  await expect(cards.nth(1)).toHaveAttribute('data-testid', 'welcome-recent-local')
+})

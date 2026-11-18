@@ -214,10 +214,12 @@ import {
   readSetting,
   HOME_RECENT_COUNT,
   readHomeRecentCount,
+  readHomeRecentOrder,
   TERMINAL_FONT_CHOICES,
   withNerdFontFallback,
   type AppearanceSnapshot,
   type HomeRecentCountKey,
+  type HomeRecentOrder,
   type SettingGroup,
 } from './lib/appSettings'
 import { installAiUiBridge, saveAiAppearanceConfig, useAiAppearanceConfig } from './lib/aiUiBridge'
@@ -1276,12 +1278,16 @@ function AppearanceSettingsCard({
   const [minimalFullscreen, setMinimalFullscreen] = useState(
     () => readSetting('ui.minimalFullscreen')?.value === true,
   )
+  // Which Home recency list sits on the left. Read through the same registry path
+  // as everything else on this card so an AI change shows up here live.
+  const [recentOrder, setRecentOrder] = useState<HomeRecentOrder>(() => readHomeRecentOrder())
   useEffect(
     () =>
       subscribeAppSettings(() => {
         setAlwaysShowHome(readSetting('ui.alwaysShowHome')?.value !== false)
         setShowStatusBar(readSetting('ui.showStatusBar')?.value !== false)
         setMinimalFullscreen(readSetting('ui.minimalFullscreen')?.value === true)
+        setRecentOrder(readHomeRecentOrder())
       }),
     [],
   )
@@ -1509,6 +1515,22 @@ function AppearanceSettingsCard({
           />
           <span className="settings-label">{t('minimalFullscreenLabel')}</span>
           <span className="settings-help">{t('minimalFullscreenHelp')}</span>
+        </div>
+
+        <div className="settings-field">
+          <label htmlFor="home-recent-order" className="settings-label">
+            {t('homeRecentOrderLabel')}
+          </label>
+          <select
+            id="home-recent-order"
+            className="settings-select"
+            value={recentOrder}
+            onChange={(e) => write({ 'ui.recentOrder': e.target.value })}
+          >
+            <option value="local-first">{t('homeRecentOrderLocalFirst')}</option>
+            <option value="remote-first">{t('homeRecentOrderRemoteFirst')}</option>
+          </select>
+          <span className="settings-help">{t('homeRecentOrderHelp')}</span>
         </div>
 
         <div className="settings-field">

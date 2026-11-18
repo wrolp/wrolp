@@ -545,6 +545,10 @@ const zh: Partial<Record<TranslationKey, string>> = {
   homeRecentRemote: '远程主机',
   homeRecentLocal: '本地终端',
   homeRecentCountHelp: '两个列表各自保留的条数（1–50），默认各 10 条，互不影响。',
+  homeRecentOrderLabel: '首页最近列表左右位置',
+  homeRecentOrderLocalFirst: '本地终端在左',
+  homeRecentOrderRemoteFirst: '远程主机在左',
+  homeRecentOrderHelp: '两块最近列表的左右位置，默认本地终端显示在左边。',
   homeUnpinnedHint: '首页已取消标签栏常驻，可在「设置 → 外观」里重新开启「一直显示首页」。',
   windowOpacityLightDisabled: '浅色主题下窗口保持不透明（半透明会透出桌面，观感发脏）。',
   // 设备身份（host key 指纹）

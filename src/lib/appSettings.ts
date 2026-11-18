@@ -212,6 +212,10 @@ export const HOME_RECENT_COUNT = { default: 10, min: 1, max: 50 } as const
 
 export type HomeRecentCountKey = 'ui.recentRemoteCount' | 'ui.recentLocalCount'
 
+/** Which of the two Home recency lists sits on the left. `local-first` is the
+ *  ordering the page has always shipped with, so an untouched install keeps it. */
+export type HomeRecentOrder = 'local-first' | 'remote-first'
+
 const defaultHighlightColors = cloneDefaultConfig().rules.reduce<Record<string, string>>(
   (acc, r) => {
     acc[r.key] = r.color
@@ -543,6 +547,18 @@ const DEFS: SettingDef[] = [
     storage: { kind: 'localStorage', key: 'wrolp-recent-local-count' },
     describe: 'How many recently used local terminals the Home page lists (1–50, default 10).',
   },
+  {
+    key: 'ui.recentOrder',
+    kind: 'enum',
+    values: ['local-first', 'remote-first'],
+    group: 'ui',
+    default: 'local-first',
+    // Only the sides swap. Each list keeps its own content and cap (the two count
+    // keys above), and `local-first` matches what the page shipped with.
+    storage: { kind: 'localStorage', key: 'wrolp-recent-order' },
+    describe:
+      'Which Home page recency list sits on the left: "local-first" puts local terminals on the left (default), "remote-first" puts remote hosts on the left.',
+  },
 
   // ---- git ---------------------------------------------------------------
   {
@@ -742,6 +758,14 @@ export function readHomeRecentCount(key: HomeRecentCountKey): number {
   return Number.isFinite(n)
     ? Math.min(HOME_RECENT_COUNT.max, Math.max(HOME_RECENT_COUNT.min, Math.round(n)))
     : HOME_RECENT_COUNT.default
+}
+
+/** Which side the local Home list takes. An unknown stored value reads as the
+ *  default (`local-first`), so a corrupt key can only ever restore the shipped order. */
+export function readHomeRecentOrder(): HomeRecentOrder {
+  const def = BY_KEY.get('ui.recentOrder')
+  const raw = def ? String(readValue(def)) : ''
+  return raw === 'remote-first' ? 'remote-first' : 'local-first'
 }
 
 /** Read all registered settings (or a validated subset of keys). */
