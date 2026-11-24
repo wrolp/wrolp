@@ -378,6 +378,8 @@ const en = {
   newFolder: 'New Folder',
   refreshThisFolder: 'Refresh folder',
   rename: 'Rename',
+  fileDeleteCount: 'Delete {count} items',
+  fileDeleteMultiConfirm: 'Delete {count} selected items? This cannot be undone.',
   fileEditor: 'File Editor',
   transfers: 'Transfers',
   transfersComplete: 'Transfers complete',

@@ -505,7 +505,9 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // which looks out of place in the WebView and can be blocked).
   const [renameTarget, setRenameTarget] = useState<TreeNode | null>(null)
   const [renameValue, setRenameValue] = useState('')
-  const [deleteTarget, setDeleteTarget] = useState<TreeNode | null>(null)
+  // One entry per selected node: the context menu's single "Delete" pushes the
+  // right-clicked node, "Delete N items" pushes the whole multi-selection.
+  const [deleteTargets, setDeleteTargets] = useState<TreeNode[]>([])
   // Copy/rename prompt: shown when a remote-internal paste lands on a name
   // that already exists in the destination folder. Stores the pending copy so
   // the user can pick a new name instead of silently auto-suffixing.
@@ -1280,18 +1282,21 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   /* ---- context-menu actions ---- */
 
-  // All selected non-directory nodes (used for multi-file download).
-  const selectedFiles = useMemo(() => {
+  // All selected nodes, in tree order (directories included).
+  const selectedNodes = useMemo(() => {
     const out: TreeNode[] = []
     const collect = (ns: TreeNode[]) => {
       for (const n of ns) {
-        if (selPaths.has(n.path) && !n.isDir) out.push(n)
+        if (selPaths.has(n.path)) out.push(n)
         if (n.children) collect(n.children)
       }
     }
     collect(tree)
     return out
   }, [selPaths, tree])
+
+  // All selected non-directory nodes (used for multi-file download).
+  const selectedFiles = useMemo(() => selectedNodes.filter((n) => !n.isDir), [selectedNodes])
 
   const resolveBaseDir = (baseNode: TreeNode | null): string => {
     if (baseNode) return baseNode.isDir ? baseNode.path : getParentDir(baseNode.path)
@@ -1380,55 +1385,79 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
 
   const handleDelete = (node: TreeNode) => {
     setContextMenu(null)
-    setDeleteTarget(node)
+    setDeleteTargets([node])
+  }
+
+  const handleDeleteSelected = () => {
+    setContextMenu(null)
+    setDeleteTargets(selectedNodes)
   }
 
   const confirmDelete = async () => {
-    if (!deleteTarget) return
-    const node = deleteTarget
-    setDeleteTarget(null)
-    if (node.isDir && sessionTabId != null) {
-      // Recursive directory delete: show a per-file progress row (only the
-      // main session streams `transfer-progress` delete events).
-      setPaused(false)
-      const key = `delete:${node.path}`
-      setTransferRows((prev) =>
-        mergeRows(prev, [
-          {
-            key,
-            filename: node.name + '/',
-            op: 'delete',
-            status: 'active',
-            transferred: 0,
-            total: 0,
-            speed: '',
-            tabId: sessionTabId ?? undefined,
-            ownerTabId: tabId,
-          },
-        ]),
-      )
-      try {
-        await fsDeleteFile(target, node.path, true)
-        setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'done' } : r)))
-        reloadDirectory(getParentDir(node.path))
-      } catch (e) {
-        const cancelled = cancelledKeysRef.current.has(key)
+    if (deleteTargets.length === 0) return
+    // A selected directory already takes its selected descendants with it, so
+    // drop those to avoid a second delete (which would fail after the first).
+    const targets = deleteTargets.filter(
+      (n) =>
+        !deleteTargets.some(
+          (o) =>
+            o !== n && o.isDir && n.path.startsWith(o.path.endsWith('/') ? o.path : o.path + '/'),
+        ),
+    )
+    setDeleteTargets([])
+    const parents = new Set<string>()
+    let firstError = ''
+    // Only the main session streams `transfer-progress` delete events, so the
+    // per-directory progress row is offered there only.
+    const showDirProgress = sessionTabId != null
+    for (const node of targets) {
+      const parent = getParentDir(node.path)
+      if (node.isDir && showDirProgress) {
+        setPaused(false)
+        const key = `delete:${node.path}`
         setTransferRows((prev) =>
-          prev.map((r) =>
-            r.key === key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
-          ),
+          mergeRows(prev, [
+            {
+              key,
+              filename: node.name + '/',
+              op: 'delete',
+              status: 'active',
+              transferred: 0,
+              total: 0,
+              speed: '',
+              tabId: sessionTabId ?? undefined,
+              ownerTabId: tabId,
+            },
+          ]),
         )
-        if (!cancelled) setError(String(e))
-        reloadDirectory(getParentDir(node.path))
+        try {
+          await fsDeleteFile(target, node.path, true)
+          setTransferRows((prev) => prev.map((r) => (r.key === key ? { ...r, status: 'done' } : r)))
+        } catch (e) {
+          const cancelled = cancelledKeysRef.current.has(key)
+          setTransferRows((prev) =>
+            prev.map((r) =>
+              r.key === key ? { ...r, status: cancelled ? 'cancelled' : 'error' } : r,
+            ),
+          )
+          if (!cancelled && !firstError) firstError = String(e)
+        }
+      } else {
+        try {
+          await fsDeleteFile(target, node.path, node.isDir)
+        } catch (e) {
+          if (!firstError) firstError = String(e)
+        }
       }
-      return
+      parents.add(parent)
     }
-    try {
-      await fsDeleteFile(target, node.path, node.isDir)
-      reloadDirectory(getParentDir(node.path))
-    } catch (e) {
-      setError(String(e))
-    }
+    parents.forEach((p) => void reloadDirectory(p))
+    setSelPaths((prev) => {
+      const next = new Set(prev)
+      targets.forEach((n) => next.delete(n.path))
+      return next
+    })
+    if (firstError) setError(firstError)
   }
 
   const handleDownload = async (node: TreeNode) => {
@@ -2624,12 +2653,17 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
               <Icon name="edit" /> Rename
             </div>
           )}
-          {contextMenu.node && (
+          {contextMenu.node && selectedNodes.length <= 1 && (
             <div
               className="context-menu-item ctx-danger"
               onClick={() => handleDelete(contextMenu.node!)}
             >
               <Icon name="trash" /> Delete
+            </div>
+          )}
+          {contextMenu.node && selectedNodes.length > 1 && (
+            <div className="context-menu-item ctx-danger" onClick={handleDeleteSelected}>
+              <Icon name="trash" /> {t('fileDeleteCount', { count: selectedNodes.length })}
             </div>
           )}
           {!contextMenu.node && <div className="context-menu-divider" />}
@@ -2777,17 +2811,19 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
       )}
 
       {/* Custom delete confirmation */}
-      {deleteTarget && (
+      {deleteTargets.length > 0 && (
         <div className="modal-overlay">
           <div className="modal">
             <div className="modal-title">Delete</div>
             <div className="modal-body" style={{ padding: '12px 20px' }}>
-              {deleteTarget.isDir
-                ? `Delete directory "${deleteTarget.name}" and all its contents?`
-                : `Delete file "${deleteTarget.name}"?`}
+              {deleteTargets.length > 1
+                ? t('fileDeleteMultiConfirm', { count: deleteTargets.length })
+                : deleteTargets[0].isDir
+                  ? `Delete directory "${deleteTargets[0].name}" and all its contents?`
+                  : `Delete file "${deleteTargets[0].name}"?`}
             </div>
             <div className="modal-actions">
-              <button onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button onClick={() => setDeleteTargets([])}>Cancel</button>
               <button className="danger" onClick={() => void confirmDelete()}>
                 Delete
               </button>

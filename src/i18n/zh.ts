@@ -371,6 +371,8 @@ const zh: Partial<Record<TranslationKey, string>> = {
   newFolder: '新建文件夹',
   refreshThisFolder: '刷新此文件夹',
   rename: '重命名',
+  fileDeleteCount: '删除选中的 {count} 项',
+  fileDeleteMultiConfirm: '确定删除选中的 {count} 个项目？此操作不可撤销。',
   fileEditor: '文件编辑器',
   transfers: '传输中',
   transfersComplete: '传输完成',
