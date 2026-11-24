@@ -1,6 +1,11 @@
 import { test, expect, type Page } from './helpers/fixtures'
 import { selectRailMode } from './helpers/sections'
-import { installTauriMock, resolvePendingCall, type MockConnection } from './helpers/tauriMock'
+import {
+  installTauriMock,
+  emitTauriEvent,
+  resolvePendingCall,
+  type MockConnection,
+} from './helpers/tauriMock'
 
 // The file panel's transfer list closes itself once nothing is in flight, but it
 // only *hides*: the rows belong to the app-wide queue (v8-P4) and the drawer's
@@ -139,11 +144,76 @@ test('a finished row drops while another transfer is still queued', async ({ pag
   // A second transfer stays queued (the mock holds it), so the panel stays open.
   await downloadNamedFile(page, 'b.log')
   await expect(list(page).locator('.file-transfer-row.queued')).toHaveCount(1)
+  // Live rows float to the top; the finished one drops below them.
+  await expect(list(page).locator('.file-transfer-row').first()).toHaveClass(/queued/)
+  await expect(list(page).locator('.file-transfer-row').last()).toHaveClass(/done/)
 
   // The finished row leaves on its own timer; the queued one keeps the panel up.
   await expect(list(page).locator('.file-transfer-row.done')).toHaveCount(0, { timeout: 12_000 })
   await expect(list(page).locator('.file-transfer-row.queued')).toHaveCount(1)
   await expect(list(page)).toBeVisible()
+})
+
+// Same idea, but the sibling is *streaming progress* rather than sitting queued.
+// Every tick used to replace the queue snapshot and restart the shared dismiss
+// timer, so a finished row outlived the whole batch — the "batch delete only
+// disappears once everything is done" report.
+test('a finished row drops on its own clock while a sibling keeps ticking', async ({ page }) => {
+  await boot(page)
+  await downloadNamedFile(page, 'app.log')
+  await resolvePendingCall(page)
+  await expect(list(page).locator('.file-transfer-row.done')).toHaveCount(1)
+
+  await downloadNamedFile(page, 'b.log')
+  await expect(list(page).locator('.file-transfer-row.queued')).toHaveCount(1)
+  // The queued row only turns `active` on its first backend tick.
+  let transferred = 1024
+  await emitTauriEvent(page, 'transfer-progress', {
+    tabId: 1,
+    op: 'download',
+    filename: 'b.log',
+    transferred,
+    total: 10 * 1024 * 1024,
+    elapsed: 1000,
+  })
+  const live = list(page).locator('.file-transfer-row.active')
+  await expect(live).toHaveCount(1)
+
+  // Keep the second transfer busy for longer than the dismiss delay: on the old
+  // shared-timer logic this alone keeps the done row alive.
+  const until = Date.now() + 6500
+  while (Date.now() < until) {
+    transferred += 1024
+    await emitTauriEvent(page, 'transfer-progress', {
+      tabId: 1,
+      op: 'download',
+      filename: 'b.log',
+      transferred,
+      total: 10 * 1024 * 1024,
+      elapsed: 1000,
+    })
+    await page.waitForTimeout(250)
+  }
+
+  await expect(list(page).locator('.file-transfer-row.done')).toHaveCount(0)
+  await expect(live).toHaveCount(1)
+})
+
+// Reconnects and rail switches remount the panel but leave the app-wide queue
+// alone; a row that already had its result shown must not replay for another
+// delay ("断开重连时又弹出来").
+test('a dismissed row stays gone after the panel remounts', async ({ page }) => {
+  await boot(page)
+  await downloadTheFile(page)
+  await resolvePendingCall(page)
+  await expect(list(page).locator('.file-transfer-row.done')).toHaveCount(1)
+  await expect(list(page)).toHaveCount(0, { timeout: 12_000 })
+
+  // Leave the files rail and come back: the panel unmounts and remounts.
+  await selectRailMode(page, 'hosts')
+  await selectRailMode(page, 'files')
+  await expect(page.locator('.file-panel')).toBeVisible()
+  await expect(list(page)).toHaveCount(0)
 })
 
 // The queue is app-wide (the drawer's transfer tab needs that), but the panel's

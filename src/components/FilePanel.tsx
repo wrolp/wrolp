@@ -41,6 +41,7 @@ import { formatSize } from '../lib/format'
 import {
   useTransferRows,
   useUpdateTransferRows,
+  dismissTransferRows,
   formatSpeed,
   type TransferRow,
 } from '../lib/transferQueue'
@@ -1822,52 +1823,73 @@ export const FilePanel = forwardRef<FileTreeHandle, FilePanelProps>(function Fil
   // A finished row is only clutter: it steals height from the file tree and has
   // nothing left to watch. Each row is therefore dropped from the *panel* (not
   // from the app-wide queue) a few seconds after it settles, whether or not other
-  // transfers are still running — a done row next to an active one used to linger
-  // until the whole list settled, which is the "completed item never disappears"
-  // report. The drawer's transfer tab still holds the rows for review (v8-P4).
-  // Hovering postpones the drop so nothing vanishes mid-read; a new transfer with
-  // the same key re-shows its row.
+  // transfers are still running. The drawer's transfer tab still holds the rows
+  // for review (v8-P4). Hovering postpones the drop so nothing vanishes mid-read;
+  // a new transfer with the same key re-shows its row.
+  //
+  // Timing is per row: a single shared timer used to restart whenever *any* row
+  // changed, so a busy sibling's progress ticks kept pushing finished rows' drop
+  // back until the whole batch ended ("删除完成后要等全部结束才一起消失").
   const [transfersHovered, setTransfersHovered] = useState(false)
-  const [hiddenTransferKeys, setHiddenTransferKeys] = useState<Set<string>>(new Set())
+  const dismissTimersRef = useRef<Map<string, number>>(new Map())
+  const settledAtRef = useRef<Map<string, number>>(new Map())
   // Only the rows this panel started. The queue itself is app-wide so the
   // drawer can show every tab's transfers, and a row's `tabId` addresses the
   // backend (a jump/docker target reports under its jump tab, or none), so the
   // owning tab is stamped separately at creation. Without this scoping, opening
   // a new connection replayed the previous connection's "Transfers complete".
+  // `dismissed` lives on the row itself, so a panel that remounts (reconnect,
+  // target switch) still knows what it has already shown.
   const panelTransferRows = transferRows.filter((r) => r.ownerTabId === tabId)
-  const visibleTransferRows = panelTransferRows.filter(
-    (r) => isLiveTransfer(r) || !hiddenTransferKeys.has(r.key),
-  )
-  // A row that is live again (its key was reused by a new transfer) must show,
-  // even if a previous run with that key had been dropped.
+  // Live rows on top, settled ones at the bottom: a row that finishes visually
+  // moves down instead of holding the position it had while running. The sort is
+  // stable, so each group keeps its queue (creation) order.
+  const visibleTransferRows = panelTransferRows
+    .filter((r) => isLiveTransfer(r) || !r.dismissed)
+    .sort((a, b) => Number(isLiveTransfer(b)) - Number(isLiveTransfer(a)))
   useEffect(() => {
-    setHiddenTransferKeys((prev) => {
-      let changed = false
-      const next = new Set(prev)
-      for (const r of transferRows) {
-        if (r.ownerTabId === tabId && isLiveTransfer(r) && next.delete(r.key)) changed = true
-      }
-      return changed ? next : prev
-    })
-  }, [transferRows, tabId])
-  // Drop rows that have settled (and are still visible) after the delay. Only
-  // this panel's rows: a transfer that finishes while another tab is focused
-  // should still show its result when the user comes back to it.
-  useEffect(() => {
-    if (transfersHovered) return
+    const timers = dismissTimersRef.current
     const settled = transferRows.filter(
-      (r) => r.ownerTabId === tabId && !isLiveTransfer(r) && !hiddenTransferKeys.has(r.key),
+      (r) => r.ownerTabId === tabId && !isLiveTransfer(r) && !r.dismissed,
     )
-    if (settled.length === 0) return
-    const timer = window.setTimeout(() => {
-      setHiddenTransferKeys((prev) => {
-        const next = new Set(prev)
-        for (const r of settled) next.add(r.key)
-        return next
-      })
-    }, TRANSFER_DISMISS_MS)
-    return () => window.clearTimeout(timer)
-  }, [transferRows, hiddenTransferKeys, transfersHovered, tabId])
+    const settledKeys = new Set(settled.map((r) => r.key))
+    // Cancel timers for rows that were removed, restarted, already dropped, or
+    // are being held by hover — those start a fresh delay when they settle again.
+    for (const key of [...timers.keys()]) {
+      if (transfersHovered || !settledKeys.has(key)) {
+        window.clearTimeout(timers.get(key))
+        timers.delete(key)
+        settledAtRef.current.delete(key)
+      }
+    }
+    if (transfersHovered) return
+    const now = Date.now()
+    for (const r of settled) {
+      if (timers.has(r.key)) continue
+      const settledAt = settledAtRef.current.get(r.key) ?? now
+      settledAtRef.current.set(r.key, settledAt)
+      const delay = Math.max(0, settledAt + TRANSFER_DISMISS_MS - now)
+      timers.set(
+        r.key,
+        window.setTimeout(() => {
+          timers.delete(r.key)
+          settledAtRef.current.delete(r.key)
+          dismissTransferRows([r.key])
+        }, delay),
+      )
+    }
+  }, [transferRows, transfersHovered, tabId])
+  // Target switches and reconnects unmount this panel; pending timers must not
+  // fire into a queue that no panel is watching anymore.
+  useEffect(() => {
+    const timers = dismissTimersRef.current
+    const settledAt = settledAtRef.current
+    return () => {
+      for (const t of timers.values()) window.clearTimeout(t)
+      timers.clear()
+      settledAt.clear()
+    }
+  }, [])
 
   /* ---- transfers panel drag-to-resize ---- */
   const transfersDragRef = useRef<{ startY: number; startH: number } | null>(null)

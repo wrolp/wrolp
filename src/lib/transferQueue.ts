@@ -38,6 +38,12 @@ export interface TransferRow {
    * (or none at all) rather than the connection the panel belongs to.
    */
   ownerTabId: number
+  /**
+   * Hidden from the file panel's inline list because its result has already been
+   * shown. Lives on the row so a remounted panel (reconnect, target switch) does
+   * not replay finished rows; the drawer's transfer tab ignores it.
+   */
+  dismissed?: boolean
 }
 
 /** Payload of the backend's `transfer-progress` event. */
@@ -127,6 +133,26 @@ export function clearFinishedTransfers(): void {
     if (!keep.has(key)) lastSample.delete(key)
   }
   rows = rows.filter((r) => keep.has(r.key))
+  emit()
+}
+
+/**
+ * Hide settled rows from the file panel's inline list. They stay in the queue
+ * (the drawer still lists them); the flag is on the row, not in panel state, so
+ * a panel that remounts after a reconnect cannot bring them back for another
+ * delay. A re-created row with the same key starts undismissed.
+ */
+export function dismissTransferRows(keys: string[]): void {
+  const set = new Set(keys)
+  if (set.size === 0) return
+  let changed = false
+  const next = rows.map((r) => {
+    if (r.dismissed || !set.has(r.key)) return r
+    changed = true
+    return { ...r, dismissed: true }
+  })
+  if (!changed) return
+  rows = next
   emit()
 }
 
