@@ -1393,6 +1393,54 @@ export async function k8sScaleResource(
   })
 }
 
+export async function k8sRestartWorkload(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  kind: string,
+  name: string,
+): Promise<string> {
+  return await invoke<string>('k8s_restart_workload', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    kind,
+    name,
+  })
+}
+
+export async function k8sStopWorkload(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  kind: string,
+  name: string,
+): Promise<string> {
+  return await invoke<string>('k8s_stop_workload', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    kind,
+    name,
+  })
+}
+
+export async function k8sStartWorkload(
+  host: K8sHostRef,
+  context: string | null | undefined,
+  namespace: string | null | undefined,
+  kind: string,
+  name: string,
+): Promise<string> {
+  return await invoke<string>('k8s_start_workload', {
+    host,
+    context: context ?? null,
+    namespace: namespace ?? null,
+    kind,
+    name,
+  })
+}
+
 export async function k8sApplyYaml(
   host: K8sHostRef,
   context: string | null | undefined,

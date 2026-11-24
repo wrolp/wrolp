@@ -33,11 +33,15 @@ const POD = {
  * The panel opens in All namespaces. Tests that assert a namespace-scoped
  * command select `apps` explicitly; pass `null` to keep the default.
  */
-async function boot(page: Page, namespace: string | null = 'apps') {
+async function boot(
+  page: Page,
+  namespace: string | null = 'apps',
+  resources: Record<string, unknown[]> = { pods: [POD] },
+) {
   await installTauriMock(page, {
     k8sContexts: CONTEXTS,
     k8sNamespaces: NAMESPACES,
-    k8sResources: { pods: [POD] },
+    k8sResources: resources,
     k8sYaml: 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-0\n',
     k8sLogs: 'one-shot web-0 log\n',
     // Two drains, then the stream reports itself ended — enough to prove the viewer
@@ -190,6 +194,66 @@ test('logs stream into the viewer and delete is scoped to its namespace', async 
     .toContainEqual(
       expect.objectContaining({ kind: 'pods', name: 'web-0', namespace: 'apps', context: 'prod' }),
     )
+})
+
+test('a deployment can be restarted, stopped and started', async ({ page }) => {
+  const deployment = (name: string, status: string, ready: string) => ({
+    kind: 'deployments',
+    name,
+    namespace: 'apps',
+    status,
+    ready,
+    restarts: 0,
+    detail: 'nginx:1.29',
+    containers: [],
+    createdAt: '2026-10-01T00:00:00Z',
+  })
+  await boot(page, 'apps', {
+    deployments: [deployment('web', 'Ready', '1/1'), deployment('legacy', 'Stopped', '0/0')],
+  })
+  await page.locator('.k8s-select[aria-label="Resource"]').selectOption('deployments')
+  const rows = page.locator('.k8s-item')
+  await expect(rows).toHaveCount(2)
+
+  // Restart is destructive-ish, so it confirms first.
+  await rows.filter({ hasText: 'web' }).click({ button: 'right' })
+  await menuItem(page, /^Restart$/).click()
+  await expect(page.locator('.confirm-dialog')).toContainText('deployments')
+  await page.locator('.confirm-dialog .btn-primary').click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'k8s_restart_workload').map((c) => c.args),
+    )
+    .toContainEqual(
+      expect.objectContaining({
+        kind: 'deployments',
+        name: 'web',
+        namespace: 'apps',
+        context: 'prod',
+      }),
+    )
+
+  // Stop uses the danger button and hits its own command.
+  await rows.filter({ hasText: 'web' }).click({ button: 'right' })
+  await menuItem(page, /^Stop$/).click()
+  await expect(page.locator('.confirm-dialog')).toContainText('Stop deployments')
+  await page.locator('.confirm-dialog .btn-danger').click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'k8s_stop_workload').map((c) => c.args),
+    )
+    .toContainEqual(expect.objectContaining({ kind: 'deployments', name: 'web' }))
+
+  // A scaled-to-zero row offers Start (not Stop) and starts without a dialog.
+  await rows.filter({ hasText: 'legacy' }).click({ button: 'right' })
+  await expect(menuItem(page, /^Stop$/)).toHaveCount(0)
+  await menuItem(page, /^Start$/).click()
+  await expect(page.locator('.confirm-dialog')).toHaveCount(0)
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'k8s_start_workload').map((c) => c.args),
+    )
+    .toContainEqual(expect.objectContaining({ kind: 'deployments', name: 'legacy' }))
 })
 
 test('apply sends the editor text and exec opens a local kubectl shell', async ({ page }) => {

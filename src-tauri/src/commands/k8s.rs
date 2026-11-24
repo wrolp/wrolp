@@ -234,6 +234,221 @@ pub async fn k8s_scale_resource(
   stdout_or_error(&format!("scale {kind}/{name}"), out, err, status)
 }
 
+/// Replica count recorded before a workload is stopped, so starting it restores
+/// what it had — a scaled-to-zero object no longer remembers its own size.
+const PREV_REPLICAS_ANNOTATION: &str = "wrolp.terminal/previous-replicas";
+
+/// Read one object as JSON; the lifecycle verbs need its current (or recorded)
+/// replica count.
+async fn get_resource_json(
+  state: &tauri::State<'_, AppState>,
+  host: &K8sHostRef,
+  context: Option<&str>,
+  namespace: Option<&str>,
+  kind: &str,
+  name: &str,
+) -> Result<Value, String> {
+  let argv = kubectl_argv(
+    context,
+    namespace,
+    false,
+    &[
+      "get".to_string(),
+      format!("{kind}/{name}"),
+      "-o".to_string(),
+      "json".to_string(),
+    ],
+  );
+  let (out, err, status) = exec_kubectl(state, host, &argv, None).await?;
+  if status != 0 {
+    return Err(failure(&format!("get {kind}/{name}"), &err, status));
+  }
+  serde_json::from_slice(&out).map_err(|e| format!("kubectl returned invalid {kind} JSON: {e}"))
+}
+
+/// `kubectl rollout restart` — the controller replaces pods one by one.
+#[tauri::command]
+pub async fn k8s_restart_workload(
+  state: tauri::State<'_, AppState>,
+  host: K8sHostRef,
+  context: Option<String>,
+  namespace: Option<String>,
+  kind: String,
+  name: String,
+) -> Result<String, String> {
+  let kind = checked_kind(&kind)?;
+  if !matches!(kind, "deployments" | "statefulsets" | "daemonsets") {
+    return Err(format!("{kind} cannot be restarted"));
+  }
+  let argv = kubectl_argv(
+    context.as_deref(),
+    namespace.as_deref(),
+    false,
+    &[
+      "rollout".to_string(),
+      "restart".to_string(),
+      format!("{kind}/{name}"),
+    ],
+  );
+  let (out, err, status) = exec_kubectl(&state, &host, &argv, None).await?;
+  stdout_or_error(&format!("rollout restart {kind}/{name}"), out, err, status)
+}
+
+/// Stop without deleting: workloads are scaled to zero, cron jobs are suspended.
+/// The previous replica count is annotated first so [`k8s_start_workload`] can
+/// restore it.
+#[tauri::command]
+pub async fn k8s_stop_workload(
+  state: tauri::State<'_, AppState>,
+  host: K8sHostRef,
+  context: Option<String>,
+  namespace: Option<String>,
+  kind: String,
+  name: String,
+) -> Result<String, String> {
+  let kind = checked_kind(&kind)?;
+  match kind {
+    "deployments" | "statefulsets" => {
+      let obj = get_resource_json(
+        &state,
+        &host,
+        context.as_deref(),
+        namespace.as_deref(),
+        kind,
+        &name,
+      )
+      .await?;
+      let replicas = obj
+        .pointer("/spec/replicas")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+      if replicas == 0 {
+        return Ok(format!("{kind}/{name} is already stopped"));
+      }
+      let argv = kubectl_argv(
+        context.as_deref(),
+        namespace.as_deref(),
+        false,
+        &[
+          "annotate".to_string(),
+          format!("{kind}/{name}"),
+          format!("{PREV_REPLICAS_ANNOTATION}={replicas}"),
+          "--overwrite".to_string(),
+        ],
+      );
+      let (out, err, status) = exec_kubectl(&state, &host, &argv, None).await?;
+      stdout_or_error(&format!("annotate {kind}/{name}"), out, err, status)?;
+      let argv = kubectl_argv(
+        context.as_deref(),
+        namespace.as_deref(),
+        false,
+        &[
+          "scale".to_string(),
+          format!("{kind}/{name}"),
+          "--replicas=0".to_string(),
+        ],
+      );
+      let (out, err, status) = exec_kubectl(&state, &host, &argv, None).await?;
+      stdout_or_error(&format!("scale {kind}/{name}"), out, err, status)
+    }
+    "cronjobs" => {
+      patch_cronjob_suspend(
+        &state,
+        &host,
+        context.as_deref(),
+        namespace.as_deref(),
+        &name,
+        true,
+      )
+      .await
+    }
+    _ => Err(format!("{kind} cannot be stopped")),
+  }
+}
+
+/// Undo [`k8s_stop_workload`]: scale back to the annotated count (1 when it was
+/// never recorded) or resume the cron job.
+#[tauri::command]
+pub async fn k8s_start_workload(
+  state: tauri::State<'_, AppState>,
+  host: K8sHostRef,
+  context: Option<String>,
+  namespace: Option<String>,
+  kind: String,
+  name: String,
+) -> Result<String, String> {
+  let kind = checked_kind(&kind)?;
+  match kind {
+    "deployments" | "statefulsets" => {
+      let obj = get_resource_json(
+        &state,
+        &host,
+        context.as_deref(),
+        namespace.as_deref(),
+        kind,
+        &name,
+      )
+      .await?;
+      // JSON pointer: `/` inside the annotation key is escaped as `~1`.
+      let replicas = obj
+        .pointer("/metadata/annotations/wrolp.terminal~1previous-replicas")
+        .and_then(Value::as_str)
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(1)
+        .max(1);
+      let argv = kubectl_argv(
+        context.as_deref(),
+        namespace.as_deref(),
+        false,
+        &[
+          "scale".to_string(),
+          format!("{kind}/{name}"),
+          format!("--replicas={replicas}"),
+        ],
+      );
+      let (out, err, status) = exec_kubectl(&state, &host, &argv, None).await?;
+      stdout_or_error(&format!("scale {kind}/{name}"), out, err, status)
+    }
+    "cronjobs" => {
+      patch_cronjob_suspend(
+        &state,
+        &host,
+        context.as_deref(),
+        namespace.as_deref(),
+        &name,
+        false,
+      )
+      .await
+    }
+    _ => Err(format!("{kind} cannot be started")),
+  }
+}
+
+async fn patch_cronjob_suspend(
+  state: &tauri::State<'_, AppState>,
+  host: &K8sHostRef,
+  context: Option<&str>,
+  namespace: Option<&str>,
+  name: &str,
+  suspend: bool,
+) -> Result<String, String> {
+  let payload = format!("{{\"spec\":{{\"suspend\":{suspend}}}}}");
+  let argv = kubectl_argv(
+    context,
+    namespace,
+    false,
+    &[
+      "patch".to_string(),
+      format!("cronjobs/{name}"),
+      "--type=merge".to_string(),
+      "-p".to_string(),
+      payload,
+    ],
+  );
+  let (out, err, status) = exec_kubectl(state, host, &argv, None).await?;
+  stdout_or_error(&format!("patch cronjobs/{name}"), out, err, status)
+}
+
 /// Apply a YAML document from the panel's editor. The document goes over stdin, so
 /// `kubectl apply -f -` handles multi-document files and never sees a temp path.
 #[tauri::command]

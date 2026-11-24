@@ -770,6 +770,10 @@ export async function installTauriMock(page: Page, options: TauriMockOptions = {
             return null
           case 'k8s_scale_resource':
             return ''
+          case 'k8s_restart_workload':
+          case 'k8s_stop_workload':
+          case 'k8s_start_workload':
+            return ''
           case 'k8s_apply_yaml':
             return 'mock applied'
           case 'k8s_pod_exec_command':

@@ -33,6 +33,9 @@ import {
   k8sPortForwardStart,
   k8sResourceYaml,
   k8sScaleResource,
+  k8sRestartWorkload,
+  k8sStartWorkload,
+  k8sStopWorkload,
   k8sStopPortForward,
   k8sSaveForwardRule,
   pollK8sLogs,
@@ -239,6 +242,12 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const [scaleValue, setScaleValue] = useState('1')
   const [scaleBusy, setScaleBusy] = useState(false)
   const [scaleError, setScaleError] = useState('')
+  // Restart / stop ask first; starting a stopped object is safe and runs directly.
+  const [lifecycleConfirm, setLifecycleConfirm] = useState<{
+    row: K8sResource
+    context: string
+    action: 'restart' | 'stop'
+  } | null>(null)
   const [copied, setCopied] = useState(false)
   const logRef = useRef<HTMLPreElement>(null)
   // The live `kubectl logs -f` on screen, its next poll, and whether the viewer is
@@ -859,6 +868,43 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     }
   }, [scaleTarget, scaleValue, namespace, rowNamespace, t])
 
+  /** Restart / stop / start one workload (or suspend/resume a cron job). */
+  const runLifecycle = useCallback(
+    async (row: K8sResource, ctx: string, action: 'restart' | 'stop' | 'start') => {
+      const ns = rowNamespace(row, namespace)
+      try {
+        if (action === 'restart') {
+          await k8sRestartWorkload(hostRef.current, ctx, ns, row.kind, row.name)
+        } else if (action === 'stop') {
+          await k8sStopWorkload(hostRef.current, ctx, ns, row.kind, row.name)
+        } else {
+          await k8sStartWorkload(hostRef.current, ctx, ns, row.kind, row.name)
+        }
+        setLocalRefresh((k) => k + 1)
+        setNotice(
+          t(
+            action === 'restart'
+              ? 'k8sRestartDone'
+              : action === 'stop'
+                ? 'k8sStopDone'
+                : 'k8sStartDone',
+            { kind: row.kind, name: row.name },
+          ),
+        )
+      } catch (e) {
+        setError(t('k8sLifecycleFailed', { kind: row.kind, name: row.name, err: String(e) }))
+      }
+    },
+    [namespace, rowNamespace, t],
+  )
+
+  const doLifecycle = useCallback(() => {
+    if (!lifecycleConfirm) return
+    const { row, context: ctx, action } = lifecycleConfirm
+    setLifecycleConfirm(null)
+    void runLifecycle(row, ctx, action)
+  }, [lifecycleConfirm, runLifecycle])
+
   const doApply = useCallback(async () => {
     if (!context) return
     setApplyBusy(true)
@@ -1112,6 +1158,20 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const menuRow = menu?.row
   const canScale =
     menuRow != null && (menuRow.kind === 'deployments' || menuRow.kind === 'statefulsets')
+  // Restart rolls the controller's pods; stop/start scale a workload to zero and
+  // back, or suspend/resume a cron job.
+  const canRestart =
+    menuRow != null &&
+    (menuRow.kind === 'deployments' ||
+      menuRow.kind === 'statefulsets' ||
+      menuRow.kind === 'daemonsets')
+  const canToggleRun =
+    menuRow != null &&
+    (menuRow.kind === 'deployments' ||
+      menuRow.kind === 'statefulsets' ||
+      menuRow.kind === 'cronjobs')
+  const isStopped =
+    menuRow != null && (menuRow.status === 'Stopped' || menuRow.status === 'Suspended')
   // `kubectl port-forward` only speaks to workload-ish targets; the map is the list.
   const canForward = menuRow != null && FORWARD_PREFIX[menuRow.kind] != null
 
@@ -1509,6 +1569,42 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
             >
               <Icon name="plus" size={14} />
               {t('k8sScale')}
+            </div>
+          )}
+          {canRestart && (
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                setLifecycleConfirm({ row: menu.row, context, action: 'restart' })
+                setMenu(null)
+              }}
+            >
+              <Icon name="refresh" size={14} />
+              {t('k8sRestart')}
+            </div>
+          )}
+          {canToggleRun && !isStopped && (
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                setLifecycleConfirm({ row: menu.row, context, action: 'stop' })
+                setMenu(null)
+              }}
+            >
+              <Icon name="stop" size={14} />
+              {t('k8sStop')}
+            </div>
+          )}
+          {canToggleRun && isStopped && (
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                void runLifecycle(menu.row, context, 'start')
+                setMenu(null)
+              }}
+            >
+              <Icon name="play" size={14} />
+              {t('k8sStart')}
             </div>
           )}
           <div
@@ -1970,6 +2066,22 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           cancelLabel={t('cancel')}
           onConfirm={() => void doDelete()}
           onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {lifecycleConfirm && (
+        <ConfirmDialog
+          danger={lifecycleConfirm.action === 'stop'}
+          draggable
+          title={t(lifecycleConfirm.action === 'restart' ? 'k8sRestart' : 'k8sStop')}
+          message={t(
+            lifecycleConfirm.action === 'restart' ? 'k8sRestartConfirm' : 'k8sStopConfirm',
+            { kind: lifecycleConfirm.row.kind, name: lifecycleConfirm.row.name },
+          )}
+          confirmLabel={t(lifecycleConfirm.action === 'restart' ? 'k8sRestart' : 'k8sStop')}
+          cancelLabel={t('cancel')}
+          onConfirm={doLifecycle}
+          onCancel={() => setLifecycleConfirm(null)}
         />
       )}
     </div>
