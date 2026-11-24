@@ -1087,6 +1087,12 @@ pub struct AppState {
   pub k8s_log_streams: StdMutex<HashMap<String, crate::k8s_host::LogStream>>,
   /// Monotonic K8s log stream id counter.
   pub next_k8s_log_stream_id: AtomicU64,
+  /// What the window's close button does: `true` (the shipped default) parks the
+  /// app in the tray, `false` quits it outright. The setting lives in the
+  /// frontend (localStorage) and is pushed here on mount and on every change,
+  /// because Rust cannot read browser storage; until the first push arrives the
+  /// default keeps the pre-setting behaviour (hide to tray).
+  pub close_to_tray: AtomicBool,
 }
 
 /// A user-defined local terminal: opens a local shell in `cwd` using `shell`.
@@ -1255,6 +1261,9 @@ impl AppState {
       next_upload_id: AtomicU64::new(1),
       upload_batch_sessions: StdMutex::new(HashMap::new()),
       next_upload_batch_id: AtomicU64::new(1),
+      // Default hides to tray: preserves the behaviour shipped before this
+      // setting existed, until the frontend pushes the user's choice.
+      close_to_tray: AtomicBool::new(true),
     }
   }
 }

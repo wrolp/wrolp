@@ -116,6 +116,24 @@ const zh: Partial<Record<TranslationKey, string>> = {
   clickReconnectHint: '点击右上角"重新连接"按钮',
   connectionFailed: '连接失败',
 
+  // System tray
+  trayShow: '显示窗口',
+  trayHide: '隐藏窗口',
+  trayQuit: '退出',
+  traySessions: '打开的会话',
+  trayRecent: '最近打开',
+  trayNoSessions: '没有打开的会话',
+  trayNoRecent: '暂无最近项',
+  trayQuitTitle: '退出 Wrolp Terminal？',
+  trayQuitMessage: '所有打开的会话将被关闭，此操作无法撤销。',
+
+  // 窗口关闭按钮
+  windowCloseActionLabel: '关闭按钮',
+  windowCloseActionHide: '隐藏到托盘（从托盘菜单退出）',
+  windowCloseActionQuit: '直接退出应用',
+  windowCloseActionHelp:
+    '窗口关闭按钮的行为。"隐藏"会让应用及其中的会话在托盘中继续运行；"退出"会关闭一切。',
+
   // Workspaces
   workspace: '工作区',
   switchWorkspace: '切换工作区',

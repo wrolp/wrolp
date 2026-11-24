@@ -559,6 +559,19 @@ const DEFS: SettingDef[] = [
     describe:
       'Which Home page recency list sits on the left: "local-first" puts local terminals on the left (default), "remote-first" puts remote hosts on the left.',
   },
+  {
+    key: 'ui.windowCloseAction',
+    kind: 'enum',
+    values: ['hide', 'quit'],
+    group: 'ui',
+    default: 'hide',
+    // Rust owns the CloseRequested handler and cannot read localStorage, so the
+    // resolved value is pushed into AppState on mount and on every change (see
+    // App.tsx). 'hide' (default) parks the app in the tray; 'quit' ends it.
+    storage: { kind: 'localStorage', key: 'wrolp-window-close-action' },
+    describe:
+      'What the window close button does: "hide" parks the app in the system tray (quit from the tray menu), "quit" closes the app directly.',
+  },
 
   // ---- git ---------------------------------------------------------------
   {
@@ -766,6 +779,15 @@ export function readHomeRecentOrder(): HomeRecentOrder {
   const def = BY_KEY.get('ui.recentOrder')
   const raw = def ? String(readValue(def)) : ''
   return raw === 'remote-first' ? 'remote-first' : 'local-first'
+}
+
+/** What the window close button does. An unknown / corrupt stored value reads
+ *  as the default (`hide`), matching the pre-setting behaviour. */
+export type WindowCloseAction = 'hide' | 'quit'
+export function readWindowCloseAction(): WindowCloseAction {
+  const def = BY_KEY.get('ui.windowCloseAction')
+  const raw = def ? String(readValue(def)) : ''
+  return raw === 'quit' ? 'quit' : 'hide'
 }
 
 /** Read all registered settings (or a validated subset of keys). */

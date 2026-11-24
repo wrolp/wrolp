@@ -28,6 +28,7 @@ pub mod ssh_session;
 #[cfg(test)]
 mod tests;
 mod tftp_proto;
+mod tray;
 mod vault;
 #[cfg(windows)]
 mod webview_drop;
@@ -37,10 +38,6 @@ mod wsl_fs;
 use ssh_session::AppState;
 use tauri::generate_handler;
 use tauri::Manager;
-// Tray-related imports (commented out along with the tray icon below)
-// use tauri::menu::{MenuBuilder, MenuItemBuilder};
-// use tauri::tray::TrayIconBuilder;
-// use tauri::image::Image;
 
 /// Install the `log` facade on stderr.
 ///
@@ -131,55 +128,47 @@ pub fn run() {
         });
       }
 
-      /*
-      // ---- Tray icon (disabled) ----
-      let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
-      let hide_item = MenuItemBuilder::with_id("hide", "Hide").build(app)?;
-      let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-      let menu = MenuBuilder::new(app)
-        .item(&show_item)
-        .item(&hide_item)
-        .item(&quit_item)
-        .build()?;
-
-      let icon_bytes = include_bytes!("../icons/32x32.png");
-      let _tray = TrayIconBuilder::new()
-        .icon(Image::from_bytes(icon_bytes)?)
-        .tooltip("Wrolp Terminal")
-        .menu(&menu)
-        .on_menu_event(move |app, event| {
-          let id = event.id().as_ref();
-          match id {
-            "show" => {
-              if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-              }
-            }
-            "hide" => {
-              if let Some(window) = app.get_webview_window("main") {
-                let _ = window.hide();
-              }
-            }
-            "quit" => {
-              app.exit(0);
-            }
-            _ => {}
-          }
-        })
-        .build(app)?;
-      */
+      // System tray: window actions, open sessions and recent items. A failure
+      // must not abort startup — the app works without it — but it must also
+      // skip the close-to-tray override below, which would otherwise hide the
+      // window with no icon left to bring it back.
+      let tray_ready = match tray::init(app.handle()) {
+        Ok(()) => true,
+        Err(e) => {
+          eprintln!("[tray] init failed: {e}");
+          false
+        }
+      };
 
       // Restore window position/size from saved config before showing
       if let Some(window) = app.get_webview_window("main") {
-        // Hide to tray instead of closing
-        // let window_clone = window.clone();
-        // window.on_window_event(move |event| {
-        //   if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-        //     api.prevent_close();
-        //     let _ = window_clone.hide();
-        //   }
-        // });
+        // The close button is configurable: hide to tray (the shipped default —
+        // keeps live sessions alive and reachable from the tray menu) or quit
+        // outright. The choice lives in the frontend's setting and is pushed
+        // into `AppState::close_to_tray`; read it at click time so a change
+        // takes effect without a restart. Only installed when the tray is up —
+        // without an icon there is no way back from a hidden window, so close
+        // must keep its default (quit) in that case.
+        if tray_ready {
+          let window_clone = window.clone();
+          // `app.handle()` borrows `app`; `.clone()` yields an owned, `'static`
+          // handle the `on_window_event` closure can capture.
+          let app_handle = app.handle().clone();
+          window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+              let hide_to_tray = app_handle
+                .try_state::<AppState>()
+                .map(|s| s.close_to_tray.load(std::sync::atomic::Ordering::Relaxed))
+                .unwrap_or(true);
+              if hide_to_tray {
+                api.prevent_close();
+                let _ = window_clone.hide();
+              }
+              // `false`: let the close go through — the app's only window
+              // closes and the process exits.
+            }
+          });
+        }
 
         // Restore window geometry if saved. First verify the window rect
         // intersects any visible monitor; if it does not (e.g. it was on a
@@ -266,6 +255,9 @@ pub fn run() {
       commands::record_local_terminal_used,
       commands::list_recent_connections,
       commands::forget_recent_entry,
+      tray::sync_tray_menu,
+      tray::quit_app,
+      tray::set_close_to_tray,
       commands::connect,
       commands::disconnect,
       commands::send_input,

@@ -115,6 +115,24 @@ const en = {
   clickReconnectHint: 'click "Reconnect" at the top-right',
   connectionFailed: 'Connection failed',
 
+  // System tray
+  trayShow: 'Show Window',
+  trayHide: 'Hide Window',
+  trayQuit: 'Quit',
+  traySessions: 'Sessions',
+  trayRecent: 'Recent',
+  trayNoSessions: 'No open sessions',
+  trayNoRecent: 'No recent items',
+  trayQuitTitle: 'Quit Wrolp Terminal?',
+  trayQuitMessage: 'All open sessions will be closed. This cannot be undone.',
+
+  // Window close button
+  windowCloseActionLabel: 'Close button',
+  windowCloseActionHide: 'Hide to tray (quit from the tray menu)',
+  windowCloseActionQuit: 'Quit the app directly',
+  windowCloseActionHelp:
+    'What the window close button does. "Hide" keeps the app and its live sessions running in the tray; "Quit" closes everything.',
+
   // Workspaces
   workspace: 'Workspace',
   switchWorkspace: 'Switch workspace',

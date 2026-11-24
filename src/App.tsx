@@ -64,6 +64,10 @@ import type {
   WorkspaceLayout,
   FileTargetMode,
   LocalTerminalEntry,
+  RecentConnectionEntry,
+  TrayTabEntry,
+  TrayRecentEntry,
+  TrayMenuLabels,
   FloatingItem,
   FloatingKind,
   DockSide,
@@ -140,6 +144,10 @@ import {
   listConnections,
   recordConnectionUsed,
   recordLocalTerminalUsed,
+  listRecentConnections,
+  syncTrayMenu,
+  quitApp,
+  setCloseToTray,
   saveConnection,
   listTunnels,
   startTunnel,
@@ -215,12 +223,14 @@ import {
   HOME_RECENT_COUNT,
   readHomeRecentCount,
   readHomeRecentOrder,
+  readWindowCloseAction,
   TERMINAL_FONT_CHOICES,
   withNerdFontFallback,
   type AppearanceSnapshot,
   type HomeRecentCountKey,
   type HomeRecentOrder,
   type SettingGroup,
+  type WindowCloseAction,
 } from './lib/appSettings'
 import { installAiUiBridge, saveAiAppearanceConfig, useAiAppearanceConfig } from './lib/aiUiBridge'
 import {
@@ -254,6 +264,15 @@ import './styles/App.scss'
 
 // Global connection cache
 let cachedConnections: ConnectionConfig[] = []
+
+// The ids `list_recent_connections` stores local terminal rows under, matching
+// `db::LOCAL_RECENT_PREFIX` / `db::DEFAULT_LOCAL_ENTRY_ID` (and the welcome
+// page's own copy). The built-in "open local shell" row has no saved entry.
+const LOCAL_RECENT_PREFIX = 'local:'
+const DEFAULT_LOCAL_ENTRY_ID = '__default__'
+// How many recent rows the tray menu offers: enough to be "where I was", short
+// enough that the submenu never runs off the screen.
+const TRAY_RECENT_LIMIT = 12
 
 /**
  * The tab's connection details in the shape `TerminalComponent` connects with.
@@ -1281,6 +1300,11 @@ function AppearanceSettingsCard({
   // Which Home recency list sits on the left. Read through the same registry path
   // as everything else on this card so an AI change shows up here live.
   const [recentOrder, setRecentOrder] = useState<HomeRecentOrder>(() => readHomeRecentOrder())
+  // What the window close button does. Pushed to the backend (which cannot read
+  // localStorage) on change, so a pick here takes effect on the next close click.
+  const [windowCloseAction, setWindowCloseAction] = useState<WindowCloseAction>(() =>
+    readWindowCloseAction(),
+  )
   useEffect(
     () =>
       subscribeAppSettings(() => {
@@ -1288,6 +1312,7 @@ function AppearanceSettingsCard({
         setShowStatusBar(readSetting('ui.showStatusBar')?.value !== false)
         setMinimalFullscreen(readSetting('ui.minimalFullscreen')?.value === true)
         setRecentOrder(readHomeRecentOrder())
+        setWindowCloseAction(readWindowCloseAction())
       }),
     [],
   )
@@ -1515,6 +1540,22 @@ function AppearanceSettingsCard({
           />
           <span className="settings-label">{t('minimalFullscreenLabel')}</span>
           <span className="settings-help">{t('minimalFullscreenHelp')}</span>
+        </div>
+
+        <div className="settings-field">
+          <label htmlFor="window-close-action" className="settings-label">
+            {t('windowCloseActionLabel')}
+          </label>
+          <select
+            id="window-close-action"
+            className="settings-select"
+            value={windowCloseAction}
+            onChange={(e) => write({ 'ui.windowCloseAction': e.target.value })}
+          >
+            <option value="hide">{t('windowCloseActionHide')}</option>
+            <option value="quit">{t('windowCloseActionQuit')}</option>
+          </select>
+          <span className="settings-help">{t('windowCloseActionHelp')}</span>
         </div>
 
         <div className="settings-field">
@@ -2145,6 +2186,19 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('default')
   const [localTerminals, setLocalTerminals] = useState<LocalTerminalEntry[]>([])
+  // Recently opened items, for the tray menu's "Recent" submenu. The welcome
+  // page reads its own copy on mount; this one is refreshed on every connect
+  // (that edge is where the backend writes a recency row) and on a workspace
+  // switch, which changes which hosts the list may contain.
+  const [recentConnections, setRecentConnections] = useState<RecentConnectionEntry[]>([])
+  const refreshRecents = useCallback(() => {
+    listRecentConnections()
+      .then(setRecentConnections)
+      .catch((err) => console.error('Failed to load recent connections:', err))
+  }, [])
+  useEffect(() => {
+    refreshRecents()
+  }, [refreshRecents, activeWorkspaceId])
   const [tunnels, setTunnels] = useState<TunnelInfo[]>([])
   const [tabContextMenu, setTabContextMenu] = useState<{
     x: number
@@ -2841,13 +2895,24 @@ export default function App() {
         // still somewhere the user goes, so it is recorded against the sidebar
         // entry it was opened from (the built-in shortcut included).
         if (tab.connectionId) {
-          void recordConnectionUsed(tab.connectionId).catch((err) => {
-            console.error('Failed to record connection use:', err)
-          })
+          // `then` rather than only `catch`: the tray menu's Recent list is
+          // built from the same table, so it must re-read once the row is
+          // really written, not race the connect it was just recorded from.
+          void recordConnectionUsed(tab.connectionId)
+            .then((written) => {
+              if (written) refreshRecents()
+            })
+            .catch((err) => {
+              console.error('Failed to record connection use:', err)
+            })
         } else if (tab.tabType === 'localShell') {
-          void recordLocalTerminalUsed(tab.localShellEntryId ?? '__default__').catch((err) => {
-            console.error('Failed to record local terminal use:', err)
-          })
+          void recordLocalTerminalUsed(tab.localShellEntryId ?? DEFAULT_LOCAL_ENTRY_ID)
+            .then((written) => {
+              if (written) refreshRecents()
+            })
+            .catch((err) => {
+              console.error('Failed to record local terminal use:', err)
+            })
         }
         const cmd = tab.postConnectCmd
         if (cmd && !pending.has(tab.tabId)) {
@@ -2863,7 +2928,7 @@ export default function App() {
       }
       prevStatusesRef.current[tab.tabId] = tab.status
     }
-  }, [tabs])
+  }, [tabs, refreshRecents])
 
   // Open (or toggle closed) a Docker container's filesystem in the Files panel.
   // `host` carries everything the target needs: a jump-host container names the
@@ -3015,6 +3080,9 @@ export default function App() {
   const [tunnelFatalInfo, setTunnelFatalInfo] = useState<{ host: string; port: string } | null>(
     null,
   )
+  // The tray's Quit asks first: it is the only action that ends the app (the
+  // close button hides to the tray), and it takes every live session with it.
+  const [trayQuitConfirm, setTrayQuitConfirm] = useState(false)
   // Which view occupies the shell pane area, per session (tabId): 'terminal' or
   // `dockerlog:<id>`. Files are not here — an open file owns a tab bar entry and
   // its own surface. Isolated per session so a log view in one tab doesn't cover
@@ -3499,6 +3567,9 @@ export default function App() {
   // `tabsRef` is already declared above (used by other callbacks).
   const connectionsRef = useRef(connections)
   connectionsRef.current = connections
+  // Read by the tray-action listener, which outlives individual list edits.
+  const localTerminalsRef = useRef(localTerminals)
+  localTerminalsRef.current = localTerminals
 
   // Persist one conversation. Empty conversations are never written (a session
   // is only created on the first message). Streaming convs are *not* skipped:
@@ -5018,6 +5089,70 @@ export default function App() {
     [tabs],
   )
 
+  // Push the tray menu's dynamic half — the open sessions and the recent items
+  // — after any change. The menu is native, so it cannot read React state; the
+  // captions travel with the rows, which is also how a language switch reaches
+  // it. `t` changes identity with the language, so it is the dependency that
+  // rebuilds the captions.
+  useEffect(() => {
+    const trayTabs: TrayTabEntry[] = tabs
+      .filter((tab) => !tab.embedded && tab.tabType !== 'home')
+      .map((tab) => ({
+        tabId: tab.tabId,
+        label: getTabLabel(tab),
+        active: tab.tabId === activeTabId,
+      }))
+
+    const connectionsById = new Map(connections.map((conn) => [conn.id, conn]))
+    const localsById = new Map(localTerminals.map((entry) => [entry.id, entry]))
+    // A row whose connection was deleted (or lives in another workspace)
+    // resolves to nothing and drops out, exactly like the welcome card — so
+    // the cap applies to rows that can actually be shown, not to raw rows.
+    const trayRecents = recentConnections
+      .flatMap((row): TrayRecentEntry[] => {
+        if (row.connectionId.startsWith(LOCAL_RECENT_PREFIX)) {
+          const entryId = row.connectionId.slice(LOCAL_RECENT_PREFIX.length)
+          if (entryId === DEFAULT_LOCAL_ENTRY_ID) {
+            return [{ id: row.connectionId, label: t('openLocalShell') }]
+          }
+          const entry = localsById.get(entryId)
+          return entry ? [{ id: row.connectionId, label: entry.name }] : []
+        }
+        const conn = connectionsById.get(row.connectionId)
+        return conn ? [{ id: conn.id, label: conn.name }] : []
+      })
+      .slice(0, TRAY_RECENT_LIMIT)
+
+    const labels: TrayMenuLabels = {
+      show: t('trayShow'),
+      hide: t('trayHide'),
+      quit: t('trayQuit'),
+      sessions: t('traySessions'),
+      recent: t('trayRecent'),
+      noSessions: t('trayNoSessions'),
+      noRecent: t('trayNoRecent'),
+    }
+    void syncTrayMenu(trayTabs, trayRecents, labels).catch((err) => {
+      console.error('Failed to sync the tray menu:', err)
+    })
+  }, [tabs, activeTabId, connections, localTerminals, recentConnections, getTabLabel, t])
+
+  // Push the window-close behaviour to the backend on mount and on every
+  // settings change. Rust owns the CloseRequested handler and cannot read
+  // localStorage, so AppState is its only source of truth for what the ✕
+  // button does; the handler reads it at click time, so a toggle takes effect
+  // without a restart. Re-pushing on any setting change is cheap and keeps the
+  // two sides in sync if the AI bridge writes the same key.
+  useEffect(() => {
+    const push = () => {
+      void setCloseToTray(readWindowCloseAction() === 'hide').catch((err) => {
+        console.error('Failed to push the close-to-tray setting:', err)
+      })
+    }
+    push()
+    return subscribeAppSettings(push)
+  }, [])
+
   /**
    * Names the terminal a file was opened from. `EditorTab.sshTabId` is the owner
    * session, and for a split pane that is the pane's own shell — so this names the
@@ -5737,6 +5872,56 @@ export default function App() {
       setFocusedLeafId(null)
     }
   }, [])
+
+  // Tray menu clicks. The backend already brought the window forward; all that
+  // is left is the switch (or, for Quit, asking first — that one ends the app).
+  // A session closed while the menu was open resolves to nothing and is
+  // ignored — the menu is rebuilt right after, without it.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    let live = true
+    void listen<{ kind: 'tab' | 'recent' | 'quit'; tabId?: number; id?: string }>(
+      'tray-action',
+      (event) => {
+        const payload = event.payload
+        if (payload.kind === 'quit') {
+          setTrayQuitConfirm(true)
+          return
+        }
+        if (payload.kind === 'tab') {
+          if (payload.tabId === undefined) return
+          if (!tabsRef.current.some((tab) => tab.tabId === payload.tabId)) return
+          handleTabClick(payload.tabId)
+          return
+        }
+        if (payload.kind !== 'recent' || !payload.id) return
+        const id = payload.id
+        if (id.startsWith(LOCAL_RECENT_PREFIX)) {
+          const entryId = id.slice(LOCAL_RECENT_PREFIX.length)
+          if (entryId === DEFAULT_LOCAL_ENTRY_ID) {
+            handleOpenLocalTerminal()
+            return
+          }
+          const entry = localTerminalsRef.current.find((e) => e.id === entryId)
+          if (entry) {
+            handleOpenLocalTerminal(entry.cwd, entry.shell, entry.name, entry.distro, entry.id)
+          }
+          return
+        }
+        const conn = connectionsRef.current.find((c) => c.id === id)
+        if (conn) handleSelectConnection(conn)
+      },
+    )
+      .then((un) => {
+        if (live) unlisten = un
+        else un()
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+      unlisten?.()
+    }
+  }, [handleTabClick, handleOpenLocalTerminal, handleSelectConnection])
 
   // Tab drag to reorder
   const handleTabDragStart = useCallback((e: React.DragEvent, index: number) => {
@@ -9992,6 +10177,24 @@ export default function App() {
           confirmLabel={t('ok')}
           onConfirm={() => setTunnelFatalInfo(null)}
           onCancel={() => setTunnelFatalInfo(null)}
+        />
+      )}
+
+      {/* Tray → Quit asks first: the close button only hides to the tray, so
+          this is the one action that really ends the app — and it takes every
+          live session with it. */}
+      {trayQuitConfirm && (
+        <ConfirmDialog
+          title={t('trayQuitTitle')}
+          message={t('trayQuitMessage')}
+          confirmLabel={t('trayQuit')}
+          cancelLabel={t('cancel')}
+          danger
+          onConfirm={() => {
+            setTrayQuitConfirm(false)
+            void quitApp()
+          }}
+          onCancel={() => setTrayQuitConfirm(false)}
         />
       )}
     </div>

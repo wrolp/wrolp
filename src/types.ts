@@ -255,6 +255,35 @@ export interface RecentConnectionEntry {
   kind?: 'connection' | 'localTerminal'
 }
 
+/** One open session in the system tray menu. The menu is native and cannot
+ *  read React state, so App pushes this row after every change. */
+export interface TrayTabEntry {
+  tabId: number
+  label: string
+  /** Checked in the menu: the session the window is currently showing. */
+  active: boolean
+}
+
+/** One recently opened row in the system tray menu. `id` is a saved
+ *  connection's id, or `local:<entryId>` — the same ids
+ *  `listRecentConnections()` returns. */
+export interface TrayRecentEntry {
+  id: string
+  label: string
+}
+
+/** Tray menu captions. Translated on this side so the menu follows the app
+ *  language (a native menu cannot call `t()` itself). */
+export interface TrayMenuLabels {
+  show: string
+  hide: string
+  quit: string
+  sessions: string
+  recent: string
+  noSessions: string
+  noRecent: string
+}
+
 /** A single global variable shared by all command-list snippets. Commands
  *  reference it as `${name}`. A non-empty `defaultValue` is substituted
  *  directly at send time; an empty one prompts the user to fill it in. */

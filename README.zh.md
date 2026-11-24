@@ -204,6 +204,7 @@
 ### 窗口与系统集成
 
 - 自定义标题栏（窗口 `decorations: false`）；窗口位置 / 尺寸 / 透明度持久化（`window.json`）。
+- **系统托盘**：关闭窗口后应用（含其中的会话）留在托盘。托盘菜单可显示 / 隐藏窗口、切换到任意打开的会话、重新打开最近使用的连接或本地终端，以及退出（需确认）。
 - 自动更新（GitHub Release 端点 —— 发布前需在 `tauri.conf.json` 中设置真实 `pubkey`）。
 - 持久化的连接配置（`connections.json`，已加密 —— 同时保存工作区）与 SQLite 数据库（`wrolp.db`，WAL 模式）存放在 OS 配置目录下的 `wrolp-terminal/`。
 

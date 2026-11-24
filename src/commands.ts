@@ -9,6 +9,9 @@ import type {
   CommandSnippetDto,
   CommandHistoryEntry,
   RecentConnectionEntry,
+  TrayTabEntry,
+  TrayRecentEntry,
+  TrayMenuLabels,
   HostCommandDto,
   GlobalVariable,
   AiPromptTemplate,
@@ -202,6 +205,38 @@ export async function listRecentConnections(limit?: number): Promise<RecentConne
 /** Forget one welcome-page recency row (`connectionId`, or `local:<entryId>`). */
 export async function forgetRecentEntry(recentId: string): Promise<boolean> {
   return await invoke<boolean>('forget_recent_entry', { recentId })
+}
+
+/**
+ * Replace the system tray menu: window actions, the open sessions and the
+ * recently opened items. The menu is native, so it cannot read React state —
+ * App.tsx pushes both lists (labels included, translated on this side) after
+ * every change, and the backend only reports clicks back via `tray-action`.
+ */
+export async function syncTrayMenu(
+  tabs: TrayTabEntry[],
+  recents: TrayRecentEntry[],
+  labels: TrayMenuLabels,
+): Promise<void> {
+  await invoke('sync_tray_menu', { tabs, recents, labels })
+}
+
+/**
+ * End the app for real. The window's close button only hides it, so quitting
+ * is a deliberate call — and only after the user confirms the tray's Quit.
+ */
+export async function quitApp(): Promise<void> {
+  await invoke('quit_app')
+}
+
+/**
+ * Tell the backend what the window's close button should do. `true` hides to
+ * the tray (the default), `false` quits. The setting lives in localStorage,
+ * which Rust cannot read, so App.tsx pushes it here on mount and on change —
+ * the CloseRequested handler reads AppState at click time.
+ */
+export async function setCloseToTray(closeToTray: boolean): Promise<void> {
+  await invoke('set_close_to_tray', { closeToTray })
 }
 
 export async function reorderConnections(
