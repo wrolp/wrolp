@@ -160,6 +160,62 @@ test('typing a placeholder inside ${} declares a single parameter', async ({ pag
   await expect(editor.locator('.snip-param-row .snip-var-name')).toHaveValue('alpha')
 })
 
+// Regression: a placeholder typed first but inserted after another used to keep
+// its row ahead of the one now standing before it in the command.
+test('parameter rows follow the command when a placeholder is inserted before an existing one', async ({
+  page,
+}) => {
+  await openPanelWithTerminal(page, [])
+
+  await page.locator('.cmd-list-add-btn').click()
+  const editor = page.locator('.cmd-list-modal-drag')
+  const textarea = editor.locator('textarea').first()
+  await textarea.click()
+  await page.keyboard.insertText('docker save ${image}')
+  const names = editor.locator('.snip-param-row .snip-var-name')
+  await expect(names).toHaveCount(1)
+  await expect(names.nth(0)).toHaveValue('image')
+
+  // Move the caret in front of `${image}` (8 chars) and type `${filename} `.
+  for (let i = 0; i < '${image}'.length; i++) await page.keyboard.press('ArrowLeft')
+  await page.keyboard.insertText('${filename} ')
+
+  await expect(names).toHaveCount(2)
+  await expect(names.nth(0)).toHaveValue('filename')
+  await expect(names.nth(1)).toHaveValue('image')
+})
+
+// The parameter list mirrors the command: rows follow the order in which their
+// `${name}` appears, not the order they were declared in.
+test('parameters are listed in placeholder order in the fill dialog and editor', async ({
+  page,
+}) => {
+  await openPanelWithTerminal(page, [
+    baseSnippet({
+      id: 'ord1',
+      command: 'docker save -o ${filename} ${image}',
+      params: [
+        { name: 'image', type: 'text', defaultValue: '', options: [], defaultEnabled: true },
+        { name: 'filename', type: 'text', defaultValue: '', options: [], defaultEnabled: true },
+      ],
+    }),
+  ])
+
+  await page.locator('.cmd-list-item').click()
+  const dialog = page.locator('.snip-fill-modal')
+  await expect(dialog.locator('.snip-fill-name')).toHaveText(['filename', 'image'])
+  await dialog.locator('.modal-header span').click()
+  await expect(dialog).toBeHidden()
+
+  await page.locator('.cmd-list-item').click({ button: 'right' })
+  await page.locator('.cmd-list-menu .context-menu-item').filter({ hasText: 'Edit' }).click()
+  const editor = page.locator('.cmd-list-modal-drag')
+  const names = editor.locator('.snip-param-row .snip-var-name')
+  await expect(names).toHaveCount(2)
+  await expect(names.nth(0)).toHaveValue('filename')
+  await expect(names.nth(1)).toHaveValue('image')
+})
+
 test('groups snippets by connection and filters to the active connection', async ({ page }) => {
   await openPanelWithTerminal(page, [
     baseSnippet({ id: 'g1', command: 'echo general', connectionId: null }),

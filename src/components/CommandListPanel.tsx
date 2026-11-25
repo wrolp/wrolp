@@ -738,6 +738,18 @@ function toEditingOptions(options: CommandOption[]): EditingOption[] {
 }
 
 /**
+ * Order param rows after the command text: each row sits where its `${name}`
+ * first appears. Rows whose name is not in the command (orphans, or a row still
+ * being typed) keep their relative order at the end. `sort` is stable.
+ */
+function orderParamsByCommand<T extends { name: string }>(rows: T[], command: string): T[] {
+  const pos = new Map<string, number>()
+  extractVariables(command).forEach((name, i) => pos.set(name, i))
+  const at = (row: T) => pos.get(row.name.trim()) ?? Number.MAX_SAFE_INTEGER
+  return [...rows].sort((a, b) => at(a) - at(b))
+}
+
+/**
  * Hover tooltip of a list row: alias / full command / description, one per line
  * (a native `<title>` renders `\n`). The row itself already shows the alias and
  * the (truncated) command, so the tooltip's job is to add the untruncated text
@@ -978,7 +990,10 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
   // placeholder being typed inside `${}` does not spawn one row per keystroke
   // (`a`, `al`, `alp`, ...); once typing pauses, intermediate rows created by
   // an earlier pass are pruned and only the finished name remains. Rows the
-  // user added or edited by hand are never auto-removed.
+  // user added or edited by hand are never auto-removed. Rows are re-ordered to
+  // follow the placeholders' positions in the command, so a placeholder typed
+  // later but inserted earlier does not leave the list out of step with the
+  // command.
   useEffect(() => {
     if (!editing) return
     const handle = setTimeout(() => {
@@ -1000,8 +1015,9 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
             enables: [],
             auto: true,
           }))
-        if (kept.length === cur.length && added.length === 0) return cur
-        return [...kept, ...added]
+        const next = orderParamsByCommand([...kept, ...added], editingCommand)
+        if (next.length === cur.length && next.every((p, i) => p === cur[i])) return cur
+        return next
       })
     }, 500)
     return () => clearTimeout(handle)
@@ -1427,7 +1443,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     s: CommandSnippetDto,
     memory?: Record<string, SnippetMemory>,
   ): FillState | null => {
-    const params = resolveParamDefs(s)
+    const params = orderParamsByCommand(resolveParamDefs(s), s.command)
     const options = s.options ?? []
     if (params.length === 0 && options.length === 0) return null
     const saved = memory ? (memory[s.id] ?? null) : loadSnippetState(s.id)
@@ -1656,7 +1672,7 @@ export const CommandListPanel: React.FC<CommandListPanelProps> = ({
     setEditingConnectionId(s.connectionId ?? '')
     setEditingGroupName(s.groupName ?? '')
     setEditingDescription(s.description ?? '')
-    setEditingParams(toEditingParams(s.params ?? []))
+    setEditingParams(orderParamsByCommand(toEditingParams(s.params ?? []), s.command))
     setEditingOptions(toEditingOptions(s.options ?? []))
     setLinkPicker(null)
   }
