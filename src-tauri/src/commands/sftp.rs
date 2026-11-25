@@ -1,4 +1,6 @@
 use super::*;
+use russh_sftp::client::error::Error as SftpError;
+
 // ==================== SFTP File Operations ====================
 
 /// Bytes per upload read/write. Also the granularity of `transfer-progress`
@@ -413,6 +415,157 @@ pub async fn write_file_content(
   Ok(true)
 }
 
+/// Consecutive failed attempts tolerated before a download gives up. The count
+/// restarts whenever an attempt moved at least one byte, so a long transfer on
+/// a link that drops every few minutes is not cut off by its Nth drop overall.
+const DOWNLOAD_MAX_CONSECUTIVE_FAILURES: u32 = 3;
+/// Hard ceiling on attempts for one download. Only a link that keeps flapping
+/// mid-transfer can reach it, since each progress-making attempt resets the
+/// consecutive-failure count.
+const DOWNLOAD_MAX_ATTEMPTS: u32 = 25;
+const DOWNLOAD_RETRY_BASE_DELAY: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// Why one download attempt stopped before EOF.
+enum CopyError {
+  /// The user cancelled — never retried.
+  Cancelled,
+  /// The connection (or the server's answer over it) failed in a way a fresh
+  /// SSH connection may fix: `Failed to read: Timeout` is the classic one,
+  /// caused by a sleeping laptop, a Wi-Fi switch or a NAT idle-drop.
+  Retry(String),
+  /// Anything a retry cannot fix: the remote file is gone, its permissions
+  /// changed, the local disk is full… Surfaced to the UI unchanged.
+  Fatal(String),
+}
+
+/// A transport-level SFTP client error (as opposed to the server answering
+/// "no" via a status packet) is worth another connection.
+fn is_retryable_sftp_error(e: &SftpError) -> bool {
+  matches!(
+    e,
+    SftpError::Timeout
+      | SftpError::IO(_)
+      | SftpError::UnexpectedPacket
+      | SftpError::UnexpectedBehavior(_)
+  )
+}
+
+fn classify_client_error(e: SftpError, context: &str) -> CopyError {
+  let msg = format!("{}: {}", context, e);
+  if is_retryable_sftp_error(&e) {
+    CopyError::Retry(msg)
+  } else {
+    CopyError::Fatal(msg)
+  }
+}
+
+/// `File::read` reports through `std::io::Error`, which wraps the SFTP client
+/// error; unwrap it so "Timeout" and "connection reset" stay retryable while
+/// protocol statuses (no such file, permission denied) do not.
+fn classify_read_error(e: std::io::Error, context: &str) -> CopyError {
+  if let Some(inner) = e.get_ref().and_then(|i| i.downcast_ref::<SftpError>()) {
+    return classify_client_error(inner.clone(), context);
+  }
+  let retryable = matches!(
+    e.kind(),
+    std::io::ErrorKind::TimedOut
+      | std::io::ErrorKind::Interrupted
+      | std::io::ErrorKind::ConnectionReset
+      | std::io::ErrorKind::ConnectionAborted
+      | std::io::ErrorKind::BrokenPipe
+      | std::io::ErrorKind::UnexpectedEof
+      | std::io::ErrorKind::NotConnected
+  );
+  let msg = format!("{}: {}", context, e);
+  if retryable {
+    CopyError::Retry(msg)
+  } else {
+    CopyError::Fatal(msg)
+  }
+}
+
+/// Decide what a failed attempt means: `Ok(delay)` = reconnect after `delay`,
+/// `Err(message)` = surface the failure to the UI. `progressed` says whether
+/// the attempt moved at least one byte before failing.
+fn retry_or_give_up(
+  err: CopyError,
+  progressed: bool,
+  consecutive_failures: &mut u32,
+  attempts: u32,
+) -> Result<std::time::Duration, String> {
+  match err {
+    CopyError::Cancelled => Err("Transfer cancelled".to_string()),
+    CopyError::Fatal(msg) => Err(msg),
+    CopyError::Retry(msg) => {
+      *consecutive_failures = if progressed {
+        1
+      } else {
+        *consecutive_failures + 1
+      };
+      if *consecutive_failures > DOWNLOAD_MAX_CONSECUTIVE_FAILURES
+        || attempts >= DOWNLOAD_MAX_ATTEMPTS
+      {
+        return Err(format!("{} (gave up after {} attempts)", msg, attempts));
+      }
+      Ok(DOWNLOAD_RETRY_BASE_DELAY * 2u32.pow(*consecutive_failures - 1))
+    }
+  }
+}
+
+/// Copy `remote_path` into `out` from `*offset` to EOF, reporting the running
+/// byte count through `on_progress`. Remote and local sides are both seeked to
+/// `*offset` first, so calling this again after a reconnect resumes where the
+/// last attempt stopped instead of restarting the transfer.
+async fn copy_remote_into_local<F: FnMut(u64)>(
+  sftp: &russh_sftp::client::SftpSession,
+  remote_path: &str,
+  out: &mut tokio::fs::File,
+  offset: &mut u64,
+  control: &TransferControl,
+  local_path: &str,
+  mut on_progress: F,
+) -> Result<(), CopyError> {
+  use tokio::io::{AsyncSeekExt, SeekFrom};
+
+  let mut remote = sftp.open(remote_path).await.map_err(|e| {
+    classify_client_error(e, &format!("Failed to open remote file '{}'", remote_path))
+  })?;
+  remote.seek(SeekFrom::Start(*offset)).await.map_err(|e| {
+    classify_read_error(e, &format!("Failed to seek remote file '{}'", remote_path))
+  })?;
+  out
+    .seek(SeekFrom::Start(*offset))
+    .await
+    .map_err(|e| CopyError::Fatal(format!("Failed to seek local file '{}': {}", local_path, e)))?;
+
+  let mut buf = vec![0u8; 65536];
+  loop {
+    // Blocks while paused; only returns an error once the user cancels.
+    check_pause(control)
+      .await
+      .map_err(|_| CopyError::Cancelled)?;
+    match remote.read(&mut buf).await {
+      Ok(0) => return Ok(()),
+      Ok(n) => {
+        out.write_all(&buf[..n]).await.map_err(|e| {
+          CopyError::Fatal(format!(
+            "Failed to write local file '{}': {}",
+            local_path, e
+          ))
+        })?;
+        *offset += n as u64;
+        on_progress(*offset);
+      }
+      Err(e) => {
+        return Err(classify_read_error(
+          e,
+          &format!("Failed to read '{}'", remote_path),
+        ))
+      }
+    }
+  }
+}
+
 #[tauri::command]
 pub async fn download_file(
   app: tauri::AppHandle,
@@ -434,29 +587,16 @@ pub async fn download_file(
   // Clean up control on exit
   let _cleanup = TransferGuard::new(&state, tab_id, control.clone());
 
-  let sftp = open_sftp_session(&state, &app, tab_id).await?;
-
   let filename = std::path::Path::new(&remote_path)
     .file_name()
     .map(|n| n.to_string_lossy().to_string())
     .unwrap_or_else(|| remote_path.clone());
 
-  // Get total file size
-  let metadata = sftp
-    .metadata(&remote_path)
-    .await
-    .map_err(|e| format!("Failed to stat remote file: {}", e))?;
-  let total = metadata.size.unwrap_or(0);
-
-  // Open file for chunked streaming read
-  let mut file = sftp
-    .open(&remote_path)
-    .await
-    .map_err(|e| format!("Failed to open remote file: {}", e))?;
-
   // Stream straight to disk rather than into a `Vec<u8>`: buffering the whole
   // file (and the accompanying `total as usize`) meant a multi-GB download had
-  // to fit twice in memory and could overflow a 32-bit usize.
+  // to fit twice in memory and could overflow a 32-bit usize. Created once and
+  // never re-truncated between attempts: a retry appends from the offset the
+  // previous attempt reached.
   if let Some(parent) = std::path::Path::new(&local_path).parent() {
     let _ = tokio::fs::create_dir_all(parent).await;
   }
@@ -464,45 +604,87 @@ pub async fn download_file(
     .await
     .map_err(|e| format!("Failed to create local file '{}': {}", local_path, e))?;
 
-  let mut buf = vec![0u8; 65536];
   let start = std::time::Instant::now();
   let mut offset: u64 = 0;
+  // Identity of the remote file from the first attempt. A reconnect that
+  // reports a different size or mtime means the file changed while we were
+  // away: the bytes on disk no longer belong to it, so the download restarts
+  // from zero rather than splicing two versions together.
+  let mut stamp: Option<(u64, Option<u32>)> = None;
+  let mut consecutive_failures = 0u32;
+  let mut attempts = 0u32;
 
   loop {
-    // Check for pause before each chunk
+    attempts += 1;
+    // A pause entered before the retry parks here; a cancel aborts.
     check_pause(&control).await?;
+    let offset_before = offset;
 
-    let n = file
-      .read(&mut buf)
+    let attempt: Result<(), CopyError> = async {
+      let sftp = open_sftp_session(&state, &app, tab_id)
+        .await
+        .map_err(CopyError::Retry)?;
+      let metadata = sftp
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| classify_client_error(e, "Failed to stat remote file"))?;
+      let size = metadata.size.unwrap_or(0);
+      let this_stamp = (size, metadata.mtime);
+      if stamp.is_some_and(|prev| prev != this_stamp || size < offset) {
+        offset = 0;
+        out.set_len(0).await.map_err(|e| {
+          CopyError::Fatal(format!(
+            "Failed to reset local file '{}': {}",
+            local_path, e
+          ))
+        })?;
+      }
+      stamp = Some(this_stamp);
+
+      copy_remote_into_local(
+        &sftp,
+        &remote_path,
+        &mut out,
+        &mut offset,
+        &control,
+        &local_path,
+        |transferred| {
+          let _ = app.emit(
+            "transfer-progress",
+            serde_json::json!({
+              "tabId": tab_id,
+              "op": "download",
+              "filename": &filename,
+              "transferred": transferred,
+              "total": size,
+              "elapsed": start.elapsed().as_millis()
+            }),
+          );
+        },
+      )
       .await
-      .map_err(|e| format!("Failed to read: {}", e))?;
-    if n == 0 {
-      break;
     }
-    out
-      .write_all(&buf[..n])
-      .await
-      .map_err(|e| format!("Failed to write local file '{}': {}", local_path, e))?;
-    offset += n as u64;
+    .await;
 
-    let _ = app.emit(
-      "transfer-progress",
-      serde_json::json!({
-        "tabId": tab_id,
-        "op": "download",
-        "filename": &filename,
-        "transferred": offset,
-        "total": total,
-        "elapsed": start.elapsed().as_millis()
-      }),
-    );
+    match attempt {
+      Ok(()) => {
+        out
+          .flush()
+          .await
+          .map_err(|e| format!("Failed to flush local file '{}': {}", local_path, e))?;
+        return Ok(true);
+      }
+      Err(err) => {
+        let delay = retry_or_give_up(
+          err,
+          offset > offset_before,
+          &mut consecutive_failures,
+          attempts,
+        )?;
+        tokio::time::sleep(delay).await;
+      }
+    }
   }
-  out
-    .flush()
-    .await
-    .map_err(|e| format!("Failed to flush local file '{}': {}", local_path, e))?;
-
-  Ok(true)
 }
 
 /// Accept exactly one path component coming from a remote SFTP server.
@@ -608,7 +790,7 @@ pub async fn download_directory(
   }
   let _cleanup = TransferGuard::new(&state, tab_id, control.clone());
 
-  let sftp = open_sftp_session(&state, &app, tab_id).await?;
+  let mut sftp = open_sftp_session(&state, &app, tab_id).await?;
 
   // Single-session recursive walk (no per-file reconnects).
   let mut dirs = Vec::new();
@@ -647,10 +829,6 @@ pub async fn download_directory(
   for (remote_path, rel, size) in &files {
     check_pause(&control).await?;
 
-    let mut file = sftp
-      .open(remote_path)
-      .await
-      .map_err(|e| format!("Failed to open remote file '{}': {}", remote_path, e))?;
     let local_path = local_root.join(rel);
     if let Some(parent) = local_path.parent() {
       let _ = tokio::fs::create_dir_all(parent).await;
@@ -663,42 +841,76 @@ pub async fn download_directory(
       )
     })?;
 
-    let mut buf = vec![0u8; 65536];
+    let local_label = local_path.display().to_string();
     let mut offset = 0u64;
+    let mut consecutive_failures = 0u32;
+    let mut attempts = 0u32;
+    // Set by a failed attempt so the next pass reconnects before reopening the
+    // remote file — the walk is already done, only the connection is lost.
+    let mut needs_reconnect = false;
     loop {
+      attempts += 1;
       check_pause(&control).await?;
-      let n = file
-        .read(&mut buf)
-        .await
-        .map_err(|e| format!("Failed to read '{}': {}", remote_path, e))?;
-      if n == 0 {
-        break;
+      if needs_reconnect {
+        match open_sftp_session(&state, &app, tab_id).await {
+          Ok(fresh) => sftp = fresh,
+          Err(e) => {
+            let delay = retry_or_give_up(
+              CopyError::Retry(e),
+              false,
+              &mut consecutive_failures,
+              attempts,
+            )?;
+            tokio::time::sleep(delay).await;
+            continue;
+          }
+        }
       }
-      out
-        .write_all(&buf[..n])
-        .await
-        .map_err(|e| format!("Failed to write '{}': {}", local_path.display(), e))?;
-      offset += n as u64;
-      done_bytes += n as u64;
-
-      let _ = app.emit(
-        "transfer-progress",
-        serde_json::json!({
-          "tabId": tab_id,
-          "op": "directory",
-          "dirName": dir_name,
-          "filename": rel,
-          "relativePath": rel,
-          "transferred": offset,
-          "total": size,
-          "doneFiles": done_files,
-          "totalFiles": total_files,
-          "doneBytes": done_bytes,
-          "totalBytes": total_bytes,
-          "elapsed": start.elapsed().as_millis()
-        }),
-      );
+      let offset_before = offset;
+      let base_bytes = done_bytes;
+      let result = copy_remote_into_local(
+        &sftp,
+        remote_path,
+        &mut out,
+        &mut offset,
+        &control,
+        &local_label,
+        |transferred| {
+          let _ = app.emit(
+            "transfer-progress",
+            serde_json::json!({
+              "tabId": tab_id,
+              "op": "directory",
+              "dirName": dir_name,
+              "filename": rel,
+              "relativePath": rel,
+              "transferred": transferred,
+              "total": size,
+              "doneFiles": done_files,
+              "totalFiles": total_files,
+              "doneBytes": base_bytes + transferred,
+              "totalBytes": total_bytes,
+              "elapsed": start.elapsed().as_millis()
+            }),
+          );
+        },
+      )
+      .await;
+      match result {
+        Ok(()) => break,
+        Err(err) => {
+          needs_reconnect = matches!(err, CopyError::Retry(_));
+          let delay = retry_or_give_up(
+            err,
+            offset > offset_before,
+            &mut consecutive_failures,
+            attempts,
+          )?;
+          tokio::time::sleep(delay).await;
+        }
+      }
     }
+    done_bytes += offset;
     done_files += 1;
   }
 
@@ -1141,5 +1353,93 @@ mod tests {
         );
       }
     }
+  }
+
+  #[test]
+  fn retry_budget_resets_once_an_attempt_makes_progress() {
+    let mut consecutive = 0;
+    for attempts in 1..=3 {
+      assert!(
+        retry_or_give_up(
+          CopyError::Retry("Timeout".into()),
+          false,
+          &mut consecutive,
+          attempts
+        )
+        .is_ok(),
+        "attempt {} should still retry",
+        attempts
+      );
+    }
+    assert_eq!(consecutive, 3);
+    let err = retry_or_give_up(
+      CopyError::Retry("Timeout".into()),
+      false,
+      &mut consecutive,
+      4,
+    )
+    .unwrap_err();
+    assert!(err.contains("gave up after 4 attempts"), "{}", err);
+
+    // An attempt that moved bytes before failing gets the full budget again.
+    let mut consecutive = 3;
+    assert!(retry_or_give_up(
+      CopyError::Retry("Timeout".into()),
+      true,
+      &mut consecutive,
+      5
+    )
+    .is_ok());
+    assert_eq!(consecutive, 1);
+  }
+
+  #[test]
+  fn cancel_and_fatal_failures_surface_without_retry() {
+    let mut consecutive = 0;
+    assert_eq!(
+      retry_or_give_up(CopyError::Cancelled, false, &mut consecutive, 1),
+      Err("Transfer cancelled".to_string())
+    );
+    assert_eq!(
+      retry_or_give_up(
+        CopyError::Fatal("denied".into()),
+        false,
+        &mut consecutive,
+        1
+      ),
+      Err("denied".to_string())
+    );
+  }
+
+  #[test]
+  fn only_transport_failures_are_retried() {
+    // `File::read` reports through io::Error, which wraps the SFTP error; the
+    // classifier has to look through it, because this is the wiring behind the
+    // user-visible "Failed to read: Timeout".
+    let timeout: std::io::Error = SftpError::Timeout.into();
+    assert!(matches!(
+      classify_read_error(timeout, "Failed to read"),
+      CopyError::Retry(msg) if msg == "Failed to read: Timeout"
+    ));
+    assert!(matches!(
+      classify_read_error(
+        std::io::Error::from(std::io::ErrorKind::NotConnected),
+        "read"
+      ),
+      CopyError::Retry(_)
+    ));
+    // A protocol status is the server answering "no" — a new connection cannot
+    // change that, so it must not burn the retry budget.
+    assert!(matches!(
+      classify_client_error(SftpError::Limited("max packet".into()), "read"),
+      CopyError::Fatal(_)
+    ));
+    assert!(matches!(
+      classify_read_error(
+        std::io::Error::from(std::io::ErrorKind::InvalidData),
+        "read"
+      ),
+      CopyError::Fatal(_)
+    ));
   }
 }
