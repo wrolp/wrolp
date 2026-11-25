@@ -4846,6 +4846,23 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     }
     const base = ghostBaseLine(live)
     const edited = base === null ? null : applyKeystroke(base, data)
+    // Keys the shell answers by rewriting the line — `Tab`'s completion (Shift+Tab
+    // walks completions backwards) and a bracketed paste — leave nothing the
+    // projection can know: the shell types the rest itself. Keeping the tail "for
+    // the line now on screen" is what leaves the grey text struck through that
+    // answer as its echo lands (user screenshot: `rm -f ` with the very filename
+    // the tail offered, completed by Tab and overlapped by the old tail). With a
+    // candidate list open the state is kept — the list is an explicit context the
+    // user opened, and its rows stay pickable; only the standing tail case is what
+    // overlaps. Other in-place edits (`←`, ^A, ^W) still fall back to the buffer
+    // below, as they always have.
+    const shellAnswers = data === '\t' || data === '\x1b[Z' || /\x1b\[20[01]~/.test(data)
+    if (shellAnswers && !ghostRef.current?.open) {
+      ghostLineRef.current = null
+      ghostRowRef.current = -1
+      evaluateGhost(null)
+      return
+    }
     // `applyKeystroke` answers null for a keystroke that edits in place (a cursor
     // move, ^A, ^W): the screen is the only honest answer then.
     const line = edited ?? live

@@ -99,6 +99,10 @@ async function installEchoingShell(page: Page) {
     ).__TAURI_INTERNALS__
     const orig = internals.invoke.bind(internals)
     const pending: string[] = []
+    // Lets a test play the *shell* writing to the row (a Tab completion's echo,
+    // a readline redraw) without a keystroke having produced it.
+    ;(window as unknown as { __GHOST_PUSH__: (s: string) => void }).__GHOST_PUSH__ = (s) =>
+      pending.push(s)
     internals.invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
       if (cmd === 'send_input') {
         const data = String(args.data ?? '')
@@ -943,4 +947,75 @@ test('a command installed on the device is offered even though it was never run'
   await page.keyboard.press('ArrowRight')
   await expect(page.locator('.xterm-rows')).toContainText(`${PROMPT}journalctl`)
   expect(await sentInput(page)).not.toContain('\r')
+})
+
+/** Write to the row the way the shell would, with no keystroke involved. */
+const pushShellOutput = (page: Page, text: string) =>
+  page.evaluate(
+    (s) => (window as unknown as { __GHOST_PUSH__: (t: string) => void }).__GHOST_PUSH__(s),
+    text,
+  )
+
+/** The paste event Ctrl+V produces (the app's guard listens for it in capture). */
+const pasteText = (page: Page, text: string) =>
+  page.evaluate((t) => {
+    const ta = document.querySelector('.xterm-helper-textarea')
+    if (!ta) throw new Error('the terminal has no input textarea')
+    const dt = new DataTransfer()
+    dt.setData('text/plain', t)
+    ta.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }),
+    )
+  }, text)
+
+const RM = 'rm -f kylin-jre8.tar'
+
+test('the shell’s Tab completion does not leave the tail under its own echo', async ({ page }) => {
+  // User-reported (SSH, 2026-11-25, screenshot): typed `rm -f `, the tail offered
+  // `kylin-jre8.tar`, Tab went to the shell (as designed), the shell completed to
+  // exactly that filename — and the grey tail stayed painted on top of the echo as
+  // it landed, the first characters drawn twice. `Tab` makes the line something
+  // only the shell knows, so the tail has to be retired on the key itself; waiting
+  // for the echo cannot work (a rewrite in flight reads as neither prefix nor
+  // extension, which `refreshGhost` deliberately keeps).
+  await openTerminal(page, {
+    commandSnippets: [{ id: 's-rm', command: RM, alias: null, hidden: false, connectionId: null }],
+    commandSets: [],
+  })
+  await page.keyboard.type('rm -f ', { delay: 60 })
+  await expect(ghost(page)).toHaveText('kylin-jre8.tar')
+
+  await page.keyboard.press('Tab')
+  await expect(ghost(page)).toHaveText('')
+
+  // The completion's echo (readline rewrites the row) finds no tail to overlap.
+  await pushShellOutput(page, `\r${PROMPT}${RM}`)
+  await expect(page.locator('.xterm-rows')).toContainText(`${PROMPT}${RM}`)
+  await expect(ghost(page)).toHaveText('')
+})
+
+test('a paste retires the tail instead of leaving it under the pasted text', async ({ page }) => {
+  // A real interactive shell enables bracketed paste, so `term.paste` hands
+  // `onData` markers plus the text — a chunk the projection cannot apply. Falling
+  // back to "the line on screen" there kept the tail for the line as it was before
+  // the paste, and the paste's echo landed underneath it.
+  await openTerminal(page, {
+    // What a real shell prints at its first prompt.
+    pollOutputChunks: [['\x1b[?2004h' + PROMPT]],
+    commandSnippets: [{ id: 's-rm', command: RM, alias: null, hidden: false, connectionId: null }],
+    commandSets: [],
+  })
+  await page.keyboard.type('rm -f ', { delay: 60 })
+  await expect(ghost(page)).toHaveText('kylin-jre8.tar')
+
+  await pasteText(page, 'k')
+  // The premise: bracketed paste really was on, or the paste would have been
+  // applied to the line and the tail would simply have followed it.
+  await expect.poll(async () => (await sentInput(page)).join('')).toContain('\x1b[200~k\x1b[201~')
+  await expect(ghost(page)).toHaveText('')
+  await expect(page.locator('.xterm-rows')).toContainText(`${PROMPT}rm -f k`)
+
+  // Typing on after the paste re-arms the tail from the real line.
+  await page.keyboard.type('y', { delay: 60 })
+  await expect(ghost(page)).toHaveText('lin-jre8.tar')
 })
