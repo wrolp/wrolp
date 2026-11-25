@@ -3,12 +3,14 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from '../../i18n'
 import { ftpServerStatus, startFtpServer, stopFtpServer } from '../../commands'
 import type { AppServerStatus } from '../../types'
+import PathField from './PathField'
+import { usePathHistory } from './pathHistory'
 import { parsePort } from './util'
 
 /** Tools panel: start/stop the built-in FTP server and tweak its config. */
 export default function FtpServerPanel() {
   const { t } = useI18n()
-  const [rootDir, setRootDir] = useState('')
+  const root = usePathHistory('ftp.root')
   const [port, setPort] = useState('2121')
   const [readOnly, setReadOnly] = useState(true)
   const [anonymous, setAnonymous] = useState(true)
@@ -35,14 +37,17 @@ export default function FtpServerPanel() {
   const pickDir = async () => {
     try {
       const picked = await open({ directory: true, multiple: false, title: t('ntRootDir') })
-      if (typeof picked === 'string') setRootDir(picked)
+      if (typeof picked === 'string') {
+        root.setValue(picked)
+        root.remember(picked)
+      }
     } catch {
       // dialog dismissed
     }
   }
 
   const start = async () => {
-    if (!rootDir.trim()) {
+    if (!root.value.trim()) {
       setError(t('ntFillAll'))
       return
     }
@@ -50,7 +55,7 @@ export default function FtpServerPanel() {
     setError('')
     try {
       const st = await startFtpServer({
-        rootDir: rootDir.trim(),
+        rootDir: root.value.trim(),
         port: parsePort(port, 2121),
         readOnly,
         anonymous,
@@ -96,22 +101,14 @@ export default function FtpServerPanel() {
             {t('ntStopped')}
           </div>
         )}
-        <div className="nt-field">
-          <label htmlFor="ftp-root">{t('ntRootDir')}</label>
-          <div className="nt-actions">
-            <input
-              id="ftp-root"
-              className="nt-input"
-              value={rootDir}
-              onChange={(e) => setRootDir(e.target.value)}
-              placeholder="C:\\share"
-              disabled={running}
-            />
-            <button className="nt-btn nt-btn-sm" onClick={pickDir} disabled={running}>
-              {t('ntBrowse')}
-            </button>
-          </div>
-        </div>
+        <PathField
+          id="ftp-root"
+          label={t('ntRootDir')}
+          state={root}
+          placeholder="C:\\share"
+          disabled={running}
+          onBrowse={pickDir}
+        />
         <div className="nt-field">
           <label htmlFor="ftp-port">{t('ntPort')}</label>
           <input

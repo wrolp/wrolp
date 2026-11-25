@@ -3,6 +3,8 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { useI18n } from '../../i18n'
 import { tftpRows, tftpStart, tftpCancel, tftpClearRows } from '../../commands'
 import type { TftpDirection, TftpRow } from '../../types'
+import PathField from './PathField'
+import { usePathHistory } from './pathHistory'
 import { dirGlyph, fmtBytes, fmtTime, parsePort } from './util'
 
 function RowPill({ status }: { status: string }) {
@@ -30,10 +32,10 @@ function ProgressCell({ row }: { row: TftpRow }) {
 /** Tools panel: run TFTP transfers from this machine to a remote server. */
 export default function TftpClientPanel() {
   const { t } = useI18n()
+  const local = usePathHistory('tftp.local')
   const [serverHost, setServerHost] = useState('')
   const [serverPort, setServerPort] = useState('69')
   const [remoteName, setRemoteName] = useState('')
-  const [localPath, setLocalPath] = useState('')
   const [direction, setDirection] = useState<TftpDirection>('download')
   const [rows, setRows] = useState<TftpRow[]>([])
   const [busy, setBusy] = useState(false)
@@ -57,13 +59,19 @@ export default function TftpClientPanel() {
     try {
       if (direction === 'upload') {
         const picked = await open({ multiple: false, title: t('ntLocalChoose') })
-        if (typeof picked === 'string') setLocalPath(picked)
+        if (typeof picked === 'string') {
+          local.setValue(picked)
+          local.remember(picked)
+        }
       } else {
         const target = await save({
           title: t('ntLocalChoose'),
           defaultPath: remoteName.trim() || 'download.bin',
         })
-        if (target) setLocalPath(target)
+        if (target) {
+          local.setValue(target)
+          local.remember(target)
+        }
       }
     } catch {
       // dialog dismissed
@@ -71,7 +79,7 @@ export default function TftpClientPanel() {
   }
 
   const start = async () => {
-    if (!serverHost.trim() || !remoteName.trim() || !localPath.trim()) {
+    if (!serverHost.trim() || !remoteName.trim() || !local.value.trim()) {
       setError(t('ntFillAll'))
       return
     }
@@ -82,7 +90,7 @@ export default function TftpClientPanel() {
         serverHost: serverHost.trim(),
         serverPort: parsePort(serverPort, 69),
         remoteName: remoteName.trim(),
-        localPath,
+        localPath: local.value,
         direction,
       })
       await refresh()
@@ -144,21 +152,13 @@ export default function TftpClientPanel() {
             placeholder="firmware.bin"
           />
         </div>
-        <div className="nt-field">
-          <label htmlFor="tc-local">{t('ntLocalPath')}</label>
-          <div className="nt-actions">
-            <input
-              id="tc-local"
-              className="nt-input"
-              value={localPath}
-              onChange={(e) => setLocalPath(e.target.value)}
-              placeholder="C:\\out\\file.bin"
-            />
-            <button className="nt-btn nt-btn-sm" onClick={pickLocal}>
-              {t('ntBrowse')}
-            </button>
-          </div>
-        </div>
+        <PathField
+          id="tc-local"
+          label={t('ntLocalPath')}
+          state={local}
+          placeholder="C:\\out\\file.bin"
+          onBrowse={pickLocal}
+        />
         <div className="nt-field">
           <label>{t('ntDirection')}</label>
           <div className="nt-actions">
@@ -167,10 +167,7 @@ export default function TftpClientPanel() {
                 type="radio"
                 className="nt-check"
                 checked={direction === 'download'}
-                onChange={() => {
-                  setDirection('download')
-                  setLocalPath('')
-                }}
+                onChange={() => setDirection('download')}
               />
               {t('ntDownload')}
             </label>
@@ -179,10 +176,7 @@ export default function TftpClientPanel() {
                 type="radio"
                 className="nt-check"
                 checked={direction === 'upload'}
-                onChange={() => {
-                  setDirection('upload')
-                  setLocalPath('')
-                }}
+                onChange={() => setDirection('upload')}
               />
               {t('ntUpload')}
             </label>

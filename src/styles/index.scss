@@ -411,6 +411,68 @@ body.float-window .titlebar {
   }
 }
 
+// Path history menu: the shared select-menu surface, with a remove button on
+// every row. The ellipsis belongs to the path text so the button keeps its space.
+.nt-path-menu {
+  max-height: 260px;
+}
+
+.nt-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: normal;
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &.selected:hover {
+    background: rgba($accent, 0.26);
+  }
+}
+
+.nt-path-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nt-path-remove {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: $text-secondary;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    background: $bg-active;
+    color: $danger;
+  }
+}
+
+.nt-path-empty {
+  padding: 6px 9px;
+  color: $text-secondary;
+  font-size: 12px;
+}
+
+.nt-path-history {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+}
+
 .nt-status {
   display: flex;
   align-items: center;

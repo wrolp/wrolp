@@ -10,6 +10,8 @@ import {
   tftpClearRows,
 } from '../../commands'
 import type { AppServerStatus, TftpRow } from '../../types'
+import PathField from './PathField'
+import { usePathHistory } from './pathHistory'
 import { dirGlyph, fmtBytes, fmtTime, parsePort } from './util'
 
 function RowPill({ status }: { status: string }) {
@@ -37,7 +39,7 @@ function ProgressCell({ row }: { row: TftpRow }) {
 /** Tools panel: start/stop the built-in TFTP server and watch its transfers. */
 export default function TftpServerPanel() {
   const { t } = useI18n()
-  const [rootDir, setRootDir] = useState('')
+  const root = usePathHistory('tftp.root')
   const [bindIp, setBindIp] = useState('')
   const [port, setPort] = useState('69')
   const [status, setStatus] = useState<AppServerStatus | null>(null)
@@ -64,14 +66,17 @@ export default function TftpServerPanel() {
   const pickDir = async () => {
     try {
       const picked = await open({ directory: true, multiple: false, title: t('ntRootDir') })
-      if (typeof picked === 'string') setRootDir(picked)
+      if (typeof picked === 'string') {
+        root.setValue(picked)
+        root.remember(picked)
+      }
     } catch {
       // dialog dismissed
     }
   }
 
   const start = async () => {
-    if (!rootDir.trim()) {
+    if (!root.value.trim()) {
       setError(t('ntFillAll'))
       return
     }
@@ -79,7 +84,7 @@ export default function TftpServerPanel() {
     setError('')
     try {
       const st = await startTftpServer({
-        rootDir: rootDir.trim(),
+        rootDir: root.value.trim(),
         port: parsePort(port, 69),
         bindIp: bindIp.trim() || undefined,
       })
@@ -139,22 +144,14 @@ export default function TftpServerPanel() {
             {t('ntStopped')}
           </div>
         )}
-        <div className="nt-field">
-          <label htmlFor="tftp-root">{t('ntRootDir')}</label>
-          <div className="nt-actions">
-            <input
-              id="tftp-root"
-              className="nt-input"
-              value={rootDir}
-              onChange={(e) => setRootDir(e.target.value)}
-              placeholder="C:\\tftp"
-              disabled={running}
-            />
-            <button className="nt-btn nt-btn-sm" onClick={pickDir} disabled={running}>
-              {t('ntBrowse')}
-            </button>
-          </div>
-        </div>
+        <PathField
+          id="tftp-root"
+          label={t('ntRootDir')}
+          state={root}
+          placeholder="C:\\tftp"
+          disabled={running}
+          onBrowse={pickDir}
+        />
         <div className="nt-field">
           <label htmlFor="tftp-bind">{t('ntBindIp')}</label>
           <input

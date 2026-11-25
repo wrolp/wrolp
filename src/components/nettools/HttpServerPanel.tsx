@@ -3,19 +3,21 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { useI18n } from '../../i18n'
 import { httpGenerateCert, httpServerStatus, startHttpServer, stopHttpServer } from '../../commands'
 import type { AppServerStatus } from '../../types'
+import PathField from './PathField'
+import { usePathHistory, type PathHistory } from './pathHistory'
 import { parsePort } from './util'
 
 /** Tools panel: start/stop the built-in HTTP(S) file server. */
 export default function HttpServerPanel() {
   const { t } = useI18n()
-  const [rootDir, setRootDir] = useState('')
+  const root = usePathHistory('http.root')
+  const cert = usePathHistory('http.cert')
+  const key = usePathHistory('http.key')
   const [port, setPort] = useState('8080')
   const [readOnly, setReadOnly] = useState(false)
   const [requireAuth, setRequireAuth] = useState(false)
   const [token, setToken] = useState('')
   const [enableTls, setEnableTls] = useState(false)
-  const [certPath, setCertPath] = useState('')
-  const [keyPath, setKeyPath] = useState('')
   const [maxUpload, setMaxUpload] = useState('256')
   const [status, setStatus] = useState<AppServerStatus | null>(null)
   const [busy, setBusy] = useState(false)
@@ -39,23 +41,29 @@ export default function HttpServerPanel() {
   const pickDir = async () => {
     try {
       const picked = await open({ directory: true, multiple: false, title: t('ntRootDir') })
-      if (typeof picked === 'string') setRootDir(picked)
+      if (typeof picked === 'string') {
+        root.setValue(picked)
+        root.remember(picked)
+      }
     } catch {
       // dialog dismissed
     }
   }
 
-  const pickFile = (setter: (v: string) => void) => async () => {
+  const pickFile = (field: PathHistory) => async () => {
     try {
       const picked = await open({ multiple: false })
-      if (typeof picked === 'string') setter(picked)
+      if (typeof picked === 'string') {
+        field.setValue(picked)
+        field.remember(picked)
+      }
     } catch {
       // dialog dismissed
     }
   }
 
   const start = async () => {
-    if (!rootDir.trim()) {
+    if (!root.value.trim()) {
       setError(t('ntFillAll'))
       return
     }
@@ -63,14 +71,14 @@ export default function HttpServerPanel() {
     setError('')
     try {
       const st = await startHttpServer({
-        rootDir: rootDir.trim(),
+        rootDir: root.value.trim(),
         port: parsePort(port, 8080),
         readOnly,
         requireAuth,
         token: requireAuth ? token || undefined : undefined,
         enableTls,
-        certPath: enableTls ? certPath.trim() || undefined : undefined,
-        keyPath: enableTls ? keyPath.trim() || undefined : undefined,
+        certPath: enableTls ? cert.value.trim() || undefined : undefined,
+        keyPath: enableTls ? key.value.trim() || undefined : undefined,
         maxUploadSize: Math.max(1, Math.round(Number(maxUpload) || 256)) * 1024 * 1024,
       })
       setStatus(st)
@@ -101,8 +109,10 @@ export default function HttpServerPanel() {
     setCertNote('')
     try {
       const r = await httpGenerateCert()
-      setCertPath(r.certPath)
-      setKeyPath(r.keyPath)
+      cert.setValue(r.certPath)
+      cert.remember(r.certPath)
+      key.setValue(r.keyPath)
+      key.remember(r.keyPath)
       setCertNote(t('ntGenCertOk'))
     } catch (e) {
       setError(String(e))
@@ -127,22 +137,14 @@ export default function HttpServerPanel() {
           {t('ntStopped')}
         </div>
       )}
-      <div className="nt-field">
-        <label htmlFor="http-root">{t('ntRootDir')}</label>
-        <div className="nt-actions">
-          <input
-            id="http-root"
-            className="nt-input"
-            value={rootDir}
-            onChange={(e) => setRootDir(e.target.value)}
-            placeholder="C:\\share"
-            disabled={running}
-          />
-          <button className="nt-btn nt-btn-sm" onClick={pickDir} disabled={running}>
-            {t('ntBrowse')}
-          </button>
-        </div>
-      </div>
+      <PathField
+        id="http-root"
+        label={t('ntRootDir')}
+        state={root}
+        placeholder="C:\\share"
+        disabled={running}
+        onBrowse={pickDir}
+      />
       <div className="nt-field">
         <label htmlFor="http-port">{t('ntPort')}</label>
         <input
@@ -216,46 +218,22 @@ export default function HttpServerPanel() {
       </div>
       {enableTls && (
         <>
-          <div className="nt-field">
-            <label htmlFor="http-cert">{t('ntCertPath')}</label>
-            <div className="nt-actions">
-              <input
-                id="http-cert"
-                className="nt-input"
-                value={certPath}
-                onChange={(e) => setCertPath(e.target.value)}
-                placeholder="cert.pem"
-                disabled={running}
-              />
-              <button
-                className="nt-btn nt-btn-sm"
-                onClick={pickFile(setCertPath)}
-                disabled={running}
-              >
-                {t('ntBrowse')}
-              </button>
-            </div>
-          </div>
-          <div className="nt-field">
-            <label htmlFor="http-key">{t('ntKeyPath')}</label>
-            <div className="nt-actions">
-              <input
-                id="http-key"
-                className="nt-input"
-                value={keyPath}
-                onChange={(e) => setKeyPath(e.target.value)}
-                placeholder="key.pem"
-                disabled={running}
-              />
-              <button
-                className="nt-btn nt-btn-sm"
-                onClick={pickFile(setKeyPath)}
-                disabled={running}
-              >
-                {t('ntBrowse')}
-              </button>
-            </div>
-          </div>
+          <PathField
+            id="http-cert"
+            label={t('ntCertPath')}
+            state={cert}
+            placeholder="cert.pem"
+            disabled={running}
+            onBrowse={pickFile(cert)}
+          />
+          <PathField
+            id="http-key"
+            label={t('ntKeyPath')}
+            state={key}
+            placeholder="key.pem"
+            disabled={running}
+            onBrowse={pickFile(key)}
+          />
           <div className="nt-actions">
             <button className="nt-btn" onClick={genCert} disabled={busy || running}>
               {t('ntGenCert')}
