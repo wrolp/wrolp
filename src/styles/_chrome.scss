@@ -938,7 +938,10 @@ html[data-theme='dark'] .titlebar-btn {
   }
 }
 
-// SSH tunnels rendered as children of a connection
+// SSH tunnels rendered as children of a connection. The action buttons stay
+// out of the flow until the row is hovered (same rule as the connection rows
+// above): the address line gets the full width and only truncates while the
+// buttons actually take space.
 .conn-tunnels {
   display: flex;
   flex-direction: column;
@@ -1015,13 +1018,12 @@ html[data-theme='dark'] .titlebar-btn {
     flex-shrink: 0;
     width: 16px;
     height: 16px;
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     border-radius: var(--r-1);
     color: $text-dim;
     cursor: pointer;
-    opacity: 1;
 
     &:hover {
       background: rgba(78, 201, 176, 0.2);
@@ -1042,13 +1044,12 @@ html[data-theme='dark'] .titlebar-btn {
     flex-shrink: 0;
     width: 16px;
     height: 16px;
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     border-radius: var(--r-1);
     color: $text-dim;
     cursor: pointer;
-    opacity: 0;
 
     &:hover {
       background: rgba(86, 156, 214, 0.3);
@@ -1061,13 +1062,12 @@ html[data-theme='dark'] .titlebar-btn {
     flex-shrink: 0;
     width: 16px;
     height: 16px;
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     border-radius: var(--r-1);
     color: $text-dim;
     cursor: pointer;
-    opacity: 0;
 
     &:hover {
       background: rgba(210, 70, 70, 0.3);
@@ -1075,9 +1075,13 @@ html[data-theme='dark'] .titlebar-btn {
     }
   }
 
+  &:hover .conn-tunnel-toggle,
   &:hover .conn-tunnel-edit,
-  &:hover .conn-tunnel-del {
-    opacity: 1;
+  &:hover .conn-tunnel-del,
+  &:focus-within .conn-tunnel-toggle,
+  &:focus-within .conn-tunnel-edit,
+  &:focus-within .conn-tunnel-del {
+    display: flex;
   }
 }
 

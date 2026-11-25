@@ -76,6 +76,11 @@ test('a saved tunnel starts and stops from the sidebar tree', async ({ page }) =
   const row = page.locator('.conn-tunnel').filter({ hasText: '5432' })
   await expect(row).toBeVisible()
   await expect(row).not.toHaveClass(/active/)
+  // The actions are hover-only: with no pointer on the row they stay out of the
+  // flow, so the address line owns the full width.
+  await expect(row.locator('.conn-tunnel-toggle')).toBeHidden()
+  await expect(row.locator('.conn-tunnel-edit')).toBeHidden()
+  await expect(row.locator('.conn-tunnel-del')).toBeHidden()
 
   // No connected carrier tab yet, so this opens the SSH tab first and starts the
   // tunnel once that tab reports `connected` (the pending-start queue).
@@ -83,12 +88,18 @@ test('a saved tunnel starts and stops from the sidebar tree', async ({ page }) =
   await expect.poll(() => countInvoked(page, 'start_tunnel')).toBeGreaterThan(0)
   await expect(row).toHaveClass(/active/)
 
+  await row.hover()
+  await expect(row.locator('.conn-tunnel-toggle')).toBeVisible()
+  await expect(row.locator('.conn-tunnel-edit')).toBeVisible()
+  await expect(row.locator('.conn-tunnel-del')).toBeVisible()
   await row.locator('.conn-tunnel-toggle').click()
   await expect.poll(() => countInvoked(page, 'stop_tunnel')).toBeGreaterThan(0)
   await expect(row).not.toHaveClass(/active/)
 })
 
-test('connection-closed rolls the tab back and Reconnect starts a fresh session', async ({ page }) => {
+test('connection-closed rolls the tab back and Reconnect starts a fresh session', async ({
+  page,
+}) => {
   await installTauriMock(page, { connections: [SSH_CONN] })
   await page.goto('/')
 
