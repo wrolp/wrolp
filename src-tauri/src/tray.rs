@@ -5,6 +5,13 @@
 //! state — the frontend pushes both lists (labels included, so the menu follows
 //! the app language) through `sync_tray_menu`, and a click only emits
 //! `tray-action` back; App.tsx performs the switch.
+//!
+//! The icon itself is optional: Settings (`ui.showTray`, default on) and the
+//! menu's own "hide tray icon" item both drive `set_tray_visible`. The menu item
+//! only asks — the frontend confirms (the window is brought up for the dialog),
+//! then persists the setting, and that push is what hides the icon. Hiding does
+//! not destroy the menu — only the shell icon — so turning it back on restores
+//! the same sessions and recents.
 
 use serde::{Deserialize, Serialize};
 use tauri::image::Image;
@@ -15,6 +22,8 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::ssh_session::AppState;
+
+use std::sync::atomic::Ordering;
 
 const TRAY_ID: &str = "main";
 const TAB_PREFIX: &str = "tab:";
@@ -46,6 +55,8 @@ pub struct TrayRecent {
 pub struct TrayLabels {
   pub show: String,
   pub hide: String,
+  /// Menu item that asks to hide the tray icon itself (re-enabled from Settings).
+  pub hide_tray: String,
   pub quit: String,
   pub sessions: String,
   pub recent: String,
@@ -84,6 +95,7 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
   let menu = MenuBuilder::new(app)
     .text("show", "Show Window")
     .text("hide", "Hide Window")
+    .text("hide_tray", "Hide Tray Icon")
     .separator()
     .text("quit", "Quit")
     .build()?;
@@ -117,6 +129,22 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
       if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
       }
+    }
+    "hide_tray" => {
+      // With the icon gone the close button quits from then on, so the frontend
+      // asks first: it shows a confirmation (the window comes up so the dialog
+      // is never behind a hidden window) and, only on confirm, persists
+      // `ui.showTray = false` — that setting push is what actually hides the
+      // icon. Cancelling leaves the tray untouched.
+      show_main_window(app);
+      let _ = app.emit(
+        "tray-action",
+        TrayAction {
+          kind: "hide-tray",
+          tab_id: None,
+          id: None,
+        },
+      );
     }
     "quit" => {
       // Never exit straight from the menu: the close button only hides the
@@ -214,6 +242,7 @@ fn build_menu(
   MenuBuilder::new(app)
     .text("show", menu_text(&labels.show))
     .text("hide", menu_text(&labels.hide))
+    .text("hide_tray", menu_text(&labels.hide_tray))
     .separator()
     .item(&sessions)
     .item(&recent_menu)
@@ -244,25 +273,58 @@ pub async fn sync_tray_menu(
 
 /// End the process for real.
 ///
-/// The window's close button only hides it (the app keeps running in the
-/// tray), so this is the one path out of the app — and the frontend runs it
-/// only after the user confirms the tray's Quit, because it takes every live
-/// session with it.
+/// With the tray icon shown the window's close button only hides it (the app
+/// keeps running in the tray), so this is the one path out of the app from the
+/// menu — and the frontend runs it only after the user confirms the tray's
+/// Quit, because it takes every live session with it.
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
   app.exit(0);
 }
 
+/// Show or hide the tray icon, keeping `AppState::tray_visible` in step.
+///
+/// The icon is hidden with `set_visible`, not destroyed, so the current menu
+/// (sessions, recents, captions) survives a hide/show round trip. Called with
+/// `false` the window close button quits instead of hiding: without an icon
+/// there would be no way to bring a hidden window back.
+fn apply_tray_visible(app: &AppHandle, visible: bool) -> Result<(), String> {
+  let tray = app
+    .tray_by_id(TRAY_ID)
+    .ok_or_else(|| "no tray".to_string())?;
+  tray.set_visible(visible).map_err(|e| e.to_string())?;
+  if let Some(state) = app.try_state::<AppState>() {
+    state.tray_visible.store(visible, Ordering::Relaxed);
+  }
+  Ok(())
+}
+
+/// Show or hide the tray icon — the frontend's `ui.showTray` setting (default
+/// on), pushed here on mount and on every change. A failed tray init is not an
+/// error to the caller: the app simply runs without an icon, and close quits.
+#[tauri::command]
+pub fn set_tray_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+  match apply_tray_visible(&app, visible) {
+    Ok(()) => Ok(()),
+    Err(e) if e == "no tray" => {
+      if let Some(state) = app.try_state::<AppState>() {
+        state.tray_visible.store(false, Ordering::Relaxed);
+      }
+      Ok(())
+    }
+    Err(e) => Err(e),
+  }
+}
+
 /// Choose what the window's close button does.
 ///
 /// `true` (the shipped default) parks the app in the tray; `false` lets the
-/// close go through and quits. The setting lives in the frontend's
+/// close go through and quits. Either way the hide only happens while the tray
+/// icon is shown — see `set_tray_visible`. The setting lives in the frontend's
 /// `ui.windowCloseAction` (localStorage), which Rust cannot read, so the
 /// frontend pushes it here on mount and on every change — the `CloseRequested`
 /// handler in `lib.rs` reads `AppState::close_to_tray` at click time.
 #[tauri::command]
 pub fn set_close_to_tray(state: State<'_, AppState>, close_to_tray: bool) {
-  state
-    .close_to_tray
-    .store(close_to_tray, std::sync::atomic::Ordering::Relaxed);
+  state.close_to_tray.store(close_to_tray, Ordering::Relaxed);
 }

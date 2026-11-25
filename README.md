@@ -204,7 +204,7 @@
 ### Window & shell integration
 
 - Custom titlebar (window `decorations: false`); window geometry/opacity persisted (`window.json`).
-- **System tray**: closing the window parks the app (and its live sessions) in the tray. Tray menu: show/hide the window, switch to any open session, reopen a recently used connection or local terminal, and quit (with a confirmation).
+- **System tray** (on by default, switchable in Settings): closing the window parks the app (and its live sessions) in the tray while the icon is shown; with it hidden, closing quits. Tray menu: show/hide the window, hide the tray icon itself (with a confirmation that points back to Settings), switch to any open session, reopen a recently used connection or local terminal, and quit (with a confirmation).
 - Auto-updater (GitHub release endpoint — set a real `pubkey` in `tauri.conf.json` before shipping).
 - Persistent connection configs (`connections.json`, encrypted — it also stores workspaces) and SQLite DB (`wrolp.db`, WAL mode) under the OS config dir + `wrolp-terminal/`.
 

@@ -1093,6 +1093,12 @@ pub struct AppState {
   /// because Rust cannot read browser storage; until the first push arrives the
   /// default keeps the pre-setting behaviour (hide to tray).
   pub close_to_tray: AtomicBool,
+  /// Whether the tray icon is currently shown. Mirrors the frontend's
+  /// `ui.showTray` setting (default on) and is updated by `set_tray_visible` and
+  /// by the tray menu's own "hide tray icon" item. The close handler needs it
+  /// because hiding the window with no icon left would strand the app with no
+  /// way back — so with the tray hidden close must quit instead.
+  pub tray_visible: AtomicBool,
 }
 
 /// A user-defined local terminal: opens a local shell in `cwd` using `shell`.
@@ -1264,6 +1270,10 @@ impl AppState {
       // Default hides to tray: preserves the behaviour shipped before this
       // setting existed, until the frontend pushes the user's choice.
       close_to_tray: AtomicBool::new(true),
+      // The tray is shown by default; the frontend's `ui.showTray` setting is
+      // pushed on mount and can turn it off. `tray::init` clears this if the
+      // icon could not be created at all.
+      tray_visible: AtomicBool::new(true),
     }
   }
 }

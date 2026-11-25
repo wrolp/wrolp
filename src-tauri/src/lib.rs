@@ -129,46 +129,50 @@ pub fn run() {
       }
 
       // System tray: window actions, open sessions and recent items. A failure
-      // must not abort startup — the app works without it — but it must also
-      // skip the close-to-tray override below, which would otherwise hide the
-      // window with no icon left to bring it back.
-      let tray_ready = match tray::init(app.handle()) {
-        Ok(()) => true,
-        Err(e) => {
-          eprintln!("[tray] init failed: {e}");
-          false
+      // must not abort startup — the app works without it — but it must be
+      // recorded so the close handler below quits instead of hiding the window
+      // with no icon left to bring it back.
+      if let Err(e) = tray::init(app.handle()) {
+        eprintln!("[tray] init failed: {e}");
+        if let Some(state) = app.try_state::<AppState>() {
+          state
+            .tray_visible
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         }
-      };
+      }
 
       // Restore window position/size from saved config before showing
       if let Some(window) = app.get_webview_window("main") {
         // The close button is configurable: hide to tray (the shipped default —
         // keeps live sessions alive and reachable from the tray menu) or quit
-        // outright. The choice lives in the frontend's setting and is pushed
-        // into `AppState::close_to_tray`; read it at click time so a change
-        // takes effect without a restart. Only installed when the tray is up —
-        // without an icon there is no way back from a hidden window, so close
-        // must keep its default (quit) in that case.
-        if tray_ready {
-          let window_clone = window.clone();
-          // `app.handle()` borrows `app`; `.clone()` yields an owned, `'static`
-          // handle the `on_window_event` closure can capture.
-          let app_handle = app.handle().clone();
-          window.on_window_event(move |event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-              let hide_to_tray = app_handle
-                .try_state::<AppState>()
-                .map(|s| s.close_to_tray.load(std::sync::atomic::Ordering::Relaxed))
-                .unwrap_or(true);
-              if hide_to_tray {
-                api.prevent_close();
-                let _ = window_clone.hide();
-              }
-              // `false`: let the close go through — the app's only window
-              // closes and the process exits.
+        // outright. Both the choice and whether an icon exists live in
+        // `AppState` (the setting is frontend-owned, so it is pushed there on
+        // mount and on change); they are read at click time, so a change takes
+        // effect without a restart. Hiding is only ever allowed while the icon
+        // is actually shown — a hidden window with no icon has no way back.
+        let window_clone = window.clone();
+        // `app.handle()` borrows `app`; `.clone()` yields an owned, `'static`
+        // handle the `on_window_event` closure can capture.
+        let app_handle = app.handle().clone();
+        window.on_window_event(move |event| {
+          if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            let state = app_handle.try_state::<AppState>();
+            let hide_to_tray = state
+              .as_ref()
+              .map(|s| s.close_to_tray.load(std::sync::atomic::Ordering::Relaxed))
+              .unwrap_or(false)
+              && state
+                .as_ref()
+                .map(|s| s.tray_visible.load(std::sync::atomic::Ordering::Relaxed))
+                .unwrap_or(false);
+            if hide_to_tray {
+              api.prevent_close();
+              let _ = window_clone.hide();
             }
-          });
-        }
+            // Otherwise let the close go through — the app's only window
+            // closes and the process exits.
+          }
+        });
 
         // Restore window geometry if saved. First verify the window rect
         // intersects any visible monitor; if it does not (e.g. it was on a
@@ -258,6 +262,7 @@ pub fn run() {
       tray::sync_tray_menu,
       tray::quit_app,
       tray::set_close_to_tray,
+      tray::set_tray_visible,
       commands::connect,
       commands::disconnect,
       commands::send_input,

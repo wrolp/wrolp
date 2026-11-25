@@ -119,6 +119,7 @@ const zh: Partial<Record<TranslationKey, string>> = {
   // System tray
   trayShow: '显示窗口',
   trayHide: '隐藏窗口',
+  trayHideTray: '隐藏托盘图标',
   trayQuit: '退出',
   traySessions: '打开的会话',
   trayRecent: '最近打开',
@@ -126,13 +127,22 @@ const zh: Partial<Record<TranslationKey, string>> = {
   trayNoRecent: '暂无最近项',
   trayQuitTitle: '退出 Wrolp Terminal？',
   trayQuitMessage: '所有打开的会话将被关闭，此操作无法撤销。',
+  trayHideTrayTitle: '隐藏托盘图标？',
+  trayHideTrayMessage:
+    '托盘图标隐藏后，关闭窗口将直接退出应用。\n可随时在 设置 → 外观 → 显示托盘图标 中重新开启。',
+  trayHideTrayConfirm: '隐藏图标',
+
+  // 托盘图标
+  showTrayLabel: '显示托盘图标',
+  showTrayHelp:
+    '在系统托盘中显示图标（默认开启）。也可以在托盘菜单中隐藏，并在这里重新开启。托盘图标隐藏时，关闭窗口将直接退出应用。',
 
   // 窗口关闭按钮
   windowCloseActionLabel: '关闭按钮',
-  windowCloseActionHide: '隐藏到托盘（从托盘菜单退出）',
+  windowCloseActionHide: '隐藏到托盘（会话继续运行）',
   windowCloseActionQuit: '直接退出应用',
   windowCloseActionHelp:
-    '窗口关闭按钮的行为。"隐藏"会让应用及其中的会话在托盘中继续运行；"退出"会关闭一切。',
+    '窗口关闭按钮的行为。"隐藏"会让应用及其中的会话在托盘中继续运行，仅在托盘图标显示时生效；托盘图标隐藏时关闭即退出。"退出"始终直接关闭一切。',
 
   // Workspaces
   workspace: '工作区',

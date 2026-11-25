@@ -107,6 +107,55 @@ test('the close-to-tray setting is pushed on boot as hide by default', async ({ 
   expect(call?.args).toEqual({ closeToTray: true })
 })
 
+// The icon is frontend-configurable as well: `ui.showTray` (default on) is
+// pushed the same way. The tray menu's "hide tray icon" item asks first (the
+// frontend shows a confirmation naming the Settings switch as the way back)
+// and only a confirmed choice is written, so the Settings switch and the menu
+// can never disagree.
+test('the tray icon is pushed as visible by default', async ({ page }) => {
+  await boot(page)
+  await expect
+    .poll(async () => (await invokedCalls(page)).some((c) => c.cmd === 'set_tray_visible'))
+    .toBe(true)
+  const call = (await invokedCalls(page)).find((c) => c.cmd === 'set_tray_visible')
+  expect(call?.args).toEqual({ visible: true })
+})
+
+test('hiding the tray from its menu asks first and only the confirmation hides it', async ({
+  page,
+}) => {
+  await boot(page)
+  await emitTauriEvent(page, 'tray-action', { kind: 'hide-tray' })
+
+  const dialog = page.locator('.confirm-dialog')
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('Hide the tray icon?')
+  // The dialog has to say where the icon can be turned back on.
+  await expect(dialog).toContainText('Settings → Appearance → Show tray icon')
+
+  // Cancel leaves both the icon and the stored setting alone.
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toBeHidden()
+  expect(
+    (await invokedCalls(page)).some(
+      (c) => c.cmd === 'set_tray_visible' && c.args.visible === false,
+    ),
+  ).toBe(false)
+  expect(await page.evaluate(() => localStorage.getItem('wrolp-show-tray'))).not.toBe('0')
+
+  // Confirming persists the setting; that push is what hides the icon.
+  await emitTauriEvent(page, 'tray-action', { kind: 'hide-tray' })
+  await page.getByRole('button', { name: 'Hide icon' }).click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).some(
+        (c) => c.cmd === 'set_tray_visible' && c.args.visible === false,
+      ),
+    )
+    .toBe(true)
+  expect(await page.evaluate(() => localStorage.getItem('wrolp-show-tray'))).toBe('0')
+})
+
 test('a quit close-action setting is pushed as closeToTray=false', async ({ page }) => {
   await installTauriMock(page, { connections: [CONN] })
   await page.addInitScript(() => {

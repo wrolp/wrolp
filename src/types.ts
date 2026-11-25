@@ -277,6 +277,8 @@ export interface TrayRecentEntry {
 export interface TrayMenuLabels {
   show: string
   hide: string
+  /** Menu item that hides the tray icon itself (turned back on in Settings). */
+  hideTray: string
   quit: string
   sessions: string
   recent: string

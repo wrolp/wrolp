@@ -239,6 +239,16 @@ export async function setCloseToTray(closeToTray: boolean): Promise<void> {
   await invoke('set_close_to_tray', { closeToTray })
 }
 
+/**
+ * Show or hide the tray icon — the `ui.showTray` setting (default on). Pushed
+ * on mount and on change like the close behaviour above. While the icon is
+ * hidden the close button quits instead of hiding, since a hidden window with
+ * no icon has no way back.
+ */
+export async function setTrayVisible(visible: boolean): Promise<void> {
+  await invoke('set_tray_visible', { visible })
+}
+
 export async function reorderConnections(
   orderedIds: string[],
   groupUpdates?: Record<string, string>,

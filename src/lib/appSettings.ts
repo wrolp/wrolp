@@ -560,6 +560,21 @@ const DEFS: SettingDef[] = [
       'Which Home page recency list sits on the left: "local-first" puts local terminals on the left (default), "remote-first" puts remote hosts on the left.',
   },
   {
+    key: 'ui.showTray',
+    kind: 'boolean',
+    group: 'ui',
+    default: true,
+    // Rust owns the icon and cannot read localStorage, so the value is pushed
+    // into AppState on mount and on every change (see App.tsx). The tray menu's
+    // own "hide tray" item writes this key too, so the switch and the menu never
+    // disagree. While it is off the close button quits even when
+    // `ui.windowCloseAction` says "hide": a hidden window with no icon has no
+    // way back.
+    storage: { kind: 'localStorage', key: 'wrolp-show-tray' },
+    describe:
+      'Show the system tray icon (default on; the tray menu can also hide it). With the icon hidden, closing the window quits the app instead of hiding it.',
+  },
+  {
     key: 'ui.windowCloseAction',
     kind: 'enum',
     values: ['hide', 'quit'],
@@ -779,6 +794,12 @@ export function readHomeRecentOrder(): HomeRecentOrder {
   const def = BY_KEY.get('ui.recentOrder')
   const raw = def ? String(readValue(def)) : ''
   return raw === 'remote-first' ? 'remote-first' : 'local-first'
+}
+
+/** Whether the tray icon is shown. Unknown / corrupt storage reads as the
+ *  shipped default (`true`). */
+export function readShowTray(): boolean {
+  return readSetting('ui.showTray')?.value !== false
 }
 
 /** What the window close button does. An unknown / corrupt stored value reads

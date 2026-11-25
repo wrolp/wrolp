@@ -148,6 +148,7 @@ import {
   syncTrayMenu,
   quitApp,
   setCloseToTray,
+  setTrayVisible,
   saveConnection,
   listTunnels,
   startTunnel,
@@ -223,6 +224,7 @@ import {
   HOME_RECENT_COUNT,
   readHomeRecentCount,
   readHomeRecentOrder,
+  readShowTray,
   readWindowCloseAction,
   TERMINAL_FONT_CHOICES,
   withNerdFontFallback,
@@ -1305,6 +1307,10 @@ function AppearanceSettingsCard({
   const [windowCloseAction, setWindowCloseAction] = useState<WindowCloseAction>(() =>
     readWindowCloseAction(),
   )
+  // Whether the tray icon is shown. Same push path as the close behaviour; the
+  // tray menu's own "hide tray icon" item writes the same key, so this switch
+  // follows a hide made from the menu.
+  const [showTray, setShowTray] = useState(() => readShowTray())
   useEffect(
     () =>
       subscribeAppSettings(() => {
@@ -1313,6 +1319,7 @@ function AppearanceSettingsCard({
         setMinimalFullscreen(readSetting('ui.minimalFullscreen')?.value === true)
         setRecentOrder(readHomeRecentOrder())
         setWindowCloseAction(readWindowCloseAction())
+        setShowTray(readShowTray())
       }),
     [],
   )
@@ -1540,6 +1547,20 @@ function AppearanceSettingsCard({
           />
           <span className="settings-label">{t('minimalFullscreenLabel')}</span>
           <span className="settings-help">{t('minimalFullscreenHelp')}</span>
+        </div>
+
+        <div className="settings-field switch-field">
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={showTray}
+            aria-label={t('showTrayLabel')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => write({ 'ui.showTray': !showTray })}
+          />
+          <span className="settings-label">{t('showTrayLabel')}</span>
+          <span className="settings-help">{t('showTrayHelp')}</span>
         </div>
 
         <div className="settings-field">
@@ -3083,6 +3104,9 @@ export default function App() {
   // The tray's Quit asks first: it is the only action that ends the app (the
   // close button hides to the tray), and it takes every live session with it.
   const [trayQuitConfirm, setTrayQuitConfirm] = useState(false)
+  // The tray's own "hide tray icon" asks first too: without the icon the close
+  // button quits, and the way back is the Settings switch (`ui.showTray`).
+  const [trayHideConfirm, setTrayHideConfirm] = useState(false)
   // Which view occupies the shell pane area, per session (tabId): 'terminal' or
   // `dockerlog:<id>`. Files are not here — an open file owns a tab bar entry and
   // its own surface. Isolated per session so a log view in one tab doesn't cover
@@ -5126,6 +5150,7 @@ export default function App() {
     const labels: TrayMenuLabels = {
       show: t('trayShow'),
       hide: t('trayHide'),
+      hideTray: t('trayHideTray'),
       quit: t('trayQuit'),
       sessions: t('traySessions'),
       recent: t('trayRecent'),
@@ -5137,16 +5162,19 @@ export default function App() {
     })
   }, [tabs, activeTabId, connections, localTerminals, recentConnections, getTabLabel, t])
 
-  // Push the window-close behaviour to the backend on mount and on every
-  // settings change. Rust owns the CloseRequested handler and cannot read
-  // localStorage, so AppState is its only source of truth for what the ✕
-  // button does; the handler reads it at click time, so a toggle takes effect
-  // without a restart. Re-pushing on any setting change is cheap and keeps the
-  // two sides in sync if the AI bridge writes the same key.
+  // Push the window-close behaviour and the tray visibility to the backend on
+  // mount and on every settings change. Rust owns the CloseRequested handler and
+  // the icon, and cannot read localStorage, so AppState is its only source of
+  // truth; the handler reads it at click time, so a toggle takes effect without
+  // a restart. Re-pushing on any setting change is cheap and keeps the two sides
+  // in sync if the AI bridge or the tray menu writes the same keys.
   useEffect(() => {
     const push = () => {
       void setCloseToTray(readWindowCloseAction() === 'hide').catch((err) => {
         console.error('Failed to push the close-to-tray setting:', err)
+      })
+      void setTrayVisible(readShowTray()).catch((err) => {
+        console.error('Failed to push the tray visibility setting:', err)
       })
     }
     push()
@@ -5874,44 +5902,52 @@ export default function App() {
   }, [])
 
   // Tray menu clicks. The backend already brought the window forward; all that
-  // is left is the switch (or, for Quit, asking first — that one ends the app).
-  // A session closed while the menu was open resolves to nothing and is
-  // ignored — the menu is rebuilt right after, without it.
+  // is left is the switch — the two actions that change how the app can be
+  // reached (Quit, hide the tray icon) ask first. A session closed while the
+  // menu was open resolves to nothing and is ignored — the menu is rebuilt
+  // right after, without it.
   useEffect(() => {
     let unlisten: (() => void) | null = null
     let live = true
-    void listen<{ kind: 'tab' | 'recent' | 'quit'; tabId?: number; id?: string }>(
-      'tray-action',
-      (event) => {
-        const payload = event.payload
-        if (payload.kind === 'quit') {
-          setTrayQuitConfirm(true)
+    void listen<{
+      kind: 'tab' | 'recent' | 'quit' | 'hide-tray'
+      tabId?: number
+      id?: string
+    }>('tray-action', (event) => {
+      const payload = event.payload
+      if (payload.kind === 'quit') {
+        setTrayQuitConfirm(true)
+        return
+      }
+      if (payload.kind === 'hide-tray') {
+        // Nothing has been hidden yet: the backend waits for the confirmed
+        // setting, whose push (`set_tray_visible(false)`) removes the icon.
+        setTrayHideConfirm(true)
+        return
+      }
+      if (payload.kind === 'tab') {
+        if (payload.tabId === undefined) return
+        if (!tabsRef.current.some((tab) => tab.tabId === payload.tabId)) return
+        handleTabClick(payload.tabId)
+        return
+      }
+      if (payload.kind !== 'recent' || !payload.id) return
+      const id = payload.id
+      if (id.startsWith(LOCAL_RECENT_PREFIX)) {
+        const entryId = id.slice(LOCAL_RECENT_PREFIX.length)
+        if (entryId === DEFAULT_LOCAL_ENTRY_ID) {
+          handleOpenLocalTerminal()
           return
         }
-        if (payload.kind === 'tab') {
-          if (payload.tabId === undefined) return
-          if (!tabsRef.current.some((tab) => tab.tabId === payload.tabId)) return
-          handleTabClick(payload.tabId)
-          return
+        const entry = localTerminalsRef.current.find((e) => e.id === entryId)
+        if (entry) {
+          handleOpenLocalTerminal(entry.cwd, entry.shell, entry.name, entry.distro, entry.id)
         }
-        if (payload.kind !== 'recent' || !payload.id) return
-        const id = payload.id
-        if (id.startsWith(LOCAL_RECENT_PREFIX)) {
-          const entryId = id.slice(LOCAL_RECENT_PREFIX.length)
-          if (entryId === DEFAULT_LOCAL_ENTRY_ID) {
-            handleOpenLocalTerminal()
-            return
-          }
-          const entry = localTerminalsRef.current.find((e) => e.id === entryId)
-          if (entry) {
-            handleOpenLocalTerminal(entry.cwd, entry.shell, entry.name, entry.distro, entry.id)
-          }
-          return
-        }
-        const conn = connectionsRef.current.find((c) => c.id === id)
-        if (conn) handleSelectConnection(conn)
-      },
-    )
+        return
+      }
+      const conn = connectionsRef.current.find((c) => c.id === id)
+      if (conn) handleSelectConnection(conn)
+    })
       .then((un) => {
         if (live) unlisten = un
         else un()
@@ -10195,6 +10231,29 @@ export default function App() {
             void quitApp()
           }}
           onCancel={() => setTrayQuitConfirm(false)}
+        />
+      )}
+
+      {/* Tray → Hide Tray Icon asks first: once the icon is gone the close
+          button quits, and the way back is the Settings switch. */}
+      {trayHideConfirm && (
+        <ConfirmDialog
+          title={t('trayHideTrayTitle')}
+          message={t('trayHideTrayMessage')}
+          confirmLabel={t('trayHideTrayConfirm')}
+          cancelLabel={t('cancel')}
+          onConfirm={() => {
+            setTrayHideConfirm(false)
+            try {
+              // Persisting the choice is what hides the icon: the settings
+              // subscription pushes `set_tray_visible(false)`, and the switch
+              // in Settings → Appearance shows it off from now on.
+              applySettingChanges({ 'ui.showTray': false }, 'user')
+            } catch (err) {
+              console.error('Failed to persist the hidden tray:', err)
+            }
+          }}
+          onCancel={() => setTrayHideConfirm(false)}
         />
       )}
     </div>

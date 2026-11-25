@@ -118,6 +118,7 @@ const en = {
   // System tray
   trayShow: 'Show Window',
   trayHide: 'Hide Window',
+  trayHideTray: 'Hide Tray Icon',
   trayQuit: 'Quit',
   traySessions: 'Sessions',
   trayRecent: 'Recent',
@@ -125,13 +126,22 @@ const en = {
   trayNoRecent: 'No recent items',
   trayQuitTitle: 'Quit Wrolp Terminal?',
   trayQuitMessage: 'All open sessions will be closed. This cannot be undone.',
+  trayHideTrayTitle: 'Hide the tray icon?',
+  trayHideTrayMessage:
+    'While the icon is hidden, closing the window quits the app.\nYou can turn it back on anytime in Settings → Appearance → Show tray icon.',
+  trayHideTrayConfirm: 'Hide icon',
+
+  // Tray icon
+  showTrayLabel: 'Show tray icon',
+  showTrayHelp:
+    'Show the icon in the system tray (on by default). It can also be hidden from the tray menu; turn it back on here. While it is hidden, closing the window quits the app.',
 
   // Window close button
   windowCloseActionLabel: 'Close button',
-  windowCloseActionHide: 'Hide to tray (quit from the tray menu)',
+  windowCloseActionHide: 'Hide to tray (keep sessions running)',
   windowCloseActionQuit: 'Quit the app directly',
   windowCloseActionHelp:
-    'What the window close button does. "Hide" keeps the app and its live sessions running in the tray; "Quit" closes everything.',
+    'What the window close button does. "Hide" keeps the app and its live sessions running in the tray — only while the tray icon is shown; with the icon hidden, closing quits. "Quit" always closes everything.',
 
   // Workspaces
   workspace: 'Workspace',
