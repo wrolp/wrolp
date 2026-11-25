@@ -44,7 +44,12 @@ type TestWindow = Window & {
   __dockerGate: { calls: InvokeArgs[]; release: () => void; finished: boolean }
 }
 
-async function boot(page: Page, localImages = IMAGES, remoteImages = [REMOTE_IMAGE]) {
+async function boot(
+  page: Page,
+  localImages = IMAGES,
+  remoteImages = [REMOTE_IMAGE],
+  dialogPath?: string,
+) {
   await page.addInitScript(() => {
     localStorage.setItem('wrolp-lang', 'en')
     const w = window as unknown as TestWindow
@@ -64,6 +69,7 @@ async function boot(page: Page, localImages = IMAGES, remoteImages = [REMOTE_IMA
     localDockerProbe: PROBE,
     localDockerImages: localImages,
     dockerImages: remoteImages,
+    dialogPath,
   })
   await page.goto('/')
   await expect(page.locator('.connection-item')).toBeVisible()
@@ -76,6 +82,13 @@ const containerButton = (page: Page) =>
   page.locator('.docker-view-btn', { hasText: /^Containers$/ })
 const removals = async (page: Page) =>
   (await invokedCalls(page)).filter((c) => c.cmd === 'remove_docker_image')
+const exportsSoFar = async (page: Page) =>
+  (await invokedCalls(page)).filter((c) => c.cmd === 'export_docker_image')
+
+async function askExport(page: Page, ref: string) {
+  await row(page, ref).click({ button: 'right' })
+  await page.locator('.docker-context-menu .context-menu-item', { hasText: 'Export image' }).click()
+}
 
 async function openImages(page: Page) {
   await selectRailMode(page, 'containers')
@@ -256,6 +269,156 @@ test('dangling images are deleted by their full ID', async ({ page }) => {
   expect((await removals(page)).map((c) => c.args)).toEqual([
     { host: { kind: 'local' }, imageRef: IMAGES[2].id },
   ])
+})
+
+test('exporting an image asks for a local tar, suggests a safe name and sends that reference', async ({
+  page,
+}) => {
+  const target = 'C:\\Users\\tester\\example-api-stable.tar'
+  await boot(page, IMAGES, [REMOTE_IMAGE], target)
+  await openImages(page)
+  await askExport(page, 'example/api:stable')
+
+  await expect
+    .poll(async () => (await exportsSoFar(page)).map((c) => c.args))
+    .toEqual([{ host: { kind: 'local' }, imageRef: 'example/api:stable', targetPath: target }])
+  // The picker opened for a `.tar` whose default name lost the characters
+  // Windows forbids (`/` and `:`).
+  const dialog = (await invokedCalls(page)).find((c) => c.cmd === 'plugin:dialog|save')
+  expect(JSON.stringify(dialog?.args)).toContain('example-api-stable.tar')
+  // Exporting is non-destructive: the menu closes and the row stays.
+  await expect(page.locator('.docker-context-menu')).toHaveCount(0)
+  await expect(row(page, 'example/api:stable')).toBeVisible()
+  expect(await removals(page)).toHaveLength(0)
+})
+
+test('an untagged image exports by its full ID', async ({ page }) => {
+  await boot(page, IMAGES, [REMOTE_IMAGE], 'C:\\Users\\tester\\dangling.tar')
+  await openImages(page)
+  await askExport(page, '<none>:<none>')
+  await expect
+    .poll(async () => (await exportsSoFar(page)).map((c) => c.args))
+    .toEqual([
+      {
+        host: { kind: 'local' },
+        imageRef: IMAGES[2].id,
+        targetPath: 'C:\\Users\\tester\\dangling.tar',
+      },
+    ])
+})
+
+test('cancelling the save dialog exports nothing', async ({ page }) => {
+  await boot(page)
+  await openImages(page)
+  await askExport(page, 'example/api:stable')
+  await expect(page.locator('.docker-context-menu')).toHaveCount(0)
+  expect(await exportsSoFar(page)).toHaveLength(0)
+})
+
+/** A jump-host daemon: the export dialog can write on the server or download. */
+async function bootRemote(page: Page, dialogPath?: string) {
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await installTauriMock(page, {
+    connections: [CONN],
+    pollOutputChunks: [['root@demo:~# ']],
+    dialogPath,
+    dockerImages: [REMOTE_IMAGE],
+    // Ignored per-path by the mock: every listing answers the same rows, which
+    // is enough to prove the combobox renders directories and drills into them.
+    fileEntries: [
+      { name: 'home', path: '/home', isDir: true, size: 0, mode: '', modified: '' },
+      { name: 'var', path: '/var', isDir: true, size: 0, mode: '', modified: '' },
+      { name: 'notes.txt', path: '/tmp/notes.txt', isDir: false, size: 9, mode: '', modified: '' },
+    ],
+  })
+  await page.goto('/')
+  await expect(page.locator('.connection-item')).toBeVisible()
+  await page.locator('.connection-item').click()
+  await expect(page.locator('.tab-item:not(.tab-home)')).toHaveCount(1)
+  await selectRailMode(page, 'containers')
+  await imageButton(page).click()
+  await expect(page.locator('.docker-list')).toHaveAttribute('aria-busy', 'false')
+}
+
+const hostExportCalls = async (page: Page) =>
+  (await invokedCalls(page)).filter((c) => c.cmd === 'export_docker_image_to_host')
+
+test('a remote export defaults to a server path, filters its directories and saves there', async ({
+  page,
+}) => {
+  await bootRemote(page)
+  await askExport(page, 'remote/worker:v2')
+
+  const dialog = page.locator('.docker-export-dialog')
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('Save on the server')
+  await expect(dialog).toContainText('Download to this computer')
+
+  // The field starts as a directory and says what the tar will be called.
+  const pathInput = dialog.getByLabel('Server path')
+  await expect(pathInput).toHaveValue('/tmp/')
+  await expect(dialog).toContainText('Will be saved as /tmp/remote-worker-v2.tar')
+  await pathInput.click()
+
+  // The list is portaled to <body>, so the scrolling modal cannot clip it.
+  const suggestions = page.locator('body > .docker-export-suggestions')
+  await expect(suggestions).toBeVisible()
+  await expect(dialog.locator('.docker-export-suggestions')).toHaveCount(0)
+  await expect(suggestions.locator('li', { hasText: 'home/' })).toBeVisible()
+  await expect(suggestions.locator('li', { hasText: 'var/' })).toBeVisible()
+  await expect(suggestions.locator('li', { hasText: 'notes.txt' })).toHaveCount(0)
+
+  // Typing filters the directories by the segment after the last `/`.
+  await pathInput.fill('/tmp/ho')
+  await expect(suggestions.locator('li', { hasText: 'home/' })).toBeVisible()
+  await expect(suggestions.locator('li', { hasText: 'var/' })).toHaveCount(0)
+
+  // Clicking a directory navigates into it; ".." walks back up.
+  await suggestions.locator('li', { hasText: 'home/' }).click()
+  await expect(pathInput).toHaveValue('/tmp/home/')
+  await suggestions.locator('li', { hasText: '..' }).click()
+  await expect(pathInput).toHaveValue('/tmp/')
+
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect.poll(async () => (await hostExportCalls(page)).length).toBe(1)
+  const call = (await hostExportCalls(page))[0]
+  expect(call.args).toEqual({
+    host: { kind: 'ssh', jumpTabId: expect.any(Number) },
+    imageRef: 'remote/worker:v2',
+    targetPath: '/tmp/remote-worker-v2.tar',
+  })
+  // The server path never opens a local save picker.
+  expect((await invokedCalls(page)).some((c) => c.cmd === 'plugin:dialog|save')).toBe(false)
+})
+
+test('a remote export can download to this computer instead', async ({ page }) => {
+  const target = 'C:\\Users\\tester\\worker.tar'
+  await bootRemote(page, target)
+  await askExport(page, 'remote/worker:v2')
+
+  const dialog = page.locator('.docker-export-dialog')
+  await dialog.getByLabel('Download to this computer').check()
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+
+  await expect.poll(async () => (await exportsSoFar(page)).length).toBe(1)
+  expect((await exportsSoFar(page))[0].args).toEqual({
+    host: { kind: 'ssh', jumpTabId: expect.any(Number) },
+    imageRef: 'remote/worker:v2',
+    targetPath: target,
+  })
+  expect(await hostExportCalls(page)).toHaveLength(0)
+  await expect(dialog).toHaveCount(0)
+})
+
+test('cancelling the export dialog writes nothing anywhere', async ({ page }) => {
+  await bootRemote(page)
+  await askExport(page, 'remote/worker:v2')
+  const dialog = page.locator('.docker-export-dialog')
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(await exportsSoFar(page)).toHaveLength(0)
+  expect(await hostExportCalls(page)).toHaveLength(0)
 })
 
 test('busy deletion cannot be confirmed twice; a rejected deletion retains rows and allows retry', async ({

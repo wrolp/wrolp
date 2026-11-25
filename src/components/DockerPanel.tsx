@@ -11,6 +11,7 @@ import {
 } from '../commands'
 import { Icon, type IconName } from './Icon'
 import { ConfirmDialog } from './ConfirmDialog'
+import { DockerExportDialog } from './DockerExportDialog'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 import { copyText } from '../lib/clipboard'
@@ -29,6 +30,12 @@ interface DockerPanelProps {
   onDeleteContainer?: (container: ContainerInfo) => Promise<void> | void
   /** The parent reports progress/success/errors and rejects on failure. */
   onDeleteImage?: (imageRef: string) => Promise<void>
+  /** Save the image as a tar. The parent picks the destination and reports the
+   *  result; absent means the entry point is hidden. Rejects on failure. */
+  onExportImage?: (imageRef: string) => Promise<void> | void
+  /** Write the tar on the daemon host itself (`docker save -o`). Only a remote
+   *  daemon offers this — the dialog's path points at that machine. */
+  onExportImageToHost?: (imageRef: string, path: string) => Promise<void>
   serverLabel?: string
   /** Reload the current view after a parent action. */
   refreshSignal?: number
@@ -80,6 +87,8 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   onStartContainer,
   onDeleteContainer,
   onDeleteImage,
+  onExportImage,
+  onExportImageToHost,
   serverLabel,
   refreshSignal,
   filter = '',
@@ -93,6 +102,9 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   const [showAll, setShowAll] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<ContextMenu | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<PendingDelete | null>(null)
+  // The image whose export dialog is open (remote daemon only — a local one
+  // goes straight to the native save picker).
+  const [exportImage, setExportImage] = useState<ImageInfo | null>(null)
   const [removing, setRemoving] = useState(false)
   const removingRef = useRef(false)
   const [menuStyle, setMenuStyle] = useState({ left: 0, top: 0 })
@@ -137,6 +149,7 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
     setError('')
     setCtxMenu(null)
     setConfirmDelete(null)
+    setExportImage(null)
     return () => {
       scopeRef.current = ''
       requests.latest++
@@ -196,6 +209,26 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
         if (scopeRef.current === action.scope) await load()
       }
     } catch (e) {
+      if (scopeRef.current === action.scope) setError(String(e))
+    }
+  }
+
+  const runImageExport = async () => {
+    if (ctxMenu?.kind !== 'image' || !onExportImage) return
+    const action = ctxMenu
+    setCtxMenu(null)
+    // A remote daemon can write the tar itself, so it gets the dialog with the
+    // server's directories; a local daemon is this machine already, where the
+    // native save picker is the better path chooser.
+    if (action.host.kind === 'ssh' && onExportImageToHost) {
+      setExportImage(action.image)
+      return
+    }
+    const ref = isTagged(action.image) ? imageRef(action.image) : action.image.id
+    try {
+      await onExportImage(ref)
+    } catch (e) {
+      // The parent has already toasted the failure; the row's own error line stays too.
       if (scopeRef.current === action.scope) setError(String(e))
     }
   }
@@ -265,6 +298,11 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
   const count = view === 'containers' ? visible.length : visibleImages.length
   const menuContainer = ctxMenu?.kind === 'container' ? ctxMenu.container : null
   const menuImage = ctxMenu?.kind === 'image' ? ctxMenu.image : null
+  const exportRefName = exportImage
+    ? isTagged(exportImage)
+      ? imageRef(exportImage)
+      : exportImage.id
+    : ''
 
   return (
     <div className="docker-panel">
@@ -498,6 +536,15 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
           )}
           {menuImage && (
             <>
+              {onExportImage && (
+                <>
+                  <div className="context-menu-item" onClick={() => void runImageExport()}>
+                    <Icon name="download" size={14} />
+                    {t('dockerExportImage')}
+                  </div>
+                  <div className="context-menu-divider" />
+                </>
+              )}
               <div className="context-menu-item" onClick={() => copyField(imageRef(menuImage))}>
                 <Icon name="copy" size={14} />
                 {t('copyImageRef')}
@@ -536,6 +583,17 @@ export const DockerPanel: React.FC<DockerPanelProps> = ({
           cancelLabel={t('cancel')}
           onConfirm={() => void confirmRemove()}
           onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {exportImage && host.kind === 'ssh' && onExportImage && onExportImageToHost && (
+        <DockerExportDialog
+          jumpTabId={host.jumpTabId}
+          imageRef={exportRefName}
+          serverLabel={serverLabel}
+          onDownload={() => onExportImage(exportRefName)}
+          onSaveToHost={(path) => onExportImageToHost(exportRefName, path)}
+          onClose={() => setExportImage(null)}
         />
       )}
     </div>

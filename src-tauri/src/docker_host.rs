@@ -248,6 +248,34 @@ pub async fn exec_bin(
   run_captured(bin, &refs, stdin).await
 }
 
+/// `exec_bin` without the probe's 3 s budget. `docker save -o` writes the tar on
+/// the daemon host and can legitimately run for minutes, so killing it on the
+/// probe timeout would fail every real export.
+async fn exec_bin_unbounded(bin: &str, args: &[String]) -> Result<(Vec<u8>, Vec<u8>, u32), String> {
+  let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+  let mut cmd = Command::new(bin);
+  cmd.hide_console();
+  cmd
+    .args(&refs)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
+  let joined = refs.join(" ");
+  let child = cmd
+    .spawn()
+    .map_err(|e| format!("failed to start `{bin}`: {e}"))?;
+  let output = child
+    .wait_with_output()
+    .await
+    .map_err(|e| format!("`{bin} {joined}` failed: {e}"))?;
+  Ok((
+    output.stdout,
+    output.stderr,
+    output.status.code().unwrap_or(-1) as u32,
+  ))
+}
+
 /// The one entry point every Docker command should use.
 pub async fn exec_docker(
   state: &tauri::State<'_, AppState>,
@@ -283,6 +311,150 @@ pub async fn exec_docker_ok(
     ));
   }
   Ok(out)
+}
+
+/// How much of a failed export's stderr is kept for the error toast. The CLI's
+/// own message is short; a cap keeps a chatty daemon from filling memory.
+const STDERR_CAP: usize = 64 * 1024;
+
+/// `exec_docker_ok` without the 3 s timeout — for a `docker save -o` that writes
+/// a tar on the daemon host and may take minutes on a large image.
+pub async fn exec_docker_ok_unbounded(
+  state: &tauri::State<'_, AppState>,
+  host: &DockerHostRef,
+  argv: &[String],
+) -> Result<Vec<u8>, String> {
+  if argv.len() < 2 {
+    return Err("empty docker argv".to_string());
+  }
+  let verb = &argv[1];
+  let (out, err, status) = match host {
+    DockerHostRef::Ssh { jump_tab_id } => {
+      let jump = crate::remote_fs::get_jump_handle(state, *jump_tab_id)?;
+      crate::docker_fs::exec_on_jump(&jump, argv, None).await?
+    }
+    DockerHostRef::Local => {
+      let bin = resolve_cli(state).await?;
+      exec_bin_unbounded(&bin, &argv[1..]).await?
+    }
+  };
+  if status != 0 {
+    return Err(format!(
+      "docker {verb} failed (exit {status}): {}",
+      String::from_utf8_lossy(&err).trim()
+    ));
+  }
+  Ok(out)
+}
+
+/// Stream `docker …` stdout straight into `target` — the transport for
+/// `docker save`, whose tar can be gigabytes and must never sit in memory. Both
+/// transports write the bytes as they arrive, so this always ends on *this*
+/// machine's disk, even when the daemon lives on the jump host.
+///
+/// A refused save removes the file again: leaving a truncated tar at a path the
+/// user chose would look like a successful export.
+pub async fn exec_docker_to_file(
+  state: &tauri::State<'_, AppState>,
+  host: &DockerHostRef,
+  argv: &[String],
+  target: &std::path::Path,
+) -> Result<(), String> {
+  if argv.len() < 2 {
+    return Err("empty docker argv".to_string());
+  }
+  let verb = &argv[1];
+  match host {
+    DockerHostRef::Ssh { jump_tab_id } => {
+      let jump = crate::remote_fs::get_jump_handle(state, *jump_tab_id)?;
+      let mut channel = crate::docker_fs::exec_streaming_on_jump(&jump, argv).await?;
+      let mut file = tokio::fs::File::create(target)
+        .await
+        .map_err(|e| format!("failed to create {}: {e}", target.display()))?;
+      let mut stderr: Vec<u8> = Vec::new();
+      let mut status: Option<u32> = None;
+      while let Some(msg) = channel.wait().await {
+        match msg {
+          russh::ChannelMsg::Data { data } => {
+            if let Err(e) = file.write_all(&data).await {
+              drop(channel);
+              let _ = tokio::fs::remove_file(target).await;
+              return Err(format!("failed to write {}: {e}", target.display()));
+            }
+          }
+          russh::ChannelMsg::ExtendedData { data, .. } => {
+            if stderr.len() < STDERR_CAP {
+              let take = (STDERR_CAP - stderr.len()).min(data.len());
+              stderr.extend_from_slice(&data[..take]);
+            }
+          }
+          russh::ChannelMsg::ExitStatus { exit_status } => status = Some(exit_status),
+          russh::ChannelMsg::Eof | russh::ChannelMsg::Close => break,
+          _ => {}
+        }
+      }
+      drop(file);
+      let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+      // Without an exit status (some servers never send one) a complaint on
+      // stderr is the only failure signal there is.
+      let failed = match status {
+        Some(code) => code != 0,
+        None => !stderr.is_empty(),
+      };
+      if failed {
+        let _ = tokio::fs::remove_file(target).await;
+        return Err(if stderr.is_empty() {
+          format!("docker {verb} failed")
+        } else {
+          format!("docker {verb} failed: {stderr}")
+        });
+      }
+      Ok(())
+    }
+    DockerHostRef::Local => {
+      let bin = resolve_cli(state).await?;
+      let args: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
+      let stdout = std::fs::File::create(target)
+        .map_err(|e| format!("failed to create {}: {e}", target.display()))?;
+      let child = Command::new(&bin)
+        .hide_console()
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn();
+      let child = match child {
+        Ok(child) => child,
+        Err(e) => {
+          let _ = std::fs::remove_file(target);
+          return Err(format!("failed to start `{bin}`: {e}"));
+        }
+      };
+      // Stdout is a file the child owns, so only stderr is drained here; no
+      // timeout on purpose — a large image legitimately takes minutes.
+      let output = match child.wait_with_output().await {
+        Ok(output) => output,
+        Err(e) => {
+          let _ = std::fs::remove_file(target);
+          return Err(format!("`{bin} {verb}` failed: {e}"));
+        }
+      };
+      if !output.status.success() {
+        let _ = std::fs::remove_file(target);
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+          format!(
+            "docker {verb} failed (exit {})",
+            output.status.code().unwrap_or(-1)
+          )
+        } else {
+          format!("docker {verb} failed: {stderr}")
+        });
+      }
+      Ok(())
+    }
+  }
 }
 
 /// Begin a long-running `docker logs -f …` and hand back its stdout as a chunk stream.

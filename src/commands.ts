@@ -956,6 +956,31 @@ export async function removeDockerImage(host: DockerHostRef, imageRef: string): 
 }
 
 /**
+ * Save one image as a tar on this machine (`docker save`, streamed straight to
+ * `targetPath`). A jump-host daemon streams over SSH, so the file is always
+ * local whichever host answers.
+ */
+export async function exportDockerImage(
+  host: DockerHostRef,
+  imageRef: string,
+  targetPath: string,
+): Promise<void> {
+  return await invoke('export_docker_image', { host, imageRef, targetPath })
+}
+
+/**
+ * Write the tar on the daemon host itself (`docker save -o <path>`). Nothing is
+ * transferred, so this is the fast path when the image may stay on the server.
+ */
+export async function exportDockerImageToHost(
+  host: DockerHostRef,
+  imageRef: string,
+  targetPath: string,
+): Promise<void> {
+  return await invoke('export_docker_image_to_host', { host, imageRef, targetPath })
+}
+
+/**
  * Ask this machine whether it has a Docker CLI and a reachable daemon. `refresh` drops
  * the backend cache — the sidebar's retry affordance after Docker Desktop was started.
  */

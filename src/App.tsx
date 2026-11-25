@@ -129,6 +129,8 @@ import {
   probeLocalDocker,
   removeDockerContainer,
   removeDockerImage,
+  exportDockerImage,
+  exportDockerImageToHost,
   startDockerContainer,
   stopDockerContainer,
   k8sPodExecCommand,
@@ -189,7 +191,7 @@ import type {
   AiStoredMessage,
 } from './types'
 import { open } from '@tauri-apps/plugin-shell'
-import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
 import AiChatPanel from './components/AiChatPanel'
 import type { AiConv, ChatMessage } from './aiChatRun'
 import { emptyAiConv } from './lib/aiConv'
@@ -3035,6 +3037,61 @@ export default function App() {
         setToast({
           kind: 'error',
           text: t('dockerImageDeleteFailed', { name: imageRef, err: String(error) }),
+        })
+        throw error
+      }
+    },
+    [t],
+  )
+
+  // Export an image as a tar onto this machine. The save dialog runs first and
+  // the backend streams `docker save` straight into that file — a jump-host
+  // daemon's tar comes back over SSH — so one entry point serves both hosts.
+  const runDockerImageExport = useCallback(
+    async (host: DockerHostRef, imageRef: string): Promise<void> => {
+      // Windows forbids `:` and friends in file names; repo:tag would carry them.
+      const suggested = `${imageRef.replace(/[<>:"/\\|?*\s]+/g, '-')}.tar`
+      const target = await saveDialog({
+        title: t('dockerExportImageTitle'),
+        defaultPath: suggested,
+        filters: [{ name: 'tar', extensions: ['tar'] }],
+      })
+      if (!target) return
+      setToast({ kind: 'progress', text: t('dockerExportingImage', { name: imageRef }) })
+      try {
+        await exportDockerImage(host, imageRef, target as string)
+        setToast({
+          kind: 'success',
+          text: t('dockerImageExported', { name: imageRef, path: target as string }),
+        })
+      } catch (error) {
+        console.error('Docker image export failed:', error)
+        setToast({
+          kind: 'error',
+          text: t('dockerImageExportFailed', { name: imageRef, err: String(error) }),
+        })
+        throw error
+      }
+    },
+    [t],
+  )
+
+  // Export onto the daemon host itself: `docker save -o <path>` runs there, so
+  // nothing crosses the network. The dialog owns the path (and its listing).
+  const runDockerImageExportToHost = useCallback(
+    async (host: DockerHostRef, imageRef: string, targetPath: string): Promise<void> => {
+      setToast({ kind: 'progress', text: t('dockerExportingImage', { name: imageRef }) })
+      try {
+        await exportDockerImageToHost(host, imageRef, targetPath)
+        setToast({
+          kind: 'success',
+          text: t('dockerImageExported', { name: imageRef, path: targetPath }),
+        })
+      } catch (error) {
+        console.error('Docker image export failed:', error)
+        setToast({
+          kind: 'error',
+          text: t('dockerImageExportFailed', { name: imageRef, err: String(error) }),
         })
         throw error
       }
@@ -9415,6 +9472,10 @@ export default function App() {
                     onStartContainer={(c) => runDockerVerb(host, c, 'start')}
                     onDeleteContainer={(c) => runDockerVerb(host, c, 'rm')}
                     onDeleteImage={(imageRef) => runDockerImageRmi(host, imageRef)}
+                    onExportImage={(imageRef) => runDockerImageExport(host, imageRef)}
+                    onExportImageToHost={(imageRef, path) =>
+                      runDockerImageExportToHost(host, imageRef, path)
+                    }
                   />
                 </div>
               </>

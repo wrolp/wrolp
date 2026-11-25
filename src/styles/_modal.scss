@@ -892,3 +892,129 @@ input[type='password']::-ms-clear {
     }
   }
 }
+
+// ===== Docker image export dialog =====
+// Destination radio + a server-path combobox whose dropdown lists the
+// daemon host's directories (the same custom-list pattern as the serial-port
+// picker above; a native <datalist> cannot drill into folders).
+.docker-export-dialog {
+  width: 520px;
+
+  .docker-export-image {
+    margin-bottom: 16px;
+    padding: 8px 10px;
+    background: $bg-input;
+    border: 1px solid $border;
+    border-radius: var(--r-1);
+    font-family: $font-mono;
+    font-size: var(--fs-md);
+    color: $text-primary;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .docker-export-option {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-bottom: 16px;
+
+    input[type='radio'] {
+      margin-top: 3px;
+      accent-color: $accent;
+    }
+  }
+
+  .docker-export-option-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .docker-export-option-title {
+    font-size: var(--fs-lg);
+    color: $text-primary;
+    cursor: pointer;
+  }
+
+  .docker-export-hint {
+    font-size: var(--fs-sm);
+    color: $text-secondary;
+  }
+
+  .docker-export-path {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .docker-export-path-input {
+    width: 100%;
+    font-family: $font-mono;
+  }
+
+  .file-error {
+    margin-top: 4px;
+    padding: 8px 10px;
+    font-size: var(--fs-sm);
+    color: #f44747;
+    background: rgba($danger, 0.08);
+    border-radius: var(--r-1);
+    overflow-wrap: anywhere;
+  }
+}
+
+// The combobox list is portaled to <body> — the dialog body scrolls, and an
+// absolutely positioned list inside it was clipped at the modal's edge. Left /
+// top / width / max-height are written inline from the input's rect, the same
+// way `.wl-select-menu` is anchored.
+.docker-export-suggestions {
+  position: fixed;
+  z-index: var(--z-menu);
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: $bg-tertiary;
+  border: 1px solid $accent-hover;
+  border-radius: var(--r-1);
+  box-shadow: 0 4px 12px var(--shadow-1);
+  overflow-y: auto;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    font-size: var(--fs-lg);
+    color: $text-primary;
+    cursor: pointer;
+    overflow: hidden;
+    white-space: nowrap;
+
+    > span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    &:hover {
+      background: rgba(0, 122, 204, 0.18);
+    }
+  }
+
+  .docker-export-list-note {
+    padding: 6px 10px;
+    font-size: var(--fs-sm);
+    color: $text-secondary;
+    cursor: default;
+    white-space: normal;
+
+    &:hover {
+      background: none;
+    }
+  }
+}

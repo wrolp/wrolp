@@ -326,6 +326,8 @@ pub fn run() {
       commands::list_docker_containers,
       commands::list_docker_images,
       commands::remove_docker_image,
+      commands::export_docker_image,
+      commands::export_docker_image_to_host,
       commands::probe_local_docker,
       commands::save_window_config,
       commands::load_window_config,

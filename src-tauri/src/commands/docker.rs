@@ -87,11 +87,16 @@ pub async fn list_docker_images(
   parse_docker_images(&String::from_utf8_lossy(&out))
 }
 
-fn remove_docker_image_argv(image_ref: &str) -> Result<Vec<String>, String> {
+fn image_ref_arg(image_ref: &str) -> Result<String, String> {
   let image_ref = image_ref.trim();
   if image_ref.is_empty() || image_ref.starts_with('-') {
     return Err("image reference must be nonempty and must not start with '-'".into());
   }
+  Ok(image_ref.to_string())
+}
+
+fn remove_docker_image_argv(image_ref: &str) -> Result<Vec<String>, String> {
+  let image_ref = image_ref_arg(image_ref)?;
   // Keep the reference as one argument on both transports; never force or prune.
   Ok(vec![
     "docker".into(),
@@ -110,6 +115,67 @@ pub async fn remove_docker_image(
 ) -> Result<(), String> {
   let argv = remove_docker_image_argv(&image_ref)?;
   crate::docker_host::exec_docker_ok(&state, &host, &argv)
+    .await
+    .map(|_| ())
+}
+
+fn save_docker_image_argv(image_ref: &str) -> Result<Vec<String>, String> {
+  let image_ref = image_ref_arg(image_ref)?;
+  Ok(vec!["docker".into(), "save".into(), image_ref])
+}
+
+/// Export one image as a tar (`docker save`) to `target_path` on this machine.
+///
+/// The tar always lands locally: with the daemon on the jump host the bytes are
+/// streamed back over the SSH exec channel, so the UI can offer one save dialog
+/// for both hosts. A failed save removes the partial file again.
+#[tauri::command]
+pub async fn export_docker_image(
+  state: tauri::State<'_, AppState>,
+  host: DockerHostRef,
+  image_ref: String,
+  target_path: String,
+) -> Result<(), String> {
+  let argv = save_docker_image_argv(&image_ref)?;
+  let target_path = target_path.trim();
+  if target_path.is_empty() {
+    return Err("export target path must be nonempty".into());
+  }
+  crate::docker_host::exec_docker_to_file(&state, &host, &argv, std::path::Path::new(target_path))
+    .await
+}
+
+fn save_docker_image_to_host_argv(
+  image_ref: &str,
+  target_path: &str,
+) -> Result<Vec<String>, String> {
+  let image_ref = image_ref_arg(image_ref)?;
+  let target_path = target_path.trim();
+  if target_path.is_empty() || target_path.starts_with('-') {
+    return Err("export target path must be nonempty and must not start with '-'".into());
+  }
+  Ok(vec![
+    "docker".into(),
+    "save".into(),
+    "-o".into(),
+    target_path.into(),
+    image_ref,
+  ])
+}
+
+/// Export one image as a tar written by the daemon host itself (`docker save -o
+/// <path>`). The path is interpreted on that machine — nothing is transferred —
+/// which is why the UI only offers it for a jump-host daemon. Runs without the
+/// probe timeout: a large image legitimately takes minutes to write.
+#[tauri::command]
+pub async fn export_docker_image_to_host(
+  state: tauri::State<'_, AppState>,
+  host: DockerHostRef,
+  image_ref: String,
+  target_path: String,
+) -> Result<(), String> {
+  let argv = save_docker_image_to_host_argv(&image_ref, &target_path)?;
+  crate::docker_host::exec_docker_ok_unbounded(&state, &host, &argv)
     .await
     .map(|_| ())
 }
@@ -486,6 +552,42 @@ mod tests {
         "{image_ref:?}"
       );
     }
+  }
+
+  #[test]
+  fn docker_image_export_saves_exactly_one_reference() {
+    for image_ref in ["registry.example:5000/team/app:v1", IMAGE_ID, "app:v1"] {
+      assert_eq!(
+        save_docker_image_argv(image_ref).unwrap(),
+        vec!["docker", "save", image_ref]
+      );
+    }
+    assert_eq!(
+      save_docker_image_argv("  app:v1 \r\n").unwrap(),
+      vec!["docker", "save", "app:v1"]
+    );
+    for image_ref in ["", " \r\n\t", "-", "--", "-o", " --output "] {
+      assert!(save_docker_image_argv(image_ref).is_err(), "{image_ref:?}");
+    }
+  }
+
+  #[test]
+  fn docker_image_export_to_host_names_the_output_and_one_reference() {
+    assert_eq!(
+      save_docker_image_to_host_argv("app:v1", " /tmp/app-v1.tar ").unwrap(),
+      vec!["docker", "save", "-o", "/tmp/app-v1.tar", "app:v1"]
+    );
+    assert_eq!(
+      save_docker_image_to_host_argv(IMAGE_ID, r"C:\out\app.tar").unwrap(),
+      vec!["docker", "save", "-o", r"C:\out\app.tar", IMAGE_ID]
+    );
+    for (image_ref, path) in [("app:v1", ""), ("app:v1", "   "), ("app:v1", " -o")] {
+      assert!(
+        save_docker_image_to_host_argv(image_ref, path).is_err(),
+        "{path:?}"
+      );
+    }
+    assert!(save_docker_image_to_host_argv("-f", "/tmp/x.tar").is_err());
   }
 
   #[test]
