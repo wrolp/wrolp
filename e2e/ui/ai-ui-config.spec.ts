@@ -197,20 +197,31 @@ test('the Terminal settings pane exposes the font controls', async ({ page }) =>
   const family = page.locator('#term-font-family')
   await expect(family).toBeVisible()
 
-  // Type a custom font — the registry stores the raw input (the Nerd Font fallback
-  // is re-appended at read time, not here).
-  await family.fill('Cascadia Code')
-  await family.blur()
-  expect(await ls(page, 'wrolp-terminal-font-family')).toBe('Cascadia Code')
+  // The family setting is a preset dropdown; pick a non-default entry and check
+  // the registry stores its value verbatim (the Nerd Font fallback is re-appended
+  // at read time, not here).
+  const picked = await family.locator('option').nth(1).getAttribute('value')
+  expect(picked).toBeTruthy()
+  await family.selectOption(picked!)
+  expect(await ls(page, 'wrolp-terminal-font-family')).toBe(picked)
 
   // The other font controls render too.
   await expect(page.locator('#term-font-size')).toBeVisible()
   await expect(page.locator('#term-line-height')).toBeVisible()
   await expect(page.locator('#term-cursor-style')).toBeVisible()
+  await expect(page.locator('#term-smooth-scroll')).toBeVisible()
+  await expect(page.locator('#term-scroll-sensitivity')).toBeVisible()
 
-  // "Restore default" writes the full default stack back. (`exact` disambiguates
-  // from the "Restore default colors" button on the highlight pane.)
-  await page.getByRole('button', { name: 'Restore default', exact: true }).click()
+  // Comfort presets persist through the registry's own localStorage keys.
+  await page.locator('#term-smooth-scroll').selectOption('80')
+  expect(await ls(page, 'wrolp-terminal-smooth-scroll')).toBe('80')
+  await page.locator('#term-scroll-sensitivity').selectOption('1.5')
+  expect(await ls(page, 'wrolp-terminal-scroll-sensitivity')).toBe('1.5')
+
+  // The first option of the dropdown is the long default stack — there is no
+  // separate "Restore default" button for the family any more.
+  const def = await family.locator('option').first().getAttribute('value')
+  await family.selectOption(def!)
   const restored = await ls(page, 'wrolp-terminal-font-family')
   expect(restored).toBeTruthy()
   expect(restored!.length).toBeGreaterThan(200)

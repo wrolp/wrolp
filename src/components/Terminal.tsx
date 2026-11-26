@@ -1958,6 +1958,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       fontSize: appearance.fontSize,
       fontFamily: appearance.fontFamily,
       lineHeight: appearance.lineHeight,
+      smoothScrollDuration: appearance.smoothScrollDuration,
+      scrollSensitivity: appearance.scrollSensitivity,
       scrollback: maxScrollback ?? 5000,
       // NOTE: do NOT enable `windowsMode`. It is the legacy winpty / pre-1903
       // ConPTY workaround (forces a line feed at the right edge and disables
@@ -2107,6 +2109,8 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       term.options.fontSize = a.fontSize
       term.options.fontFamily = a.fontFamily
       term.options.lineHeight = a.lineHeight
+      term.options.smoothScrollDuration = a.smoothScrollDuration
+      term.options.scrollSensitivity = a.scrollSensitivity
       term.options.cursorStyle = a.cursorStyle
       term.options.cursorBlink = a.cursorBlink
       // Reload the bundled Nerd Font at the new size and rebuild the renderer's

@@ -81,6 +81,8 @@ export const SessionViewer: React.FC<SessionViewerProps> = ({
       fontSize: appearance.fontSize,
       fontFamily: appearance.fontFamily,
       lineHeight: appearance.lineHeight,
+      smoothScrollDuration: appearance.smoothScrollDuration,
+      scrollSensitivity: appearance.scrollSensitivity,
       cursorBlink: false,
       disableStdin: true,
       convertEol: true,

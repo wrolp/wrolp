@@ -898,6 +898,17 @@ function TerminalFontSettings() {
   const [cursor, setCursor] = useState(readCursor)
   useEffect(() => subscribeAppSettings(() => setCursor(readCursor())), [])
 
+  const readSmoothScroll = () => Number(readSetting('terminal.smoothScroll')?.value) || 0
+  const [smoothScroll, setSmoothScroll] = useState(() => String(readSmoothScroll()))
+  useEffect(() => subscribeAppSettings(() => setSmoothScroll(String(readSmoothScroll()))), [])
+
+  const readScrollSensitivity = () => Number(readSetting('terminal.scrollSensitivity')?.value) || 1
+  const [scrollSensitivity, setScrollSensitivity] = useState(() => String(readScrollSensitivity()))
+  useEffect(
+    () => subscribeAppSettings(() => setScrollSensitivity(String(readScrollSensitivity()))),
+    [],
+  )
+
   const commitSize = () => {
     const n = Number(size)
     const next = Number.isFinite(n) ? Math.min(32, Math.max(8, Math.round(n))) : 14
@@ -917,6 +928,17 @@ function TerminalFontSettings() {
     ['underline', t('termCursorUnderline')],
     ['bar', t('termCursorBar')],
   ]
+
+  // Presets for the two comfort settings; a value set by the AI bridge outside
+  // the presets stays selectable instead of silently snapping to the first one.
+  const withCurrent = (presets: number[], current: string) => {
+    const n = Number(current)
+    return Number.isFinite(n) && !presets.includes(n)
+      ? [...presets, n].sort((a, b) => a - b)
+      : presets
+  }
+  const smoothChoices = withCurrent([0, 80, 120], smoothScroll)
+  const sensitivityChoices = withCurrent([1, 1.5, 2], scrollSensitivity)
 
   // Keep the current (possibly custom or legacy) font visible even if it isn't in
   // the curated list, so an old free-text value isn't silently replaced.
@@ -1043,6 +1065,66 @@ function TerminalFontSettings() {
         />
       </div>
       <span className="settings-help">{t('termLineHeightHelp')}</span>
+
+      <div
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
+        <label
+          htmlFor="term-smooth-scroll"
+          className="settings-label"
+          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          {t('termSmoothScroll')}
+        </label>
+        <select
+          id="term-smooth-scroll"
+          className="settings-input"
+          data-setting="terminal.smoothScroll"
+          value={smoothScroll}
+          style={{ width: 140 }}
+          onChange={(e) =>
+            applySettingChanges({ 'terminal.smoothScroll': Number(e.target.value) }, 'user')
+          }
+        >
+          {smoothChoices.map((ms) => (
+            <option key={ms} value={String(ms)}>
+              {ms === 0 ? t('termSmoothScrollOff') : `${ms} ms`}
+            </option>
+          ))}
+        </select>
+      </div>
+      <span className="settings-help">{t('termSmoothScrollHelp')}</span>
+
+      <div
+        className="settings-field"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row' }}
+      >
+        <label
+          htmlFor="term-scroll-sensitivity"
+          className="settings-label"
+          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          {t('termScrollSensitivity')}
+        </label>
+        <select
+          id="term-scroll-sensitivity"
+          className="settings-input"
+          data-setting="terminal.scrollSensitivity"
+          value={scrollSensitivity}
+          style={{ width: 140 }}
+          onChange={(e) =>
+            applySettingChanges({ 'terminal.scrollSensitivity': Number(e.target.value) }, 'user')
+          }
+        >
+          {sensitivityChoices.map((x) => (
+            <option key={x} value={String(x)}>
+              {`${x}×`}
+            </option>
+          ))}
+        </select>
+      </div>
+      <span className="settings-help">{t('termScrollSensitivityHelp')}</span>
 
       <div
         className="settings-field"

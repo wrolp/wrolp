@@ -173,6 +173,8 @@ export const TERMINAL_APPEARANCE_KEYS = {
   fontSize: 'wrolp-terminal-font-size',
   fontFamily: 'wrolp-terminal-font-family',
   lineHeight: 'wrolp-terminal-line-height',
+  smoothScroll: 'wrolp-terminal-smooth-scroll',
+  scrollSensitivity: 'wrolp-terminal-scroll-sensitivity',
   cursorStyle: 'wrolp-terminal-cursor-style',
   cursorBlink: 'wrolp-terminal-cursor-blink',
   lineNumbers: 'wrolp-terminal-line-numbers',
@@ -189,6 +191,10 @@ export interface TerminalAppearance {
   fontSize: number
   fontFamily: string
   lineHeight: number
+  /** xterm's smooth-scroll animation in ms; 0 keeps the jump-to-row feel. */
+  smoothScrollDuration: number
+  /** Wheel notches → rows multiplier (xterm `scrollSensitivity`; 1 = one row). */
+  scrollSensitivity: number
   cursorStyle: TerminalCursorStyle
   cursorBlink: boolean
   /** Line-number gutter on the left of the terminal (drawn by us — xterm has no
@@ -351,6 +357,27 @@ const DEFS: SettingDef[] = [
     default: 1,
     storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.lineHeight },
     describe: 'Terminal line-height multiplier (1.0–2.0).',
+  },
+  {
+    key: 'terminal.smoothScroll',
+    kind: 'number',
+    min: 0,
+    max: 500,
+    group: 'terminal',
+    default: 0,
+    storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.smoothScroll },
+    describe:
+      'Smooth-scroll animation in milliseconds (0 = off; the settings page offers 0/80/120).',
+  },
+  {
+    key: 'terminal.scrollSensitivity',
+    kind: 'number',
+    min: 0.5,
+    max: 5,
+    group: 'terminal',
+    default: 1,
+    storage: { kind: 'localStorage', key: TERMINAL_APPEARANCE_KEYS.scrollSensitivity },
+    describe: 'Rows moved per wheel notch (xterm scrollSensitivity; 1 = one row).',
   },
   {
     key: 'terminal.cursorStyle',
@@ -832,6 +859,8 @@ export function getTerminalAppearance(): TerminalAppearance {
     fontSize: Number(get('terminal.fontSize')) || 14,
     fontFamily: withNerdFontFallback(String(get('terminal.fontFamily'))),
     lineHeight: Number(get('terminal.lineHeight')) || 1,
+    smoothScrollDuration: Number(get('terminal.smoothScroll')) || 0,
+    scrollSensitivity: Number(get('terminal.scrollSensitivity')) || 1,
     cursorStyle: (get('terminal.cursorStyle') as TerminalCursorStyle) ?? 'block',
     cursorBlink: get('terminal.cursorBlink') !== false,
     lineNumbers: get('terminal.lineNumbers') === true,
