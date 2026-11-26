@@ -328,6 +328,11 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // Assigned by the mount effect, called from the reconnect effect and from
   // focus/visibility changes so every path shares one loop.
   const startPollingRef = useRef<() => void>(() => {})
+  // Keystroke echo flush. Routed through the SAME single-flight poll as the
+  // interval loop: a second concurrent `poll_output` can resolve out of order and
+  // interleave chunks in xterm. Assigned by the mount effect.
+  const flushPollRef = useRef<() => void>(() => {})
+
   // rAF retry counter for the initial fit-wait loop (capped to avoid a 60 fps
   // spin when a pane stays 0-sized, e.g. hidden behind a file editor overlay).
   const layoutWaitFrames = useRef(0)
@@ -2937,10 +2942,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // in the command history is that stale line — `docker p` for `docker ps`,
         // or nothing at all when nothing had been echoed yet.
         localSendInput(currentTabId, data)
-          .then(() => pollOutput(currentTabId))
-          .then((chunks) => {
-            for (const chunk of chunks) writeOutput(chunk)
-          })
+          .then(() => flushPollRef.current())
           .catch((err) => console.error('local_send_input error:', err))
       } else if (isSerial) {
         serialSendInput(currentTabId, data).catch((err) =>
@@ -2956,13 +2958,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
             // Flush the output buffer right away so the remote echo of the
             // keystroke we just sent shows up immediately instead of waiting for
             // the next 100ms poll — otherwise fast typing looks like the echo
-            // "doesn't keep up" (echo lagging behind). pollOutput drains the
-            // buffer, so
-            // this never doubles what the interval poll will later write.
-            return pollOutput(currentTabId)
-          })
-          .then((chunks) => {
-            for (const chunk of chunks) writeOutput(chunk)
+            // "doesn't keep up" (echo lagging behind). `flushPollRef` reuses the
+            // single-flight poll, so this neither doubles what the interval poll
+            // writes later nor races it for chunk order.
+            flushPollRef.current()
           })
           .catch((err) => console.error('send_input error:', err))
       }
@@ -3124,6 +3123,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // Reconnect paths live in another effect, so they reach the same loop through
     // this ref instead of growing a second interval of their own.
     startPollingRef.current = startPolling
+    // A keystroke's echo must show now, but it must not open a second poll: if a
+    // round is already in flight, ask that one to pull again the moment it lands.
+    flushPollRef.current = () => {
+      if (pollInFlightRef.current) {
+        pollPendingRef.current = true
+        return
+      }
+      void pollOnce()
+    }
 
     // Stop polling (and mark disconnected) when the backend reports the SSH
     // connection closed, instead of keeping the loop running forever.
