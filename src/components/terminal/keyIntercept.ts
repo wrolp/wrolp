@@ -53,6 +53,11 @@ export class KeyInterceptRouter {
   private readonly onEvent = (ev: KeyboardEvent): boolean => {
     // The handler also sees keyup/keypress; only keydown decides anything.
     if (ev.type !== 'keydown') return true
+    // While an IME is composing, arrows / Enter / Escape belong to the candidate
+    // window, not to us — consuming them makes Chinese/Japanese input unselectable
+    // (the completion accepts a tail instead of picking a character). WebViews
+    // still report those keys as keyCode 229.
+    if (ev.isComposing || ev.keyCode === 229) return true
     for (const rule of this.rules) {
       if (rule.handle(ev)) {
         ev.preventDefault()
