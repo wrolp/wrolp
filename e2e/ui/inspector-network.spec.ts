@@ -48,6 +48,10 @@ async function boot(page: Page, extra: TauriMockOptions = {}) {
 const tabBtns = (page: Page) => page.locator('.inspector-tabs .tab-btn')
 const networkTab = (page: Page) => tabBtns(page).nth(3)
 const panel = (page: Page) => page.locator('.netscan-panel')
+// The titlebar carries a second "Scan Network" button; these tests exercise the
+// nav column's entry, so scope the locator to the connections sidebar.
+const scanBtn = (page: Page) =>
+  page.locator('.sidebar .panel-head button[aria-label="Scan Network"]')
 
 test('the nav column opens the scan as a column tab and leaves the terminal alone', async ({
   page,
@@ -55,7 +59,7 @@ test('the nav column opens the scan as a column tab and leaves the terminal alon
   await boot(page)
   await expect(page.locator('.inspector')).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'Scan Network' }).click()
+  await scanBtn(page).click()
 
   await expect(networkTab(page)).toHaveAttribute('aria-selected', 'true')
   await expect(panel(page)).toBeVisible()
@@ -67,7 +71,7 @@ test('the nav column opens the scan as a column tab and leaves the terminal alon
 
 test('rows come from the scan-progress events and closed probes are dropped', async ({ page }) => {
   await boot(page, { scanResults: [SSH_ROW, TELNET_ROW, CLOSED_ROW], scanHold: true })
-  await page.getByRole('button', { name: 'Scan Network' }).click()
+  await scanBtn(page).click()
   await panel(page).locator('#netscan-target').fill('10.0.0.0/24')
   await panel(page).getByRole('button', { name: 'Start Scan' }).click()
 
@@ -92,7 +96,7 @@ test('rows come from the scan-progress events and closed probes are dropped', as
 
 test('switching inspector tabs keeps the scan and its results mounted', async ({ page }) => {
   await boot(page, { scanResults: [SSH_ROW] })
-  await page.getByRole('button', { name: 'Scan Network' }).click()
+  await scanBtn(page).click()
   await panel(page).locator('#netscan-target').fill('10.0.0.21')
   await panel(page).getByRole('button', { name: 'Start Scan' }).click()
   await expect(page.locator('.scan-item')).toHaveCount(1)
@@ -115,7 +119,7 @@ test('switching inspector tabs keeps the scan and its results mounted', async ({
 
 test('adding a result saves a connection that matches the probe', async ({ page }) => {
   await boot(page, { scanResults: [SSH_ROW, TELNET_ROW] })
-  await page.getByRole('button', { name: 'Scan Network' }).click()
+  await scanBtn(page).click()
   await panel(page).locator('#netscan-target').fill('10.0.0.0/24')
   await panel(page).locator('#netscan-group').selectOption('prod')
   await panel(page).getByRole('button', { name: 'Start Scan' }).click()
@@ -144,7 +148,7 @@ test('adding a result saves a connection that matches the probe', async ({ page 
 
 test('Add All is dead until the scan found something', async ({ page }) => {
   await boot(page, { scanResults: [] })
-  await page.getByRole('button', { name: 'Scan Network' }).click()
+  await scanBtn(page).click()
   const addAll = panel(page).getByRole('button', { name: 'Add All' })
   await expect(addAll).toBeDisabled()
   await expect(page.locator('.scan-empty')).toBeVisible()

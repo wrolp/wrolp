@@ -4,6 +4,12 @@ import { installTauriMock } from './helpers/tauriMock'
 // The popped-out ("floated") terminal window resizes from every edge and corner.
 // It used to expose only a single bottom-right grip, so this guards the 8-way
 // resize and the N/W edges that also move the window origin.
+//
+// SKIPPED (2026-11-26): terminal panes now pop out into a real OS window
+// (a560a31), so `.term-pane-float` no longer mounts the in-page
+// `.floating-window` this spec drags. The in-page overlay — and these grips —
+// remain for docker-log floats; port these cases to that surface before
+// re-enabling. The OS-window hand-over is covered by term-float-window.spec.ts.
 
 const DEMO_CONN = { id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }
 
@@ -35,7 +41,7 @@ const cases: { dir: string; dx: number; dy: number; dw: number; dh: number }[] =
 ]
 
 for (const c of cases) {
-  test(`the ${c.dir} grip resizes the floating window`, async ({ page }) => {
+  test.skip(`the ${c.dir} grip resizes the floating window`, async ({ page }) => {
     await openFloat(page)
 
     const grip = page.locator(`.fw-rh-${c.dir}`)
@@ -58,7 +64,7 @@ for (const c of cases) {
 
 // Dragging the W (or N) edge must keep the OPPOSITE edge fixed — i.e. the window
 // origin moves as the size changes, otherwise the whole window would slide.
-test('the west grip keeps the right edge fixed', async ({ page }) => {
+test.skip('the west grip keeps the right edge fixed', async ({ page }) => {
   await openFloat(page)
   const grip = page.locator('.fw-rh-w')
   const gb = (await grip.boundingBox())!
@@ -79,10 +85,8 @@ test('the west grip keeps the right edge fixed', async ({ page }) => {
 
 // The bottom-right grip used to paint a diagonal "corner" triangle; it is now
 // invisible like every other grip.
-test('the resize grips paint no visible marker', async ({ page }) => {
+test.skip('the resize grips paint no visible marker', async ({ page }) => {
   await openFloat(page)
-  const bg = await page
-    .locator('.fw-rh-se')
-    .evaluate((el) => getComputedStyle(el).backgroundImage)
+  const bg = await page.locator('.fw-rh-se').evaluate((el) => getComputedStyle(el).backgroundImage)
   expect(bg).toBe('none')
 })
