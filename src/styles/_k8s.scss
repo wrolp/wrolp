@@ -209,6 +209,68 @@ $ns-label-colors: (
   }
 }
 
+// ===== Status filter chips =====
+//
+// A wrap of toggle chips under the scope pickers. Each mirrors the tone of the
+// status chip it corresponds to in the row; toggling one off dims + strikes it
+// and hides every row carrying that status. Rendered in resources mode only.
+.k8s-status-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid $border;
+  flex: none;
+}
+
+.k8s-status-label {
+  font-size: var(--fs-xs);
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.k8s-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.k8s-status-chip {
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: $bg-active;
+  color: $text-secondary;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  transition: opacity var(--d-1) var(--e-out);
+
+  &.ok {
+    background: rgba($success, 0.16);
+    color: var(--success-soft-40);
+  }
+  &.warn {
+    background: rgba($warning, 0.16);
+    color: var(--warning-soft-40);
+  }
+  &.bad {
+    background: rgba($danger, 0.18);
+    color: var(--danger-soft-40);
+  }
+  // Toggled off: the status is hidden, so the chip reads as disabled.
+  &.off {
+    opacity: 0.4;
+    background: transparent;
+    color: $text-muted;
+    border-color: $border;
+    text-decoration: line-through;
+  }
+}
+
 // ===== Overlays =====
 
 .k8s-modal {

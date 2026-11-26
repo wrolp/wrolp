@@ -139,6 +139,13 @@ function statusTone(status: string): 'ok' | 'warn' | 'bad' {
   return 'warn'
 }
 
+/** Sort weight for the status chip row — problems first, so the chips a user is
+ * most likely to toggle sit at the front of the wrap. Mirrors `statusTone`. */
+function statusRank(status: string): number {
+  const tone = statusTone(status)
+  return tone === 'bad' ? 0 : tone === 'warn' ? 1 : tone === 'ok' ? 2 : 3
+}
+
 interface K8sPanelProps {
   /** Where kubectl runs: the focused session's jump host, or this machine. */
   host: K8sHostRef
@@ -224,6 +231,10 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [localRefresh, setLocalRefresh] = useState(0)
+  // Status words toggled off in the chip filter. Empty = every status is shown.
+  // Local to this mount: a host switch remounts the panel (keyed by host), and a
+  // kind switch resets it below, so a choice can never outlive the list it came from.
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(new Set())
 
   const [menu, setMenu] = useState<{ x: number; y: number; row: K8sResource } | null>(null)
   const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
@@ -433,6 +444,13 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
 
   // Load on every scope change, and when the App or a local action asks for a refresh.
   useEffect(() => loadResources(), [loadResources, localRefresh, refreshSignal])
+
+  // A kind or host change presents a different set of status words; clear the
+  // exclusion set so the new list starts fully visible. (A host change also
+  // remounts the panel, but the kind change within one host does not.)
+  useEffect(() => {
+    setHiddenStatuses(new Set())
+  }, [kind, hostKey])
 
   // ---- Helm ----
 
@@ -1128,15 +1146,38 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     }
   }, [])
 
+  // Distinct status words in the current list, problems first. Resources only —
+  // the chip row is not rendered in helm mode.
+  const statusOptions = useMemo(() => {
+    const seen = new Set<string>()
+    for (const r of resources) {
+      if (r.status) seen.add(r.status)
+    }
+    return [...seen].sort((a, b) => statusRank(a) - statusRank(b) || a.localeCompare(b))
+  }, [resources])
+
+  const toggleStatus = useCallback((status: string) => {
+    setHiddenStatuses((prev) => {
+      const next = new Set(prev)
+      if (next.has(status)) next.delete(status)
+      else next.add(status)
+      return next
+    })
+  }, [])
+
   const q = filter.toLowerCase()
-  const visible = resources.filter(
-    (r) =>
-      !q ||
+  // Status chips exclude whole statuses; the text filter then narrows what's left.
+  // Both apply to the resource list only; helm keeps its text-only filter.
+  const visible = resources.filter((r) => {
+    if (hiddenStatuses.has(r.status)) return false
+    if (!q) return true
+    return (
       r.name.toLowerCase().includes(q) ||
       r.detail.toLowerCase().includes(q) ||
       (r.node ?? '').toLowerCase().includes(q) ||
-      r.status.toLowerCase().includes(q),
-  )
+      r.status.toLowerCase().includes(q)
+    )
+  })
   // The same filter box narrows the release list, by chart and status as well as name.
   const visibleReleases = releases.filter(
     (r) =>
@@ -1305,6 +1346,31 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         )}
       </div>
 
+      {mode === 'resources' && statusOptions.length > 0 && (
+        <div className="k8s-status-bar">
+          <span className="k8s-status-label">{t('k8sStatus')}</span>
+          <div className="k8s-status-chips">
+            {statusOptions.map((s) => {
+              const hidden = hiddenStatuses.has(s)
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  className={`k8s-status-chip ${statusTone(s)}${hidden ? ' off' : ''}`}
+                  aria-pressed={!hidden}
+                  title={
+                    hidden ? t('k8sStatusShow', { status: s }) : t('k8sStatusHide', { status: s })
+                  }
+                  onClick={() => toggleStatus(s)}
+                >
+                  {s}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {notice && <div className="k8s-notice">{notice}</div>}
 
       <div className="k8s-list">
@@ -1316,7 +1382,11 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
               <div className="file-empty">{t('k8sNoContexts')}</div>
             )}
             {!loading && !error && scopeReady && visible.length === 0 && (
-              <div className="file-empty">{t('k8sNoResources', { kind: t(KIND_LABEL[kind]) })}</div>
+              <div className="file-empty">
+                {resources.length > 0
+                  ? t('k8sNoMatches')
+                  : t('k8sNoResources', { kind: t(KIND_LABEL[kind]) })}
+              </div>
             )}
           </>
         )}

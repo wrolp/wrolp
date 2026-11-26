@@ -612,3 +612,84 @@ test('the Helm mode says so when the host has no helm', async ({ page }) => {
     )
     .toBe(0)
 })
+
+// The status chip row: one chip per distinct status (problems first), toggling a
+// chip hides every row carrying that status, and switching kind wipes the choice.
+test('status chips filter the list and reset when the kind changes', async ({ page }) => {
+  const pods = [
+    { ...POD, name: 'web-0', status: 'Running' },
+    { ...POD, name: 'web-1', status: 'Pending' },
+    { ...POD, name: 'web-2', status: 'Failed' },
+  ]
+  const deployments = [
+    {
+      kind: 'deployments',
+      name: 'api',
+      namespace: 'apps',
+      status: 'Ready',
+      ready: '3/3',
+      restarts: 0,
+      detail: 'api:1.0',
+      containers: ['api'],
+    },
+  ]
+  await boot(page, 'apps', { pods, deployments })
+
+  const rows = page.locator('.k8s-item')
+  await expect(rows).toHaveCount(3)
+
+  // One chip per distinct status, bad first (Failed), then warn (Pending), then ok.
+  const chips = page.locator('.k8s-status-chip')
+  await expect(chips).toHaveCount(3)
+  await expect(chips.nth(0)).toHaveText('Failed')
+  await expect(chips.nth(1)).toHaveText('Pending')
+  await expect(chips.nth(2)).toHaveText('Running')
+  // Nothing hidden yet — no chip carries the off class.
+  await expect(page.locator('.k8s-status-chip.off')).toHaveCount(0)
+
+  // Hide Failed → only Pending and Running remain; the chip reads as off.
+  await chips.filter({ hasText: 'Failed' }).click()
+  await expect(rows).toHaveCount(2)
+  await expect(rows.filter({ hasText: 'web-2' })).toHaveCount(0)
+  const offChips = page.locator('.k8s-status-chip.off')
+  await expect(offChips).toHaveCount(1)
+  await expect(offChips).toContainText('Failed')
+
+  // Hide Pending too → only Running is left.
+  await chips.filter({ hasText: 'Pending' }).click()
+  await expect(rows).toHaveCount(1)
+  await expect(rows.filter({ hasText: 'web-0' })).toHaveCount(1)
+
+  // Show Failed again → Failed and Running (Pending stays hidden).
+  await chips.filter({ hasText: 'Failed' }).click()
+  await expect(rows).toHaveCount(2)
+  await expect(rows.filter({ hasText: 'web-0' })).toHaveCount(1)
+  await expect(rows.filter({ hasText: 'web-2' })).toHaveCount(1)
+
+  // Switching kind resets the filter: deployments are fully visible.
+  await page.locator('.k8s-select[aria-label="Resource"]').selectOption('deployments')
+  await expect(rows).toHaveCount(1)
+  await expect(rows).toContainText('api')
+  const deployChips = page.locator('.k8s-status-chip')
+  await expect(deployChips).toHaveCount(1)
+  await expect(deployChips).toHaveText('Ready')
+  await expect(page.locator('.k8s-status-chip.off')).toHaveCount(0)
+
+  // Back to pods: the selection was reset, so all three show again.
+  await page.locator('.k8s-select[aria-label="Resource"]').selectOption('pods')
+  await expect(rows).toHaveCount(3)
+})
+
+test('hiding every status shows the no-matches empty state', async ({ page }) => {
+  await boot(page, 'apps', {
+    pods: [
+      { ...POD, name: 'web-0', status: 'Running' },
+      { ...POD, name: 'web-1', status: 'Failed' },
+    ],
+  })
+  const chips = page.locator('.k8s-status-chip')
+  await chips.filter({ hasText: 'Running' }).click()
+  await chips.filter({ hasText: 'Failed' }).click()
+  await expect(page.locator('.k8s-item')).toHaveCount(0)
+  await expect(page.locator('.k8s-list .file-empty')).toContainText(/match/i)
+})
