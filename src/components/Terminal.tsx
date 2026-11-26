@@ -772,6 +772,12 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // keystroke into the buffer (so the newest character is colored too). Only runs
   // while we are awaiting an echo for a keystroke we just sent (expectingEchoRef),
   // so program output is never recolored as if it were a typed command.
+  //
+  // Must stay synchronous with the write callback. Coalescing it to the next
+  // animation frame was tried and is wrong: the echo window can close in between
+  // (the next chunk may be the submitted line's own `\r\n`), and the repaint then
+  // lands on the NEW prompt row — an e2e (tail room) showed a typed character
+  // disappearing from the input line.
   const recolorLiveLine = () => {
     const term = termRef.current
     if (!term) return
