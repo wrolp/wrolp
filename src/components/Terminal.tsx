@@ -2001,22 +2001,84 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
     // a webview without WebGL silently keeps the DOM renderer.
     let webglAddon: { dispose(): void } | null = null
     let webglDisposed = false
+    // A lost context (sleep/resume, remote-desktop switch, driver reset) used to
+    // leave the pane on the DOM renderer for the rest of the session — visibly
+    // slower with no way back. Recreate the addon a bounded number of times.
+    let webglRetries = 0
+    const WEBGL_MAX_RETRIES = 3
+    const WEBGL_RETRY_DELAY_MS = 1500
+    // @xterm/addon-webgl waits 3 s after `webglcontextlost` before firing
+    // onContextLoss (it hopes for a `webglcontextrestored` first); measured
+    // recovery was 3 s + our 1.5 s retry. Watch the canvas ourselves and rebuild
+    // after a short grace, so a real loss recovers in about 1 s. The addon's
+    // late callback is ignored through `earlyLoss`.
+    const WEBGL_EARLY_LOSS_GRACE_MS = 600
+    const earlyLoss = new WeakSet<object>()
+    const rebuildWebgl = (addon: { dispose(): void }, immediate: boolean) => {
+      if (earlyLoss.has(addon)) return
+      earlyLoss.add(addon)
+      try {
+        addon.dispose()
+      } catch {
+        /* already torn down */
+      }
+      if (webglAddon === addon) webglAddon = null
+      if (webglDisposed || webglRetries >= WEBGL_MAX_RETRIES || !mountedRef.current) return
+      webglRetries += 1
+      if (immediate) {
+        loadWebglAddon()
+        return
+      }
+      window.setTimeout(() => {
+        if (!webglDisposed && mountedRef.current) loadWebglAddon()
+      }, WEBGL_RETRY_DELAY_MS)
+    }
+    const watchEarlyContextLoss = (addon: { dispose(): void }) => {
+      // `loadAddon` creates the renderer canvas synchronously, but keep a few
+      // retries in case a future version defers it.
+      const attach = (attempt: number) => {
+        if (webglDisposed || webglAddon !== addon) return
+        const canvases = term.element?.querySelectorAll<HTMLCanvasElement>('.xterm-screen canvas')
+        if (!canvases || canvases.length === 0) {
+          if (attempt < 5) window.setTimeout(() => attach(attempt + 1), 100)
+          return
+        }
+        canvases.forEach((canvas) => {
+          canvas.addEventListener(
+            'webglcontextlost',
+            () => {
+              window.setTimeout(() => {
+                if (webglDisposed || webglAddon !== addon || earlyLoss.has(addon)) return
+                const gl = canvas.getContext('webgl2') || canvas.getContext('webgl')
+                if (!gl || !gl.isContextLost()) return
+                rebuildWebgl(addon, true)
+              }, WEBGL_EARLY_LOSS_GRACE_MS)
+            },
+            { once: true },
+          )
+        })
+      }
+      attach(0)
+    }
     // e2e asserts against the DOM grid (`.xterm-rows`); the flag is set by the
     // playwright fixture (e2e/ui/helpers/fixtures.ts).
     const e2eDomRenderer = (window as { __WROLP_E2E__?: boolean }).__WROLP_E2E__ === true
-    if (!e2eDomRenderer) {
+    const loadWebglAddon = () => {
+      if (webglDisposed) return
       void import('@xterm/addon-webgl')
         .then(({ WebglAddon }) => {
-          if (webglDisposed) return
+          if (webglDisposed || !mountedRef.current) return
           const addon = new WebglAddon()
-          addon.onContextLoss(() => addon.dispose())
+          addon.onContextLoss(() => rebuildWebgl(addon, false))
           term.loadAddon(addon)
           webglAddon = addon
+          watchEarlyContextLoss(addon)
         })
         .catch(() => {
           /* no WebGL in this webview: stay on the DOM renderer */
         })
     }
+    if (!e2eDomRenderer) loadWebglAddon()
 
     // Replay any scrollback cached from a previous mount (float pop-out / dock-back)
     // before fitting/connecting, so the user's prior output is restored. Done here
