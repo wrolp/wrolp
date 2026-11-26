@@ -3008,8 +3008,9 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
       if (!isActiveRef.current || !fitRef.current) return
       const container = containerRef.current
       if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+      // `fit()` already reflows and repaints; an extra full-screen `refresh()` here
+      // repainted every row on every frame of a split-drag or window resize.
       fitRef.current.fit()
-      term.refresh(0, term.rows - 1)
       // B16: only send a resize when the geometry actually changed. Sending the
       // same cols/rows repeatedly makes the remote shell repaint its prompt for
       // nothing, and — worse — re-triggers xterm's scrollback reflow, which can
