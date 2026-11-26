@@ -1439,6 +1439,10 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
   // `staleSubmit` in the input handler is what keeps that window from writing the old
   // command into the history a second time.
   const lastSubmitRowRef = useRef(-1)
+  // The text is needed as well as the row: a late repaint can put that same submitted
+  // command on a DIFFERENT row, where the pending tail of the next command would
+  // otherwise be appended to it.
+  const lastSubmitCommandRef = useRef('')
   // True from submitting a command until the shell moves past its input line.
   // ConPTY re-serializes the *screen*, so the echo of that line arrives wrapped
   // in absolute cursor moves (`ESC[4;20Hdir ESC[4;23H`) — indistinguishable from
@@ -2701,7 +2705,15 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
         // twice over: the text is stale, and whatever this Enter's own keystroke put
         // into `typedLineRef` describes that old row, not this command. Record
         // nothing: from here this submit's content genuinely cannot be known.
-        const staleSubmit = isLoneEnter && lastSubmitRowRef.current === submitRow
+        const submitEchoed = submitParsed?.command.trim() ?? ''
+        const submitTyped = typedLineRef.current.trim()
+        const staleExtension =
+          submitEchoed.length > 0 &&
+          submitEchoed === lastSubmitCommandRef.current &&
+          submitTyped.length > submitEchoed.length &&
+          submitTyped.startsWith(submitEchoed)
+        const staleSubmit =
+          isLoneEnter && (lastSubmitRowRef.current === submitRow || staleExtension)
         // Arm on EVERY submitted Enter, whatever the row happens to read. A blank
         // read (right after `clear`, before the repainted prompt) and a paste — whose
         // newlines ride inside one `onData` block, so `isLoneEnter` is false — both
@@ -2762,6 +2774,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({
               // stepped on with Enter (`28Z WARN bevy_ecs::...`, `Delete? [Y/n] y`)
               // became a saved command.
               if (prompt && !staleSubmit && !isInteractiveQuestion(prompt + command)) {
+                lastSubmitCommandRef.current = command.trim()
                 onCommandSubmittedRef.current?.(command)
               }
               // Session-boundary commands switch the shell context: entering a

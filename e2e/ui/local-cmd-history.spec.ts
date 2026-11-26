@@ -322,3 +322,33 @@ test('the command typed after the shell has moved on is still recorded whole', a
 
   await expect.poll(() => recorded(page)).toContain('yarn dev|localShell|localhost')
 })
+
+test('a stale command repainted on another row cannot absorb the next command', async ({
+  page,
+}) => {
+  // The new prompt and the first three characters have both been visible, so the
+  // pending-input projection holds only `n dev`. A late ConPTY repaint then puts
+  // the PREVIOUS command under the caret on a different row. The row guard cannot
+  // catch it, and the pending tail used to turn it into `yarn tauri devn dev`.
+  await bootLocalShell(page)
+  await installManualOutput(page)
+
+  await page.keyboard.type('yarn tauri dev', { delay: 20 })
+  await page.keyboard.press('Enter')
+  await expect.poll(() => recorded(page)).toContain('yarn tauri dev|localShell|localhost')
+
+  await page.evaluate((p) => window.__queueOutput('\r\n' + p), PROMPT)
+  await page.waitForTimeout(150)
+  await page.keyboard.type('yar', { delay: 20 })
+  await page.evaluate(() => window.__queueOutput('yar'))
+  await page.waitForTimeout(150)
+  await page.keyboard.type('n dev', { delay: 20 })
+
+  await page.evaluate((p) => window.__queueOutput('\r' + p + 'yarn tauri dev'), PROMPT)
+  await page.waitForTimeout(150)
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(300)
+
+  expect(await recorded(page)).toEqual(['yarn tauri dev|localShell|localhost'])
+  expect(await committed(page)).toEqual([])
+})
