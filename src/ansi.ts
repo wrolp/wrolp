@@ -290,11 +290,15 @@ function reset(s: SgrState) {
 
 /**
  * Heuristic syntax highlighter for plain (non-ANSI) log text.
- * Detects common log patterns and colourises them so the Docker log view
- * stays readable even when the container emits no ANSI escape codes:
- *   - RFC3339 / ISO timestamps at the start of a line
- *   - log levels: TRACE/DEBUG/INFO/NOTICE/WARN/WARNING/ERROR/ERR/FATAL/CRIT
- *   - key=value pairs and JSON object/array delimiters
+ * Detects common log patterns and colourises them so the Docker and Kubernetes
+ * log views stay readable even when the workload emits no ANSI escape codes:
+ *   - timestamps at the start of a line: ISO/RFC3339 (optionally bracketed),
+ *     nginx's `2026/11/28 10:00:00`, syslog's `Nov 28 10:00:00` and Apache's
+ *     `[Fri Nov 28 10:00:00 2026]` — plus the bracketed CLF timestamp nginx
+ *     puts mid-line in its access log
+ *   - log levels: bare upper-case TRACE…CRITICAL words, bracketed `[INFO]` /
+ *     `[core:error]`, and structured `level=info` / `"level":"error"` pairs
+ *   - JSON object lines get a CSS class for subtle emphasis
  * Lines that match none of the patterns are passed through unchanged.
  */
 const ANSI_RE = /\x1b\[/g
@@ -309,14 +313,38 @@ function esc(s: string): string {
   return escapeHtml(s)
 }
 
-// RFC3339 / ISO-8601-ish timestamp at the start of a line, optionally wrapped
-// in brackets (Log4j/Java style `[2026-08-07 19:48:06,008]`) and with an
-// optional trailing Z / timezone offset. The fractional seconds separator may
-// be a dot or a comma (the latter is common in Java logging frameworks).
-const TS_RE =
-  /^(?:\[)?(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)(?:\])? /
+const TS_COLOR = '#61afef'
 
-const LEVEL_RE = /\b(TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRIT(?:ICAL)?)\b/g
+// Leading-timestamp shapes, tried in order — the first hit is the line's timestamp.
+// RFC3339 / ISO-8601-ish, optionally wrapped in brackets (Log4j/Java style
+// `[2026-08-07 19:48:06,008]`) and with an optional trailing Z / timezone
+// offset. The fractional-seconds separator may be a dot or a comma (the latter
+// is common in Java logging frameworks).
+const ISO_TS_RE =
+  /^(?:\[)?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?(?:\])? /
+// nginx error log: `2026/11/28 10:00:00 [error] …`
+const NGINX_TS_RE = /^\d{4}\/\d{2}\/\d{2}[ T]\d{2}:\d{2}:\d{2}/
+// Classic syslog: `Nov 28 10:00:00 host app[42]: …` (single-digit days are
+// space-padded, hence `{1,2}`).
+const SYSLOG_TS_RE = /^[A-Z][a-z]{2} {1,2}\d{1,2} \d{2}:\d{2}:\d{2}/
+// Apache error log: `[Fri Nov 28 10:00:00.123456 2026] [core:error] …`
+const APACHE_TS_RE =
+  /^\[[A-Z][a-z]{2} [A-Z][a-z]{2} {1,2}\d{1,2} \d{2}:\d{2}:\d{2}(?:\.\d+)? \d{4}\]/
+// The CLF timestamp in the middle of an nginx access-log line:
+// `10.0.0.1 - - [28/Nov/2026:10:00:00 +0800] "GET / HTTP/1.1" 200`.
+const CLF_TS_RE = /\[\d{2}\/[A-Za-z]{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}\]/g
+
+// The level vocabulary, shared by every detector below. Bare words stay
+// upper-case-only (that was the original contract — a lowercase `error` in a
+// prose message must not turn red); the bracketed and keyed forms are
+// case-insensitive because that is how logfmt / JSON logs spell them.
+const LEVEL_WORDS = 'TRACE|DEBUG|INFO|NOTICE|WARN(?:ING)?|ERROR|ERR|FATAL|CRIT(?:ICAL)?'
+const LEVEL_RE = new RegExp(`\\b(${LEVEL_WORDS})\\b`, 'g')
+const BRACKET_LEVEL_RE = new RegExp(`\\[(?:[A-Za-z0-9_.-]+:)?(${LEVEL_WORDS})\\]`, 'gi')
+const KV_LEVEL_RE = new RegExp(
+  `\\b(?:level|lvl|severity|sev|log\\.level)\\b["']?\\s*[=:]\\s*["']?(${LEVEL_WORDS})\\b`,
+  'gi',
+)
 
 const LEVEL_FG: Record<string, string> = {
   TRACE: '#7daeec',
@@ -332,44 +360,74 @@ const LEVEL_FG: Record<string, string> = {
   CRITICAL: '#f44747',
 }
 
+const levelColor = (word: string): string => LEVEL_FG[word.toUpperCase()] ?? LEVEL_FG.WARN
+
+interface HlSpan {
+  start: number
+  end: number
+  color: string
+  bold: boolean
+}
+
+/** All colour spans of one line, plus where its leading timestamp ended. */
+function collectSpans(line: string): { spans: HlSpan[]; tsEnd: number } {
+  const spans: HlSpan[] = []
+  let tsEnd = 0
+  for (const re of [ISO_TS_RE, NGINX_TS_RE, SYSLOG_TS_RE, APACHE_TS_RE]) {
+    const m = re.exec(line)
+    if (m) {
+      tsEnd = m[0].length
+      spans.push({ start: 0, end: tsEnd, color: TS_COLOR, bold: false })
+      break
+    }
+  }
+  for (const m of line.matchAll(CLF_TS_RE)) {
+    spans.push({ start: m.index, end: m.index + m[0].length, color: TS_COLOR, bold: false })
+  }
+  // The bracket and keyed forms run before the bare word: when both agree the
+  // span is identical and the renderer keeps only one.
+  for (const m of line.matchAll(BRACKET_LEVEL_RE)) {
+    const start = m.index + m[0].lastIndexOf(m[1])
+    spans.push({ start, end: start + m[1].length, color: levelColor(m[1]), bold: true })
+  }
+  for (const m of line.matchAll(KV_LEVEL_RE)) {
+    const start = m.index + m[0].lastIndexOf(m[1])
+    spans.push({ start, end: start + m[1].length, color: levelColor(m[1]), bold: true })
+  }
+  for (const m of line.matchAll(LEVEL_RE)) {
+    spans.push({ start: m.index, end: m.index + m[0].length, color: levelColor(m[0]), bold: true })
+  }
+  return { spans, tsEnd }
+}
+
+function renderSpans(line: string, spans: HlSpan[]): string {
+  if (spans.length === 0) return esc(line)
+  // Earlier match wins; at the same offset the longer one does (a bracketed or
+  // keyed level also satisfies the bare-word detector).
+  spans.sort((a, b) => a.start - b.start || b.end - a.end)
+  let html = ''
+  let cur = 0
+  for (const s of spans) {
+    if (s.start < cur) continue
+    html += esc(line.slice(cur, s.start))
+    const weight = s.bold ? ';font-weight:bold' : ''
+    html += `<span style="color:${s.color}${weight}">${esc(line.slice(s.start, s.end))}</span>`
+    cur = s.end
+  }
+  return html + esc(line.slice(cur))
+}
+
 function highlightLine(line: string): string {
   if (!line) return ''
-
-  let html = ''
-  let rest = line
-
-  // Leading timestamp
-  const tsMatch = TS_RE.exec(line)
-  if (tsMatch) {
-    html += `<span style="color:#61afef">${esc(tsMatch[0])}</span>`
-    rest = line.slice(tsMatch[0].length)
-  }
-
-  // Levels anywhere in the line (bold + colour)
-  if (LEVEL_RE.test(rest)) {
-    LEVEL_RE.lastIndex = 0
-    let last = 0
-    let m: RegExpExecArray | null
-    let lvlHtml = ''
-    while ((m = LEVEL_RE.exec(rest)) !== null) {
-      const key = m[1]
-      const fg = LEVEL_FG[key] ?? '#e5c07b'
-      lvlHtml += esc(rest.slice(last, m.index))
-      lvlHtml += `<span style="color:${fg};font-weight:bold">${esc(m[0])}</span>`
-      last = m.index + m[0].length
-    }
-    lvlHtml += esc(rest.slice(last))
-    rest = lvlHtml
-  } else {
-    rest = esc(rest)
-  }
-
-  // key=value pairs inside the (possibly already-spanned) text are left as-is
-  // to keep the markup simple; JSON braces get subtle emphasis via CSS class.
+  const { spans, tsEnd } = collectSpans(line)
+  const body = renderSpans(line, spans)
+  // Braces/brackets in the message part get subtle emphasis via CSS class (the
+  // leading timestamp is excluded, so `[2026-…]` alone does not trigger it).
+  const rest = line.slice(tsEnd)
   if (rest.includes('{') || rest.includes('[')) {
-    return `<span class="dlv-log-json">${html}${rest}</span>`
+    return `<span class="dlv-log-json">${body}</span>`
   }
-  return html + rest
+  return body
 }
 
 /**

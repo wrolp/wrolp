@@ -776,7 +776,7 @@
   }
 }
 
-// ===== Docker Log Viewer (tab) =====
+// ===== Shared log viewer (Docker log tabs, Kubernetes log dialog) =====
 .docker-log-viewer {
   display: flex;
   flex-direction: column;
@@ -1052,6 +1052,16 @@
   // Heuristic-highlighted lines that contain JSON get subtle emphasis.
   .dlv-log-json {
     color: #c9d1d9;
+  }
+
+  // The live stream ran out (Kubernetes: pod gone, session dropped).
+  .dlv-ended {
+    flex: none;
+    padding: 6px 12px;
+    border-top: 1px solid $border;
+    background: $bg-secondary;
+    color: $text-secondary;
+    font-size: var(--fs-xs);
   }
 
   .dlv-error {
