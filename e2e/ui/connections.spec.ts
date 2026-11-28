@@ -42,6 +42,33 @@ test('renders connections grouped by group name', async ({ page }) => {
   )
 })
 
+// The custom overlay scrollbar has to follow what the list actually holds. A list
+// whose rows arrive after the first paint (the normal case: connections come from
+// the backend) needs a thumb, and collapsing a group has to take it away again —
+// a thumb left over from taller content is a permanent scrollbar over a short list.
+test('the overlay scrollbar follows the list content', async ({ page }) => {
+  const many: MockConnection[] = Array.from({ length: 30 }, (_, i) => ({
+    id: `m${i}`,
+    name: `Host ${i}`,
+    host: `10.0.0.${i}`,
+    port: 22,
+    username: 'root',
+    group: 'Bulk',
+  }))
+  await installTauriMock(page, { connections: many })
+  await page.goto('/')
+
+  const thumb = page.locator('.sidebar-scrollbar-thumb')
+  const list = page.locator('.sidebar-list')
+  await expect(thumb).toHaveCount(1)
+  expect(await list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(0)
+
+  await page.locator('.conn-group-header', { hasText: 'Bulk' }).click()
+  await expect(page.locator('.connection-item')).toHaveCount(0)
+  expect(await list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBe(0)
+  await expect(thumb).toHaveCount(0)
+})
+
 test('creates a new connection through the modal', async ({ page }) => {
   await installTauriMock(page, {})
   await page.goto('/')

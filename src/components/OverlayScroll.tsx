@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useCustomScrollbar } from '../hooks/useCustomScrollbar'
 
 interface OverlayScrollProps {
@@ -9,8 +9,9 @@ interface OverlayScrollProps {
 /**
  * A scroll container whose native bar is replaced by the app's overlay thumb.
  * The zero-height sticky ruler keeps the thumb pinned to the scrollport while
- * the content moves; the MutationObserver refreshes it when a payload arrives
- * after the first paint (a diff or blame row set).
+ * the content moves; `useCustomScrollbar` watches the content itself, so a
+ * payload arriving after the first paint (a diff or blame row set) resizes the
+ * thumb without this component having to observe anything.
  */
 export function OverlayScroll({ className, children }: OverlayScrollProps) {
   const {
@@ -18,20 +19,11 @@ export function OverlayScroll({ className, children }: OverlayScrollProps) {
     thumbHeight,
     thumbTop,
     showThumb,
-    updateThumb,
     onScroll,
     onThumbMouseDown,
     onMouseEnter,
     onMouseLeave,
   } = useCustomScrollbar()
-
-  useEffect(() => {
-    const el = listRef.current
-    if (!el) return
-    const observer = new MutationObserver(updateThumb)
-    observer.observe(el, { childList: true, subtree: true })
-    return () => observer.disconnect()
-  }, [listRef, updateThumb])
 
   return (
     <div

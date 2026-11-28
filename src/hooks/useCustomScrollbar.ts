@@ -23,7 +23,10 @@ export function useCustomScrollbar() {
     const el = listRef.current
     if (!el) return
     const { scrollTop, scrollHeight, clientHeight } = el
-    if (scrollHeight <= clientHeight) {
+    // A scrollport can report one pixel more content than it can show — rounded
+    // `scrollHeight` against a fractional layout height. That is not an overflow,
+    // and a full-height bar for it reads as a permanently stuck scrollbar.
+    if (scrollHeight - clientHeight <= 1) {
       setThumbHeight(0)
       return
     }
@@ -77,9 +80,19 @@ export function useCustomScrollbar() {
     const el = listRef.current
     if (!el) return
     updateThumb()
+    // The scrollport's own size is only half the story: content arrives after the
+    // first paint, a refresh can return fewer rows, and collapsing a connection
+    // group shrinks the list without touching the element's height. A ResizeObserver
+    // alone leaves the thumb at the *previous* content's height — which is how a
+    // short list ends up with a full-height bar (and a long one gets none).
     const ro = new ResizeObserver(updateThumb)
     ro.observe(el)
-    return () => ro.disconnect()
+    const mo = new MutationObserver(updateThumb)
+    mo.observe(el, { childList: true, subtree: true })
+    return () => {
+      ro.disconnect()
+      mo.disconnect()
+    }
   }, [updateThumb])
 
   return {
