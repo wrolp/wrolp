@@ -14,6 +14,84 @@
   background: $bg-primary;
 }
 
+// ===== Scope bar =====
+//
+// The context / namespace / kind pickers below are a setting chosen once, not a
+// read-out read every time: this bar carries the same choices on one 24px line,
+// and the form folds away under it. Folding is what gives the list its height
+// back — the two labelled rows cost ~105px in a column this narrow.
+.k8s-scope-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-bottom: 1px solid $border;
+  background: transparent;
+  color: $text-muted;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: $bg-hover;
+  }
+
+  &:focus-visible {
+    outline: 1px solid $accent;
+    outline-offset: -1px;
+  }
+}
+
+// The context is the segment that names the cluster, so it takes the slack and
+// truncates first; namespace and kind give up width only after it, and the kind
+// never does (it is the shortest and the one a row's list is about).
+.k8s-scope-ctx {
+  flex: 1 1 auto;
+  min-width: 2.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $text-secondary;
+}
+
+.k8s-scope-ns {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.k8s-scope-kind {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.k8s-scope-sep {
+  flex: none;
+  color: $text-dim;
+}
+
+// Down when the form is showing, right when it is folded away. A step brighter
+// than `.k8s-scope-sep`: the separators and this glyph are the same shape at the
+// same size, and only the chevron is a control.
+.k8s-scope-chev {
+  flex: none;
+  margin-left: auto;
+  color: $text-muted;
+  transform: rotate(-90deg);
+  transition: transform var(--d-1) var(--e-out);
+
+  .k8s-scope-bar[aria-expanded='true'] & {
+    transform: none;
+  }
+}
+
 .k8s-filters {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -43,7 +121,11 @@
   padding: 4px 6px;
   border: 1px solid $border;
   border-radius: var(--r-1);
-  background: $bg-input;
+  // `background-color`, not the shorthand: the global `select` rule paints the
+  // chevron with `background-image`, and a shorthand here resets its
+  // `no-repeat` / `12px` size — which tiled the arrow across the control on the
+  // light theme (whose override re-adds the image at a higher specificity).
+  background-color: $bg-input;
   color: $text-primary;
   font-family: inherit;
   font-size: var(--fs-sm);
@@ -56,6 +138,11 @@
   &:disabled {
     opacity: 0.55;
   }
+}
+
+// Room for the 12px chevron the global rule draws at `right 7px center`.
+.k8s-select {
+  padding-right: 24px;
 }
 
 .k8s-notice {
@@ -134,15 +221,16 @@
 // cluster slice a row belongs to, so each namespace gets a stable hue. Colour,
 // not a badge: a chip competes with the status chips on the right. The palette
 // uses the theme's *-soft-40 tokens — tuned for AA text on both dark and light
-// surfaces (see `_theme.scss`).
+// surfaces (see `_theme.scss`). `--danger-soft-40` is deliberately absent: red
+// already means a *bad* status chip on the same row, so a namespace must never
+// wear it, or the label reads as an error.
 $ns-label-colors: (
   0: var(--accent-soft-40),
   1: var(--info-soft-40),
   2: var(--cyan-soft-40),
   3: var(--success-soft-40),
   4: var(--warning-soft-40),
-  5: var(--danger-soft-40),
-  6: var(--purple-soft-40),
+  5: var(--purple-soft-40),
 );
 
 @each $index, $token in $ns-label-colors {
@@ -214,17 +302,23 @@ $ns-label-colors: (
 // A wrap of toggle chips under the scope pickers. Each mirrors the tone of the
 // status chip it corresponds to in the row; toggling one off dims + strikes it
 // and hides every row carrying that status. Rendered in resources mode only.
+// One line, not two: the label is a prefix for the chips rather than a row of its
+// own. Folded, the row may not wrap — a status chip that silently falls off the
+// bottom would look like a resource that no longer exists; the chips scroll
+// sideways instead, and the problem states sort first so they are never the tail.
 .k8s-status-bar {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
   border-bottom: 1px solid $border;
   flex: none;
+  overflow: hidden;
 }
 
 .k8s-status-label {
-  font-size: var(--fs-xs);
+  flex: none;
+  font-size: 10px;
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -232,8 +326,25 @@ $ns-label-colors: (
 
 .k8s-status-chips {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
   gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  // The chips are a filter bar, not a table: a visible scrollbar in a 25px row
+  // costs more than it tells.
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  // Expanded means the detail view: the chips may use as many rows as they need
+  // instead of hiding their tail behind a scroll.
+  .k8s-panel.scope-open & {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
 }
 
 .k8s-status-chip {
@@ -271,6 +382,131 @@ $ns-label-colors: (
   }
 }
 
+// ===== Log / YAML tabs =====
+//
+// Both open as tab-bar entries and take the main area, the same surface a
+// pane-free container log gets. The panel is one narrow rail column, so the old
+// dialogs covered the very list the object was picked from.
+
+.k8s-tab-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: $bg-primary;
+}
+
+.k8s-tab-body,
+.k8s-yaml-tab {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+// The log viewer's own header already names the pod; this row exists only for the
+// container picker of a multi-container pod.
+.k8s-tab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  min-width: 0;
+  padding: 5px 12px;
+  border-bottom: 1px solid $border;
+}
+
+.k8s-tab-title {
+  flex: none;
+  font-size: var(--fs-md);
+  color: $text-primary;
+  white-space: nowrap;
+}
+
+.k8s-tab-sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: $text-muted;
+}
+
+.k8s-tab-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+}
+
+.k8s-tab-error {
+  flex: none;
+  padding: 8px 12px;
+}
+
+.k8s-tab-notice {
+  flex: none;
+  padding: 4px 12px;
+  border-bottom: 1px solid $border;
+  font-size: var(--fs-xs);
+  color: var(--success-soft-40);
+}
+
+// Same dot the file tabs use for an unsaved buffer: the manifest was edited and
+// not applied yet.
+.k8s-tab-dirty {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: $accent;
+}
+
+// The edit surface of a manifest tab. A plain textarea, like the Apply dialog —
+// Monaco would bring a model per tab and a save flow this view does not own.
+.k8s-yaml-editor {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 16px;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: $bg-primary;
+  color: $text-primary;
+  font-family: $font-mono;
+  font-size: 12px;
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  caret-color: $accent;
+
+  // The surface is the editor: a ring around the whole pane says nothing the
+  // caret does not, and it outranks `_a11y.scss`'s global focus-visible rule.
+  &:focus,
+  &:focus-visible {
+    outline: none;
+  }
+}
+
+// `height: 100%` from the shared viewer would fight a toolbar above it; the tab
+// body is a flex column, so let the viewer take what is left instead.
+.k8s-tab-body > .docker-log-viewer {
+  flex: 1 1 auto;
+  height: auto;
+}
+
+// The dialog capped the manifest so it could scroll inside a small box. A tab owns
+// the window's height, so the pre starts at zero and grows to the space available.
+.k8s-yaml-tab .k8s-yaml {
+  min-height: 0;
+}
+
 // ===== Overlays =====
 
 .k8s-modal {
@@ -286,14 +522,20 @@ $ns-label-colors: (
   flex: none;
 }
 
-.k8s-log-toolbar {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
-  flex: none;
-  padding: 8px 16px;
-  border-bottom: 1px solid $border;
+// The shared log viewer fills the dialog; its own body scrolls. `flex-basis:
+// auto` (not 0) lets a long log grow the dialog up to `max-height` instead of
+// pinning it to the minimum.
+.k8s-modal .docker-log-viewer {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 320px;
+}
+
+// Multi-container pods pick the container right in the header, next to the
+// title the viewer does not repeat.
+.k8s-log-container {
+  margin-left: auto;
+  margin-right: 16px;
 }
 
 .k8s-inline {
@@ -333,7 +575,6 @@ $ns-label-colors: (
   }
 }
 
-.k8s-log-output,
 .k8s-yaml {
   margin: 0;
   flex: 1;
@@ -345,31 +586,8 @@ $ns-label-colors: (
   font-family: $font-mono;
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.k8s-yaml {
   white-space: pre;
-}
-
-// Custom slim scrollbar for the log viewer (both axes — long lines scroll
-// horizontally too), matching the other panel scrollbars in the app.
-.k8s-log-output {
-  &::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
-  }
-  &::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  &::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thumb);
-    border-radius: var(--r-1);
-    &:hover {
-      background: var(--scrollbar-thumb-hover);
-    }
-  }
+  word-break: break-word;
 }
 
 .k8s-modal .modal-error {
@@ -491,24 +709,30 @@ $ns-label-colors: (
 
 // ===== Modes and Helm =====
 
-// Resources and releases share the scope pickers, so the switch sits above them and
-// spans the column: two labels, no room for anything else.
-.k8s-modes {
+// The Resources/Helm switch sits in the section head now: at 264px a row of its
+// own cost 29px — a resource row — for two words. It stays at 10px, the scale the
+// panel's own chips use, so the head survives the largest 界面字号; the section
+// title is the item allowed to give up width if the column is dragged narrow.
+.k8s-head .k8s-modes {
   display: flex;
-  gap: 4px;
-  flex: none;
-  padding: 6px 8px 0;
+  flex: 0 0 auto;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid $border;
+  border-radius: var(--r-2);
+  background: $bg-input;
 }
 
 .k8s-mode {
-  flex: 1;
-  padding: 3px 0;
-  border: 1px solid $border;
-  border-radius: var(--r-1);
+  padding: 1px 6px;
+  border: none;
+  border-radius: calc(var(--r-1) - 1px);
   background: transparent;
   color: $text-muted;
   font-family: inherit;
-  font-size: var(--fs-xs);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
   cursor: pointer;
 
   &:hover {
@@ -519,6 +743,11 @@ $ns-label-colors: (
   &.active {
     background: $bg-active;
     color: $text-primary;
+  }
+
+  &:focus-visible {
+    outline: 1px solid $accent;
+    outline-offset: -1px;
   }
 }
 

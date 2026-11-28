@@ -39,6 +39,7 @@ import { FileEditor, type EditorTab } from './components/FileEditor'
 import { DockerPanel } from './components/DockerPanel'
 import { DockerLogViewer } from './components/DockerLogViewer'
 import { K8sPanel, ALL_NAMESPACES } from './components/K8sPanel'
+import { K8sHelmHistoryTab, K8sHelmValuesTab, K8sLogTab, K8sYamlTab } from './components/K8sTabs'
 import { GitPanel } from './components/GitPanel'
 import { CommandListPanel } from './components/CommandListPanel'
 import { ShortcutsPane } from './components/ShortcutsPane'
@@ -60,6 +61,8 @@ import type {
   K8sHostRef,
   K8sScope,
   K8sExecTarget,
+  K8sTabRef,
+  K8sHelmRef,
   K8sForwardRule,
   WorkspaceLayout,
   FileTargetMode,
@@ -2210,6 +2213,14 @@ function isWorkspaceTab(tab: TabInfo | undefined): tab is TabInfo {
   return isSessionTab(tab) && tab != null && !tab.embedded
 }
 
+// Tabs that render a Kubernetes view over the main area instead of owning panes.
+const K8S_TAB_TYPES: ReadonlySet<TabInfo['tabType']> = new Set([
+  'k8sLog',
+  'k8sYaml',
+  'k8sHelmValues',
+  'k8sHelmHistory',
+])
+
 // The bar entry that owns a session: a root tab owns itself, an embedded pane
 // belongs to whichever root's tree holds it. Anything that has to *select* a
 // session after leaving a file or a float behind needs this, because an embedded
@@ -3215,6 +3226,139 @@ export default function App() {
     },
     [focusedLeafTabId],
   )
+
+  /**
+   * Open a Kubernetes log / manifest as a tab-bar entry. The rail is a 264px
+   * column, so the old dialogs covered the very list the object came from; a tab
+   * takes the main area and keeps the panel usable. The host is frozen on the tab
+   * (`k8sHost` follows the focused terminal), and re-opening the same object
+   * focuses its tab instead of stacking a duplicate.
+   */
+  const openK8sTab = useCallback(
+    (kind: 'k8sLog' | 'k8sYaml', target: K8sTabRef) => {
+      const host = k8sHost
+      if (!host) return
+      const sameTarget = (r?: K8sTabRef) =>
+        r != null &&
+        r.context === target.context &&
+        r.namespace === target.namespace &&
+        r.kind === target.kind &&
+        r.name === target.name
+      const existing = tabsRef.current.find((t) => t.tabType === kind && sameTarget(t.k8sRef))
+      if (existing) {
+        setActiveTabId(existing.tabId)
+        return
+      }
+      const tabId = nextTabId++
+      setTabs((prev) => [
+        ...prev,
+        {
+          tabId,
+          connectionName: target.name,
+          host: 'Kubernetes',
+          status: 'connected',
+          tabType: kind,
+          k8sHost: host,
+          k8sRef: target,
+        },
+      ])
+      setActiveTabId(tabId)
+    },
+    [k8sHost],
+  )
+  const handleOpenK8sLogs = useCallback(
+    (target: K8sTabRef) => openK8sTab('k8sLog', target),
+    [openK8sTab],
+  )
+  const handleOpenK8sYaml = useCallback(
+    (target: K8sTabRef) => openK8sTab('k8sYaml', target),
+    [openK8sTab],
+  )
+
+  /** Helm values / history ride the same tab mechanism as logs and manifests. */
+  const openK8sHelmTab = useCallback(
+    (kind: 'k8sHelmValues' | 'k8sHelmHistory', helm: K8sHelmRef) => {
+      const host = k8sHost
+      if (!host) return
+      const existing = tabsRef.current.find(
+        (t) =>
+          t.tabType === kind &&
+          t.k8sHelm != null &&
+          t.k8sHelm.context === helm.context &&
+          t.k8sHelm.namespace === helm.namespace &&
+          t.k8sHelm.release === helm.release,
+      )
+      if (existing) {
+        setActiveTabId(existing.tabId)
+        return
+      }
+      const tabId = nextTabId++
+      setTabs((prev) => [
+        ...prev,
+        {
+          tabId,
+          connectionName: helm.release,
+          host: 'Kubernetes',
+          status: 'connected',
+          tabType: kind,
+          k8sHost: host,
+          k8sHelm: helm,
+        },
+      ])
+      setActiveTabId(tabId)
+    },
+    [k8sHost],
+  )
+  const handleOpenK8sHelmValues = useCallback(
+    (target: K8sHelmRef) => openK8sHelmTab('k8sHelmValues', target),
+    [openK8sHelmTab],
+  )
+  const handleOpenK8sHelmHistory = useCallback(
+    (target: K8sHelmRef) => openK8sHelmTab('k8sHelmHistory', target),
+    [openK8sHelmTab],
+  )
+
+  // An edited manifest tab keeps its draft in App: the tab body unmounts when
+  // another tab is selected, and the tab's ✕ has to be able to ask first.
+  const [k8sYamlDrafts, setK8sYamlDrafts] = useState<Record<number, string | null>>({})
+  const [k8sYamlDirty, setK8sYamlDirty] = useState<Record<number, boolean>>({})
+  const k8sYamlDirtyRef = useRef(k8sYamlDirty)
+  k8sYamlDirtyRef.current = k8sYamlDirty
+  const [pendingCloseK8sYaml, setPendingCloseK8sYaml] = useState<number | null>(null)
+  const setK8sYamlDraft = useCallback((tabId: number, draft: string | null) => {
+    setK8sYamlDrafts((prev) => {
+      if (draft == null) {
+        if (!(tabId in prev)) return prev
+        const next = { ...prev }
+        delete next[tabId]
+        return next
+      }
+      return prev[tabId] === draft ? prev : { ...prev, [tabId]: draft }
+    })
+  }, [])
+  const setK8sYamlTabDirty = useCallback((tabId: number, dirty: boolean) => {
+    setK8sYamlDirty((prev) => (prev[tabId] === dirty ? prev : { ...prev, [tabId]: dirty }))
+  }, [])
+  // Drop bookkeeping for tabs that no longer exist (closed, or their session went).
+  useEffect(() => {
+    const live = new Set(tabs.map((t) => t.tabId))
+    const staleIds = (prev: Record<number, unknown>) =>
+      Object.keys(prev).filter((id) => !live.has(Number(id)))
+    setK8sYamlDrafts((prev) => {
+      const stale = staleIds(prev)
+      if (stale.length === 0) return prev
+      const next = { ...prev }
+      for (const id of stale) delete next[Number(id)]
+      return next
+    })
+    setK8sYamlDirty((prev) => {
+      const stale = staleIds(prev)
+      if (stale.length === 0) return prev
+      const next = { ...prev }
+      for (const id of stale) delete next[Number(id)]
+      return next
+    })
+  }, [tabs])
 
   // Remote file editor state
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
@@ -4712,6 +4856,13 @@ export default function App() {
     async (tabId: number, opts?: { force?: boolean }) => {
       const root = tabsRef.current.find((t) => t.tabId === tabId)
       if (!root) return
+      // An edited manifest tab asks before its draft is thrown away. `force` is
+      // set by the confirm handler, and by session teardown — where the host is
+      // already gone and there is nothing left to apply to.
+      if (root.tabType === 'k8sYaml' && !opts?.force && k8sYamlDirtyRef.current[tabId]) {
+        setPendingCloseK8sYaml(tabId)
+        return
+      }
       // Home owns no session to tear down; its ✕ unpins it and the pin effect
       // removes the entry.
       if (root.tabType === 'home') {
@@ -4769,6 +4920,19 @@ export default function App() {
           )
           .map((x) => x.tabId),
       )
+      // Kubernetes tabs read through `kubectl` on their jump host. Closing that
+      // session leaves them polling a dead handle, so they go with it — the same
+      // rule Docker log tabs follow above.
+      const k8sTabIds = new Set(
+        tabsRef.current
+          .filter(
+            (x) =>
+              K8S_TAB_TYPES.has(x.tabType) &&
+              x.k8sHost?.kind === 'ssh' &&
+              sessionIds.includes(x.k8sHost.jumpTabId),
+          )
+          .map((x) => x.tabId),
+      )
       setSplitTrees((prev) => {
         const n = { ...prev }
         delete n[tabId]
@@ -4789,15 +4953,19 @@ export default function App() {
       // The editor buffers die with their session, and so do their tab bar entries.
       const dyingKeys = dropSessionFiles(sessionIds)
       setTabs((prev) =>
-        prev.filter((t) => !sessionIds.includes(t.tabId) && !dockerLogIds.has(t.tabId)),
+        prev.filter(
+          (t) =>
+            !sessionIds.includes(t.tabId) && !dockerLogIds.has(t.tabId) && !k8sTabIds.has(t.tabId),
+        ),
       )
       setActiveTabId((prev) => {
         // `tabsRef.current` is still the pre-close list here, so "was the selected
-        // tab removed" has to be answered from the two sets above: the workspace
-        // itself, or one of its files that was the active tab.
+        // tab removed" has to be answered from the sets above: the workspace
+        // itself, one of its files, or a Kubernetes view on the closing host.
         const gone =
           prev == null ||
           prev === tabId ||
+          (prev != null && k8sTabIds.has(prev)) ||
           tabsRef.current.some(
             (t) =>
               t.tabId === prev && t.tabType === 'fileEditor' && dyingKeys.has(t.editorKey ?? ''),
@@ -5236,6 +5404,12 @@ export default function App() {
       if (tab.tabType === 'home') return t('tabHome')
       if (tab.tabType === 'settings') return t('tabSettings')
       if (tab.tabType === 'dockerLog') return tab.containerName ?? t('logs')
+      if (tab.tabType === 'k8sLog') return t('k8sLogTab', { name: tab.k8sRef?.name ?? '' })
+      if (tab.tabType === 'k8sYaml') return t('k8sYamlTab', { name: tab.k8sRef?.name ?? '' })
+      if (tab.tabType === 'k8sHelmValues')
+        return t('k8sHelmValuesTab', { name: tab.k8sHelm?.release ?? '' })
+      if (tab.tabType === 'k8sHelmHistory')
+        return t('k8sHelmHistoryTab', { name: tab.k8sHelm?.release ?? '' })
       if (tab.commandLabel) return tab.commandLabel
       if (tab.tabType === 'localShell')
         return tab.localShellName || tab.localShellCwd || t('localTerminal')
@@ -5374,6 +5548,10 @@ export default function App() {
     if (tab.tabType === 'settings') return 'settings'
     if (tab.tabType === 'fileEditor') return 'file'
     if (tab.tabType === 'dockerLog') return 'clipboard'
+    if (tab.tabType === 'k8sLog') return 'clipboard'
+    if (tab.tabType === 'k8sYaml') return 'file'
+    if (tab.tabType === 'k8sHelmValues') return 'file'
+    if (tab.tabType === 'k8sHelmHistory') return 'history'
     // A pod's exec shell is named after the pod; the boxes glyph keeps it distinct
     // from the connection tabs it split away from.
     if (tab.kubectlExec) return 'boxes'
@@ -5545,6 +5723,17 @@ export default function App() {
             (t) => t.tabType === 'dockerLog' && t.jumpTabId != null && t.jumpTabId === closedTabId,
           )
           .map((t) => t.tabId)
+        // Kubernetes views read through this session's kubectl; they cannot run
+        // once the pane is gone.
+        const closedK8sIds = tabsRef.current
+          .filter(
+            (t) =>
+              K8S_TAB_TYPES.has(t.tabType) &&
+              t.k8sHost?.kind === 'ssh' &&
+              t.k8sHost.jumpTabId === closedTabId,
+          )
+          .map((t) => t.tabId)
+        const goneIds = [...closedDockerLogIds, ...closedK8sIds]
         if (closedTabId === rootId) {
           // The workspace's identity pane closed, but others remain. Keep the
           // rootId tab as the workspace entry (now disconnected) so the top tab
@@ -5552,13 +5741,13 @@ export default function App() {
           await disconnectTab(rootId)
           setTabs((prev) =>
             prev
-              .filter((t) => !closedDockerLogIds.includes(t.tabId))
+              .filter((t) => !goneIds.includes(t.tabId))
               .map((t) => (t.tabId === rootId ? { ...t, status: 'disconnected' } : t)),
           )
         } else {
           await disconnectTab(closedTabId)
           setTabs((prev) =>
-            prev.filter((t) => t.tabId !== closedTabId && !closedDockerLogIds.includes(t.tabId)),
+            prev.filter((t) => t.tabId !== closedTabId && !goneIds.includes(t.tabId)),
           )
         }
         setShellView((prev) => {
@@ -6717,6 +6906,8 @@ export default function App() {
       tab &&
       tab.tabType !== 'settings' &&
       tab.tabType !== 'fileEditor' &&
+      tab.tabType !== 'k8sLog' &&
+      tab.tabType !== 'k8sYaml' &&
       tab.tabType !== 'home'
     ) {
       setIndexSubjectTabId(tab.tabId)
@@ -9101,6 +9292,12 @@ export default function App() {
     activeTerminalTab?.tabType === 'dockerLog' && !activeTerminalTab.embedded
       ? activeTerminalTab
       : null
+  // A Kubernetes log / manifest / Helm view is the same kind of entry: no pane
+  // tree behind it, so it takes the whole main area while it is selected.
+  const activeK8sTab =
+    activeTerminalTab != null && K8S_TAB_TYPES.has(activeTerminalTab.tabType)
+      ? activeTerminalTab
+      : null
 
   // Portals keep each terminal instance mounted (preserving its SSH session and
   // scrollback) while placing its DOM into the correct pane body, or into the
@@ -9212,7 +9409,8 @@ export default function App() {
       <div className="terminal-split-root" style={{ position: 'relative' }}>
         {rootTabs.map((root) => {
           const tree = splitTrees[root.tabId] ?? makeLeaf(`leaf-${root.tabId}`, root.tabId)
-          const workspaceHidden = settingsActive || homeActive || root.tabId !== shownRootId
+          const workspaceHidden =
+            settingsActive || homeActive || activeK8sTab != null || root.tabId !== shownRootId
           return (
             <div
               key={root.tabId}
@@ -9299,6 +9497,45 @@ export default function App() {
         {/* A pane-free container log. Mounted only while selected: the viewer's
             unmount cleanup stops its own follow stream. */}
         {activeLogTab && <div className="dockerlog-overlay">{renderLogHost(activeLogTab)}</div>}
+        {/* Kubernetes logs / manifests / Helm views as tab bodies. Mounted only
+            while selected: the log viewer's unmount cleanup stops its own follow
+            stream, and a text tab re-reads only when a different object is opened. */}
+        {activeK8sTab?.k8sHost && (
+          <div className="k8s-tab-overlay">
+            {activeK8sTab.tabType === 'k8sLog' && activeK8sTab.k8sRef && (
+              <K8sLogTab
+                key={activeK8sTab.tabId}
+                host={activeK8sTab.k8sHost}
+                target={activeK8sTab.k8sRef}
+                onAskAi={handleOpenAiChat}
+              />
+            )}
+            {activeK8sTab.tabType === 'k8sYaml' && activeK8sTab.k8sRef && (
+              <K8sYamlTab
+                key={activeK8sTab.tabId}
+                host={activeK8sTab.k8sHost}
+                target={activeK8sTab.k8sRef}
+                draft={k8sYamlDrafts[activeK8sTab.tabId] ?? null}
+                onDraftChange={(draft) => setK8sYamlDraft(activeK8sTab.tabId, draft)}
+                onDirtyChange={(dirty) => setK8sYamlTabDirty(activeK8sTab.tabId, dirty)}
+              />
+            )}
+            {activeK8sTab.tabType === 'k8sHelmValues' && activeK8sTab.k8sHelm && (
+              <K8sHelmValuesTab
+                key={activeK8sTab.tabId}
+                host={activeK8sTab.k8sHost}
+                helm={activeK8sTab.k8sHelm}
+              />
+            )}
+            {activeK8sTab.tabType === 'k8sHelmHistory' && activeK8sTab.k8sHelm && (
+              <K8sHelmHistoryTab
+                key={activeK8sTab.tabId}
+                host={activeK8sTab.k8sHost}
+                helm={activeK8sTab.k8sHelm}
+              />
+            )}
+          </div>
+        )}
         {/* The dual-pane file view (v8-P5). Mounted only while open: both sides
             are real file panels, and a hidden one would keep listing directories
             and holding SFTP sessions for a view nobody is looking at. */}
@@ -9598,6 +9835,10 @@ export default function App() {
               resolveRuleHost={resolveK8sRuleHost}
               onExecPod={(target) => void handleExecK8sPod(target)}
               onBrowsePod={handleBrowsePod}
+              onOpenLogs={handleOpenK8sLogs}
+              onOpenYaml={handleOpenK8sYaml}
+              onOpenHelmValues={handleOpenK8sHelmValues}
+              onOpenHelmHistory={handleOpenK8sHelmHistory}
             />
           </div>
         )}
@@ -10310,6 +10551,25 @@ export default function App() {
           onSave={() => void confirmCloseSave()}
           onConfirm={confirmCloseDiscard}
           onCancel={confirmCloseCancel}
+        />
+      )}
+
+      {/* Ask before closing a manifest tab whose edits were never applied. The tab
+          may have gone with its session while the dialog was up — then there is
+          nothing left to ask about. */}
+      {pendingCloseK8sYaml != null && tabs.some((tab) => tab.tabId === pendingCloseK8sYaml) && (
+        <ConfirmDialog
+          title={t('unsavedChanges')}
+          message={t('k8sYamlDiscardMessage')}
+          confirmLabel={t('k8sYamlDiscard')}
+          cancelLabel={t('cancel')}
+          danger
+          onConfirm={() => {
+            const id = pendingCloseK8sYaml
+            setPendingCloseK8sYaml(null)
+            void closeTab(id, { force: true })
+          }}
+          onCancel={() => setPendingCloseK8sYaml(null)}
         />
       )}
 

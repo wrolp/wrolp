@@ -5,8 +5,10 @@
 // context switches and restarts, and two rows from the same namespace always
 // agree. Pure so the mapping is pinned by tests without mounting the panel.
 
-/** Must match the number of `--*-soft-40` entries in `_k8s.scss`. */
-export const NAMESPACE_COLOR_COUNT = 7
+/** Must match the number of entries in `$ns-label-colors` in `_k8s.scss`. The
+ *  palette has no red: red is the row's *bad* status colour and a namespace
+ *  label must never read as an error. */
+export const NAMESPACE_COLOR_COUNT = 6
 
 /** FNV-1a over the namespace name, folded into the palette size. */
 export function namespaceColorIndex(namespace: string): number {
@@ -26,7 +28,7 @@ export function namespaceColorClass(namespace: string): string {
 /**
  * Colours for one screenful of namespaces, with no duplicates.
  *
- * A pure hash collides (`apps` and `prod` both land on 1), and two rows in the
+ * A pure hash collides (`apps` and `backend` both land on 1), and two rows in the
  * same list must never look alike, so the hash is only the *starting* slot: each
  * name probes forward to the first free one. Names are processed in sorted order
  * so the assignment depends on the set, not on the order the rows arrived in.

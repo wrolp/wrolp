@@ -158,15 +158,15 @@
 - `analyze_docker_container` + `docker_container_logs`：检视容器并流式获取其日志（`docker_logs_stream_start` / `poll_docker_logs` / `stop_docker_logs_stream`）。
 - **Docker 日志标签与浮动**：容器的日志可作为一个独立的日志标签打开，并弹出为浮动窗口。标签重连时会自动重新发送其 `postConnectCmd`（例如原始的 `docker exec`），从而让面板在重连后保持一致。
 - `command_help`：查询连接服务器上某命令的帮助 / 手册文本。
-- 相关 UI 面板：`DockerPanel`、`DockerLogViewer`、`DockerAnalysisPanel`、`HostAnalysisPanel`。
+- 相关 UI 面板：`DockerPanel`、`DockerLogViewer`（Docker 传输层，显示由共享的 `LogViewer` 负责）、`DockerAnalysisPanel`、`HostAnalysisPanel`。
 
 ### Kubernetes
 
-- 活动栏的 **K8s** 模式与 Docker 一样跟随当前聚焦的终端：`K8sHostRef` 要么是 `{kind:'ssh', jumpTabId}`（`kubectl` 跑在已连接 SSH 会话的跳板机上），要么是 `{kind:'local'}`（使用本机 CLI 与 kubeconfig）。面板顶部是上下文与命名空间选择器，行列表支持搜索过滤。**默认选中「所有命名空间」**（切换上下文也会回到它），kubeconfig 未指明的命名空间里出问题时第一眼就能看到。该模式下名字下方的命名空间文本按命名空间取一个稳定颜色，不同命名空间的行一眼可分。
+- 活动栏的 **K8s** 模式与 Docker 一样跟随当前聚焦的终端：`K8sHostRef` 要么是 `{kind:'ssh', jumpTabId}`（`kubectl` 跑在已连接 SSH 会话的跳板机上），要么是 `{kind:'local'}`（使用本机 CLI 与 kubeconfig）。作用域（上下文 / 命名空间 / 资源类型）收在列表上方的一行摘要里，不用时把选择器折叠起来；行列表支持搜索过滤。**默认选中「所有命名空间」**（切换上下文也会回到它），kubeconfig 未指明的命名空间里出问题时第一眼就能看到。该模式下名字下方的命名空间文本按命名空间取一个稳定颜色，不同命名空间的行一眼可分。
 - 十种资源共用一套通用行模型（`src-tauri/src/k8s_host.rs` 的 `K8sResource`）：pods、deployments、statefulsets、daemonsets、services、ingresses、jobs、cronjobs、configmaps、secrets。每行带状态 chip、`ready/total`、重启次数与一行摘要；Pod 的摘要是镜像，**节点名单独占一行**显示在其下方。
-- 行级操作：查看 / 编辑清单 YAML 并应用（`k8s_apply_yaml`）、对 deployment / statefulset 扩缩容、带应用内确认的删除、打开 Pod 日志（一次性或流式、支持 ANSI 颜色），以及在 Pod 内开 shell——本机宿主直接开一个独立 PTY，SSH 宿主则新开分栏并自动键入 `kubectl exec`。
+- 行级操作：把清单作为可编辑的 YAML 标签页打开（应用走 `k8s_apply_yaml`）、对 deployment / statefulset 扩缩容、带应用内确认的删除、把 Pod 日志开在标签页里（与 Docker 日志页同一个查看器：跟随、着色、换行、行号、时间戳 / 级别高亮），以及在 Pod 内开 shell——本机宿主直接开一个独立 PTY，SSH 宿主则新开分栏并自动键入 `kubectl exec`。
 - **端口转发**：转发 Pod / Service 端口，面板里查看进行中的转发并复用已保存规则；后端与终端共用同一事件通道上报，标签页关闭不会留下孤儿转发。
-- **Helm**：`helm_probe` 判断 CLI 是否存在；Helm 标签页列出该命名空间的 release，展示 values 与修订历史，并支持回滚与卸载。
+- **Helm**：`helm_probe` 判断 CLI 是否存在；Helm 标签页列出该命名空间的 release，values 与修订历史各自开在标签页里，并支持回滚与卸载。
 
 ### Git 管理面板
 

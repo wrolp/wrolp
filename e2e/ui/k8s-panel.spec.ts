@@ -43,7 +43,9 @@ async function boot(
     k8sNamespaces: NAMESPACES,
     k8sResources: resources,
     k8sYaml: 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-0\n',
-    k8sLogs: 'one-shot web-0 log\n',
+    // logfmt line so the one-shot read also proves plain-log highlighting is
+    // wired into this viewer (the stream below stays plain text).
+    k8sLogs: 'time=2026-11-28T10:00:00Z level=info msg="one-shot web-0 log"\n',
     // Two drains, then the stream reports itself ended — enough to prove the viewer
     // appends across polls instead of replacing its buffer each time.
     k8sLogChunks: [['hello from '], ['web-0\n']],
@@ -76,12 +78,78 @@ test('the panel opens in All namespaces and shows the row YAML', async ({ page }
   await expect(row.locator('.k8s-detail')).toHaveText('nginx:1.29')
   await expect(row.locator('.k8s-node')).toHaveText('node-1')
 
+  // The manifest opens as a tab, not as a dialog over the rail it was picked from.
   await row.click()
-  await expect(page.locator('.k8s-yaml')).toContainText('kind: Pod')
+  await expect(page.locator('.k8s-tab-overlay .k8s-yaml')).toContainText('kind: Pod')
+  await expect(page.locator('.tab-item.active')).toContainText('web-0')
+  await expect(page.locator('.k8s-modal')).toHaveCount(0)
+  // Re-opening the same object focuses its tab instead of stacking a second one.
+  await page.locator('.k8s-item').click()
+  await expect(page.locator('.tab-item', { hasText: 'web-0' })).toHaveCount(1)
 
   const named = (await invokedCalls(page)).filter((c) => c.cmd === 'k8s_list_resources')
   // All namespaces is sent as `null` (kubectl's --all-namespaces).
   expect(named[0]?.args).toMatchObject({ kind: 'pods', namespace: null, context: 'prod' })
+})
+
+// The manifest tab is editable in place: Edit swaps the pre for a textarea, Apply
+// sends exactly what the user typed through `k8s_apply_yaml`, then the tab re-reads
+// the object so the view shows what the cluster accepted.
+test('the manifest tab edits, applies and re-reads the object', async ({ page }) => {
+  await boot(page, 'apps')
+  await page.locator('.k8s-item').click()
+  const tab = page.locator('.k8s-tab-overlay')
+
+  await tab.getByRole('button', { name: 'Edit' }).click()
+  const editor = tab.locator('.k8s-yaml-editor')
+  await expect(editor).toHaveValue(/kind: Pod/)
+  const edited = 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-0\n  labels:\n    edited: "1"\n'
+  await editor.fill(edited)
+  await expect(tab.locator('.k8s-tab-dirty')).toHaveCount(1)
+
+  await tab.getByRole('button', { name: 'Apply YAML' }).click()
+  await expect
+    .poll(async () =>
+      (await invokedCalls(page)).filter((c) => c.cmd === 'k8s_apply_yaml').map((c) => c.args),
+    )
+    .toContainEqual(expect.objectContaining({ context: 'prod', namespace: 'apps', yaml: edited }))
+  // Back to the read view, holding the reloaded manifest and a confirmation.
+  await expect(tab.locator('.k8s-yaml-editor')).toHaveCount(0)
+  await expect(tab.locator('.k8s-yaml')).toContainText('kind: Pod')
+  await expect(tab.locator('.k8s-tab-notice')).toHaveText('Applied')
+})
+
+// A draft is not a file buffer, but it is still work: switching tabs keeps it, and
+// closing the tab asks first — Cancel leaves the tab and the edit in place.
+test('an unapplied manifest draft survives a tab switch and guards the close', async ({ page }) => {
+  await boot(page, 'apps')
+  await page.locator('.k8s-item').click()
+  const tab = page.locator('.k8s-tab-overlay')
+  await tab.getByRole('button', { name: 'Edit' }).click()
+  const edited = 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-0\n  labels:\n    draft: "1"\n'
+  await tab.locator('.k8s-yaml-editor').fill(edited)
+  await expect(tab.locator('.k8s-tab-dirty')).toHaveCount(1)
+
+  // Another tab takes the surface; coming back has to show the same draft.
+  await page.locator('.k8s-item').click({ button: 'right' })
+  await menuItem(page, /^Logs$/).click()
+  await expect(page.locator('.k8s-tab-overlay .dlv-output')).toContainText('hello from web-0')
+  await page.locator('.tab-item', { hasText: 'web-0 · YAML' }).click()
+  await expect(page.locator('.k8s-tab-overlay .k8s-yaml-editor')).toHaveValue(edited)
+
+  // Closing asks first; Cancel keeps the tab and the draft.
+  const dialog = page.locator('.confirm-dialog')
+  await page.locator('.tab-item.active .tab-close').click()
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('not applied to the cluster')
+  await dialog.locator('.btn-cancel').click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.locator('.k8s-tab-overlay .k8s-yaml-editor')).toHaveValue(edited)
+
+  // Confirming discards the draft and closes the tab.
+  await page.locator('.tab-item.active .tab-close').click()
+  await dialog.getByRole('button', { name: 'Discard changes' }).click()
+  await expect(page.locator('.tab-item', { hasText: 'web-0 · YAML' })).toHaveCount(0)
 })
 
 test('picking a namespace scopes the list to it', async ({ page }) => {
@@ -104,6 +172,38 @@ test('switching context resets the namespace to All namespaces', async ({ page }
   await expect(ns).toHaveValue('*')
 })
 
+// The pickers fold under a one-line summary of the same three choices. Folding is
+// presentation only: the scope stays put, so the list must not be reloaded, and
+// the choice survives the remount the rail does when it swaps panels.
+test('the scope bar folds the pickers and remembers the fold', async ({ page }) => {
+  await boot(page, null)
+  await expect(page.locator('.k8s-item')).toHaveCount(1)
+
+  const bar = page.locator('.k8s-scope-bar')
+  await expect(bar).toHaveAttribute('aria-expanded', 'true')
+  await expect(bar.locator('.k8s-scope-ctx')).toHaveText('prod')
+  await expect(bar.locator('.k8s-scope-ns')).toHaveText('All namespaces')
+  await expect(bar.locator('.k8s-scope-kind')).toHaveText('Pods')
+  await expect(page.locator('.k8s-filters')).toBeVisible()
+
+  const reads = async () =>
+    (await invokedCalls(page)).filter((c) => c.cmd === 'k8s_list_resources').length
+  const before = await reads()
+
+  await bar.click()
+  await expect(bar).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('.k8s-filters')).toHaveCount(0)
+  await expect(page.locator('.k8s-item')).toHaveCount(1)
+  expect(await reads()).toBe(before)
+  expect(await page.evaluate(() => localStorage.getItem('wrolp-k8s-scope-open'))).toBe('0')
+
+  await selectRailMode(page, 'hosts')
+  await selectRailMode(page, 'k8s')
+  await expect(page.locator('.k8s-scope-bar')).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('.k8s-filters')).toHaveCount(0)
+  await expect(page.locator('.k8s-item')).toHaveCount(1)
+})
+
 // The dialogs sit on top of the list they were opened from, so each one moves: the
 // grab handle is the header and nothing else, and the offset is per opening.
 test('a dialog drags by its header and reopens centred', async ({ page }) => {
@@ -116,7 +216,10 @@ test('a dialog drags by its header and reopens centred', async ({ page }) => {
       return { x: r.x, y: r.y }
     })
 
-  await page.locator('.k8s-item').click()
+  // The manifest opens in a tab now, so this drives the Apply dialog instead: the
+  // same `DraggableModal` primitive, still opened from the panel head.
+  const openApply = () => page.getByRole('button', { name: 'Apply YAML' }).click()
+  await openApply()
   await expect(box).toHaveCount(1)
   const centred = await at()
 
@@ -134,7 +237,7 @@ test('a dialog drags by its header and reopens centred', async ({ page }) => {
   await page.locator('.modal-close').click()
   await expect(box).toHaveCount(0)
 
-  await page.locator('.k8s-item').click()
+  await openApply()
   await expect(box).toHaveCount(1)
   expect(await at()).toEqual(centred)
 
@@ -148,6 +251,11 @@ test('logs stream into the viewer and delete is scoped to its namespace', async 
 
   await page.locator('.k8s-item').click({ button: 'right' })
   await menuItem(page, /^Logs$/).click()
+
+  // The log view is a tab body, not a dialog over the rail it came from.
+  await expect(page.locator('.k8s-tab-overlay .docker-log-viewer')).toHaveCount(1)
+  await expect(page.locator('.k8s-modal')).toHaveCount(0)
+  await expect(page.locator('.tab-item.active')).toContainText('web-0')
 
   // Follow is on by default, so the viewer opens a `kubectl logs -f` rather than
   // asking for the same tail over and over.
@@ -166,9 +274,9 @@ test('logs stream into the viewer and delete is scoped to its namespace', async 
       }),
     )
   // Both scripted drains are in the buffer: the second appended, it did not replace.
-  await expect(page.locator('.k8s-log-output')).toContainText('hello from web-0')
-  // The scripted stream runs out, and the backend says so.
-  await expect(page.locator('.k8s-note')).toContainText('Stream ended')
+  await expect(page.locator('.dlv-output')).toContainText('hello from web-0')
+  // The scripted stream runs out, and the viewer says so below the log.
+  await expect(page.locator('.dlv-ended')).toContainText('Stream ended')
   await expect
     .poll(async () =>
       (await invokedCalls(page))
@@ -178,9 +286,16 @@ test('logs stream into the viewer and delete is scoped to its namespace', async 
     .toContain('mock-k8s-log')
 
   // Follow off switches to the one-shot `kubectl logs --tail N` read.
-  await page.locator('.k8s-log-toolbar input[type="checkbox"]').uncheck()
-  await expect(page.locator('.k8s-log-output')).toContainText('one-shot web-0 log')
-  await page.locator('.modal-close').click()
+  await page.locator('.dlv-follow-btn').click()
+  await expect(page.locator('.dlv-output')).toContainText('one-shot web-0 log')
+  // The plain-log highlighter colours the logfmt level in place.
+  await expect(page.locator('.dlv-output span[style*="color:#98c379"]')).toHaveText('info')
+  // The K8s tab uses the same viewer as the Docker log tab: line numbers render.
+  await page.locator('.dlv-controls label', { hasText: 'Line numbers' }).locator('input').check()
+  await expect(page.locator('.dlv-output .dlv-ln').first()).toHaveText('1')
+  // Closing the tab unmounts the viewer, whose cleanup stops the stream.
+  await page.locator('.tab-item.active .tab-close').click()
+  await expect(page.locator('.k8s-tab-overlay')).toHaveCount(0)
 
   await page.locator('.k8s-item').click({ button: 'right' })
   await menuItem(page, /^Delete$/).click()
@@ -194,6 +309,33 @@ test('logs stream into the viewer and delete is scoped to its namespace', async 
     .toContainEqual(
       expect.objectContaining({ kind: 'pods', name: 'web-0', namespace: 'apps', context: 'prod' }),
     )
+})
+
+// A Kubernetes tab reads through its jump host. Closing that session has to take
+// the tab with it — otherwise it keeps polling a dead handle and sits there in error.
+test('closing the session closes the Kubernetes tabs opened through it', async ({ page }) => {
+  await installTauriMock(page, {
+    connections: [{ id: 'c1', name: 'Demo', host: 'demo.local', port: 22, username: 'root' }],
+    k8sContexts: CONTEXTS,
+    k8sNamespaces: NAMESPACES,
+    k8sResources: { pods: [POD] },
+    k8sYaml: 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: web-0\n',
+    pollOutputChunks: [['root@demo:~# ']],
+  })
+  await page.addInitScript(() => localStorage.setItem('wrolp-lang', 'en'))
+  await page.goto('/')
+  await page.locator('.connection-item').first().click()
+  await expect(page.locator('.tab-item', { hasText: 'Demo' })).toHaveCount(1)
+
+  await selectRailMode(page, 'k8s')
+  await expect(page.locator('.k8s-item')).toHaveCount(1)
+  await page.locator('.k8s-item').click()
+  await expect(page.locator('.k8s-tab-overlay')).toHaveCount(1)
+  await expect(page.locator('.tab-item', { hasText: 'web-0' })).toHaveCount(1)
+
+  await page.locator('.tab-item', { hasText: 'Demo' }).locator('.tab-close').click()
+  await expect(page.locator('.k8s-tab-overlay')).toHaveCount(0)
+  await expect(page.locator('.tab-item', { hasText: 'web-0' })).toHaveCount(0)
 })
 
 test('a deployment can be restarted, stopped and started', async ({ page }) => {
@@ -535,19 +677,24 @@ test('helm releases list, read values, roll back and install', async ({ page }) 
   await expect(rows.first()).toContainText('nginx-1.2.3')
   await expect(rows.nth(1).locator('.k8s-chip.bad')).toHaveText('failed')
 
-  // A click reads the values; the head says whose.
+  // A click opens the values in their own tab; the tab names the release.
   await rows.first().click()
-  await expect(page.locator('.k8s-modal .k8s-yaml')).toContainText('replicas: 2')
-  await expect(page.locator('.k8s-modal h3')).toHaveText('web — Values')
-  await page.locator('.modal-close').click()
+  await expect(page.locator('.k8s-tab-overlay .k8s-yaml')).toContainText('replicas: 2')
+  await expect(page.locator('.tab-item.active')).toContainText('web · Values')
+  await expect(page.locator('.k8s-modal')).toHaveCount(0)
+  await page.locator('.tab-item.active .tab-close').click()
+  await expect(page.locator('.k8s-tab-overlay')).toHaveCount(0)
 
   await rows.first().click({ button: 'right' })
   await menuItem(page, /^History$/).click()
-  await expect(page.locator('.k8s-history-row')).toHaveCount(2)
+  await expect(page.locator('.k8s-tab-overlay .k8s-history-row')).toHaveCount(2)
+  await expect(page.locator('.tab-item.active')).toContainText('web · History')
   // Newest first, so the superseded revision to roll back to is the second row —
   // and the deployed one has nothing to roll back to.
-  await expect(page.locator('.k8s-history-row').first().locator('button')).toBeDisabled()
-  const rollback = page.locator('.k8s-history-row').nth(1).locator('button')
+  await expect(
+    page.locator('.k8s-tab-overlay .k8s-history-row').first().locator('button'),
+  ).toBeDisabled()
+  const rollback = page.locator('.k8s-tab-overlay .k8s-history-row').nth(1).locator('button')
   await expect(rollback).toBeEnabled()
   await rollback.click()
   await expect

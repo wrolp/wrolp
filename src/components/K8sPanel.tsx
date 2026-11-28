@@ -11,6 +11,8 @@ import type {
   K8sPortForward,
   K8sResource,
   K8sScope,
+  K8sTabRef,
+  K8sHelmRef,
 } from '../types'
 import {
   helmListReleases,
@@ -41,11 +43,11 @@ import {
   pollK8sLogs,
   stopK8sLogsStream,
 } from '../commands'
-import { parseAnsiToHtmlLines, highlightPlainLogLines } from '../ansi'
 import { namespaceColorIndex, namespaceColorMap } from '../lib/k8sNamespaceColor'
 import { Icon } from './Icon'
 import { ConfirmDialog } from './ConfirmDialog'
 import { DraggableModal } from './DraggableModal'
+import { LogViewer, type LogSource } from './LogViewer'
 import { useI18n } from '../i18n'
 import type { TranslationKey } from '../i18n/en'
 
@@ -76,22 +78,33 @@ const KIND_LABEL: Record<Kind, TranslationKey> = {
   secrets: 'k8sKindSecrets',
 }
 
-/**
- * Cap on the log viewer's buffer. A chatty pod can outrun the 500 ms poll, and the
- * text is held in React state — so the oldest content is dropped at a newline
- * boundary rather than growing without limit.
- */
-const MAX_LOG_CHARS = 300_000
-
-function trimToChars(text: string): string {
-  if (text.length <= MAX_LOG_CHARS) return text
-  const cut = text.length - MAX_LOG_CHARS
-  const nl = text.indexOf('\n', cut)
-  return nl >= 0 ? text.slice(nl + 1) : text.slice(cut)
-}
-
 /** The "all namespaces" pseudo-selection. Shared with App's default scope. */
 export const ALL_NAMESPACES = '*'
+
+/**
+ * Whether the scope pickers are folded under the summary bar. A display-only
+ * preference, so it lives in localStorage beside the theme/highlight keys rather
+ * than in the workspace layout — and it is app-wide, not per host: a folded
+ * picker is a habit, not a property of the cluster.
+ */
+const SCOPE_OPEN_KEY = 'wrolp-k8s-scope-open'
+
+function readScopeOpenPref(): boolean | null {
+  try {
+    const raw = localStorage.getItem(SCOPE_OPEN_KEY)
+    return raw === null ? null : raw === '1'
+  } catch {
+    return null
+  }
+}
+
+function writeScopeOpenPref(open: boolean): void {
+  try {
+    localStorage.setItem(SCOPE_OPEN_KEY, open ? '1' : '0')
+  } catch {
+    // Storage unavailable — the panel still folds for this mount.
+  }
+}
 
 /**
  * The kinds `kubectl port-forward` accepts, mapped to the target prefix it wants.
@@ -105,8 +118,9 @@ const FORWARD_PREFIX: Partial<Record<string, string>> = {
 }
 
 /** Chip tone for a status word; unknown states stay neutral (`.warn`). Covers both
- * kubectl's phases and helm's release statuses (`deployed`, `pending-upgrade`, …). */
-function statusTone(status: string): 'ok' | 'warn' | 'bad' {
+ * kubectl's phases and helm's release statuses (`deployed`, `pending-upgrade`, …).
+ * Shared with the Helm history tab, which draws the same chips. */
+export function statusTone(status: string): 'ok' | 'warn' | 'bad' {
   const v = status.toLowerCase()
   if (
     [
@@ -161,6 +175,14 @@ interface K8sPanelProps {
   onExecPod?: (target: K8sExecTarget) => void
   /** Opens the pod's filesystem in the Files panel. Absent for a read-only panel. */
   onBrowsePod?: (target: K8sExecTarget) => void
+  /** Opens the pod's log view as a tab. Falls back to the in-panel dialog when absent. */
+  onOpenLogs?: (target: K8sTabRef) => void
+  /** Opens the resource's YAML as a tab. Falls back to the in-panel dialog when absent. */
+  onOpenYaml?: (target: K8sTabRef) => void
+  /** Opens a release's values as a tab. Falls back to the in-panel dialog when absent. */
+  onOpenHelmValues?: (target: K8sHelmRef) => void
+  /** Opens a release's revision history as a tab. Falls back to the in-panel dialog. */
+  onOpenHelmHistory?: (target: K8sHelmRef) => void
   /** Pod whose filesystem the Files panel is currently showing. */
   activePod?: string | null
   /** Saved connection behind `host`, recorded on a rule so it can be reopened later. */
@@ -179,13 +201,6 @@ interface LogState {
   context: string
   namespace: string
   container: string
-  tail: number
-  follow: boolean
-  text: string
-  error: string
-  loading: boolean
-  /** The `kubectl logs -f` stream ran out (pod gone, session dropped). */
-  ended: boolean
 }
 
 interface YamlState {
@@ -206,6 +221,10 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   refreshSignal,
   onExecPod,
   onBrowsePod,
+  onOpenLogs,
+  onOpenYaml,
+  onOpenHelmValues,
+  onOpenHelmHistory,
   activePod,
   connectionId,
   connectionName,
@@ -236,6 +255,12 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   // kind switch resets it below, so a choice can never outlive the list it came from.
   const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(new Set())
 
+  // The three scope pickers are a setting, not a read-out. Folded, the summary bar
+  // keeps the same information on one 24px line and the list gets the ~105px back.
+  // Expanded until the user folds it once: the first look at a panel has to show
+  // what there is to choose before it can hide it.
+  const [scopeOpen, setScopeOpen] = useState(() => readScopeOpenPref() ?? true)
+
   const [menu, setMenu] = useState<{ x: number; y: number; row: K8sResource } | null>(null)
   const [menuStyle, setMenuStyle] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
@@ -259,15 +284,6 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     context: string
     action: 'restart' | 'stop'
   } | null>(null)
-  const [copied, setCopied] = useState(false)
-  const logRef = useRef<HTMLPreElement>(null)
-  // The live `kubectl logs -f` on screen, its next poll, and whether the viewer is
-  // pinned to the bottom. All three are imperative handles, not render state.
-  const streamIdRef = useRef<string | null>(null)
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const stickRef = useRef(true)
-  const logsRef = useRef<LogState | null>(null)
-  logsRef.current = logs
 
   // Port forwards are app-wide (they outlive this panel), so the list is polled rather
   // than kept in component state alongside the resource rows.
@@ -498,6 +514,10 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
 
   const showValues = useCallback(
     async (rel: HelmRelease) => {
+      if (onOpenHelmValues) {
+        onOpenHelmValues({ context, namespace: rel.namespace, release: rel.name })
+        return
+      }
       const title = `${rel.name} — ${t('k8sHelmValues')}`
       setHelmText({ title, text: '', error: '', loading: true })
       try {
@@ -513,11 +533,15 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         setHelmText((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev))
       }
     },
-    [context, t],
+    [context, t, onOpenHelmValues],
   )
 
   const showHistory = useCallback(
     async (rel: HelmRelease) => {
+      if (onOpenHelmHistory) {
+        onOpenHelmHistory({ context, namespace: rel.namespace, release: rel.name })
+        return
+      }
       setHistory({ release: rel.name, rows: [], error: '', loading: true })
       try {
         const rows = await helmReleaseHistory(
@@ -531,7 +555,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         setHistory((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev))
       }
     },
-    [context],
+    [context, onOpenHelmHistory],
   )
 
   const doRollback = useCallback(
@@ -675,166 +699,51 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const openLogs = useCallback(
     (row: K8sResource) => {
       if (!context) return
-      stickRef.current = true
-      setLogs({
-        row,
-        context,
-        namespace: rowNamespace(row, namespace),
-        container: row.containers[0] ?? '',
-        tail: 500,
-        follow: true,
-        text: '',
-        error: '',
-        loading: true,
-        ended: false,
-      })
-      setCopied(false)
-    },
-    [context, namespace, rowNamespace],
-  )
-
-  // ---- follow mode: a live `kubectl logs -f` drained by a poll ----
-  //
-  // The recursive `setTimeout` (not `setInterval`) is what keeps the order straight:
-  // a slow `poll_k8s_logs` cannot overlap the next one and append chunks out of turn.
-  const appendLogs = useCallback((text: string) => {
-    setLogs((prev) =>
-      prev ? { ...prev, text: trimToChars(prev.text + text), loading: false } : prev,
-    )
-  }, [])
-
-  const stopLogStream = useCallback(async () => {
-    if (pollTimerRef.current) {
-      clearTimeout(pollTimerRef.current)
-      pollTimerRef.current = null
-    }
-    const sid = streamIdRef.current
-    streamIdRef.current = null
-    if (sid) {
-      await stopK8sLogsStream(sid).catch(() => {
-        /* already gone */
-      })
-    }
-  }, [])
-
-  const startLogStream = useCallback(
-    async (scope: {
-      context: string
-      namespace: string
-      pod: string
-      container: string
-      tail: number
-    }) => {
-      await stopLogStream()
-      try {
-        const sid = await k8sLogsStreamStart(
-          hostRef.current,
-          scope.context,
-          scope.namespace,
-          scope.pod,
-          scope.container || null,
-          scope.tail,
-        )
-        streamIdRef.current = sid
-        const tick = async () => {
-          // The stream was closed or replaced while this tick was queued.
-          if (streamIdRef.current !== sid) return
-          try {
-            const poll = await pollK8sLogs(sid)
-            if (streamIdRef.current !== sid) return
-            if (poll.chunks.length > 0) appendLogs(poll.chunks.join(''))
-            else setLogs((prev) => (prev ? { ...prev, loading: false } : prev))
-            if (poll.ended) {
-              streamIdRef.current = null
-              setLogs((prev) => (prev ? { ...prev, ended: true, loading: false } : prev))
-              // The buffer is drained; releasing it keeps the registry from holding
-              // a dead stream until the viewer happens to close.
-              await stopK8sLogsStream(sid).catch(() => {})
-              return
-            }
-          } catch {
-            // A failed poll is not worth losing the follow for; the next tick retries.
-          }
-          if (streamIdRef.current === sid) {
-            pollTimerRef.current = setTimeout(tick, 500)
-          }
-        }
-        pollTimerRef.current = setTimeout(tick, 500)
-      } catch (e) {
-        setLogs((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev))
+      const ns = rowNamespace(row, namespace)
+      if (onOpenLogs) {
+        // A tab keeps the rail usable while the stream runs. The dialog below is
+        // only the fallback for a panel mounted without an App host.
+        onOpenLogs({
+          context,
+          namespace: ns,
+          kind: row.kind,
+          name: row.name,
+          container: row.containers[0] ?? null,
+          containers: row.containers,
+        })
+        return
       }
+      setLogs({ row, context, namespace: ns, container: row.containers[0] ?? '' })
     },
-    [appendLogs, stopLogStream],
+    [context, namespace, rowNamespace, onOpenLogs],
   )
 
-  // One string names everything the viewer can be asked about, so switching pod,
-  // container, tail length or follow mode restarts the read from a clean buffer.
-  const logScope = logs
-    ? `${logs.context}|${logs.namespace}|${logs.row.name}|${logs.container}|${logs.tail}|${logs.follow}`
-    : ''
-  useEffect(() => {
-    const current = logsRef.current
-    if (!current) return
-    setLogs((prev) => (prev ? { ...prev, text: '', error: '', ended: false, loading: true } : prev))
-    if (current.follow) {
-      void startLogStream({
-        context: current.context,
-        namespace: current.namespace,
-        pod: current.row.name,
-        container: current.container,
-        tail: current.tail,
-      })
-    } else {
-      k8sPodLogs(
-        hostRef.current,
-        current.context,
-        current.namespace,
-        current.row.name,
-        current.container || null,
-        current.tail,
-      )
-        .then((text) =>
-          setLogs((prev) => (prev ? { ...prev, text, loading: false, error: '' } : prev)),
-        )
-        .catch((e) =>
-          setLogs((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev)),
-        )
+  // Transport for the shared log viewer: one-shot tail, live `kubectl logs -f`
+  // stream, and its poll/stop. The callbacks read the host through the ref (it
+  // follows the focused terminal); the memo is keyed on the opened scope.
+  const logsSource = useMemo<LogSource | null>(() => {
+    if (!logs) return null
+    const { context: ctx, namespace: ns, row, container } = logs
+    return {
+      fetchTail: (tail) => k8sPodLogs(hostRef.current, ctx, ns, row.name, container || null, tail),
+      startStream: (tail) =>
+        k8sLogsStreamStart(hostRef.current, ctx, ns, row.name, container || null, tail),
+      pollStream: async (streamId) => {
+        const poll = await pollK8sLogs(streamId)
+        return { chunks: poll.chunks, ended: poll.ended }
+      },
+      stopStream: (streamId) => stopK8sLogsStream(streamId),
     }
-    return () => {
-      void stopLogStream()
-    }
-    // `logScope` is the whole input; the callbacks read it through refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logScope])
-
-  // Keep the newest lines in view, but only while the user has not scrolled back to
-  // read something — a viewer that yanks you forward is a viewer you turn off.
-  useEffect(() => {
-    if (!logRef.current || !stickRef.current) return
-    logRef.current.scrollTop = logRef.current.scrollHeight
-  }, [logs?.text])
-
-  // Render the log text as HTML, stripping shell control bytes (cursor moves,
-  // screen erases, OSC titles, bell/backspace) and colourising ANSI SGR codes.
-  // Output without any ANSI falls back to heuristic plain-log highlighting
-  // (timestamps, levels) so uncoloured `kubectl logs` stays readable. The wrapper
-  // object is memoized so a re-render doesn't replace the <pre> children and
-  // detach the user's text selection.
-  const logsHtmlPayload = useMemo(() => {
-    const text = logs?.text
-    if (!text) {
-      const msg = logs?.loading ? t('loading') : t('k8sNoLogs')
-      return { __html: msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
-    }
-    const plain = highlightPlainLogLines(text)
-    const lines = plain ?? parseAnsiToHtmlLines(text)
-    return { __html: lines.join('\n') }
-  }, [logs?.loading, logs?.text, t])
+  }, [logs])
 
   const openYaml = useCallback(
     (row: K8sResource) => {
       if (!context) return
       const ns = rowNamespace(row, namespace)
+      if (onOpenYaml) {
+        onOpenYaml({ context, namespace: ns, kind: row.kind, name: row.name })
+        return
+      }
       setYaml({ row, context, namespace: ns, text: '', error: '', loading: true })
       k8sResourceYaml(hostRef.current, context, ns, row.kind, row.name)
         .then((text) => setYaml((prev) => (prev ? { ...prev, text, loading: false } : prev)))
@@ -842,7 +751,7 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
           setYaml((prev) => (prev ? { ...prev, error: String(e), loading: false } : prev)),
         )
     },
-    [context, namespace, rowNamespace],
+    [context, namespace, rowNamespace, onOpenYaml],
   )
 
   const doDelete = useCallback(async () => {
@@ -958,17 +867,6 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     },
     [context, namespace, onExecPod, rowNamespace],
   )
-
-  const copyLogs = useCallback(async () => {
-    if (!logs) return
-    try {
-      await navigator.clipboard.writeText(logs.text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // Clipboard permission can be denied; the text is selectable either way.
-    }
-  }, [logs])
 
   const refreshForwards = useCallback(async () => {
     try {
@@ -1165,6 +1063,14 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
     })
   }, [])
 
+  const toggleScope = useCallback(() => {
+    setScopeOpen((prev) => {
+      const next = !prev
+      writeScopeOpenPref(next)
+      return next
+    })
+  }, [])
+
   const q = filter.toLowerCase()
   // Status chips exclude whole statuses; the text filter then narrows what's left.
   // Both apply to the resource list only; helm keeps its text-only filter.
@@ -1217,16 +1123,32 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
   const canForward = menuRow != null && FORWARD_PREFIX[menuRow.kind] != null
 
   return (
-    <div className="k8s-panel">
-      <div className="panel-head sec">
+    <div className={`k8s-panel${scopeOpen ? ' scope-open' : ''}`}>
+      <div className="panel-head sec k8s-head">
         <span className="panel-title">{t('railK8s')}</span>
-        <span className="cnt" title={context}>
-          {context
-            ? `${mode === 'helm' ? visibleReleases.length : visible.length} · ${context}`
-            : mode === 'helm'
-              ? visibleReleases.length
-              : visible.length}
-        </span>
+        {/* Two lists, one scope: the context and namespace pickers below apply to
+            whichever of these is showing. The switch lives in the head rather than
+            on a row of its own — 29px is a row of resources in a 264px rail. */}
+        <div className="k8s-modes" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'resources'}
+            className={`k8s-mode${mode === 'resources' ? ' active' : ''}`}
+            onClick={() => onScopeChange({ mode: 'resources' })}
+          >
+            {t('k8sModeResources')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'helm'}
+            className={`k8s-mode${mode === 'helm' ? ' active' : ''}`}
+            onClick={() => onScopeChange({ mode: 'helm' })}
+          >
+            {t('k8sModeHelm')}
+          </button>
+        </div>
         {mode === 'helm' ? (
           <button
             type="button"
@@ -1268,83 +1190,86 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         </button>
       </div>
 
-      {/* Two lists, one scope: the context and namespace pickers below apply to
-          whichever of these is showing. */}
-      <div className="k8s-modes" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === 'resources'}
-          className={`k8s-mode${mode === 'resources' ? ' active' : ''}`}
-          onClick={() => onScopeChange({ mode: 'resources' })}
-        >
-          {t('k8sModeResources')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === 'helm'}
-          className={`k8s-mode${mode === 'helm' ? ' active' : ''}`}
-          onClick={() => onScopeChange({ mode: 'helm' })}
-        >
-          {t('k8sModeHelm')}
-        </button>
-      </div>
+      {/* The chosen scope, always on one line. The three pickers below are a
+          setting, not a read-out, and folding them away hands their ~105px back to
+          the list. The bar is the whole disclosure - one target, one chevron. */}
+      <button
+        type="button"
+        className="k8s-scope-bar"
+        aria-expanded={scopeOpen}
+        title={t(scopeOpen ? 'k8sScopeCollapse' : 'k8sScopeExpand')}
+        onClick={toggleScope}
+      >
+        <span className="k8s-scope-ctx">{context || '—'}</span>
+        <span className="k8s-scope-sep">›</span>
+        <span className="k8s-scope-ns">
+          {namespace === ALL_NAMESPACES ? t('k8sAllNamespaces') : namespace || '—'}
+        </span>
+        <span className="k8s-scope-sep">›</span>
+        <span className="k8s-scope-kind">
+          {mode === 'helm' ? t('k8sModeHelm') : t(KIND_LABEL[kind])}
+        </span>
+        <Icon name="chevronDown" size={12} className="k8s-scope-chev" />
+      </button>
 
-      <div className="k8s-filters">
-        <label className="k8s-field k8s-field-wide">
-          <span>{t('k8sContext')}</span>
-          <select
-            className="k8s-select"
-            value={contextReady ? context : ''}
-            onChange={(e) => onScopeChange({ context: e.target.value, namespace: ALL_NAMESPACES })}
-            disabled={contextsHost !== hostKey || contexts.length === 0}
-            aria-label={t('k8sContext')}
-          >
-            {!contextReady && <option value="">—</option>}
-            {contexts.map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.current ? `● ${c.name}` : c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="k8s-field">
-          <span>{t('k8sNamespace')}</span>
-          <select
-            className="k8s-select"
-            value={scopeReady ? namespace : ''}
-            onChange={(e) => onScopeChange({ namespace: e.target.value })}
-            disabled={!namespaceListReady}
-            aria-label={t('k8sNamespace')}
-          >
-            {!scopeReady && <option value="">—</option>}
-            <option value={ALL_NAMESPACES}>{t('k8sAllNamespaces')}</option>
-            {namespaces.map((n) => (
-              <option key={n.name} value={n.name}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {mode === 'resources' && (
-          <label className="k8s-field">
-            <span>{t('k8sResourceKind')}</span>
+      {scopeOpen && (
+        <div className="k8s-filters">
+          <label className="k8s-field k8s-field-wide">
+            <span>{t('k8sContext')}</span>
             <select
               className="k8s-select"
-              value={kind}
-              onChange={(e) => onScopeChange({ kind: e.target.value })}
-              aria-label={t('k8sResourceKind')}
+              value={contextReady ? context : ''}
+              onChange={(e) =>
+                onScopeChange({ context: e.target.value, namespace: ALL_NAMESPACES })
+              }
+              disabled={contextsHost !== hostKey || contexts.length === 0}
+              aria-label={t('k8sContext')}
             >
-              {KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {t(KIND_LABEL[k])}
+              {!contextReady && <option value="">—</option>}
+              {contexts.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.current ? `● ${c.name}` : c.name}
                 </option>
               ))}
             </select>
           </label>
-        )}
-      </div>
+          <label className="k8s-field">
+            <span>{t('k8sNamespace')}</span>
+            <select
+              className="k8s-select"
+              value={scopeReady ? namespace : ''}
+              onChange={(e) => onScopeChange({ namespace: e.target.value })}
+              disabled={!namespaceListReady}
+              aria-label={t('k8sNamespace')}
+            >
+              {!scopeReady && <option value="">—</option>}
+              <option value={ALL_NAMESPACES}>{t('k8sAllNamespaces')}</option>
+              {namespaces.map((n) => (
+                <option key={n.name} value={n.name}>
+                  {n.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {mode === 'resources' && (
+            <label className="k8s-field">
+              <span>{t('k8sResourceKind')}</span>
+              <select
+                className="k8s-select"
+                value={kind}
+                onChange={(e) => onScopeChange({ kind: e.target.value })}
+                aria-label={t('k8sResourceKind')}
+              >
+                {KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {t(KIND_LABEL[k])}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
 
       {mode === 'resources' && statusOptions.length > 0 && (
         <div className="k8s-status-bar">
@@ -1746,21 +1671,14 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
         <DraggableModal className="k8s-modal" onClose={() => setLogs(null)}>
           <div className="modal-header">
             <h3>{t('k8sLogsTitle', { name: logs.row.name })}</h3>
-            <span className="modal-close" onClick={() => setLogs(null)}>
-              <Icon name="x" size={14} />
-            </span>
-          </div>
-          <div className="k8s-log-toolbar">
             {logs.row.containers.length > 1 && (
-              <label className="k8s-inline">
+              <label className="k8s-inline k8s-log-container">
                 <span>{t('k8sContainer')}</span>
                 <select
                   className="k8s-select"
                   value={logs.container}
                   onChange={(e) =>
-                    setLogs((prev) =>
-                      prev ? { ...prev, container: e.target.value, loading: true } : prev,
-                    )
+                    setLogs((prev) => (prev ? { ...prev, container: e.target.value } : prev))
                   }
                 >
                   {logs.row.containers.map((c) => (
@@ -1771,49 +1689,21 @@ export const K8sPanel: React.FC<K8sPanelProps> = ({
                 </select>
               </label>
             )}
-            <label className="k8s-inline">
-              <span>{t('k8sTail')}</span>
-              <select
-                className="k8s-select"
-                value={logs.tail}
-                onChange={(e) =>
-                  setLogs((prev) =>
-                    prev ? { ...prev, tail: Number(e.target.value), loading: true } : prev,
-                  )
-                }
-              >
-                {[200, 500, 2000, 5000].map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="k8s-inline k8s-check">
-              <input
-                type="checkbox"
-                checked={logs.follow}
-                onChange={(e) =>
-                  setLogs((prev) => (prev ? { ...prev, follow: e.target.checked } : prev))
-                }
-              />
-              <span>{t('k8sFollow')}</span>
-            </label>
-            <button type="button" className="k8s-btn" onClick={copyLogs}>
-              {copied ? t('k8sCopied') : t('k8sCopy')}
-            </button>
+            <span className="modal-close" onClick={() => setLogs(null)}>
+              <Icon name="x" size={14} />
+            </span>
           </div>
-          {logs.error && <div className="modal-error">{logs.error}</div>}
-          <pre
-            className="k8s-log-output"
-            ref={logRef}
-            onScroll={(e) => {
-              const el = e.currentTarget
-              stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
-            }}
-            dangerouslySetInnerHTML={logsHtmlPayload}
-          />
-          {logs.ended && <div className="k8s-note">{t('k8sStreamEnded')}</div>}
+          {logsSource && (
+            <LogViewer
+              // A different pod/container is a different stream: remount so the
+              // viewer starts with a clean buffer and fresh follow/toggles.
+              key={`${logs.context}|${logs.namespace}|${logs.row.name}|${logs.container}`}
+              source={logsSource}
+              initialTail={500}
+              endedLabel={t('k8sStreamEnded')}
+              className="k8s-modal-log"
+            />
+          )}
         </DraggableModal>
       )}
 

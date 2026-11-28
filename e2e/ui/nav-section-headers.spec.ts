@@ -71,6 +71,14 @@ test('every section keeps its title at the default column width', async ({ page 
 
   // The metadata *is* allowed to ellipsis — that is the item that gives way.
   expect(await truncated(page, '.panel-head.sec .cnt')).not.toEqual([])
+
+  // Kubernetes shares its head with the Resources/Helm switch now, so both items
+  // have to survive the same row at the default width.
+  await selectRailMode(page, 'k8s')
+  await expect(page.locator('.panel-head.sec .panel-title')).toHaveText(['Kubernetes'])
+  expect(await truncated(page, '.panel-head.sec .panel-title')).toEqual([])
+  await expect(page.locator('.k8s-mode')).toHaveText(['Resources', 'Helm'])
+  expect(await truncated(page, '.k8s-mode')).toEqual([])
 })
 
 test('the mode switch never truncates a mode name', async ({ page }) => {

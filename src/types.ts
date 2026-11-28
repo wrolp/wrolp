@@ -353,6 +353,10 @@ export interface TabInfo {
     | 'terminal'
     | 'settings'
     | 'dockerLog'
+    | 'k8sLog'
+    | 'k8sYaml'
+    | 'k8sHelmValues'
+    | 'k8sHelmHistory'
     | 'localShell'
     | 'serial'
     | 'telnet'
@@ -378,6 +382,16 @@ export interface TabInfo {
   containerName?: string
   containerId?: string
   containerImage?: string
+  // k8sLog / k8sYaml tab fields
+  /**
+   * Where kubectl runs for this tab, captured when it opened: the rail's focused
+   * host can move to another cluster while the log stream is still reading this one.
+   */
+  k8sHost?: K8sHostRef
+  /** The object the tab was opened for (a pod's logs, a resource's YAML). */
+  k8sRef?: K8sTabRef
+  /** The Helm release a values / history tab was opened for. */
+  k8sHelm?: K8sHelmRef
   // localShell tab fields
   localShellCwd?: string
   localShellType?: string
@@ -690,6 +704,29 @@ export interface K8sExecTarget {
   namespace: string
   pod: string
   container?: string | null
+}
+
+/**
+ * The Kubernetes object a log / YAML tab was opened for. `tabType` says which of
+ * the two the tab shows; this is the identity both need, so re-opening the same
+ * object focuses the open tab instead of stacking a second copy.
+ */
+export interface K8sTabRef {
+  context: string
+  namespace: string
+  kind: string
+  name: string
+  /** The container a log tab starts on (pods with more than one). */
+  container?: string | null
+  /** Every container of the pod, for the log tab's own picker. */
+  containers?: string[]
+}
+
+/** The Helm release a values / history tab belongs to. */
+export interface K8sHelmRef {
+  context: string
+  namespace: string
+  release: string
 }
 
 /** A recorded local-shell working directory (for the "recent directories" list). */

@@ -41,21 +41,23 @@ test('the color is stable, bounded, and differs between namespaces', () => {
 })
 
 test('namespaces that hash to the same slot still get different colors', () => {
-  // `apps` and `prod` both hash to 1 — the map probes forward for the second.
-  expect(namespaceColorIndex('apps')).toBe(namespaceColorIndex('prod'))
-  const map = namespaceColorMap(['apps', 'prod'])
+  // `apps` and `backend` both hash to 1 — the map probes forward for the second.
+  expect(namespaceColorIndex('apps')).toBe(namespaceColorIndex('backend'))
+  const map = namespaceColorMap(['apps', 'backend'])
   expect(map.get('apps')).toBe(1)
-  expect(map.get('prod')).toBe(2)
+  expect(map.get('backend')).toBe(2)
   expect(new Set(map.values()).size).toBe(2)
 
   // Assignment depends on the set, not on the arrival order.
-  const reversed = namespaceColorMap(['prod', 'apps'])
+  const reversed = namespaceColorMap(['backend', 'apps'])
   expect([...reversed.entries()].sort()).toEqual([...map.entries()].sort())
 
-  // Up to the palette size every namespace on screen is distinct.
-  const many = namespaceColorMap(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'])
-  const firstSeven = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
-  expect(new Set(firstSeven.map((n) => many.get(n))).size).toBe(7)
+  // Up to the palette size every namespace on screen is distinct. The palette
+  // deliberately has no red slot, so it is one colour shorter than
+  // `_theme.scss`'s soft-40 families.
+  const many = namespaceColorMap(['a', 'b', 'c', 'd', 'e', 'f', 'g'])
+  const firstPalette = ['a', 'b', 'c', 'd', 'e', 'f']
+  expect(new Set(firstPalette.map((n) => many.get(n))).size).toBe(NAMESPACE_COLOR_COUNT)
 })
 
 async function boot(page: Page) {
@@ -78,7 +80,7 @@ test('rows from different namespaces get different text colors', async ({ page }
   const apps = page.locator('.k8s-item', { hasText: 'web-0' }).locator('.k8s-ns')
   const def = page.locator('.k8s-item', { hasText: 'worker-0' }).locator('.k8s-ns')
   await expect(apps).toHaveClass(/k8s-ns-color-1/)
-  await expect(def).toHaveClass(/k8s-ns-color-4/)
+  await expect(def).toHaveClass(/k8s-ns-color-0/)
 
   // The class has to resolve to an actual colour token, not just be present.
   const color = await apps.evaluate((el) => getComputedStyle(el).color)
